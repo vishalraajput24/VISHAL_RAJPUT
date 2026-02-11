@@ -1,0 +1,5 @@
+streamlit
+breeze-connect
+pandas
+requests
+pytz
