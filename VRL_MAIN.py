@@ -1219,6 +1219,9 @@ def _send_today_download():
     spot_csv = os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + today_str + ".csv")
     if os.path.isfile(spot_csv):
         files_to_zip.append((spot_csv, "nifty_spot_1min_" + today_str + ".csv"))
+    scan_csv = os.path.join(D.OPTIONS_1MIN_DIR, "nifty_signal_scan_" + today_str + ".csv")
+    if os.path.isfile(scan_csv):
+        files_to_zip.append((scan_csv, "nifty_signal_scan_" + today_str + ".csv"))
 
     if os.path.isfile(D.STATE_FILE_PATH):
         files_to_zip.append((D.STATE_FILE_PATH, "vrl_live_state.json"))
