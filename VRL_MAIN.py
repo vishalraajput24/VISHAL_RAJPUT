@@ -785,6 +785,215 @@ def _is_new_1min_candle(now: datetime) -> bool:
 #  STRATEGY LOOP
 # ═══════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════
+#  DASHBOARD SNAPSHOT — written every cycle for VRL_WEB.py
+#  VRL_WEB.py reads this file. Zero calculation in web server.
+# ═══════════════════════════════════════════════════════════════
+
+def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
+                     profile, all_results, expiry, now):
+    """Write everything the dashboard needs to a single JSON file."""
+    try:
+        with _state_lock:
+            st = dict(state)
+
+        # ── Market context ──
+        spot_3m = D.get_spot_indicators("3minute")
+        spot_gap = D.get_spot_gap()
+        fib_info = D.get_nearest_fib_level(spot_ltp) if spot_ltp > 0 else {}
+
+        hourly_rsi = 0
+        try:
+            hourly_rsi = D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0
+        except Exception:
+            pass
+
+        bias = ""
+        try:
+            bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
+        except Exception:
+            pass
+
+        straddle_open = getattr(D, "_straddle_open", 0)
+        straddle_captured = getattr(D, "_straddle_captured", False)
+
+        # ── Build CE/PE signal blocks ──
+        def _build_signal(opt_type, result):
+            if not result:
+                return {
+                    "gate_3m": {"ema": False, "body": False, "rsi": False, "price": False,
+                                "met": 0, "spread": 0, "rsi_val": 0, "body_pct": 0, "mode": ""},
+                    "spread_1m": 0, "spread_1m_min": D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE,
+                    "entry_1m": {"body_pct": 0, "body_ok": False, "rsi": 0, "rsi_rising": False,
+                                 "rsi_ok": False, "vol": 0, "vol_ok": False},
+                    "score": 0, "score_min": D.SESSION_SCORE_MIN.get(session, 5),
+                    "fired": False, "verdict": "NO DATA",
+                    "greeks": {"delta": 0, "iv": 0, "theta": 0, "gamma": 0},
+                    "ltp": 0, "regime": "",
+                }
+
+            d3 = result.get("details_3m", {})
+            d1 = result.get("details_1m", {})
+            g  = result.get("greeks", {})
+            spread_1m = result.get("spread_1m", 0)
+            min_spread = D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE
+            score = result.get("score", 0)
+            session_min = D.SESSION_SCORE_MIN.get(session, 5)
+
+            # Verdict logic
+            conds = d3.get("conditions_met", 0)
+            if result.get("fired"):
+                verdict = "FIRED"
+            elif conds < 3:
+                verdict = "3M BLOCKED " + str(conds) + "/4"
+            elif spread_1m < min_spread:
+                verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
+            elif d1.get("rsi_reject"):
+                rsi_v = d1.get("rsi_val", 0)
+                if rsi_v > 65:
+                    verdict = "RSI " + str(rsi_v) + " TOO HIGH"
+                else:
+                    verdict = "RSI " + str(rsi_v) + " NOT RISING"
+            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
+                verdict = "BODY " + str(d1.get("body_pct", 0)) + "% WEAK"
+            elif score < session_min:
+                verdict = "SCORE " + str(score) + "/" + str(session_min)
+            elif score >= session_min:
+                verdict = "READY"
+            else:
+                verdict = "BLOCKED"
+
+            return {
+                "gate_3m": {
+                    "ema": d3.get("ema_aligned", False),
+                    "body": d3.get("body_ok", False),
+                    "rsi": d3.get("rsi_ok", False),
+                    "price": d3.get("price_ok", False),
+                    "met": d3.get("conditions_met", 0),
+                    "spread": round(d3.get("ema_spread_3m", 0), 1),
+                    "rsi_val": round(d3.get("rsi_val_3m", 0), 1),
+                    "body_pct": round(d3.get("body_pct_3m", 0), 1),
+                    "mode": d3.get("mode", ""),
+                },
+                "spread_1m": round(spread_1m, 1),
+                "spread_1m_min": min_spread,
+                "entry_1m": {
+                    "body_pct": round(d1.get("body_pct", 0), 1),
+                    "body_ok": d1.get("body_ok", False),
+                    "rsi": round(d1.get("rsi_val", 0), 1),
+                    "rsi_rising": d1.get("rsi_rising", False),
+                    "rsi_ok": d1.get("rsi_ok", False),
+                    "vol": round(d1.get("vol_ratio", 0), 2),
+                    "vol_ok": d1.get("vol_ok", False),
+                },
+                "score": score,
+                "score_min": session_min,
+                "fired": result.get("fired", False),
+                "verdict": verdict,
+                "greeks": {
+                    "delta": round(g.get("delta", 0), 3),
+                    "iv": round(g.get("iv_pct", 0), 1),
+                    "theta": round(g.get("theta", 0), 2),
+                    "gamma": round(g.get("gamma", 0), 4),
+                },
+                "ltp": round(result.get("entry_price", 0), 2),
+                "regime": result.get("regime", ""),
+            }
+
+        ce_signal = _build_signal("CE", all_results.get("CE"))
+        pe_signal = _build_signal("PE", all_results.get("PE"))
+
+        # ── Position block ──
+        position = {}
+        if st.get("in_trade"):
+            opt_ltp = D.get_ltp(st.get("token", 0))
+            entry = st.get("entry_price", 0)
+            pnl = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
+            sl_key = "phase1_sl" if st.get("exit_phase", 1) == 1 else "phase2_sl"
+            sl = st.get(sl_key, 0)
+            position = {
+                "in_trade": True,
+                "symbol": st.get("symbol", ""),
+                "direction": st.get("direction", ""),
+                "entry": entry,
+                "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
+                "pnl": pnl,
+                "peak": round(st.get("peak_pnl", 0), 1),
+                "trough": round(st.get("trough_pnl", 0), 1),
+                "phase": st.get("exit_phase", 1),
+                "sl": round(sl, 2),
+                "sl_dist": round(opt_ltp - sl, 1) if opt_ltp > 0 and sl > 0 else 0,
+                "score": st.get("score_at_entry", 0),
+                "candles": st.get("candles_held", 0),
+                "trail_tightened": st.get("trail_tightened", False),
+                "rsi_overbought": st.get("_rsi_was_overbought", False),
+                "mode": st.get("mode", ""),
+                "regime": st.get("regime_at_entry", ""),
+                "strike": st.get("strike", 0),
+            }
+        else:
+            position = {"in_trade": False}
+
+        # ── Today summary ──
+        today_block = {
+            "pnl": round(st.get("daily_pnl", 0), 1),
+            "trades": st.get("daily_trades", 0),
+            "wins": st.get("daily_trades", 0) - st.get("daily_losses", 0),
+            "losses": st.get("daily_losses", 0),
+            "streak": st.get("consecutive_losses", 0),
+            "paused": st.get("paused", False),
+            "profit_locked": st.get("profit_locked", False),
+        }
+
+        # ── Straddle ──
+        straddle_block = {
+            "open": round(straddle_open, 1) if straddle_captured else 0,
+            "captured": straddle_captured,
+        }
+
+        # ── Full snapshot ──
+        dashboard = {
+            "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "version": D.VERSION,
+            "mode": "PAPER" if D.PAPER_MODE else "LIVE",
+            "market": {
+                "spot": round(spot_ltp, 1),
+                "atm": atm_strike,
+                "dte": dte,
+                "vix": round(vix_ltp, 1),
+                "session": session,
+                "regime": spot_3m.get("regime", ""),
+                "bias": bias,
+                "gap": round(spot_gap, 1),
+                "spot_ema9": spot_3m.get("ema9", 0),
+                "spot_ema21": spot_3m.get("ema21", 0),
+                "spot_spread": spot_3m.get("spread", 0),
+                "spot_rsi": spot_3m.get("rsi", 0),
+                "hourly_rsi": round(hourly_rsi, 1),
+                "fib_nearest": fib_info.get("level", ""),
+                "fib_price": fib_info.get("price", 0),
+                "fib_distance": round(fib_info.get("distance", 0), 1),
+                "expiry": expiry.isoformat() if expiry else "",
+                "market_open": D.is_market_open(),
+            },
+            "ce": ce_signal,
+            "pe": pe_signal,
+            "position": position,
+            "today": today_block,
+            "straddle": straddle_block,
+        }
+
+        # Atomic write
+        tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dashboard, f, indent=2, default=str)
+        os.replace(tmp, os.path.join(D.STATE_DIR, 'vrl_dashboard.json'))
+
+    except Exception as e:
+        logger.debug("[DASH] Snapshot write: " + str(e))
+
+
 def _strategy_loop(kite):
     global _running
     today_str = date.today().isoformat()
@@ -907,6 +1116,13 @@ def _strategy_loop(kite):
                                 + "  RSI check on /edge"
                             )
                         _save_state()
+                        # Dashboard update during trade
+                        try:
+                            _write_dashboard(spot_ltp, state.get("strike", 0),
+                                             dte, D.get_vix(), session,
+                                             profile, {}, expiry, now)
+                        except Exception:
+                            pass
 
                 time.sleep(0.5)
                 continue
@@ -1086,6 +1302,13 @@ def _strategy_loop(kite):
                         "ce"        : _scan_summary(ce_res),
                         "pe"        : _scan_summary(pe_res),
                     }
+
+                # v12.14: Write dashboard snapshot for web
+                try:
+                    _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
+                                     profile, all_results, expiry, now)
+                except Exception as _de:
+                    logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
                     _execute_entry(kite, best_opt_info, best_type,
