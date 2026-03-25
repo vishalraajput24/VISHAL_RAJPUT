@@ -1280,6 +1280,12 @@ def _cmd_help(args):
         "/forceexit — emergency exit\n"
         "/restart   — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>SERVER</b>\n"
+        "/deploy       — git pull + restart bot\n"
+        "/serverstatus — server + bot health\n"
+        "/serverlog    — last 20 log lines\n"
+        "/gitlog       — last 5 commits\n"
         "Mode: " + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE") + " | ATM: 100-step"
     )
 
@@ -2262,7 +2268,12 @@ def _tg_handle_message(message: dict):
     if handler:
         handler(args)
     else:
-        _tg_send("Unknown command: " + raw_cmd + "\nType /help")
+        _WATCHDOG = ("/deploy","/serverstatus","/serverlog","/gitlog")
+        if raw_cmd not in _WATCHDOG:
+            _tg_send("Unknown command: " + raw_cmd + "\nType /help")
+        _WATCHDOG_CMDS = ("/deploy", "/serverstatus", "/serverlog", "/gitlog")
+        if raw_cmd not in _WATCHDOG_CMDS:
+            _tg_send("Unknown command: " + raw_cmd + "\nType /help")
 
 def _tg_handle_callback(callback: dict):
     query_id = callback.get("id", "")

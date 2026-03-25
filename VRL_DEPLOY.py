@@ -267,7 +267,7 @@ def main():
             updates = _tg_get_updates()
             for upd in updates:
                 msg  = upd.get("message", {})
-                text = msg.get("text", "").strip().split()[0].lower() if msg.get("text") else ""
+                text = msg.get("text", "").strip().split()[0].split("@")[0].lower() if msg.get("text") else ""
                 chat = str(msg.get("chat", {}).get("id", ""))
 
                 if chat != TG_CHAT_ID:
