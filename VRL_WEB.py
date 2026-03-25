@@ -168,14 +168,16 @@ function render(d, trades){
     const barPct=minSpread>0?Math.min(100,Math.max(0,sig.spread_1m/minSpread*100)):0;
     const barClr=barPct>=100?'var(--gn)':barPct>=70?'var(--am)':'var(--rd)';
     const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')?'var(--rd)':'var(--am)';
-    let h='<div class="sect"><div class="sh">'+label+' SIGNAL'+(sig.ltp>0?' · ₹'+sig.ltp:'')+'</div>';
+    let h='<div class="sect"><div class="sh">'+label+' '+mk.atm+' · ₹'+sig.ltp+'</div>';
     // 3-min gate
-    h+='<div class="row"><div class="k">3-MIN GATE</div><div class="v" style="color:'+(g.met>=3?'var(--gn)':'var(--rd)')+'">'+g.met+'/4'+(g.met>=3?' ✅':' ❌')+'</div></div>';
+    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:rgba(59,130,246,.05)">▸ 3-MIN GATE</div>';
+    h+='<div class="row"><div class="k">STATUS</div><div class="v" style="color:'+(g.met>=3?'var(--gn)':'var(--rd)')+'">'+g.met+'/4'+(g.met>=3?' ✅':' ❌')+'</div></div>';
     h+='<div class="gate">'+dotH(g.ema,'E')+dotH(g.body,'B')+dotH(g.rsi,'R')+dotH(g.price,'P')+'</div>';
     if(g.rsi_val>0)h+='<div class="row"><div class="k">3m RSI</div><div class="v">'+g.rsi_val+'</div></div>';
     if(g.spread!=0)h+='<div class="row"><div class="k">3m Spread</div><div class="v" style="color:'+(g.spread>0?'var(--gn)':'var(--rd)')+'">'+(g.spread>0?'+':'')+g.spread+'</div></div>';
-    // 1-min spread bar
-    h+='<div class="bar-wrap"><div class="bar-label"><span>1m SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
+    // 1-min section
+    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);border-top:1px solid var(--bd);background:rgba(16,185,129,.05)">▸ 1-MIN ENTRY</div>';
+    h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
     h+='<div class="bar"><div class="bar-fill" style="width:'+barPct+'%;background:'+barClr+'"></div></div></div>';
     // 1-min entry
     const rClr=(e.rsi_ok&&e.rsi_rising)?'var(--gn)':e.rsi>65?'var(--rd)':'var(--am)';
@@ -195,7 +197,23 @@ function render(d, trades){
     signalBlock('CE',ce,ce.spread_1m_min||6)+signalBlock('PE',pe,pe.spread_1m_min||4)+'</div>';
 
   // ── MARKET TAB ──
-  let mh='<div class="ctx-row">'+
+  let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
+    '<div class="row"><div class="k">EMA 9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
+    '<div class="row"><div class="k">EMA 21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
+    '<div class="row"><div class="k">EMA SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'pts</div></div>'+
+    '<div class="row"><div class="k">RSI (3m)</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
+    '<div class="row"><div class="k">REGIME</div><div class="v" style="color:'+(mk.regime.includes('TREND')?'var(--gn)':'var(--am)')+'">'+esc(mk.regime)+'</div></div>'+
+    '<div class="row"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'pts</div></div>'+
+    '<div style="padding:6px 10px;font-size:10px;color:'+(mk.spot_spread>5?'var(--gn)':mk.spot_spread<-5?'var(--rd)':'var(--am)')+'">'+
+    (mk.spot_spread>10?'🚀 Strong uptrend — EMA9 pulling away from EMA21':
+     mk.spot_spread>5?'📈 Uptrend — spot above both EMAs':
+     mk.spot_spread>0?'⚠️ Weak up — EMAs close, trend unclear':
+     mk.spot_spread>-5?'⚠️ Weak down — EMAs close, choppy':
+     mk.spot_spread>-10?'📉 Downtrend — spot below both EMAs':
+     '🔻 Strong downtrend — EMA9 falling hard')+'</div>'+
+    '<div style="padding:2px 10px 6px;font-size:9px;color:#555">'+
+    'RSI '+(mk.spot_rsi>=70?'OVERBOUGHT — reversal likely':mk.spot_rsi>=60?'STRONG — momentum with bulls':mk.spot_rsi<=30?'OVERSOLD — reversal likely':mk.spot_rsi<=40?'WEAK — bears in control':'NEUTRAL — no clear direction')+'</div></div>';
+  mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">SPOT</div><div class="v" style="color:var(--bl)">'+mk.spot+'</div></div>'+
     '<div class="ctx"><div class="k">EMA9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
     '<div class="ctx"><div class="k">EMA21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
@@ -205,11 +223,25 @@ function render(d, trades){
     '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
     '<div class="ctx"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'</div></div>'+
     '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
+  // Fib Pivot Section
+  mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
+  var fp=mk.fib_pivots||{};
+  if(fp.R3||fp.pivot){
+    var spot=mk.spot;
+    function flvl(name,price){
+      var dist=spot-price;var near=Math.abs(dist)<20;
+      var clr=name.startsWith('R')?'var(--gn)':name.startsWith('S')?'var(--rd)':'var(--bl)';
+      return '<div class="row" style="'+(near?'background:rgba(59,130,246,.08)':'')+'"><div class="k" style="color:'+clr+'">'+name+'</div><div class="v" style="font-size:11px">'+price+(near?' ◄ NEAR':' <span style=\'color:#555;font-size:9px\'>'+(dist>0?'+':'')+dist.toFixed(0)+'pts</span>')+'</div></div>';}
+    mh+=flvl('R3',fp.R3||0)+flvl('R2',fp.R2||0)+flvl('R1',fp.R1||0)+flvl('PIVOT',fp.pivot||0)+flvl('S1',fp.S1||0)+flvl('S2',fp.S2||0)+flvl('S3',fp.S3||0);
+    mh+='<div style="padding:5px 10px;font-size:9px;color:#555">Prev: H='+fp.prev_high+' L='+fp.prev_low+' C='+fp.prev_close+' Range='+fp.range+'pts</div>';
+  } else { mh+='<div style="padding:10px;color:#555;font-size:10px">Fib pivots load on market open</div>'; }
+  mh+='</div>';
+  // Straddle + context
   mh+='<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">FIB</div><div class="v" style="font-size:10px">'+esc(mk.fib_nearest||'—')+'</div></div>'+
-    '<div class="ctx"><div class="k">FIB DIST</div><div class="v">'+(mk.fib_distance>0?'+':'')+mk.fib_distance+'</div></div>'+
+    '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
     '<div class="ctx"><div class="k">STRADDLE</div><div class="v">'+(str.captured?'₹'+str.open:'—')+'</div></div>'+
-    '<div class="ctx"><div class="k">EXPIRY</div><div class="v" style="font-size:10px">'+esc(mk.expiry||'—')+'</div></div></div>';
+    '<div class="ctx"><div class="k">EXPIRY</div><div class="v" style="font-size:10px">'+esc(mk.expiry||'—')+'</div></div>'+
+    '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
   document.getElementById('p-mkt').innerHTML=mh;
 
   // ── TRADES TAB ──
