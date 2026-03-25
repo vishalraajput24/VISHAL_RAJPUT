@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.14
 #  Foundation layer. Settings, logging, market data, Greeks.
-#  v12.13: Fib pivot points, expiry breakout mode,
+#  v12.14: Fib pivot points, expiry breakout mode,
 #          spot consolidation detection, expiry-specific rules.
 # ═══════════════════════════════════════════════════════════════
 
@@ -16,7 +16,7 @@ from logging.handlers import RotatingFileHandler
 import pandas as pd
 from kiteconnect import KiteTicker
 
-VERSION  = "v12.13"
+VERSION  = "v12.14"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 def _load_env_file(path: str):
@@ -97,7 +97,7 @@ ATR_SL_CANDLES    = 5      # Last N candles for ATR calculation
 TRAIL_DRAWDOWN_PCT     = 25   # Exit when drawdown > 25% of peak
 TRAIL_EMA_CANDLES_FAIL = 2    # Need 2 consecutive closes below EMA to exit
 
-# v12.13: Expiry breakout mode (DTE=0)
+# v12.14: Expiry breakout mode (DTE=0)
 EXPIRY_CONSOL_CANDLES  = 5    # Min candles for consolidation detection
 EXPIRY_CONSOL_RANGE    = 15   # Max range (pts) to qualify as consolidation
 EXPIRY_BREAKOUT_MIN    = 10   # Min pts beyond consolidation for breakout
@@ -116,7 +116,7 @@ LOOKBACK_3M = 60
 LOOKBACK_5M = 10
 
 TRADE_START_HOUR  = 9
-TRADE_START_MIN   = 38
+TRADE_START_MIN   = 15
 ENTRY_CUTOFF_HOUR = 15
 ENTRY_CUTOFF_MIN  = 10
 MARKET_OPEN_HOUR  = 9
@@ -854,7 +854,7 @@ def get_spot_regime(interval: str = "3minute") -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  FIB PIVOT POINTS (v12.13)
+#  FIB PIVOT POINTS (v12.14)
 #  Calculated once at startup from previous session's H/L/C
 #  Fibonacci ratios: 0.382, 0.618, 1.000
 # ═══════════════════════════════════════════════════════════════
@@ -962,7 +962,7 @@ def get_nearest_fib_level(spot_price: float) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  SPOT CONSOLIDATION DETECTOR (v12.13)
+#  SPOT CONSOLIDATION DETECTOR (v12.14)
 #  Tracks last N 1-min candles for tight-range detection
 #  Used by expiry breakout mode
 # ═══════════════════════════════════════════════════════════════
@@ -1047,3 +1047,286 @@ def is_expiry_window(now: datetime = None) -> bool:
     start = now.replace(hour=EXPIRY_START_HOUR, minute=EXPIRY_START_MIN, second=0)
     end   = now.replace(hour=EXPIRY_CUTOFF_HOUR, minute=EXPIRY_CUTOFF_MIN, second=0)
     return start <= now <= end
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v12.14: WARNING SYSTEM (all warnings only — no blocking)
+#  Bias 9:20 | Straddle 9:30 | VIX+Hourly RSI continuous
+#  Entry fire: 9:45-15:10 | Scan from 9:15
+# ═══════════════════════════════════════════════════════════════
+
+VIX_WARN_LEVEL    = 22
+VIX_DANGER_LEVEL  = 28
+STRADDLE_WARN_PCT = 5.0
+ENTRY_FIRE_HOUR   = 9
+ENTRY_FIRE_MIN    = 45
+
+_straddle_open     = 0.0
+_straddle_captured = False
+_daily_bias        = "UNKNOWN"
+_daily_bias_done   = False
+_hourly_rsi        = 0.0
+_hourly_rsi_ts     = 0
+_straddle_check_ts = 0
+
+
+def capture_straddle(kite, strike, expiry):
+    global _straddle_open, _straddle_captured
+    if _straddle_captured:
+        return
+    try:
+        tokens = get_option_tokens(kite, strike, expiry)
+        if not tokens:
+            return
+        ce_ltp = pe_ltp = 0.0
+        for side in ("CE", "PE"):
+            info = tokens.get(side)
+            if not info:
+                continue
+            ltp = get_ltp(info["token"])
+            if ltp <= 0 and kite:
+                try:
+                    q = kite.ltp(["NFO:" + info["symbol"]])
+                    ltp = float(list(q.values())[0]["last_price"])
+                except Exception:
+                    pass
+            if side == "CE":
+                ce_ltp = ltp
+            else:
+                pe_ltp = ltp
+        if ce_ltp > 0 and pe_ltp > 0:
+            _straddle_open = round(ce_ltp + pe_ltp, 2)
+            _straddle_captured = True
+            logger.info("[STRADDLE] CE=" + str(round(ce_ltp, 1))
+                        + " PE=" + str(round(pe_ltp, 1))
+                        + " Sum=" + str(_straddle_open))
+    except Exception as e:
+        logger.warning("[STRADDLE] Capture: " + str(e))
+
+
+def get_straddle_decay(kite, strike, expiry):
+    global _straddle_check_ts
+    import time as _t
+    result = {"decay_pct": 0.0, "current": 0.0, "open": _straddle_open,
+              "warning": False, "msg": ""}
+    if not _straddle_captured or _straddle_open <= 0:
+        return result
+    if _t.time() - _straddle_check_ts < 300:
+        return result
+    _straddle_check_ts = _t.time()
+    try:
+        tokens = get_option_tokens(kite, strike, expiry)
+        if not tokens:
+            return result
+        ce_ltp = pe_ltp = 0.0
+        for side in ("CE", "PE"):
+            info = tokens.get(side)
+            if info:
+                ltp = get_ltp(info["token"])
+                if side == "CE":
+                    ce_ltp = ltp
+                else:
+                    pe_ltp = ltp
+        if ce_ltp > 0 and pe_ltp > 0:
+            current = ce_ltp + pe_ltp
+            decay = round((current - _straddle_open) / _straddle_open * 100, 1)
+            result["current"] = round(current, 2)
+            result["decay_pct"] = decay
+            if decay <= -STRADDLE_WARN_PCT:
+                result["warning"] = True
+                result["msg"] = ("SELLERS DAY straddle " + str(decay)
+                                 + "% (open " + str(int(_straddle_open))
+                                 + " now " + str(int(current)) + ")")
+    except Exception as e:
+        logger.warning("[STRADDLE] Decay: " + str(e))
+    return result
+
+
+def compute_daily_bias(kite):
+    global _daily_bias, _daily_bias_done
+    result = {"bias": "UNKNOWN", "ema21": 0, "adx": 0, "spot": 0, "details": ""}
+    try:
+        if _kite is None:
+            return result
+        now = datetime.now()
+        raw = _kite.historical_data(
+            instrument_token=NIFTY_SPOT_TOKEN,
+            from_date=now - timedelta(days=60), to_date=now,
+            interval="day", continuous=False, oi=False)
+        if not raw or len(raw) < 25:
+            return result
+        df = pd.DataFrame(raw)
+        for col in ("close", "high", "low"):
+            df[col] = df[col].astype(float)
+        ema21 = df["close"].ewm(span=21, adjust=False).mean()
+        last_ema = round(float(ema21.iloc[-1]), 2)
+        last_c = float(df["close"].iloc[-1])
+        import numpy as _np
+        up = df["high"].diff()
+        dn = -df["low"].diff()
+        pdm = _np.where((up > dn) & (up > 0), up, 0.0)
+        ndm = _np.where((dn > up) & (dn > 0), dn, 0.0)
+        tr = pd.concat([df["high"]-df["low"],
+                         (df["high"]-df["close"].shift(1)).abs(),
+                         (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+        atr_s = tr.ewm(alpha=1/14, adjust=False).mean()
+        pdi = 100 * pd.Series(pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+        ndi = 100 * pd.Series(ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+        adx_s = ((pdi-ndi).abs() / (pdi+ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+        adx_v = round(float(adx_s.iloc[-1]), 1)
+        above = last_c > last_ema
+        if adx_v < 18:
+            bias, det = "SIDEWAYS", "ADX " + str(adx_v) + " < 18 no trend"
+        elif above and adx_v >= 20:
+            bias, det = "BULL", "Above EMA21 + ADX " + str(adx_v)
+        elif not above and adx_v >= 20:
+            bias, det = "BEAR", "Below EMA21 + ADX " + str(adx_v)
+        else:
+            bias, det = "NEUTRAL", "Mixed ADX " + str(adx_v)
+        result = {"bias": bias, "ema21": last_ema, "adx": adx_v,
+                  "spot": last_c, "details": det}
+        _daily_bias = bias
+        _daily_bias_done = True
+        logger.info("[BIAS] " + bias + " EMA21=" + str(last_ema) + " ADX=" + str(adx_v))
+    except Exception as e:
+        logger.warning("[BIAS] " + str(e))
+    return result
+
+
+def get_daily_bias():
+    return _daily_bias
+
+
+def check_hourly_rsi(kite):
+    global _hourly_rsi, _hourly_rsi_ts
+    result = {"rsi": 0.0, "warning": False, "msg": ""}
+    try:
+        if _kite is None:
+            return result
+        now = datetime.now()
+        raw = _kite.historical_data(
+            instrument_token=NIFTY_SPOT_TOKEN,
+            from_date=now - timedelta(days=10), to_date=now,
+            interval="60minute", continuous=False, oi=False)
+        if not raw or len(raw) < 20:
+            return result
+        df = pd.DataFrame(raw)
+        df["close"] = df["close"].astype(float)
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+        rsi = 100 - 100 / (1 + gain / (loss + 1e-9))
+        rv = round(float(rsi.iloc[-1]), 1)
+        _hourly_rsi = rv
+        _hourly_rsi_ts = int(now.timestamp())
+        result["rsi"] = rv
+        if rv >= 70:
+            result["warning"] = True
+            result["msg"] = "Hourly RSI " + str(rv) + " OVERBOUGHT — CE risky"
+        elif rv <= 30:
+            result["warning"] = True
+            result["msg"] = "Hourly RSI " + str(rv) + " OVERSOLD — PE risky"
+        logger.info("[HOURLY] RSI=" + str(rv))
+    except Exception as e:
+        logger.warning("[HOURLY] " + str(e))
+    return result
+
+
+def get_hourly_rsi():
+    return _hourly_rsi
+
+
+def check_vix_warning():
+    vix = get_vix()
+    result = {"vix": round(vix, 1), "warning": False, "level": "NORMAL", "msg": ""}
+    if vix >= VIX_DANGER_LEVEL:
+        result.update(warning=True, level="DANGER",
+                      msg="VIX " + str(round(vix, 1)) + " DANGER — SLs hit by noise")
+    elif vix >= VIX_WARN_LEVEL:
+        result.update(warning=True, level="ELEVATED",
+                      msg="VIX " + str(round(vix, 1)) + " ELEVATED — wider SLs needed")
+    return result
+
+
+def is_entry_fire_window(now=None):
+    if now is None:
+        now = datetime.now()
+    start = now.replace(hour=ENTRY_FIRE_HOUR, minute=ENTRY_FIRE_MIN, second=0)
+    end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0)
+    return start <= now <= end
+
+
+def run_warnings(kite, state, expiry, dte, spot_ltp, now):
+    import time as _t
+    msgs = []
+    upd = {}
+    # 1. Daily bias 9:20
+    if now.hour == 9 and 20 <= now.minute <= 22 and not state.get("_bias_done"):
+        try:
+            b = compute_daily_bias(kite)
+            upd["_bias_done"] = True
+            if b.get("bias") != "UNKNOWN":
+                ic = {"BULL": "\U0001f402", "BEAR": "\U0001f43b",
+                      "SIDEWAYS": "\u26a0\ufe0f", "NEUTRAL": "\u3030\ufe0f"}
+                msgs.append(ic.get(b["bias"], "?") + " <b>DAILY BIAS: " + b["bias"] + "</b>\n"
+                            + b.get("details", "") + "\n"
+                            + "EMA21: " + str(b.get("ema21", 0)) + "  ADX: " + str(b.get("adx", 0)))
+        except Exception as _e:
+            logger.warning("[WARN] Bias: " + str(_e))
+    # 2. Straddle capture 9:30
+    if (now.hour == 9 and now.minute >= 30 and not state.get("_straddle_done")
+            and spot_ltp > 0 and expiry is not None):
+        try:
+            _ss = get_active_strike_step(dte)
+            _sa = resolve_atm_strike(spot_ltp, _ss)
+            if _sa > 0:
+                capture_straddle(kite, _sa, expiry)
+                upd["_straddle_done"] = True
+                if _straddle_captured:
+                    msgs.append("\U0001f4ca <b>STRADDLE CAPTURED</b>\nATM CE+PE: \u20b9" + str(int(_straddle_open)))
+        except Exception as _e:
+            logger.warning("[WARN] Straddle: " + str(_e))
+    # 3. Straddle decay (every 5min)
+    if (_straddle_captured and not state.get("_straddle_alerted")
+            and spot_ltp > 0 and expiry is not None):
+        try:
+            _ss2 = get_active_strike_step(dte)
+            _sa2 = resolve_atm_strike(spot_ltp, _ss2)
+            sd = get_straddle_decay(kite, _sa2, expiry)
+            if sd.get("warning"):
+                upd["_straddle_alerted"] = True
+                msgs.append("\U0001f534 <b>" + sd["msg"] + "</b>")
+        except Exception:
+            pass
+    # 4. Hourly RSI (every hour)
+    if (now.minute == 0 and now.second < 35
+            and (_t.time() - state.get("_hourly_rsi_ts", 0)) > 3000):
+        try:
+            hr = check_hourly_rsi(kite)
+            upd["_hourly_rsi_ts"] = _t.time()
+            if hr.get("warning"):
+                msgs.append("\u26a0\ufe0f <b>" + hr["msg"] + "</b>")
+        except Exception as _e:
+            logger.warning("[WARN] Hourly: " + str(_e))
+    # 5. VIX (once)
+    if not state.get("_vix_warned"):
+        try:
+            vw = check_vix_warning()
+            if vw.get("warning"):
+                upd["_vix_warned"] = True
+                msgs.append("\u26a0\ufe0f <b>" + vw["msg"] + "</b>")
+        except Exception:
+            pass
+    return msgs, upd
+
+
+def reset_daily_warnings():
+    global _straddle_open, _straddle_captured, _daily_bias, _daily_bias_done
+    global _hourly_rsi, _hourly_rsi_ts, _straddle_check_ts
+    _straddle_open = 0.0
+    _straddle_captured = False
+    _daily_bias = "UNKNOWN"
+    _daily_bias_done = False
+    _hourly_rsi = 0.0
+    _hourly_rsi_ts = 0
+    _straddle_check_ts = 0

@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.14
 #  Master orchestration file.
-#  v12.13: Expiry breakout mode, fib pivots, /pivot command,
+#  v12.14: Expiry breakout mode, fib pivots, /pivot command,
 #          spot buffer feed, expiry-specific entry logic.
 # ═══════════════════════════════════════════════════════════════
 
@@ -87,6 +87,11 @@ DEFAULT_STATE = {
     "_circuit_breaker"   : False,
     "_error_count"       : 0,
     "_last_milestone"    : 0,
+    "_bias_done"         : False,
+    "_straddle_done"     : False,
+    "_hourly_rsi_ts"     : 0,
+    "_vix_warned"        : False,
+    "_straddle_alerted"  : False,
 }
 
 state   = deepcopy(DEFAULT_STATE)
@@ -138,7 +143,13 @@ def _reset_daily(today_str: str):
         state["profit_locked"]         = False
         state["_eod_reported"]         = False
         state["paused"]                = False
+        state["_bias_done"]            = False
+        state["_straddle_done"]        = False
+        state["_hourly_rsi_ts"]        = 0
+        state["_vix_warned"]           = False
+        state["_straddle_alerted"]     = False
     D.clear_token_cache()
+    D.reset_daily_warnings()
     logger.info("[MAIN] Daily reset")
     _save_state()
 
@@ -169,6 +180,7 @@ TRADE_FIELDNAMES = [
     "mode", "entry_price", "exit_price", "pnl_pts", "pnl_rs",
     "peak_pnl", "exit_reason", "score", "iv_at_entry",
     "regime", "dte", "candles_held",
+    "bias", "vix_at_entry", "hourly_rsi",
 ]
 
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
@@ -197,6 +209,9 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "regime"      : st.get("regime_at_entry", ""),
         "dte"         : st.get("dte_at_entry", 0),
         "candles_held": candles_held,
+        "bias": D.get_daily_bias(),
+        "vix_at_entry": round(D.get_vix(), 1),
+        "hourly_rsi": D.get_hourly_rsi(),
     }
 
     try:
@@ -328,7 +343,7 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "GATES (v12.13)\n"
+        "GATES (v12.14)\n"
         "3-min  : 3/4 conditions — option trending UP\n"
         "CE     : TRENDING regime + 1m spread ≥+6pts\n"
         "PE     : 3-min permitted + 1m spread ≥+4pts\n"
@@ -798,6 +813,18 @@ def _strategy_loop(kite):
             session = D.get_session_block(now.hour, now.minute)
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
+            # v12.14: Warning system
+            try:
+                _wmsg, _wupd = D.run_warnings(
+                    kite, state, expiry, dte, spot_ltp, now)
+                if _wupd:
+                    with _state_lock:
+                        state.update(_wupd)
+                for _wm in _wmsg:
+                    _tg_send(_wm)
+            except Exception as _we:
+                logger.warning("[MAIN] Warnings: " + str(_we))
+
             # v12.9 FIX: _error_count reset moved AFTER successful scan
             # (was here at top = circuit breaker never fired)
 
@@ -866,7 +893,7 @@ def _strategy_loop(kite):
 
             # ── NO RE‑ENTRY WATCHING — removed ──────────────────
 
-            # v12.13: Feed spot buffer for consolidation detection
+            # v12.14: Feed spot buffer for consolidation detection
             if spot_ltp > 0:
                 D.update_spot_buffer({
                     "timestamp": now.isoformat(),
@@ -880,7 +907,7 @@ def _strategy_loop(kite):
                     and spot_ltp > 0
                     and expiry is not None):
 
-                # v12.13: Feed proper 1-min candle to spot buffer
+                # v12.14: Feed proper 1-min candle to spot buffer
                 try:
                     _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 5)
                     if not _spot_df.empty and len(_spot_df) >= 2:
@@ -904,7 +931,7 @@ def _strategy_loop(kite):
                     time.sleep(2)
                     continue
 
-                # v12.13: EXPIRY BREAKOUT MODE (DTE=0)
+                # v12.14: EXPIRY BREAKOUT MODE (DTE=0)
                 if dte == 0:
                     try:
                         eb_result = check_expiry_breakout(
@@ -2179,7 +2206,7 @@ def _cmd_trades(args):
     )
 
 # ═══════════════════════════════════════════════════════════════
-#  v12.13: PIVOT COMMAND
+#  v12.14: PIVOT COMMAND
 # ═══════════════════════════════════════════════════════════════
 
 def _cmd_pivot(args):
@@ -2446,7 +2473,7 @@ def main():
     except Exception as e:
         logger.warning("[MAIN] Gap calculation failed: " + str(e))
 
-    # v12.13: Calculate fib pivot points
+    # v12.14: Calculate fib pivot points
     try:
         pivots = D.calculate_fib_pivots()
         if pivots:

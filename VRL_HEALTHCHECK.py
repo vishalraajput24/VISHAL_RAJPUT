@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.14
 #  Runs at 9:30 AM — verifies all critical systems
 #  Rule: every major bug fix must add a check here
-#  v12.13: Spot gap check added
+#  v12.14: Spot gap check added
 #  5 consecutive clean days = ready for live trading
 # ═══════════════════════════════════════════════════════════════
 
@@ -267,7 +267,7 @@ def check_circuit_breaker_logic():
 
 
 def check_strike_step():
-    """v12.13: Verify 100-step strikes active + expiry fallback to 50."""
+    """v12.14: Verify 100-step strikes active + expiry fallback to 50."""
     try:
         from VRL_DATA import STRIKE_STEP, STRIKE_STEP_EXPIRY, get_active_strike_step
         issues = []
@@ -289,7 +289,7 @@ def check_strike_step():
 
 
 def check_spot_gap():
-    """v12.13: Verify spot gap detection works."""
+    """v12.14: Verify spot gap detection works."""
     try:
         gap_info = D.calculate_spot_gap()
         gap = gap_info.get("gap_pts", 0)
@@ -302,10 +302,68 @@ def check_spot_gap():
         return False, f"❌ Spot gap error: {e}"
 
 
+
+def check_engine_ce_override():
+    """v12.14: Verify CE regime override has no orphaned return."""
+    try:
+        path = os.path.join(os.path.dirname(__file__), "VRL_ENGINE.py")
+        with open(path) as f:
+            content = f.read()
+        if "\n\n\n\n            return result" in content:
+            return False, "ORPHANED RETURN in ENGINE — CE entries broken"
+        return True, "CE override path clean"
+    except Exception as e:
+        return False, f"CE override check: {e}"
+
+
+def check_version_match():
+    """v12.14: All VRL files same version."""
+    try:
+        target = D.VERSION
+        bad = []
+        base = os.path.dirname(__file__)
+        for fn in ["VRL_MAIN.py", "VRL_ENGINE.py", "VRL_TRADE.py"]:
+            p = os.path.join(base, fn)
+            if not os.path.isfile(p): continue
+            with open(p) as f: head = "".join(f.readlines()[:10])
+            if target not in head: bad.append(fn)
+        if bad:
+            return False, f"Version mismatch: {', '.join(bad)} != {target}"
+        return True, f"All files at {target}"
+    except Exception as e:
+        return False, f"Version check: {e}"
+
+
+def check_warning_system():
+    """v12.14: Warning functions exist."""
+    try:
+        funcs = ["run_warnings", "compute_daily_bias", "check_hourly_rsi",
+                 "check_vix_warning", "capture_straddle", "is_entry_fire_window"]
+        missing = [f for f in funcs if not hasattr(D, f)]
+        if missing:
+            return False, f"Missing: {', '.join(missing)}"
+        return True, "Warning system present"
+    except Exception as e:
+        return False, f"Warning check: {e}"
+
+
+def check_entry_window():
+    """v12.14: Entry fire window configured."""
+    try:
+        h = D.ENTRY_FIRE_HOUR; m = D.ENTRY_FIRE_MIN
+        if h != 9 or m != 45:
+            return False, f"Entry fire wrong: {h}:{m:02d} expected 9:45"
+        if D.TRADE_START_MIN != 15:
+            return False, f"Scan start wrong: 9:{D.TRADE_START_MIN:02d} expected 9:15"
+        return True, f"Scan 9:{D.TRADE_START_MIN:02d} | Fire {h}:{m:02d}-{D.ENTRY_CUTOFF_HOUR}:{D.ENTRY_CUTOFF_MIN:02d}"
+    except Exception as e:
+        return False, f"Entry window check: {e}"
+
+
 def main():
     global _kite_ref
     now = datetime.now().strftime("%H:%M")
-    print(f"VRL HealthCheck v12.13 running at {now}")
+    print(f"VRL HealthCheck v12.14 running at {now}")
 
     try:
         kite = get_kite()
@@ -334,6 +392,10 @@ def main():
         ("RSI Warmup",      check_rsi_warmup()),
         ("State",           check_state()),
         ("Logs",            check_logs()),
+        ("CE Override",     check_engine_ce_override()),
+        ("Version Match",   check_version_match()),
+        ("Warning System",  check_warning_system()),
+        ("Entry Window",    check_entry_window()),
     ]
 
     all_ok = all(ok for _, (ok, _) in checks)
@@ -346,7 +408,7 @@ def main():
 
     status = "✅ ALL SYSTEMS OK — Ready to trade" if all_ok else "⚠️ ISSUES FOUND — Fix before trading"
     report = (
-        f"🩺 <b>HEALTHCHECK v12.13 — {now}</b>\n"
+        f"🩺 <b>HEALTHCHECK v12.14 — {now}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         + "\n".join(lines) +
         f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"

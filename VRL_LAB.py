@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_LAB.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_LAB.py — VISHAL RAJPUT TRADE v12.14
 #  Independent lab data collector. Separate process.
 #  Collects 1-min + 3-min option candles. EOD forward fill.
 #  Zero connection to trade loop. Cannot affect money.

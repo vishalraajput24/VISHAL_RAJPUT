@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.14
 #  Signal logic. Entry checks, exit management, scoring.
-#  v12.13: Expiry breakout mode (spot consolidation trigger),
+#  v12.14: Expiry breakout mode (spot consolidation trigger),
 #          fib pivot proximity, expiry-specific SL/trail.
 # ═══════════════════════════════════════════════════════════════
 
@@ -140,6 +140,7 @@ def pre_entry_checks(kite, token: int, state: dict,
         except Exception:
             pass
     if state.get("in_trade"):                return False, "Already in trade"
+    if not D.is_entry_fire_window():         return False, "Before 9:45"
     if not D.is_market_open():               return False, "Market closed"
     if not D.is_tick_live(D.NIFTY_SPOT_TOKEN): return False, "Spot tick stale"
     if option_ltp <= 0:                      return False, "Option LTP zero"
@@ -331,7 +332,7 @@ def check_entry(token: int, option_type: str, profile: dict,
                 logger.info("[ENGINE] Spot regime override: " + spot_regime
                             + " (option was " + result["regime"] + ")")
 
-        # v12.13: CE uses spot regime backup when option shows NEUTRAL/CHOPPY
+        # v12.14: CE uses spot regime backup when option shows NEUTRAL/CHOPPY
         if option_type == "CE" and result["regime"] in ("NEUTRAL", "CHOPPY"):
             spot_regime = D.get_spot_regime("3minute")
             if spot_regime in ("TRENDING", "TRENDING_STRONG"):
@@ -447,14 +448,14 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 def compute_entry_sl(entry_price: float, profile: dict, mode: str,
                      token: int = None, dte: int = 99) -> float:
-    """v12.12: ATR-based SL. v12.13: Expiry cap 20pts."""
+    """v12.12: ATR-based SL. v12.14: Expiry cap 20pts."""
     if mode in ("CONVICTION", "EXPIRY_BREAKOUT") and token:
         sl_pts = D.calculate_atr_sl(token, profile, entry_price)
     else:
         sl_pts = profile.get("conv_sl_pts", 20) if mode == "CONVICTION" else profile.get("scalp_sl_pts", 8)
         sl_pts = sl_pts or 8
     actual = max(sl_pts, _min_sl_pts(entry_price))
-    # v12.13: Tighter cap on expiry day
+    # v12.14: Tighter cap on expiry day
     sl_cap = D.EXPIRY_SL_MAX if dte == 0 else D.ATR_SL_MAX
     actual = min(actual, sl_cap)
     if actual != sl_pts:
@@ -526,7 +527,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
     running   = round(option_ltp - entry, 2)
 
     # v12.12: Percentage-based drawdown (replaces flat 5/8pts)
-    # v12.13: Use tighter 20% on expiry (DTE=0), 25% otherwise
+    # v12.14: Use tighter 20% on expiry (DTE=0), 25% otherwise
     dte_at_entry = state.get("dte_at_entry", 99)
     drawdown_pct = D.EXPIRY_TRAIL_PCT if dte_at_entry == 0 else D.TRAIL_DRAWDOWN_PCT
     drawdown = peak - running
@@ -640,7 +641,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  EXPIRY BREAKOUT MODE (v12.13)
+#  EXPIRY BREAKOUT MODE (v12.14)
 #  Spot consolidation → breakout detection
 #  No option RSI/EMA gate — spot is the trigger
 #  Only active on DTE=0
@@ -649,7 +650,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
 def check_expiry_breakout(kite, spot_ltp: float, strike: int,
                           expiry_date, session: str) -> dict:
     """
-    v12.13: Expiry-specific entry based on spot breakout.
+    v12.14: Expiry-specific entry based on spot breakout.
     Returns same format as check_entry for compatibility.
     """
     result = {

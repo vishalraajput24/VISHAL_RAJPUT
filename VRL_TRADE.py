@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_TRADE.py — VISHAL RAJPUT TRADE v12.13
+#  VRL_TRADE.py — VISHAL RAJPUT TRADE v12.14
 #  Sealed order execution machine.
 #  ONLY file that touches Kite orders.
 #  Paper mode: simulated fills. Live mode: real orders + verification.
