@@ -342,11 +342,6 @@ def check_entry(token: int, option_type: str, profile: dict,
                             + " spot=" + spot_regime + " — both weak")
                 return result
 
-
-
-
-            return result
-
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
         if spread_3m > 5 and option_type == "PE":
             session_min += 1

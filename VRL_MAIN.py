@@ -330,8 +330,8 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "GATES (v12.13)\n"
         "3-min  : 3/4 conditions — option trending UP\n"
-        "CE     : TRENDING regime + 1m spread ≥+8pts\n"
-        "PE     : 3-min permitted + 1m spread ≥+6pts\n"
+        "CE     : TRENDING regime + 1m spread ≥+6pts\n"
+        "PE     : 3-min permitted + 1m spread ≥+4pts\n"
         "Both   : Option must trend UP (EMA9 > EMA21)\n"
         "Score  : ≥5 to fire  |  ≥6 after streak\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2276,9 +2276,6 @@ def _tg_handle_message(message: dict):
     else:
         _WATCHDOG = ("/deploy","/serverstatus","/serverlog","/gitlog")
         if raw_cmd not in _WATCHDOG:
-            _tg_send("Unknown command: " + raw_cmd + "\nType /help")
-        _WATCHDOG_CMDS = ("/deploy", "/serverstatus", "/serverlog", "/gitlog")
-        if raw_cmd not in _WATCHDOG_CMDS:
             _tg_send("Unknown command: " + raw_cmd + "\nType /help")
 
 def _tg_handle_callback(callback: dict):
