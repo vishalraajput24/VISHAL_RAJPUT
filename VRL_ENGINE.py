@@ -331,10 +331,20 @@ def check_entry(token: int, option_type: str, profile: dict,
                 logger.info("[ENGINE] Spot regime override: " + spot_regime
                             + " (option was " + result["regime"] + ")")
 
-        # v12.8: CE blocked in NEUTRAL/CHOPPY — data confirmed 2/2 dead trades
+        # v12.13: CE uses spot regime backup when option shows NEUTRAL/CHOPPY
         if option_type == "CE" and result["regime"] in ("NEUTRAL", "CHOPPY"):
-            logger.info("[ENGINE] CE blocked — regime=" + result["regime"]
-                        + " spread=" + str(round(spread_3m, 1)) + " — need TRENDING (≥5pts)")
+            spot_regime = D.get_spot_regime("3minute")
+            if spot_regime in ("TRENDING", "TRENDING_STRONG"):
+                logger.info("[ENGINE] CE spot override: " + spot_regime + " (option was " + result["regime"] + ")")
+                result["regime"] = spot_regime
+            else:
+                logger.info("[ENGINE] CE blocked — regime=" + result["regime"]
+                            + " spot=" + spot_regime + " — both weak")
+                return result
+
+
+
+
             return result
 
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────

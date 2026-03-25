@@ -79,7 +79,7 @@ LOSS_STREAK_GATE_SCORE  = 5
 EXCELLENCE_BYPASS_SCORE = 6
 
 # v12.8: 1-min spread gates
-SPREAD_1M_MIN_CE = 8    # CE needs +8pts — fights premium decay
+SPREAD_1M_MIN_CE = 6    # CE needs +8pts — fights premium decay
 SPREAD_1M_MIN_PE = 4    # PE needs +4pts — velocity advantage
 
 # v12.12: Separate RSI zones per timeframe
