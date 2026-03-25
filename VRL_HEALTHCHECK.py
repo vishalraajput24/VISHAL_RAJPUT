@@ -51,7 +51,7 @@ def check_spread_gates():
 
 def check_single_instance():
     try:
-        result = subprocess.run(["pgrep", "-f", "VRL_MAIN.py"], capture_output=True, text=True)
+        result = subprocess.run(["pgrep", "-f", "VISHAL_RAJPUT/VRL_MAIN.py"], capture_output=True, text=True)
         pids = [p for p in result.stdout.strip().split() if p]
         if len(pids) == 0:
             return False, "❌ Bot NOT running"
@@ -183,7 +183,7 @@ def check_logs():
 
 def check_scan_timing():
     try:
-        main_path = os.path.expanduser("~/VRL_MAIN.py")
+        main_path = os.path.expanduser("~/VISHAL_RAJPUT/VRL_MAIN.py")
         with open(main_path) as f:
             src = f.read()
         if "31 <= now.second <= 36" in src:
@@ -193,13 +193,13 @@ def check_scan_timing():
         elif "now.second <= 5" in src:
             return False, "❌ Scan window :0-5s — MISALIGNED with ENGINE (:31s)"
         else:
-            return False, "⚠️ Scan window unknown — check VRL_MAIN.py"
+            return False, "⚠️ Scan window unknown — check VISHAL_RAJPUT/VRL_MAIN.py"
     except Exception as e:
         return False, f"❌ Scan timing check error: {e}"
 
 def check_expiry_init():
     try:
-        main_path = os.path.expanduser("~/VRL_MAIN.py")
+        main_path = os.path.expanduser("~/VISHAL_RAJPUT/VRL_MAIN.py")
         with open(main_path) as f:
             src = f.read()
         if "Expiry on startup" in src and "expiry = D.get_nearest_expiry(kite)" in src:
@@ -211,7 +211,7 @@ def check_expiry_init():
 
 def check_token_cache():
     try:
-        data_path = os.path.expanduser("~/VRL_DATA.py")
+        data_path = os.path.expanduser("~/VISHAL_RAJPUT/VRL_DATA.py")
         with open(data_path) as f:
             src = f.read()
         if "_token_cache" in src and "clear_token_cache" in src:
@@ -223,11 +223,11 @@ def check_token_cache():
 
 
 def check_vrl_trade():
-    """v12.9: Verify VRL_TRADE.py exists and is importable."""
+    """v12.9: Verify VISHAL_RAJPUT/VRL_TRADE.py exists and is importable."""
     try:
-        trade_path = os.path.expanduser("~/VRL_TRADE.py")
+        trade_path = os.path.expanduser("~/VISHAL_RAJPUT/VRL_TRADE.py")
         if not os.path.isfile(trade_path):
-            return False, "❌ VRL_TRADE.py missing — bot will crash on startup"
+            return False, "❌ VISHAL_RAJPUT/VRL_TRADE.py missing — bot will crash on startup"
         # Verify it has the required functions
         with open(trade_path) as f:
             src = f.read()
@@ -237,8 +237,8 @@ def check_vrl_trade():
         if "def place_exit" not in src:
             missing.append("place_exit")
         if missing:
-            return False, f"❌ VRL_TRADE.py missing functions: {missing}"
-        return True, "✅ VRL_TRADE.py present (place_entry + place_exit)"
+            return False, f"❌ VISHAL_RAJPUT/VRL_TRADE.py missing functions: {missing}"
+        return True, "✅ VISHAL_RAJPUT/VRL_TRADE.py present (place_entry + place_exit)"
     except Exception as e:
         return False, f"❌ VRL_TRADE check error: {e}"
 
@@ -246,7 +246,7 @@ def check_vrl_trade():
 def check_circuit_breaker_logic():
     """v12.9: Verify circuit breaker _error_count reset is NOT at top of loop."""
     try:
-        main_path = os.path.expanduser("~/VRL_MAIN.py")
+        main_path = os.path.expanduser("~/VISHAL_RAJPUT/VRL_MAIN.py")
         with open(main_path) as f:
             src = f.read()
         # The bug was: _error_count reset at top of loop = circuit breaker never fires
