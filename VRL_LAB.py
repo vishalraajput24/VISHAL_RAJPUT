@@ -47,6 +47,7 @@ FIELDNAMES_SCAN = [
     "direction", "entry_price",
     # 1-min
     "rsi_1m", "body_pct_1m", "vol_ratio_1m", "rsi_rising_1m",
+    "spread_1m",
     # 3-min
     "rsi_3m", "body_pct_3m", "ema_spread_3m", "conditions_3m", "mode_3m",
     # result
@@ -57,6 +58,11 @@ FIELDNAMES_SCAN = [
     "vix",
     # v12.11: Spot columns
     "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime", "spot_gap",
+    # v12.14: Market context
+    "bias", "hourly_rsi", "straddle_decay_pct",
+    "near_fib_level", "fib_distance",
+    # v12.14: Blocked trade analysis (forward fill at EOD)
+    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]
 
 # ─── SESSION STATE ────────────────────────────────────────────
@@ -245,6 +251,15 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "spot_ema_spread_3m": spot_3m.get("spread", 0),
                 "spot_regime"       : spot_3m.get("regime", ""),
                 "spot_gap"          : round(spot_gap, 1),
+                # v12.14: Market context
+                "spread_1m"         : result.get("spread_1m", 0),
+                "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
+                "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
+                "straddle_decay_pct": 0.0,
+                "near_fib_level"    : D.get_nearest_fib_level(spot_ltp).get("level", "") if hasattr(D, "get_nearest_fib_level") else "",
+                "fib_distance"      : D.get_nearest_fib_level(spot_ltp).get("distance", 0) if hasattr(D, "get_nearest_fib_level") else 0,
+                # v12.14: Forward fill placeholders
+                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
             })
 
         except Exception as e:
@@ -846,6 +861,271 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
 
 # ─── LAB SCHEDULER ────────────────────────────────────────────
 
+
+# ─── SCAN FORWARD FILL (v12.14) ──────────────────────────────
+
+def fill_forward_scan(kite, target_date: date = None):
+    """
+    v12.14: For each scan row, fill what the option price was
+    3/5/10 candles later. Answers: "What would have happened
+    if we entered here?"
+    Only fills rows where fired=0 (blocked entries) — these are
+    the what-if analysis rows.
+    """
+    if target_date is None:
+        target_date = date.today()
+
+    path = _csv_path_scan(target_date)
+    if not os.path.isfile(path):
+        return
+
+    logger.info("[LAB] Scan forward fill for " + str(target_date))
+
+    try:
+        with open(path) as f:
+            rows = list(csv.DictReader(f))
+    except Exception as e:
+        logger.error("[LAB] Scan fwd read: " + str(e))
+        return
+
+    if not rows:
+        return
+
+    changed = 0
+    for row in rows:
+        # Skip already filled
+        if row.get("fwd_3c"):
+            continue
+        # Only fill blocked entries (the what-if analysis)
+        # Also fill fired entries for comparison
+        token = None
+        opt_type = row.get("direction", "")
+        if _current_atm_tokens and opt_type in _current_atm_tokens:
+            token = _current_atm_tokens[opt_type]["token"]
+
+        if not token:
+            continue
+
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            prices = []
+            for mins in [3, 5, 10]:
+                fwd_t = ts + timedelta(minutes=mins)
+                candles = _fetch_candles(kite, token,
+                                         fwd_t - timedelta(minutes=1),
+                                         fwd_t + timedelta(minutes=2),
+                                         "minute")
+                prices.append(round(candles[-1]["close"], 2) if candles else None)
+                time.sleep(0.25)
+
+            entry = float(row.get("entry_price", 0))
+            if entry > 0 and all(p is not None for p in prices):
+                row["fwd_3c"]  = prices[0]
+                row["fwd_5c"]  = prices[1]
+                row["fwd_10c"] = prices[2]
+                max_move = max(p - entry for p in prices)
+                min_move = min(p - entry for p in prices)
+                if max_move >= 10:
+                    row["fwd_outcome"] = "WIN"
+                elif min_move <= -8:
+                    row["fwd_outcome"] = "LOSS"
+                else:
+                    row["fwd_outcome"] = "NEUTRAL"
+                changed += 1
+        except Exception as e:
+            logger.debug("[LAB] Scan fwd row: " + str(e))
+
+    try:
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=FIELDNAMES_SCAN, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+            f.flush()
+        logger.info("[LAB] Scan fwd fill done: " + str(changed) + " rows")
+    except Exception as e:
+        logger.error("[LAB] Scan fwd write: " + str(e))
+
+
+# ─── DAILY SUMMARY CSV (v12.14) ──────────────────────────────
+
+FIELDNAMES_DAILY = [
+    "date", "day_of_week",
+    # Trade stats
+    "total_trades", "wins", "losses", "pnl_pts", "pnl_rs",
+    "best_trade_pts", "worst_trade_pts",
+    "avg_peak", "avg_trough", "avg_candles_held",
+    # Scan stats
+    "total_scans", "total_fired",
+    "blocks_3m_gate", "blocks_spread", "blocks_rsi",
+    "blocks_body", "blocks_volume", "blocks_score",
+    # Market context
+    "bias", "vix_open", "vix_close", "vix_high",
+    "spot_open", "spot_close", "spot_high", "spot_low", "spot_range",
+    "gap_pts",
+    "dte",
+    # Warning data
+    "straddle_open", "straddle_close", "straddle_decay_pct",
+    "hourly_rsi_high", "hourly_rsi_low",
+    # Regime distribution
+    "regime_trending_pct", "regime_choppy_pct",
+]
+
+
+def generate_daily_summary(target_date: date = None):
+    """
+    v12.14: Generate one-row-per-day summary CSV.
+    Called at EOD from VRL_MAIN.
+    """
+    if target_date is None:
+        target_date = date.today()
+
+    summary_path = os.path.join(D.REPORTS_DIR, "vrl_daily_summary.csv")
+    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+
+    row = {"date": target_date.isoformat(),
+           "day_of_week": target_date.strftime("%A")}
+
+    # ── Trade stats ──
+    trade_log = os.path.join(D.LAB_DIR, "vrl_trade_log.csv")
+    today_str = target_date.isoformat()
+    trades = []
+    if os.path.isfile(trade_log):
+        try:
+            with open(trade_log) as f:
+                for r in csv.DictReader(f):
+                    if r.get("date", "").strip() == today_str:
+                        trades.append(r)
+        except Exception:
+            pass
+
+    if trades:
+        pnls = [float(t.get("pnl_pts", 0)) for t in trades]
+        peaks = [float(t.get("peak_pnl", 0)) for t in trades]
+        troughs = [float(t.get("trough_pnl", 0)) for t in trades]
+        candles = [int(t.get("candles_held", 0)) for t in trades]
+        row["total_trades"]     = len(trades)
+        row["wins"]             = sum(1 for p in pnls if p > 0)
+        row["losses"]           = sum(1 for p in pnls if p < 0)
+        row["pnl_pts"]          = round(sum(pnls), 2)
+        row["pnl_rs"]           = round(sum(pnls) * D.LOT_SIZE, 0)
+        row["best_trade_pts"]   = round(max(pnls), 2)
+        row["worst_trade_pts"]  = round(min(pnls), 2)
+        row["avg_peak"]         = round(sum(peaks) / len(peaks), 1) if peaks else 0
+        row["avg_trough"]       = round(sum(troughs) / len(troughs), 1) if troughs else 0
+        row["avg_candles_held"] = round(sum(candles) / len(candles), 1) if candles else 0
+    else:
+        for k in ["total_trades", "wins", "losses", "pnl_pts", "pnl_rs",
+                   "best_trade_pts", "worst_trade_pts", "avg_peak",
+                   "avg_trough", "avg_candles_held"]:
+            row[k] = 0
+
+    # ── Scan stats ──
+    scan_path = _csv_path_scan(target_date)
+    scans = []
+    if os.path.isfile(scan_path):
+        try:
+            with open(scan_path) as f:
+                scans = list(csv.DictReader(f))
+        except Exception:
+            pass
+
+    if scans:
+        row["total_scans"]    = len(scans)
+        row["total_fired"]    = sum(1 for s in scans if s.get("fired") == "1")
+        reasons = [s.get("reject_reason", "") for s in scans if s.get("fired") != "1"]
+        row["blocks_3m_gate"] = sum(1 for r in reasons if "3M" in r)
+        row["blocks_spread"]  = sum(1 for r in reasons if "SPREAD" in r.upper() or "1M_SPREAD" in r.upper())
+        row["blocks_rsi"]     = sum(1 for r in reasons if "RSI" in r)
+        row["blocks_body"]    = sum(1 for r in reasons if "BODY" in r)
+        row["blocks_volume"]  = sum(1 for r in reasons if "VOLUME" in r.upper() or "VOL" in r.upper())
+        row["blocks_score"]   = sum(1 for r in reasons if "SCORE" in r)
+        # Regime distribution
+        regimes = [s.get("spot_regime", "") for s in scans if s.get("spot_regime")]
+        if regimes:
+            row["regime_trending_pct"] = round(sum(1 for r in regimes if "TREND" in r) / len(regimes) * 100, 0)
+            row["regime_choppy_pct"]   = round(sum(1 for r in regimes if "CHOPPY" in r or "NEUTRAL" in r) / len(regimes) * 100, 0)
+    else:
+        for k in ["total_scans", "total_fired", "blocks_3m_gate",
+                   "blocks_spread", "blocks_rsi", "blocks_body",
+                   "blocks_volume", "blocks_score",
+                   "regime_trending_pct", "regime_choppy_pct"]:
+            row[k] = 0
+
+    # ── Market context ──
+    try:
+        row["bias"] = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
+    except Exception:
+        row["bias"] = ""
+
+    try:
+        row["vix_open"]  = round(D.get_vix(), 1)
+        row["vix_close"] = round(D.get_vix(), 1)
+        row["vix_high"]  = round(D.get_vix(), 1)
+    except Exception:
+        row["vix_open"] = row["vix_close"] = row["vix_high"] = 0
+
+    # Spot from spot CSV
+    spot_path = os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + target_date.strftime("%Y%m%d") + ".csv")
+    if os.path.isfile(spot_path):
+        try:
+            with open(spot_path) as f:
+                spot_rows = list(csv.DictReader(f))
+            if spot_rows:
+                closes = [float(r.get("close", 0)) for r in spot_rows if float(r.get("close", 0)) > 0]
+                highs  = [float(r.get("high", 0)) for r in spot_rows if float(r.get("high", 0)) > 0]
+                lows   = [float(r.get("low", 0)) for r in spot_rows if float(r.get("low", 0)) > 0]
+                if closes:
+                    row["spot_open"]  = round(closes[0], 1)
+                    row["spot_close"] = round(closes[-1], 1)
+                if highs:
+                    row["spot_high"] = round(max(highs), 1)
+                if lows:
+                    row["spot_low"]  = round(min(lows), 1)
+                if highs and lows:
+                    row["spot_range"] = round(max(highs) - min(lows), 1)
+        except Exception:
+            pass
+
+    try:
+        row["gap_pts"] = round(D.get_spot_gap(), 1) if hasattr(D, "get_spot_gap") else 0
+    except Exception:
+        row["gap_pts"] = 0
+
+    try:
+        exp = D.get_nearest_expiry()
+        row["dte"] = D.calculate_dte(exp) if exp else 0
+    except Exception:
+        row["dte"] = 0
+
+    # Straddle
+    try:
+        row["straddle_open"]      = round(getattr(D, "_straddle_open", 0), 1)
+        row["straddle_close"]     = 0
+        row["straddle_decay_pct"] = 0
+    except Exception:
+        pass
+
+    # Hourly RSI
+    try:
+        row["hourly_rsi_high"] = round(D.get_hourly_rsi(), 1) if hasattr(D, "get_hourly_rsi") else 0
+        row["hourly_rsi_low"]  = round(D.get_hourly_rsi(), 1) if hasattr(D, "get_hourly_rsi") else 0
+    except Exception:
+        row["hourly_rsi_high"] = row["hourly_rsi_low"] = 0
+
+    # ── Write ──
+    is_new = not os.path.isfile(summary_path)
+    try:
+        with open(summary_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=FIELDNAMES_DAILY, extrasaction="ignore")
+            if is_new:
+                w.writeheader()
+            w.writerow(row)
+            f.flush()
+        logger.info("[LAB] Daily summary written for " + str(target_date))
+    except Exception as e:
+        logger.error("[LAB] Daily summary write: " + str(e))
+
+
 def start_lab(kite):
     """
     Entry point. Call after kite auth in VRL_MAIN.py.
@@ -943,6 +1223,10 @@ def _lab_loop():
                     fill_forward_columns(_kite_ref, today, "1min")
                 except Exception as e:
                     logger.error("[LAB] Forward fill error: " + str(e))
+                try:
+                    fill_forward_scan(_kite_ref, today)
+                except Exception as e:
+                    logger.error("[LAB] Scan forward fill error: " + str(e))
 
         except Exception as e:
             logger.error("[LAB] Loop error: " + str(e))

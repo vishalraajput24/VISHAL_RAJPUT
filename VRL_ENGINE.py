@@ -476,6 +476,10 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
     if running_pnl > state.get("peak_pnl", 0):
         state["peak_pnl"] = running_pnl
 
+    # v12.14: Track trough (worst unrealized PNL) for SL calibration
+    if running_pnl < state.get("trough_pnl", 0):
+        state["trough_pnl"] = running_pnl
+
     if phase == 1:
         sl = state.get("phase1_sl", 0)
         if sl > 0 and option_ltp <= sl:

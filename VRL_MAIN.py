@@ -87,6 +87,12 @@ DEFAULT_STATE = {
     "_circuit_breaker"   : False,
     "_error_count"       : 0,
     "_last_milestone"    : 0,
+    "trough_pnl"         : 0.0,
+    "session_at_entry"   : "",
+    "spread_1m_at_entry" : 0.0,
+    "spread_3m_at_entry" : 0.0,
+    "delta_at_entry"     : 0.0,
+    "sl_pts_at_entry"    : 0.0,
     "_bias_done"         : False,
     "_straddle_done"     : False,
     "_hourly_rsi_ts"     : 0,
@@ -481,7 +487,7 @@ def _alert_exit(symbol: str, entry: float, exit_price: float,
         saved = round((18 - abs(pnl)) if abs(pnl) < 18 else 0, 1)
         quality = "🛡 PROTECTED  (saved ~" + str(saved) + "pts vs full SL)"
     else:
-        quality = "❌ LOSS  (peak was +" + str(round(peak_pnl, 1)) + "pts)"
+        quality = "❌ LOSS  (peak was +" + str(round(peak_pnl, 1)) + "pts  trough " + str(round(state.get("trough_pnl", 0), 1)) + "pts)"
 
     dpnl_sign = "+" if daily_pnl >= 0 else ""
 
@@ -647,6 +653,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_last_trail_candle"] = ""
         state["_rsi_was_overbought"] = False
         state["daily_trades"]      += 1
+        state["trough_pnl"]         = 0.0
+        state["session_at_entry"]   = session
+        state["spread_1m_at_entry"] = round(entry_result.get("spread_1m", 0.0), 2)
+        state["spread_3m_at_entry"] = round(entry_result.get("ema_spread", 0.0), 2)
+        state["delta_at_entry"]     = round(entry_result.get("greeks", {}).get("delta", 0), 3)
+        state["sl_pts_at_entry"]    = round(actual_price - phase1_sl, 2)
 
     D.subscribe_tokens([token])
     _save_state()
@@ -687,6 +699,8 @@ def _execute_exit(kite, option_ltp: float, reason: str):
         candles   = state.get("candles_held", 0)
         regime    = state.get("regime_at_entry", "")
         score     = state.get("score_at_entry", 0)
+        trough    = state.get("trough_pnl", 0)
+        exit_phase= state.get("exit_phase", 1)
 
     fill = place_exit(kite, symbol, token, direction,
                       qty, option_ltp, reason)
@@ -729,6 +743,7 @@ def _execute_exit(kite, option_ltp: float, reason: str):
             "phase2_sl"           : 0.0,
             "trail_tightened"     : False,
             "peak_pnl"            : 0.0,
+            "trough_pnl"          : 0.0,
             "mode"                : "",
             "iv_at_entry"         : 0.0,
             "score_at_entry"      : 0,
@@ -840,6 +855,11 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
+                try:
+                    from VRL_LAB import generate_daily_summary
+                    generate_daily_summary()
+                except Exception as e:
+                    logger.warning("[MAIN] Daily summary: " + str(e))
 
             if state.get("force_exit") and state.get("in_trade"):
                 option_ltp = D.get_ltp(state.get("token"))
