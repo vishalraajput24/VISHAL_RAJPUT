@@ -29,6 +29,26 @@ def _today():
     return date.today().strftime("%Y%m%d")
 
 
+def _find_latest_file(directory, prefix, ext=".csv"):
+    """Find most recent file matching prefix in directory."""
+    if not os.path.isdir(directory):
+        return None
+    import glob
+    pattern = os.path.join(directory, prefix + "*" + ext)
+    files = sorted(glob.glob(pattern))
+    if not files:
+        return None
+    # Try today first, then most recent
+    today_file = os.path.join(directory, prefix + _today() + ext)
+    if os.path.isfile(today_file) and os.path.getsize(today_file) > 50:
+        return today_file
+    # Return most recent non-empty file
+    for f in reversed(files):
+        if os.path.getsize(f) > 50:
+            return f
+    return None
+
+
 def _read_csv(path, max_rows=500):
     if not os.path.isfile(path):
         return []
@@ -51,8 +71,50 @@ def _read_state():
 
 
 def _get_spot_data(tf="1m", count=100):
-    """Read spot 1-min CSV, optionally resample."""
-    path = os.path.join(LAB, "spot", "nifty_spot_1min_" + _today() + ".csv")
+    """Read spot CSV with historical fallback. Uses native 5m/15m files when available."""
+    # For 5m and 15m, try native files first (has pre-calculated EMA/RSI)
+    if tf == "5m":
+        native = _find_latest_file(os.path.join(LAB, "spot"), "nifty_spot_5min_")
+        if native:
+            rows = _read_csv(native, 500)
+            if rows:
+                result = []
+                for r in rows:
+                    try:
+                        result.append({
+                            "time": r.get("timestamp", "")[-8:-3],
+                            "open": float(r.get("open", 0)), "high": float(r.get("high", 0)),
+                            "low": float(r.get("low", 0)), "close": float(r.get("close", 0)),
+                            "volume": int(r.get("volume", 0)),
+                            "ema9": float(r.get("ema9", 0)), "ema21": float(r.get("ema21", 0)),
+                            "rsi": float(r.get("rsi", 50)),
+                        })
+                    except Exception: continue
+                return result[-count:]
+
+    if tf == "15m":
+        native = _find_latest_file(os.path.join(LAB, "spot"), "nifty_spot_15min_")
+        if native:
+            rows = _read_csv(native, 500)
+            if rows:
+                result = []
+                for r in rows:
+                    try:
+                        result.append({
+                            "time": r.get("timestamp", "")[-8:-3],
+                            "open": float(r.get("open", 0)), "high": float(r.get("high", 0)),
+                            "low": float(r.get("low", 0)), "close": float(r.get("close", 0)),
+                            "volume": int(r.get("volume", 0)),
+                            "ema9": float(r.get("ema9", 0)), "ema21": float(r.get("ema21", 0)),
+                            "rsi": float(r.get("rsi", 50)),
+                        })
+                    except Exception: continue
+                return result[-count:]
+
+    # Default: 1-min with fallback to most recent file
+    path = _find_latest_file(os.path.join(LAB, "spot"), "nifty_spot_1min_")
+    if not path:
+        return []
     rows = _read_csv(path, 500)
     if not rows:
         return []
@@ -126,11 +188,17 @@ def _get_spot_data(tf="1m", count=100):
 
 
 def _get_option_data(tf="3m", count=100):
-    """Read option 3-min or 1-min CSV for CE and PE."""
-    if tf in ("1m",):
-        path = os.path.join(LAB, "options_1min", "nifty_option_1min_" + _today() + ".csv")
-    else:
-        path = os.path.join(LAB, "options_3min", "nifty_option_3min_" + _today() + ".csv")
+    """Read option CSV for CE and PE with historical fallback."""
+    tf_map = {
+        "1m":  ("options_1min", "nifty_option_1min_"),
+        "3m":  ("options_3min", "nifty_option_3min_"),
+        "5m":  ("options_1min", "nifty_option_5min_"),
+        "15m": ("options_1min", "nifty_option_15min_"),
+    }
+    subdir, prefix = tf_map.get(tf, ("options_3min", "nifty_option_3min_"))
+    path = _find_latest_file(os.path.join(LAB, subdir), prefix)
+    if not path:
+        return {"CE": [], "PE": []}
 
     rows = _read_csv(path, 1000)
     ce_data = []
@@ -143,9 +211,13 @@ def _get_option_data(tf="3m", count=100):
                 "rsi": float(r.get("rsi", 50)),
                 "volume": int(r.get("volume", 0)),
                 "ema9": float(r.get("ema9", 0)),
+                "ema21": float(r.get("ema21", r.get("ema9", 0))),
+                "ema_spread": float(r.get("ema_spread", r.get("ema9_gap", 0))),
                 "body_pct": float(r.get("body_pct", 0)),
                 "delta": float(r.get("delta", 0)),
                 "iv_pct": float(r.get("iv_pct", 0)),
+                "adx": float(r.get("adx", 0)),
+                "macd_hist": float(r.get("macd_hist", 0)),
             }
             if r.get("type") == "CE":
                 ce_data.append(entry)
@@ -494,13 +566,17 @@ function renderOptionChart(data, side) {
   if (!d.length) return;
   const ctx = document.getElementById('optChart').getContext('2d');
   const color = side === 'CE' ? '#10b981' : '#ef4444';
+  // Build datasets: LTP + EMA9 + EMA21 if available
+  const datasets = [
+    { label: side + ' LTP', data: d.map(x => x.close), borderColor: color, borderWidth: 2, pointRadius: 0, fill: true, backgroundColor: color + '15', tension: 0.3 }
+  ];
+  if (d[0].ema9) datasets.push({ label: 'EMA9', data: d.map(x => x.ema9 || x.close), borderColor: '#10b981', borderWidth: 1, pointRadius: 0, borderDash: [], tension: 0.3 });
+  if (d[0].ema21) datasets.push({ label: 'EMA21', data: d.map(x => x.ema21 || x.close), borderColor: '#f59e0b', borderWidth: 1, pointRadius: 0, borderDash: [4,2], tension: 0.3 });
   charts.opt = new Chart(ctx, {
     type: 'line',
     data: {
       labels: d.map(x => x.time),
-      datasets: [
-        { label: side + ' LTP', data: d.map(x => x.close), borderColor: color, borderWidth: 2, pointRadius: 0, fill: true, backgroundColor: color + '15', tension: 0.3 }
-      ]
+      datasets: datasets
     },
     options: {
       responsive: true, animation: { duration: 400 },

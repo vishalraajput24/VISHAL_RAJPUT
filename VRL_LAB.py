@@ -100,6 +100,53 @@ def _csv_path_spot() -> str:
     return os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + today.strftime("%Y%m%d") + ".csv")
 
 
+# ─── 5-MIN + 15-MIN SCHEMAS ────────────────────────────────
+
+FIELDNAMES_5M = [
+    "timestamp", "strike", "type",
+    "open", "high", "low", "close", "volume",
+    "spot_ref", "dte", "session_block",
+    "body_pct", "rsi", "ema9", "ema21", "ema_spread",
+    "volume_ratio", "iv_pct", "delta",
+]
+
+FIELDNAMES_15M = [
+    "timestamp", "strike", "type",
+    "open", "high", "low", "close", "volume",
+    "spot_ref", "dte", "session_block",
+    "body_pct", "rsi", "ema9", "ema21", "ema_spread",
+    "macd_hist", "adx",
+    "volume_ratio", "iv_pct", "delta",
+]
+
+FIELDNAMES_SPOT_5M = [
+    "timestamp", "open", "high", "low", "close", "volume",
+    "ema9", "ema21", "ema_spread", "rsi",
+]
+
+FIELDNAMES_SPOT_15M = [
+    "timestamp", "open", "high", "low", "close", "volume",
+    "ema9", "ema21", "ema_spread", "rsi", "adx",
+]
+
+
+def _csv_path_5m(d):
+    return os.path.join(D.OPTIONS_1MIN_DIR,
+                        "nifty_option_5min_" + d.strftime("%Y%m%d") + ".csv")
+
+def _csv_path_15m(d):
+    return os.path.join(D.OPTIONS_1MIN_DIR,
+                        "nifty_option_15min_" + d.strftime("%Y%m%d") + ".csv")
+
+def _csv_path_spot_5m():
+    from datetime import date as _d
+    return os.path.join(D.SPOT_DIR, "nifty_spot_5min_" + _d.today().strftime("%Y%m%d") + ".csv")
+
+def _csv_path_spot_15m():
+    from datetime import date as _d
+    return os.path.join(D.SPOT_DIR, "nifty_spot_15min_" + _d.today().strftime("%Y%m%d") + ".csv")
+
+
 # ─── SPOT 1-MIN COLLECTOR ─────────────────────────────────────
 
 FIELDNAMES_SPOT = ["timestamp", "open", "high", "low", "close", "volume"]
@@ -1126,6 +1173,263 @@ def generate_daily_summary(target_date: date = None):
         logger.error("[LAB] Daily summary write: " + str(e))
 
 
+
+# ─── 5-MIN OPTION COLLECTOR ──────────────────────────────────
+
+def collect_option_5min(kite, spot_ltp: float):
+    """Collect last closed 5-min option candle for ATM CE + PE."""
+    global _current_atm_strike, _current_atm_tokens, _current_expiry
+    if not _current_atm_tokens or not _current_expiry:
+        return
+    now = datetime.now()
+    if not D.is_market_open():
+        return
+    today = date.today()
+    dte = D.calculate_dte(_current_expiry)
+    session = D.get_session_block(now.hour, now.minute)
+    from_dt = now - timedelta(days=3)
+    to_dt = now
+    all_rows = []
+    for opt_type, info in _current_atm_tokens.items():
+        token = info["token"]
+        try:
+            candles = _fetch_candles_with_warmup(kite, token, from_dt, to_dt, "5minute", 30)
+            if not candles or len(candles) < 2:
+                continue
+            last = candles[-2]
+            df = pd.DataFrame(candles)
+            df.rename(columns={"date": "timestamp"}, inplace=True)
+            df.set_index("timestamp", inplace=True)
+            df = D.add_indicators(df)
+            row = df.iloc[-2]
+            c = float(row["close"])
+            o = float(row["open"])
+            h = float(row["high"])
+            l_val = float(row["low"])
+            rng = h - l_val
+            e9 = float(row.get("EMA_9", c))
+            e21 = float(row.get("EMA_21", c))
+            vols = [df.iloc[i]["volume"] for i in range(-7, -2) if i >= -len(df) and df.iloc[i]["volume"] > 0]
+            avg_v = sum(vols) / len(vols) if vols else 1
+            greeks = D.get_full_greeks(c, spot_ltp, _current_atm_strike, _current_expiry, opt_type)
+            ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
+                      if hasattr(last["date"], "strftime") else str(last["date"]))
+            all_rows.append({
+                "timestamp": ts_str, "strike": _current_atm_strike, "type": opt_type,
+                "open": round(o, 2), "high": round(h, 2), "low": round(l_val, 2), "close": round(c, 2),
+                "volume": int(last["volume"]), "spot_ref": round(spot_ltp, 2),
+                "dte": dte, "session_block": session,
+                "body_pct": round(abs(c - o) / rng * 100, 1) if rng > 0 else 0,
+                "rsi": round(float(row.get("RSI", 50)), 1),
+                "ema9": round(e9, 2), "ema21": round(e21, 2),
+                "ema_spread": round(e9 - e21, 2),
+                "volume_ratio": round(last["volume"] / avg_v if avg_v > 0 else 1, 2),
+                "iv_pct": greeks.get("iv_pct", 0), "delta": greeks.get("delta", 0),
+            })
+        except Exception as e:
+            logger.debug("[LAB] 5m error " + opt_type + ": " + str(e))
+        time.sleep(0.35)
+    if all_rows:
+        _append_rows(_csv_path_5m(today), FIELDNAMES_5M, all_rows)
+        logger.debug("[LAB] 5m wrote=" + str(len(all_rows)))
+
+
+def collect_option_15min(kite, spot_ltp: float):
+    """Collect last closed 15-min option candle for ATM CE + PE."""
+    global _current_atm_strike, _current_atm_tokens, _current_expiry
+    if not _current_atm_tokens or not _current_expiry:
+        return
+    now = datetime.now()
+    if not D.is_market_open():
+        return
+    today = date.today()
+    dte = D.calculate_dte(_current_expiry)
+    session = D.get_session_block(now.hour, now.minute)
+    from_dt = now - timedelta(days=10)
+    to_dt = now
+    all_rows = []
+    for opt_type, info in _current_atm_tokens.items():
+        token = info["token"]
+        try:
+            candles = _fetch_candles_with_warmup(kite, token, from_dt, to_dt, "15minute", 30)
+            if not candles or len(candles) < 2:
+                continue
+            last = candles[-2]
+            df = pd.DataFrame(candles)
+            df.rename(columns={"date": "timestamp"}, inplace=True)
+            df.set_index("timestamp", inplace=True)
+            df = D.add_indicators(df)
+            row = df.iloc[-2]
+            c = float(row["close"])
+            o = float(row["open"])
+            h = float(row["high"])
+            l_val = float(row["low"])
+            rng = h - l_val
+            e9 = float(row.get("EMA_9", c))
+            e21 = float(row.get("EMA_21", c))
+            # ADX calc
+            adx_val = 0
+            try:
+                import numpy as _np
+                up = df["high"].diff()
+                dn = -df["low"].diff()
+                pdm = _np.where((up > dn) & (up > 0), up, 0.0)
+                ndm = _np.where((dn > up) & (dn > 0), dn, 0.0)
+                tr = pd.concat([df["high"]-df["low"],
+                                (df["high"]-df["close"].shift(1)).abs(),
+                                (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+                atr_s = tr.ewm(alpha=1/14, adjust=False).mean()
+                pdi = 100 * pd.Series(pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+                ndi = 100 * pd.Series(ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+                adx_s = ((pdi-ndi).abs() / (pdi+ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+                adx_val = round(float(adx_s.iloc[-2]), 1)
+            except Exception:
+                pass
+            # MACD
+            macd_hist = 0
+            try:
+                sma12 = df["close"].rolling(12).mean()
+                sma26 = df["close"].rolling(26).mean()
+                macd_line = sma12 - sma26
+                macd_sig = macd_line.rolling(9).mean()
+                macd_hist = round(float((macd_line - macd_sig).iloc[-2]), 2)
+            except Exception:
+                pass
+            vols = [df.iloc[i]["volume"] for i in range(-5, -2) if i >= -len(df) and df.iloc[i]["volume"] > 0]
+            avg_v = sum(vols) / len(vols) if vols else 1
+            greeks = D.get_full_greeks(c, spot_ltp, _current_atm_strike, _current_expiry, opt_type)
+            ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
+                      if hasattr(last["date"], "strftime") else str(last["date"]))
+            all_rows.append({
+                "timestamp": ts_str, "strike": _current_atm_strike, "type": opt_type,
+                "open": round(o, 2), "high": round(h, 2), "low": round(l_val, 2), "close": round(c, 2),
+                "volume": int(last["volume"]), "spot_ref": round(spot_ltp, 2),
+                "dte": dte, "session_block": session,
+                "body_pct": round(abs(c - o) / rng * 100, 1) if rng > 0 else 0,
+                "rsi": round(float(row.get("RSI", 50)), 1),
+                "ema9": round(e9, 2), "ema21": round(e21, 2),
+                "ema_spread": round(e9 - e21, 2),
+                "macd_hist": macd_hist, "adx": adx_val,
+                "volume_ratio": round(last["volume"] / avg_v if avg_v > 0 else 1, 2),
+                "iv_pct": greeks.get("iv_pct", 0), "delta": greeks.get("delta", 0),
+            })
+        except Exception as e:
+            logger.debug("[LAB] 15m error " + opt_type + ": " + str(e))
+        time.sleep(0.35)
+    if all_rows:
+        _append_rows(_csv_path_15m(today), FIELDNAMES_15M, all_rows)
+        logger.debug("[LAB] 15m wrote=" + str(len(all_rows)))
+
+
+def collect_spot_5min(kite):
+    """Collect last closed 5-min spot candle."""
+    if not D.is_market_open():
+        return
+    try:
+        now = datetime.now()
+        candles = kite.historical_data(
+            instrument_token=D.NIFTY_SPOT_TOKEN,
+            from_date=now - timedelta(days=3), to_date=now,
+            interval="5minute", continuous=False, oi=False)
+        if not candles or len(candles) < 15:
+            return
+        df = pd.DataFrame(candles)
+        df.rename(columns={"date": "timestamp"}, inplace=True)
+        df.set_index("timestamp", inplace=True)
+        df = D.add_indicators(df)
+        last = df.iloc[-2]
+        c = float(last["close"])
+        e9 = float(last.get("EMA_9", c))
+        e21 = float(last.get("EMA_21", c))
+        ts_str = str(df.index[-2])[:19]
+        path = _csv_path_spot_5m()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        is_new = not os.path.isfile(path)
+        import csv as _csv
+        with open(path, "a", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_5M, extrasaction="ignore")
+            if is_new:
+                w.writeheader()
+            w.writerow({
+                "timestamp": ts_str,
+                "open": round(float(last["open"]), 2),
+                "high": round(float(last["high"]), 2),
+                "low": round(float(last["low"]), 2),
+                "close": round(c, 2),
+                "volume": int(last["volume"]),
+                "ema9": round(e9, 2), "ema21": round(e21, 2),
+                "ema_spread": round(e9 - e21, 2),
+                "rsi": round(float(last.get("RSI", 50)), 1),
+            })
+            f.flush()
+    except Exception as e:
+        logger.debug("[LAB] Spot 5m: " + str(e))
+
+
+def collect_spot_15min(kite):
+    """Collect last closed 15-min spot candle."""
+    if not D.is_market_open():
+        return
+    try:
+        now = datetime.now()
+        candles = kite.historical_data(
+            instrument_token=D.NIFTY_SPOT_TOKEN,
+            from_date=now - timedelta(days=10), to_date=now,
+            interval="15minute", continuous=False, oi=False)
+        if not candles or len(candles) < 20:
+            return
+        df = pd.DataFrame(candles)
+        df.rename(columns={"date": "timestamp"}, inplace=True)
+        df.set_index("timestamp", inplace=True)
+        df = D.add_indicators(df)
+        last = df.iloc[-2]
+        c = float(last["close"])
+        e9 = float(last.get("EMA_9", c))
+        e21 = float(last.get("EMA_21", c))
+        # ADX
+        adx_val = 0
+        try:
+            import numpy as _np
+            up = df["high"].diff()
+            dn = -df["low"].diff()
+            pdm = _np.where((up > dn) & (up > 0), up, 0.0)
+            ndm = _np.where((dn > up) & (dn > 0), dn, 0.0)
+            tr = pd.concat([df["high"]-df["low"],
+                            (df["high"]-df["close"].shift(1)).abs(),
+                            (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+            atr_s = tr.ewm(alpha=1/14, adjust=False).mean()
+            pdi = 100 * pd.Series(pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+            ndi = 100 * pd.Series(ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / atr_s
+            adx_s = ((pdi-ndi).abs() / (pdi+ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+            adx_val = round(float(adx_s.iloc[-2]), 1)
+        except Exception:
+            pass
+        ts_str = str(df.index[-2])[:19]
+        path = _csv_path_spot_15m()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        is_new = not os.path.isfile(path)
+        import csv as _csv
+        with open(path, "a", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_15M, extrasaction="ignore")
+            if is_new:
+                w.writeheader()
+            w.writerow({
+                "timestamp": ts_str,
+                "open": round(float(last["open"]), 2),
+                "high": round(float(last["high"]), 2),
+                "low": round(float(last["low"]), 2),
+                "close": round(c, 2),
+                "volume": int(last["volume"]),
+                "ema9": round(e9, 2), "ema21": round(e21, 2),
+                "ema_spread": round(e9 - e21, 2),
+                "rsi": round(float(last.get("RSI", 50)), 1),
+                "adx": adx_val,
+            })
+            f.flush()
+    except Exception as e:
+        logger.debug("[LAB] Spot 15m: " + str(e))
+
+
 def start_lab(kite):
     """
     Entry point. Call after kite auth in VRL_MAIN.py.
@@ -1212,6 +1516,40 @@ def _lab_loop():
                         logger.error("[LAB] 3m error: " + str(e))
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 3m skip — spot LTP not available yet")
+
+            # ── 5-min collection at boundary + 30s ────────────
+            five_min    = (now.minute // 5) * 5
+            five_min_key = (today, now.hour, five_min)
+            if (not hasattr(_lab_loop, '_last_5min') or
+                    getattr(_lab_loop, '_last_5min', None) != five_min_key) and now.second >= 30:
+                _lab_loop._last_5min = five_min_key
+                spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                    try:
+                        collect_option_5min(_kite_ref, spot_ltp)
+                    except Exception as e:
+                        logger.debug("[LAB] 5m error: " + str(e))
+                    try:
+                        collect_spot_5min(_kite_ref)
+                    except Exception as e:
+                        logger.debug("[LAB] spot 5m: " + str(e))
+
+            # ── 15-min collection at boundary + 35s ───────────
+            fifteen_min    = (now.minute // 15) * 15
+            fifteen_min_key = (today, now.hour, fifteen_min)
+            if (not hasattr(_lab_loop, '_last_15min') or
+                    getattr(_lab_loop, '_last_15min', None) != fifteen_min_key) and now.second >= 35:
+                _lab_loop._last_15min = fifteen_min_key
+                spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                    try:
+                        collect_option_15min(_kite_ref, spot_ltp)
+                    except Exception as e:
+                        logger.debug("[LAB] 15m error: " + str(e))
+                    try:
+                        collect_spot_15min(_kite_ref)
+                    except Exception as e:
+                        logger.debug("[LAB] spot 15m: " + str(e))
 
             # ── EOD forward fill at 15:35 ─────────────────────
             if (now.hour == 15 and now.minute == 35
