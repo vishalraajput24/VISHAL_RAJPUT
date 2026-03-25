@@ -449,7 +449,7 @@ def _alert_exit(symbol: str, entry: float, exit_price: float,
         "MODERATE_DRAWDOWN"   : ("Moderate drawdown exit", "20pt+ peak, gave back 8pts — profit protected"),
         "RSI_EXHAUSTION"      : ("RSI exhaustion exit 🎯", "RSI hit 76+ with profit — top captured"),
         "GAMMA_RIDER"         : ("Gamma rider exit 🏄", "RSI dropped from overbought — reversal caught"),
-        "STALE_ENTRY"         : ("Stale entry cut 🔪", "5 candles, peak <5pts — dead trade, saved full SL"),
+        "STALE_ENTRY"         : ("Stale entry cut 🔪", "5 candles, peak under 5pts — dead trade, saved full SL"),
         "MARKET_CLOSE"        : ("Market close exit", "Forced exit at 15:28"),
         "FORCE_EXIT"          : ("Manual force exit", ""),
     }
@@ -516,7 +516,7 @@ def _alert_profit_lock(daily_pnl: float):
 def _alert_loss_streak_gate(streak: int, score: int, required: int):
     _tg_send(
         "⏸ <b>STREAK GATE — " + str(streak) + " losses</b>\n"
-        "Score " + str(score) + " < required " + str(required) + "\n"
+        "Score " + str(score) + " below required " + str(required) + "\n"
         "Waiting for stronger setup. Capital protected."
     )
 
