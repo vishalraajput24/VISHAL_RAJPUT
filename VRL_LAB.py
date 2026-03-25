@@ -91,7 +91,7 @@ def _csv_path_scan(d: date) -> str:
 
 
 def _csv_path_spot() -> str:
-    return os.path.join(D.SPOT_DIR, "nifty_spot_1min.csv")
+    return os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + today.strftime("%Y%m%d") + ".csv")
 
 
 # ─── SPOT 1-MIN COLLECTOR ─────────────────────────────────────
