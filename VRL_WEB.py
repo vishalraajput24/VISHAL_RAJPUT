@@ -23,15 +23,16 @@ import glob as _glob
 import urllib.parse as _up
 
 _FOLDERS = {
-    "trade_log": ("Trade Log", os.path.join(BASE, "lab_data")),
-    "spot": ("Spot CSVs", os.path.join(BASE, "lab_data", "spot")),
-    "options_3min": ("Options 3-Min", os.path.join(BASE, "lab_data", "options_3min")),
-    "options_1min": ("Options 1-Min", os.path.join(BASE, "lab_data", "options_1min")),
-    "reports": ("Reports", os.path.join(BASE, "lab_data", "reports")),
-    "sessions": ("Sessions", os.path.join(BASE, "lab_data", "sessions")),
-    "research": ("Research", os.path.join(BASE, "research")),
-    "state": ("State", os.path.join(BASE, "state")),
-    "logs": ("Logs", os.path.join(BASE, "logs", "live")),
+    "trade_log":    ("📒 Trade Log",              os.path.join(BASE, "lab_data")),
+    "spot":         ("📈 Spot (1m/5m/15m/60m/D)", os.path.join(BASE, "lab_data", "spot")),
+    "options_3min": ("📊 Options 3-Min CE+PE",    os.path.join(BASE, "lab_data", "options_3min")),
+    "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
+    "reports":      ("📑 Daily Summary Reports",  os.path.join(BASE, "lab_data", "reports")),
+    "sessions":     ("🗂 Sessions",               os.path.join(BASE, "lab_data", "sessions")),
+    "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
+    "state":        ("⚙️ State + Dashboard JSON", os.path.join(BASE, "state")),
+    "logs":         ("📋 Live Logs",              os.path.join(BASE, "logs", "live")),
+    "logs_lab":     ("🔬 Lab Logs",               os.path.join(BASE, "logs", "lab")),
 }
 
 def _list_files(folder=""):
@@ -382,11 +383,19 @@ class H(BaseHTTPRequestHandler):
             if info and os.path.isdir(info[1]):
                 html += '<h3 style="color:#888;font-size:12px">' + info[0] + '</h3>'
                 files = sorted(os.listdir(info[1]), reverse=True)
-                for fname in files[:30]:
+                import time as _t
+                file_list = []
+                for fname in files:
                     fp = os.path.join(info[1], fname)
                     if os.path.isfile(fp) and os.path.getsize(fp) > 0:
-                        sz = round(os.path.getsize(fp) / 1024, 1)
-                        html += '<a href="/api/download/' + folder + '/' + fname + '" class="f">' + fname + '<span class="sz">' + str(sz) + ' KB</span></a>'
+                        sz = os.path.getsize(fp)
+                        mt = os.path.getmtime(fp)
+                        file_list.append((fname, sz, mt, fp))
+                file_list.sort(key=lambda x: x[2], reverse=True)
+                for fname, sz, mt, fp in file_list[:40]:
+                    sz_str = str(round(sz / 1024, 1)) + ' KB' if sz < 1024*1024 else str(round(sz / (1024*1024), 1)) + ' MB'
+                    mod = _t.strftime('%d %b %H:%M', _t.localtime(mt))
+                    html += '<a href="/api/download/' + folder + '/' + fname + '" class="f">' + fname + '<span class="sz">' + sz_str + ' · ' + mod + '</span></a>'
             else:
                 html += '<div style="color:#555;padding:20px">Folder not found</div>'
         html += '</body></html>'
