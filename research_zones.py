@@ -48,15 +48,15 @@ import VRL_DATA as D
 DAYS_BACK        = 60      # How far back to scan
 CONSOL_MIN       = 3       # Min candles for consolidation
 CONSOL_MAX       = 8       # Max candles for consolidation
-CONSOL_RANGE_MAX = 30      # Max pts range to qualify as consolidation (15-min)
-IMPULSE_BODY_PCT = 55      # Min body % for impulse candle
-IMPULSE_VOL_MULT = 1.3     # Min volume vs 10-candle avg
-IMPULSE_MIN_PTS  = 20      # Min impulse move (pts)
-ZONE_PROXIMITY   = 25      # Within X pts = "near zone"
+CONSOL_RANGE_MAX = 80      # Max pts range to qualify as consolidation (15-min)
+IMPULSE_BODY_PCT = 50      # Min body % for impulse candle
+IMPULSE_VOL_MULT = 0       # Spot index has NO volume — disabled
+IMPULSE_MIN_PTS  = 30      # Min impulse move (pts)
+ZONE_PROXIMITY   = 40      # Within X pts = "near zone"
 ZONE_MAX_TESTS   = 3       # After X revisits, zone is dead
 
 OUTPUT_DIR       = os.path.expanduser("~/research")
-TIMEFRAMES       = ["15minute", "60minute"]  # Detect on both
+TIMEFRAMES       = ["15minute", "60minute", "3minute"]  # Detect on both
 
 
 # ── Zone Detection ────────────────────────────────────────────
@@ -91,7 +91,7 @@ def detect_zones(df, timeframe="15minute"):
         vol_ratio = vol / vol_avg
         
         # Is this an impulse candle?
-        if body_pct < IMPULSE_BODY_PCT or vol_ratio < IMPULSE_VOL_MULT:
+        if body_pct < IMPULSE_BODY_PCT:  # Volume check removed — spot has no volume
             i += 1
             continue
         
