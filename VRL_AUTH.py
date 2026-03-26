@@ -91,6 +91,11 @@ def get_kite():
     saved     = _read_token()
     today_str = date.today().isoformat()
 
+    # Delete tokens older than 1 day (never serve yesterday's token)
+    if saved.get("date") and saved.get("date") < today_str:
+        logger.warning("[AUTH] Stale token from " + saved.get("date") + " — ignoring")
+        saved = {}
+
     if saved.get("date") == today_str and saved.get("access_token"):
         logger.info("[AUTH] Trying saved token")
         kite.set_access_token(saved["access_token"])
@@ -138,14 +143,41 @@ def force_fresh_login():
 # v12.14: Standalone execution for cron job at 8 AM
 # Previously cron ran `python3 VRL_AUTH.py` which did nothing (no __main__)
 # Now it forces fresh login and caches today's token
+def _tg_alert(msg):
+    """Send auth alert to Telegram."""
+    try:
+        url = "https://api.telegram.org/bot" + D.TELEGRAM_TOKEN + "/sendMessage"
+        requests.post(url, json={
+            "chat_id": D.TELEGRAM_CHAT_ID,
+            "text": msg, "parse_mode": "HTML"
+        }, timeout=10)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     print("[AUTH] Cron login starting — " + date.today().isoformat())
-    # Check if saved token is already for today
+    # Delete stale token if > 1 day old
     saved = _read_token()
-    if saved.get("date") == date.today().isoformat():
-        print("[AUTH] Token already cached for today — forcing fresh anyway")
+    if saved.get("date") and saved.get("date") != date.today().isoformat():
+        print("[AUTH] Stale token from " + saved.get("date") + " — deleting")
+        try:
+            os.remove(D.TOKEN_FILE_PATH)
+        except Exception:
+            pass
     result = force_fresh_login()
     if result:
-        print("[AUTH] Cron login complete ✓")
+        # Verify token actually works
+        try:
+            result.profile()
+            _tg_alert("🔑 <b>AUTH OK</b> " + date.today().isoformat()
+                      + "\nToken fresh + verified ✓")
+            print("[AUTH] Cron login complete + verified ✓")
+        except Exception as e:
+            _tg_alert("⚠️ <b>AUTH WARNING</b>\nToken saved but profile check failed: "
+                      + str(e)[:100])
+            print("[AUTH] Token saved but verification failed: " + str(e))
     else:
-        print("[AUTH] ⚠️ Cron login FAILED — bot will retry at startup")
+        _tg_alert("🚨 <b>AUTH FAILED</b>\nCron login failed at 8:00 AM\n"
+                  "Bot will retry at 9:10 startup\nCheck manually if repeated")
+        print("[AUTH] ⚠️ Cron login FAILED")
