@@ -7,6 +7,7 @@
 
 import logging
 from datetime import datetime
+import pandas as pd
 import VRL_DATA as D
 
 logger = logging.getLogger("vrl_live")
@@ -86,6 +87,24 @@ def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> t
 
         conditions_met = sum([details["ema_aligned"], details["body_ok"],
                               details["rsi_ok"],       details["price_ok"]])
+        # ADX
+        try:
+            import numpy as _np
+            _up = df["high"].diff()
+            _dn = -df["low"].diff()
+            _pdm = _np.where((_up > _dn) & (_up > 0), _up, 0.0)
+            _ndm = _np.where((_dn > _up) & (_dn > 0), _dn, 0.0)
+            _tr = pd.concat([df["high"]-df["low"],
+                             (df["high"]-df["close"].shift(1)).abs(),
+                             (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+            _atr = _tr.ewm(alpha=1/14, adjust=False).mean()
+            _pdi = 100 * pd.Series(_pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
+            _ndi = 100 * pd.Series(_ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
+            _adx = ((_pdi-_ndi).abs() / (_pdi+_ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+            details["adx_3m"] = round(float(_adx.iloc[-2]), 1)
+        except Exception:
+            details["adx_3m"] = 0
+
         details["conditions_met"] = conditions_met
         permitted = conditions_met >= 3
         details["permitted"] = permitted

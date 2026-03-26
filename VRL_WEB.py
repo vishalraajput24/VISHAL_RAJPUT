@@ -55,6 +55,51 @@ def _list_files(folder=""):
     return {"files": files[:30], "folder": folder, "folder_name": info[0]}
 
 
+import glob as _glob
+
+def _read_multitf():
+    spot_dir = os.path.join(BASE, "lab_data", "spot")
+    opt3_dir = os.path.join(BASE, "lab_data", "options_3min")
+    opt1_dir = os.path.join(BASE, "lab_data", "options_1min")
+    def _latest(d, p):
+        fs = sorted(_glob.glob(os.path.join(d, p + "*.csv")))
+        if fs: return fs[-1]
+        a = os.path.join(d, p + ".csv")
+        return a if os.path.isfile(a) else None
+    def _last(path):
+        if not path or not os.path.isfile(path): return None
+        try:
+            with open(path) as f: rows = list(csv.DictReader(f))
+            return rows[-1] if rows else None
+        except: return None
+    def _lasttype(path, t):
+        if not path or not os.path.isfile(path): return None
+        try:
+            with open(path) as f: rows = list(csv.DictReader(f))
+            for r in reversed(rows):
+                if r.get("type") == t: return r
+            return None
+        except: return None
+    def _f(r, k, d=0): 
+        try: return round(float(r.get(k, d)), 1)
+        except: return d
+    def _f3(r, k, d=0):
+        try: return round(float(r.get(k, d)), 3)
+        except: return d
+    spot = []
+    for label, prefix in [("1m","nifty_spot_1min"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("60m","nifty_spot_60min_"),("D","nifty_spot_daily")]:
+        r = _last(_latest(spot_dir, prefix))
+        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread"))})
+        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0})
+    ce = []; pe = []
+    for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_"),("5m",opt1_dir,"nifty_option_5min_"),("15m",opt1_dir,"nifty_option_15min_")]:
+        p = _latest(d, prefix)
+        for side, arr in [("CE",ce),("PE",pe)]:
+            r = _lasttype(p, side)
+            if r: arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close")})
+            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0})
+    return {"spot":spot,"ce":ce,"pe":pe}
+
 def _read_trades():
     if not os.path.isfile(TRADE_LOG): return []
     today = date.today().isoformat()
@@ -147,7 +192,7 @@ function tagC(v){
   if(v==='BULL')return 'tg';if(v==='BEAR')return 'tr';
   if(v==='SIDEWAYS'||v==='NEUTRAL')return 'ta';return 'tb'}
 
-function render(d, trades, zones){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
+function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
   
   const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{};
 
@@ -213,6 +258,7 @@ function render(d, trades, zones){ if(!d || !d.market){document.getElementById('
     h+='<div class="gate">'+dotH(g.ema,'E')+dotH(g.body,'B')+dotH(g.rsi,'R')+dotH(g.price,'P')+'</div>';
     if(g.rsi_val>0)h+='<div class="row"><div class="k">3m RSI</div><div class="v">'+g.rsi_val+'</div></div>';
     if(g.spread!=0)h+='<div class="row"><div class="k">3m Spread</div><div class="v" style="color:'+(g.spread>0?'var(--gn)':'var(--rd)')+'">'+(g.spread>0?'+':'')+g.spread+'</div></div>';
+    var adxV=g.adx||0;if(adxV>0)h+='<div class="row"><div class="k">3m ADX</div><div class="v" style="color:'+(adxV>=25?'var(--gn)':adxV>=18?'var(--am)':'var(--rd)')+'">'+adxV+(adxV>=25?' TREND':adxV>=18?' WEAK':' FLAT')+'</div></div>';
     // 1-min section
     h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);border-top:1px solid var(--bd);background:rgba(16,185,129,.05)">▸ 1-MIN ENTRY</div>';
     h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
@@ -261,6 +307,33 @@ function render(d, trades, zones){ if(!d || !d.market){document.getElementById('
     '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
     '<div class="ctx"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'</div></div>'+
     '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
+  // Multi-TF Alignment
+  var sp=mtf.spot||[],ceo=mtf.ce||[],peo=mtf.pe||[];
+  function ac(v){return v>=25?'var(--gn)':v>=18?'var(--am)':'var(--rd)'}
+  function al(v){return v>=25?'TR':v>=18?'WK':'FL'}
+  function rc(v){return v>=60?'var(--gn)':v<=40?'var(--rd)':'var(--am)'}
+  function sc(v){return v>0?'var(--gn)':v<0?'var(--rd)':'var(--dm)'}
+  function gr(cols){return 'display:grid;grid-template-columns:repeat('+cols+',1fr);padding:4px 10px;font-size:11px;border-bottom:1px solid rgba(30,30,48,.5)'}
+  function hdr(cols,names){var h='<div style="'+gr(names.length)+';font-size:8px;color:#555;font-weight:700">';names.forEach(function(n){h+='<div style="text-align:'+(n==='TF'?'left':'right')+'">'+n+'</div>'});return h+'</div>'}
+  if(sp.some(function(s){return s.adx>0||s.rsi>0})){
+    mh+='<div class="sect"><div class="sh">\ud83d\udcc8 SPOT MULTI-TF</div>';
+    mh+=hdr(4,['TF','ADX','RSI','SPREAD']);
+    sp.forEach(function(t){if(!t.adx&&!t.rsi)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
+    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0}).length;
+    var up=sp.filter(function(t){return t.spread>0&&t.adx>0}).length,dn=sp.filter(function(t){return t.spread<0&&t.adx>0}).length;
+    var vc=trn>=3?'var(--gn)':trn>=2?'var(--am)':'var(--rd)';
+    mh+='<div style="padding:5px 10px;font-size:10px;font-weight:700;color:'+vc+'">'+(trn>=3?'STRONG':trn>=2?'MODERATE':'WEAK')+' '+trn+'/'+tot+(up>=3?' \u2191 BULLISH':dn>=3?' \u2193 BEARISH':'')+'</div></div>'}
+  if(ceo.some(function(c){return c.rsi>0||c.ltp>0})){
+    mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE OPTION MULTI-TF</div>';
+    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
+    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right">'+t.delta+'</div><div style="text-align:right;color:var(--gn)">\u20b9'+t.ltp+'</div></div>'});
+    mh+='</div>'}
+  if(peo.some(function(p){return p.rsi>0||p.ltp>0})){
+    mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE OPTION MULTI-TF</div>';
+    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
+    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right">'+t.delta+'</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
+    mh+='</div>'}
+
   // Fib Pivot Section
   mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
   var fp=mk.fib_pivots||{};
@@ -335,8 +408,8 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t,z]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]}))]);
-    render(d||{},t||[],z||{zones:[]})
+    const[d,t,z,mtf]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]}))]);
+    render(d||{},t||[],z||{zones:[]},mtf||{})
   }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
@@ -431,6 +504,7 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
+        elif p=="/api/multitf":self._j(_read_multitf())
         elif p=="/api/zones":
             zp = os.path.join(BASE, "state", "vrl_zones.json")
             if os.path.isfile(zp):
