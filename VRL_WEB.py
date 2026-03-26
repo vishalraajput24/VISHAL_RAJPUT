@@ -147,7 +147,7 @@ function tagC(v){
   if(v==='BULL')return 'tg';if(v==='BEAR')return 'tr';
   if(v==='SIDEWAYS'||v==='NEUTRAL')return 'ta';return 'tb'}
 
-function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
+function render(d, trades, zones){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
   
   const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{};
 
@@ -280,6 +280,23 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     '<div class="ctx"><div class="k">STRADDLE</div><div class="v">'+(str.captured?'₹'+str.open:'—')+'</div></div>'+
     '<div class="ctx"><div class="k">EXPIRY</div><div class="v" style="font-size:10px">'+esc(mk.expiry||'—')+'</div></div>'+
     '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
+  // Zones
+  var zl=zones.zones||[];
+  if(zl.length>0){
+    var near=zl.filter(function(z){return Math.abs(z.distance_from_spot||999)<=100});
+    mh+='<div class="sect"><div class="sh">\ud83d\uddfa DEMAND/SUPPLY ZONES</div>';
+    if(near.length>0){
+      near.forEach(function(z){
+        var clr=z.zone_type==='DEMAND'?'var(--gn)':'var(--rd)';
+        var icon=z.zone_type==='DEMAND'?'\ud83d\udfe2':'\ud83d\udd34';
+        mh+='<div class="row"><div class="k" style="color:'+clr+'">'+icon+' '+z.zone_type+'</div><div class="v" style="font-size:11px">'+z.zone_low+' - '+z.zone_high+' ['+z.strength+']'+(z.multi_tf?' \ud83d\udd25MTF':'')+'</div></div>';
+        mh+='<div class="row"><div class="k">Distance</div><div class="v" style="font-size:11px">'+(z.distance_from_spot>0?'+':'')+z.distance_from_spot+'pts · '+z.proximity+' · tested '+z.times_tested+'x</div></div>';
+      });
+    } else {
+      mh+='<div style="padding:8px 10px;color:#555;font-size:10px">No zones within 100pts — open territory</div>';
+    }
+    mh+='<div style="padding:4px 10px;font-size:9px;color:#444">Total: '+zl.length+' active zones</div></div>';
+  }
   document.getElementById('p-mkt').innerHTML=mh;
 
   // ── TRADES TAB ──
@@ -318,8 +335,8 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[])]);
-    render(d||{},t||[])
+    const[d,t,z]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]}))]);
+    render(d||{},t||[],z||{zones:[]})
   }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
@@ -414,6 +431,12 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
+        elif p=="/api/zones":
+            zp = os.path.join(BASE, "state", "vrl_zones.json")
+            if os.path.isfile(zp):
+                self._j(json.load(open(zp)))
+            else:
+                self._j({"zones":[]})
         elif p=="/api/files":
             q = urlparse(self.path).query
             folder = ''
