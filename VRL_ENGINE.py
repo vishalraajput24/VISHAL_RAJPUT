@@ -105,6 +105,7 @@ def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> t
         except Exception:
             details["adx_3m"] = 0
 
+        details["candle_count_3m"] = len(df)
         details["conditions_met"] = conditions_met
         permitted = conditions_met >= 3
         details["permitted"] = permitted

@@ -204,6 +204,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
   if(mk.bias)tags+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
   if(mk.regime)tags+='<span class="tag '+(mk.regime.includes('TREND')?'tg':'ta')+'">'+esc(mk.regime)+'</span>';
+    if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
 
   // Position
@@ -259,6 +260,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     if(g.rsi_val>0)h+='<div class="row"><div class="k">3m RSI</div><div class="v">'+g.rsi_val+'</div></div>';
     if(g.spread!=0)h+='<div class="row"><div class="k">3m Spread</div><div class="v" style="color:'+(g.spread>0?'var(--gn)':'var(--rd)')+'">'+(g.spread>0?'+':'')+g.spread+'</div></div>';
     var adxV=g.adx||0;if(adxV>0)h+='<div class="row"><div class="k">3m ADX</div><div class="v" style="color:'+(adxV>=25?'var(--gn)':adxV>=18?'var(--am)':'var(--rd)')+'">'+adxV+(adxV>=25?' TREND':adxV>=18?' WEAK':' FLAT')+'</div></div>';
+    var cc=g.candles||0;if(cc>0&&cc<25)h+='<div class="row"><div class="k">DATA</div><div class="v" style="color:var(--am);font-size:10px">'+cc+' candles (WARMUP '+(cc<15?'\u26a0\ufe0f cold':'\u23f3 warming')+')</div></div>';
     // 1-min section
     h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);border-top:1px solid var(--bd);background:rgba(16,185,129,.05)">▸ 1-MIN ENTRY</div>';
     h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
