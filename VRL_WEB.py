@@ -19,6 +19,41 @@ def _read_dash():
         with open(DASH_FILE) as f: return json.load(f)
     except: return {}
 
+import glob as _glob
+import urllib.parse as _up
+
+_FOLDERS = {
+    "trade_log": ("Trade Log", os.path.join(BASE, "lab_data")),
+    "spot": ("Spot CSVs", os.path.join(BASE, "lab_data", "spot")),
+    "options_3min": ("Options 3-Min", os.path.join(BASE, "lab_data", "options_3min")),
+    "options_1min": ("Options 1-Min", os.path.join(BASE, "lab_data", "options_1min")),
+    "reports": ("Reports", os.path.join(BASE, "lab_data", "reports")),
+    "sessions": ("Sessions", os.path.join(BASE, "lab_data", "sessions")),
+    "research": ("Research", os.path.join(BASE, "research")),
+    "state": ("State", os.path.join(BASE, "state")),
+    "logs": ("Logs", os.path.join(BASE, "logs", "live")),
+}
+
+def _list_files(folder=""):
+    if not folder:
+        return {"folders": [{"key": k, "name": v[0]} for k, v in _FOLDERS.items()]}
+    info = _FOLDERS.get(folder)
+    if not info or not os.path.isdir(info[1]):
+        return {"files": [], "folder": folder}
+    files = []
+    for f in sorted(os.listdir(info[1]), reverse=True):
+        fp = os.path.join(info[1], f)
+        if os.path.isfile(fp):
+            size = os.path.getsize(fp)
+            if size > 0:
+                files.append({
+                    "name": f,
+                    "size": round(size / 1024, 1),
+                    "path": folder + "/" + f,
+                })
+    return {"files": files[:30], "folder": folder, "folder_name": info[0]}
+
+
 def _read_trades():
     if not os.path.isfile(TRADE_LOG): return []
     today = date.today().isoformat()
@@ -92,16 +127,18 @@ body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;
   <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIGNALS</div>
   <div class="tab" data-t="mkt" onclick="st('mkt')">📊 MARKET</div>
   <div class="tab" data-t="trd" onclick="st('trd')">📒 TRADES</div>
+  <div class="tab" data-t="fil" onclick="window.location.href='/files'">📁 FILES</div>
 </div>
 
 <div id="p-sig"></div>
 <div id="p-mkt" class="H"></div>
 <div id="p-trd" class="H"></div>
+<div id="p-fil" class="H"></div>
 
 <div class="ft">Auto-refresh 10s · <span id="ts"></span></div>
 
 <script>
-function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','trd'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t))}
+function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','trd','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t))}
 
 function esc(s){return String(s).replace(/</g,'&lt;')}
 
@@ -109,8 +146,8 @@ function tagC(v){
   if(v==='BULL')return 'tg';if(v==='BEAR')return 'tr';
   if(v==='SIDEWAYS'||v==='NEUTRAL')return 'ta';return 'tb'}
 
-function render(d, trades){
-  if(!d||!d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#444;padding:30px">Waiting for bot data...<br>Bot writes dashboard every scan cycle</div>';return}
+function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
+  
   const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{};
 
   // Version + tags
@@ -264,12 +301,29 @@ function render(d, trades){
   document.getElementById('p-trd').innerHTML=th;
   document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN')}
 
+async function loadFiles(folder){
+  const d=await A('files'+(folder?'?folder='+folder:''));
+  const el=document.getElementById('p-fil');
+  if(!d){el.innerHTML='<div style="text-align:center;color:#555;padding:20px">Error loading files</div>';return}
+  if(!folder&&d.folders){
+    el.innerHTML='<div style="padding:8px 10px;font-size:11px;font-weight:700;color:var(--dm)">SELECT FOLDER</div>'+
+      d.folders.map(function(f){return '<div onclick="loadFiles(\x27'+f.key+'\x27)" style="margin:3px 8px;padding:10px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700;font-size:12px">'+f.name+'</span><span style="color:#555;font-size:18px">></span></div>'}).join('');
+    return}
+  var h='<div onclick="loadFiles(\x27\x27)" style="margin:8px;padding:8px 10px;background:var(--c2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-size:11px;color:var(--bl)">Back</div>';
+  h+='<div style="padding:4px 10px;font-size:11px;font-weight:700;color:var(--dm)">'+(d.folder_name||folder)+' ('+d.files.length+' files)</div>';
+  if(!d.files.length){h+='<div style="text-align:center;color:#555;padding:20px">No files</div>'}
+  else{d.files.forEach(function(f){h+='<a href="/api/download/'+f.path+'" style="display:block;margin:2px 8px;padding:8px 10px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;text-decoration:none;color:var(--tx)"><span style="font-size:11px">'+f.name+'</span><span style="float:right;color:#555;font-size:10px">'+f.size+'KB</span></a>'})}
+  el.innerHTML=h}
+
 async function go(){
   try{
-    const[d,t]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()),fetch('/api/trades').then(r=>r.json())]);
-    render(d,t)}catch(e){console.error(e)}
+    const[d,t]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[])]);
+    render(d||{},t||[])
+  }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
+// Load files tab when clicked
+document.querySelector('[data-t="fil"]').addEventListener('click',function(){loadFiles('')});
 </script></body></html>"""
 
 class H(BaseHTTPRequestHandler):
@@ -280,8 +334,70 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin","*")
         self.end_headers()
         self.wfile.write(json.dumps(d,default=str).encode())
+    def _send_file(self, path):
+        try:
+            parts = path.split("/", 1)
+            if len(parts) != 2:
+                self.send_error(404); return
+            folder_key, filename = parts[0], parts[1]
+            info = _FOLDERS.get(folder_key)
+            if not info:
+                self.send_error(404); return
+            filepath = os.path.join(info[1], filename)
+            if not os.path.isfile(filepath):
+                self.send_error(404); return
+            self.send_response(200)
+            if filename.endswith(".csv"):
+                self.send_header("Content-Type", "text/csv")
+            elif filename.endswith(".json"):
+                self.send_header("Content-Type", "application/json")
+            elif filename.endswith(".log"):
+                self.send_header("Content-Type", "text/plain")
+            else:
+                self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", "attachment; filename=" + filename)
+            self.send_header("Content-Length", str(os.path.getsize(filepath)))
+            self.end_headers()
+            with open(filepath, "rb") as f:
+                self.wfile.write(f.read())
+        except Exception as e:
+            self.send_error(500)
+
+    def _files_page(self):
+        import urllib.parse
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        folder = q.get("f",[""])[0]
+        html = '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VRL Files</title>'
+        html += '<style>body{background:#080810;color:#e4e4e7;font-family:monospace;font-size:13px;padding:10px;max-width:500px;margin:0 auto}'
+        html += 'a{color:#3b82f6;text-decoration:none}.f{display:block;margin:4px 0;padding:10px;background:#111118;border:1px solid #1e1e30;border-radius:6px}'
+        html += '.f:active{background:#1e1e30}.sz{float:right;color:#555;font-size:11px}.bk{display:inline-block;margin:8px 0;padding:6px 12px;background:#1e1e30;border-radius:6px}</style></head><body>'
+        html += '<h2 style="color:#3b82f6;font-size:15px">VISHAL RAJPUT FILES</h2>'
+        html += '<a href="/" class="bk">War Room</a><br>'
+        if not folder:
+            for k, v in _FOLDERS.items():
+                html += '<a href="/files?f=' + k + '" class="f">' + v[0] + '</a>'
+        else:
+            html += '<a href="/files" class="bk">Back</a>'
+            info = _FOLDERS.get(folder)
+            if info and os.path.isdir(info[1]):
+                html += '<h3 style="color:#888;font-size:12px">' + info[0] + '</h3>'
+                files = sorted(os.listdir(info[1]), reverse=True)
+                for fname in files[:30]:
+                    fp = os.path.join(info[1], fname)
+                    if os.path.isfile(fp) and os.path.getsize(fp) > 0:
+                        sz = round(os.path.getsize(fp) / 1024, 1)
+                        html += '<a href="/api/download/' + folder + '/' + fname + '" class="f">' + fname + '<span class="sz">' + str(sz) + ' KB</span></a>'
+            else:
+                html += '<div style="color:#555;padding:20px">Folder not found</div>'
+        html += '</body></html>'
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode())
+
     def do_GET(self):
         p=urlparse(self.path).path
+        if p=="/files" or p.startswith("/files?"):self._files_page();return
         if p in("/","/dashboard"):
             self.send_response(200)
             self.send_header("Content-Type","text/html")
@@ -289,6 +405,14 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
+        elif p=="/api/files":
+            q = urlparse(self.path).query
+            folder = ''
+            if 'folder=' in q:
+                folder = q.split('folder=')[1].split('&')[0]
+            self._j(_list_files(folder))
+        elif p.startswith("/api/download/"):
+            self._send_file(p[14:])  # strip /api/download/
         else:self.send_error(404)
 
 if __name__=="__main__":
