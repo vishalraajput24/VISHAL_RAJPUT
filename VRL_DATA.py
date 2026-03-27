@@ -11,7 +11,7 @@ import time
 import logging
 import threading
 from datetime import date, datetime, timedelta
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 
 import pandas as pd
 from kiteconnect import KiteTicker
@@ -289,7 +289,8 @@ def setup_logger(name: str, log_file: str, level=logging.DEBUG) -> logging.Logge
     lg.setLevel(level)
     fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s",
                             datefmt="%Y-%m-%d %H:%M:%S")
-    fh = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
+    fh = TimedRotatingFileHandler(log_file, when="midnight", backupCount=7)
+    fh.suffix = "%Y-%m-%d"
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
     lg.addHandler(fh)

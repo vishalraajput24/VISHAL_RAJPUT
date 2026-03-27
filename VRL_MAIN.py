@@ -193,6 +193,28 @@ TRADE_FIELDNAMES = [
     "straddle_decay",
 ]
 
+def _cleanup_trade_log():
+    """One-time cleanup: remove corrupted rows where date doesn't match YYYY-MM-DD."""
+    path = D.TRADE_LOG_PATH
+    if not os.path.isfile(path):
+        return
+    try:
+        import re
+        date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        with open(path, "r") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return
+            good_rows = [r for r in reader if date_re.match(r.get("date", ""))]
+        # Rewrite with correct header + good rows only
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(good_rows)
+        logger.info("[MAIN] Trade log cleaned: " + str(len(good_rows)) + " valid rows kept")
+    except Exception as e:
+        logger.warning("[MAIN] Trade log cleanup error: " + str(e))
+
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
                candles_held: int = 0):
     os.makedirs(os.path.dirname(D.TRADE_LOG_PATH), exist_ok=True)
@@ -1038,6 +1060,8 @@ def _strategy_loop(kite):
     logger.info("[MAIN] Strategy loop started")
     # Ensure state dir exists
     os.makedirs(os.path.expanduser("~/state"), exist_ok=True)
+    # One-time trade log cleanup
+    _cleanup_trade_log()
     # Compute bias
     try:
         D.compute_daily_bias(kite)
