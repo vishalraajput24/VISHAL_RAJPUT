@@ -1761,11 +1761,8 @@ def _lab_loop():
                         collect_spot_1min(_kite_ref)
                     except Exception as e:
                         logger.debug("[LAB] spot 1m: " + str(e))
-                    # Signal scan — log every minute, fired or not
-                    try:
-                        _log_signal_scan(_kite_ref, spot_ltp, now)
-                    except Exception as e:
-                        logger.debug("[LAB] scan log: " + str(e))
+                    # Signal scan disabled — VRL_MAIN already scans and writes dashboard
+                    # _log_signal_scan was duplicating check_entry calls + API load
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 1m skip — spot LTP not available yet")
 
