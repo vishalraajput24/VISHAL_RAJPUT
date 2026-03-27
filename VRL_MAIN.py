@@ -972,7 +972,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 },
                 "ltp": round(result.get("entry_price", 0), 2),
                 "regime": result.get("regime", ""),
-                "strike": dir_strikes.get(opt_type, atm_strike),
+                "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
@@ -1404,6 +1404,7 @@ def _strategy_loop(kite):
                         session     = session,
                     )
 
+                    result["_strike"] = _opt_strike  # carry per-direction strike
                     all_results[opt_type] = result
 
                     if not result["fired"]:
