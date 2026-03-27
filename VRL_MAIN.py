@@ -1322,17 +1322,17 @@ def _strategy_loop(kite):
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
 
                 # v12.15: Direction-aware strike selection
-                # Resolve per-direction strikes (CE→ITM/ATM below spot, PE→ITM/ATM above spot)
+                # CE → at/below spot (ITM), PE → at/above spot (ITM)
                 dir_strikes = {}
                 dir_tokens  = {}
                 for _dt in ("CE", "PE"):
-                    _ds = D.resolve_strike_for_direction(
-                        spot_ltp, step, _dt, dte, kite, expiry)
-                    if _ds:
-                        dir_strikes[_dt] = _ds["strike"]
-                        _tk = D.get_option_tokens(kite, _ds["strike"], expiry)
-                        if _tk.get(_dt):
-                            dir_tokens[_dt] = _tk[_dt]
+                    _strike = D.resolve_strike_for_direction(spot_ltp, _dt, dte)
+                    dir_strikes[_dt] = _strike
+                    _tk = D.get_option_tokens(kite, _strike, expiry)
+                    if _tk.get(_dt):
+                        dir_tokens[_dt] = _tk[_dt]
+                    logger.info("[MAIN] Strike " + str(_strike) + " " + _dt
+                                + " spot=" + str(round(spot_ltp, 1)))
 
                 # Fallback to ATM if direction-aware failed
                 if not dir_tokens:
