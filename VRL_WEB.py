@@ -26,15 +26,14 @@ import glob as _glob
 
 _FOLDERS = {
     "trade_log":    ("📒 Trade Log",              os.path.join(BASE, "lab_data")),
-    "spot":         ("📈 Spot (1m/5m/15m/60m/D)", os.path.join(BASE, "lab_data", "spot")),
+    "spot":         ("📈 Spot (1m/5m/15m/D)",     os.path.join(BASE, "lab_data", "spot")),
     "options_3min": ("📊 Options 3-Min CE+PE",    os.path.join(BASE, "lab_data", "options_3min")),
     "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
-    "reports":      ("📑 Daily Summary Reports",  os.path.join(BASE, "lab_data", "reports")),
-    "sessions":     ("🗂 Sessions",               os.path.join(BASE, "lab_data", "sessions")),
+    "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
+    "sessions":     ("🗂 Trade Sessions",         os.path.join(BASE, "lab_data", "sessions")),
     "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
-    "state":        ("⚙️ State + Dashboard JSON", os.path.join(BASE, "state")),
-    "logs":         ("📋 Live Logs",              os.path.join(BASE, "logs", "live")),
-    "logs_lab":     ("🔬 Lab Logs",               os.path.join(BASE, "logs", "lab")),
+    "state":        ("⚙️ State + Config",         os.path.join(BASE, "state")),
+    "logs":         ("📋 Logs",                   os.path.join(BASE, "logs", "live")),
 }
 
 def _list_files(folder=""):

@@ -60,29 +60,27 @@ def setup(state_ref, lock_ref, tg_send_fn, tg_send_file_fn,
 _RESEARCH_DIR = os.path.expanduser("~/research")
 
 _BROWSER_ROOTS = {
-    "logs_live"   : D.LIVE_LOG_DIR,
-    "logs_lab"    : D.LAB_LOG_DIR,
-    "lab_options" : D.OPTIONS_3MIN_DIR,
+    "trade_log"   : os.path.dirname(D.TRADE_LOG_PATH),
     "lab_spot"    : D.SPOT_DIR,
+    "lab_options" : D.OPTIONS_3MIN_DIR,
+    "lab_1min"    : D.OPTIONS_1MIN_DIR,
     "lab_reports" : D.REPORTS_DIR,
     "lab_sessions": D.SESSIONS_DIR,
-    "state"       : D.STATE_DIR,
-    "backups"     : D.BACKUP_DIR,
-    "trade_log"   : os.path.dirname(D.TRADE_LOG_PATH),
     "research"    : _RESEARCH_DIR,
+    "state"       : D.STATE_DIR,
+    "logs_live"   : D.LIVE_LOG_DIR,
 }
 
 _BROWSER_LABELS = {
-    "logs_live"   : "📋 Live Logs",
-    "logs_lab"    : "🔬 Lab Logs",
-    "lab_options" : "📊 Options 3-Min",
-    "lab_spot"    : "📈 Spot CSVs",
-    "lab_reports" : "📑 Reports",
-    "lab_sessions": "🗂 Sessions",
-    "state"       : "⚙️ State Files",
-    "backups"     : "💾 Backups",
     "trade_log"   : "📒 Trade Log",
-    "research"    : "🔭 Research Data",
+    "lab_spot"    : "📈 Spot (1m/5m/15m/D)",
+    "lab_options" : "📊 Options 3-Min CE+PE",
+    "lab_1min"    : "📊 Options 1m/5m/15m/Scan",
+    "lab_reports" : "📑 Daily Summary",
+    "lab_sessions": "🗂 Trade Sessions",
+    "research"    : "🔭 Zones + Research",
+    "state"       : "⚙️ State + Config",
+    "logs_live"   : "📋 Logs",
 }
 
 def _send_file_browser():
