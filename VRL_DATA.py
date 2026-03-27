@@ -579,8 +579,8 @@ def calculate_atr_sl(token: int, profile: dict,
     return sl
 
 def get_active_strike_step(dte: int = None) -> int:
-    """v12.15: Returns 50-step for DTE ≤ 3, 100-step for DTE 4+."""
-    if dte is not None and dte <= 3:
+    """v12.10: Returns 50-step on expiry day, 100-step otherwise."""
+    if dte is not None and dte == 0:
         return STRIKE_STEP_EXPIRY
     return STRIKE_STEP
 
@@ -598,69 +598,82 @@ def resolve_strike_for_direction(spot_ltp: float, step: int,
                                   kite=None, expiry_date=None) -> dict:
     """
     v12.15: Direction-aware strike selection.
-    CE → strike ≤ spot (ITM/ATM) for intrinsic value
-    PE → strike ≥ spot (ITM/ATM) for intrinsic value
-    Returns {"strike": int, "reason": str} or None if no good strike.
+    DTE 0: handled by expiry breakout mode, this returns ATM (step=50).
+    DTE 1+: step=100.
+      CE → ATM if ATM ≤ spot (already ITM), else ATM-step
+      PE → ATM+step if ATM < spot (go 1 step above for ITM), else ATM
+    Example: spot=22930, step=100 → ATM=22900
+      CE = 22900 (ATM ≤ spot → keep)
+      PE = 23000 (ATM < spot → ATM+100)
+    Returns {"strike": int, "reason": str, "premium": float}
     """
     atm = resolve_atm_strike(spot_ltp, step)
 
+    # DTE=0: use ATM, expiry breakout handles its own strike logic
+    if dte == 0:
+        return {"strike": atm, "reason": "ATM (expiry)", "premium": 0}
+
+    # DTE 1+: direction-aware ITM selection
     if direction == "CE":
-        # CE wants strike ≤ spot (ITM)
+        # CE wants strike ≤ spot for intrinsic value
         if atm <= spot_ltp:
-            itm_strike = atm               # ATM is already ITM/ATM for CE
+            selected = atm       # ATM is at or below spot → ITM for CE
+            reason = "ATM"
         else:
-            itm_strike = atm - step         # ATM > spot, go 1 step down
-        candidates = [itm_strike, atm]      # prefer ITM, fallback ATM
+            selected = atm - step  # ATM above spot → go 1 step down
+            reason = "1-STEP ITM"
     else:
-        # PE wants strike ≥ spot (ITM)
+        # PE wants strike ≥ spot for intrinsic value
         if atm >= spot_ltp:
-            itm_strike = atm               # ATM is already ITM/ATM for PE
+            selected = atm       # ATM is at or above spot → ITM for PE
+            reason = "ATM"
         else:
-            itm_strike = atm + step         # ATM < spot, go 1 step up
-        candidates = [itm_strike, atm]      # prefer ITM, fallback ATM
+            selected = atm + step  # ATM below spot → go 1 step up
+            reason = "1-STEP ITM"
 
-    # DTE-based preference: ITM more important on shorter DTE
-    # DTE 4+: ATM is fine, DTE ≤ 1: ITM required
-    prefer_itm = dte <= 3
-
-    # Try to get premium for candidates to filter
+    # Premium filter: check if premium is in ₹100-400 range
     k = kite or _kite
     if k and expiry_date:
-        for strike in candidates:
-            try:
-                tokens = get_option_tokens(k, strike, expiry_date)
-                opt_info = tokens.get(direction)
-                if not opt_info:
-                    continue
+        try:
+            tokens = get_option_tokens(k, selected, expiry_date)
+            opt_info = tokens.get(direction)
+            if opt_info:
                 q = k.ltp(["NFO:" + opt_info["symbol"]])
                 premium = float(list(q.values())[0]["last_price"])
 
                 if premium < STRIKE_PREMIUM_MIN:
-                    logger.info("[DATA] Strike " + str(strike) + " " + direction
+                    logger.info("[DATA] Strike " + str(selected) + " " + direction
                                 + " premium ₹" + str(round(premium, 1))
-                                + " < ₹" + str(STRIKE_PREMIUM_MIN) + " — skip")
-                    continue
+                                + " < ₹" + str(STRIKE_PREMIUM_MIN) + " — too OTM, skip")
+                    return None
                 if premium > STRIKE_PREMIUM_MAX:
-                    logger.info("[DATA] Strike " + str(strike) + " " + direction
+                    # Fall back to ATM
+                    logger.info("[DATA] Strike " + str(selected) + " " + direction
                                 + " premium ₹" + str(round(premium, 1))
-                                + " > ₹" + str(STRIKE_PREMIUM_MAX) + " — try next")
-                    continue
+                                + " > ₹" + str(STRIKE_PREMIUM_MAX) + " — using ATM")
+                    selected = atm
+                    reason = "ATM (premium cap)"
+                    # Re-check ATM premium
+                    tokens = get_option_tokens(k, atm, expiry_date)
+                    opt_info = tokens.get(direction)
+                    if opt_info:
+                        q = k.ltp(["NFO:" + opt_info["symbol"]])
+                        premium = float(list(q.values())[0]["last_price"])
+                    else:
+                        premium = 0
 
-                reason = "ITM" if strike != atm else "ATM"
-                if strike == itm_strike and strike != atm:
-                    reason = "1-STEP ITM"
-                logger.info("[DATA] Strike selected: " + str(strike) + " " + direction
+                logger.info("[DATA] Strike " + str(selected) + " " + direction
                             + " ₹" + str(round(premium, 1)) + " (" + reason + ")"
                             + " spot=" + str(round(spot_ltp, 1)))
-                return {"strike": strike, "reason": reason, "premium": premium}
-            except Exception as e:
-                logger.debug("[DATA] Strike check error " + str(strike) + ": " + str(e))
-                continue
+                return {"strike": selected, "reason": reason, "premium": premium}
+        except Exception as e:
+            logger.debug("[DATA] Strike premium check error: " + str(e))
 
-    # Fallback: no premium check possible, use simple logic
-    if prefer_itm:
-        return {"strike": itm_strike, "reason": "ITM (no premium check)", "premium": 0}
-    return {"strike": atm, "reason": "ATM (fallback)", "premium": 0}
+    # Fallback: no premium check, use direction logic
+    logger.info("[DATA] Strike " + str(selected) + " " + direction
+                + " (" + reason + ") spot=" + str(round(spot_ltp, 1))
+                + " [no premium check]")
+    return {"strike": selected, "reason": reason, "premium": 0}
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
