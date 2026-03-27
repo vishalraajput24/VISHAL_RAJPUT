@@ -269,9 +269,11 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
     h+='<div class="bar"><div class="bar-fill" style="width:'+barPct+'%;background:'+barClr+'"></div></div></div>';
     // 1-min entry
-    const rClr=(e.rsi_ok&&e.rsi_rising)?'var(--gn)':e.rsi>65?'var(--rd)':'var(--am)';
+    const rClr=(e.rsi_ok&&e.rsi_rising)?'var(--gn)':e.rsi>60?'var(--rd)':'var(--am)';
     h+='<div class="row"><div class="k">BODY</div><div class="v" style="color:'+(e.body_ok?'var(--gn)':'var(--rd)')+'">'+e.body_pct+'%'+(e.body_ok?' ✅':' ❌')+'</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rClr+'">'+e.rsi+(e.rsi_rising?' ↑':' ↓')+(e.rsi_ok?' ✅':' ❌')+'</div></div>';
+    h+='<div class="row"><div class="k">RSI vs 3m</div><div class="v" style="color:'+(e.rsi_below_3m?'var(--gn)':'var(--rd)')+'">'+( e.rsi_below_3m?'DIP ✅':'CHASING ❌')+'</div></div>';
+    h+='<div class="row"><div class="k">SPREAD</div><div class="v" style="color:'+(e.spread_accel?'var(--gn)':'var(--rd)')+'">'+( e.spread_accel?'ACCEL ✅':'DECEL ❌')+'</div></div>';
     h+='<div class="row"><div class="k">VOLUME</div><div class="v" style="color:'+(e.vol_ok?'var(--gn)':'var(--rd)')+'">'+e.vol+'x'+(e.vol_ok?' ✅':' ❌')+'</div></div>';
     // Score
     h+='<div class="row"><div class="k">SCORE</div><div class="v" style="color:'+(sig.score>=sig.score_min?'var(--gn)':'var(--rd)')+'">'+sig.score+'/'+sig.score_min+'</div></div>';

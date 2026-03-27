@@ -473,8 +473,10 @@ def _alert_entry(symbol: str, option_type: str, entry_price: float,
         "  Body:" + str(det_1m.get("body_pct", 0)) + "%"
         + ("✅" if det_1m.get("body_ok") else "❌")
         + "  RSI:" + str(det_1m.get("rsi_val", 0)) + "↑"
+        + ("  DIP✅" if det_1m.get("rsi_1m_below_3m") else "")
         + "  Vol:" + str(det_1m.get("vol_ratio", 0)) + "x\n"
-        "  1m Spread:" + str(round(spread_1m, 1)) + "pts"
+        "  Spread:" + str(round(spread_1m, 1)) + "pts"
+        + (" ACCEL✅" if det_1m.get("spread_accel") else " DECEL⚠️")
         + ("  🔥DOUBLE" if abs(spread_3m) >= 5 and spread_1m > 0 else "") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "GREEKS  Delta:" + str(greeks.get("delta","—"))
@@ -512,7 +514,7 @@ def _alert_exit(symbol: str, entry: float, exit_price: float,
         "MODERATE_DRAWDOWN"   : ("Moderate drawdown exit", "20pt+ peak, gave back 8pts — profit protected"),
         "RSI_EXHAUSTION"      : ("RSI exhaustion exit 🎯", "RSI hit 76+ with profit — top captured"),
         "GAMMA_RIDER"         : ("Gamma rider exit 🏄", "RSI dropped from overbought — reversal caught"),
-        "STALE_ENTRY"         : ("Stale entry cut 🔪", "5 candles, peak under 5pts — dead trade, saved full SL"),
+        "STALE_ENTRY"         : ("Stale entry cut 🔪", "3 candles, peak under 5pts — dead trade, saved full SL"),
         "MARKET_CLOSE"        : ("Market close exit", "Forced exit at 15:28"),
         "FORCE_EXIT"          : ("Manual force exit", ""),
     }
@@ -893,18 +895,29 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
             # Verdict logic
             conds = d3.get("conditions_met", 0)
+            regime = result.get("regime", "")
             if result.get("fired"):
                 verdict = "FIRED"
             elif conds < 3:
                 verdict = "3M BLOCKED " + str(conds) + "/4"
+            elif regime in ("NEUTRAL", "CHOPPY"):
+                verdict = "REGIME " + regime
             elif spread_1m < min_spread:
                 verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
             elif d1.get("rsi_reject"):
                 rsi_v = d1.get("rsi_val", 0)
-                if rsi_v > 65:
+                if rsi_v > 60:
                     verdict = "RSI " + str(rsi_v) + " TOO HIGH"
-                else:
+                elif not d1.get("rsi_1m_below_3m", True):
+                    verdict = "RSI " + str(rsi_v) + " > 3m (CHASING)"
+                elif not d1.get("rsi_rising", False):
                     verdict = "RSI " + str(rsi_v) + " NOT RISING"
+                else:
+                    verdict = "RSI " + str(rsi_v) + " OUT OF ZONE"
+            elif not d1.get("spread_accel", True):
+                verdict = "SPREAD DECELERATING"
+            elif not d1.get("vol_ok", False) and d1.get("vol_ratio", 0) > 0:
+                verdict = "VOL " + str(d1.get("vol_ratio", 0)) + "x < 1.5x"
             elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
                 verdict = "BODY " + str(d1.get("body_pct", 0)) + "% WEAK"
             elif score < session_min:
@@ -937,8 +950,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "rsi": round(d1.get("rsi_val", 0), 1),
                     "rsi_rising": d1.get("rsi_rising", False),
                     "rsi_ok": d1.get("rsi_ok", False),
+                    "rsi_below_3m": d1.get("rsi_1m_below_3m", False),
                     "vol": round(d1.get("vol_ratio", 0), 2),
                     "vol_ok": d1.get("vol_ok", False),
+                    "spread_accel": d1.get("spread_accel", False),
                 },
                 "score": score,
                 "score_min": session_min,
