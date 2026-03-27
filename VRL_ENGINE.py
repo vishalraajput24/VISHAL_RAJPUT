@@ -334,6 +334,21 @@ def check_entry(token: int, option_type: str, profile: dict,
         if not permitted:
             logger.info("[ENGINE] " + option_type
                         + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
+            # Still fetch 1-min data for dashboard display
+            try:
+                _ok1, _det1 = _check_1min(token, option_type, profile)
+                result["details_1m"] = _det1
+                result["entry_price"] = _det1.get("entry_price", 0.0)
+                # 1-min spread
+                _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
+                _df1 = D.add_indicators(_df1)
+                if not _df1.empty and len(_df1) >= 3:
+                    _l1 = _df1.iloc[-2]
+                    result["spread_1m"] = round(
+                        float(_l1.get("EMA_9", _l1["close"])) -
+                        float(_l1.get("EMA_21", _l1["close"])), 2)
+            except Exception:
+                pass
             return result
 
         # ── LAYER 2: REGIME ──────────────────────────────────
@@ -397,10 +412,22 @@ def check_entry(token: int, option_type: str, profile: dict,
         if option_type == "CE" and spread_1m < D.SPREAD_1M_MIN_CE:
             logger.info("[ENGINE] CE 1m spread BLOCKED: " + str(round(spread_1m,1))
                         + " need +" + str(D.SPREAD_1M_MIN_CE))
+            try:
+                _ok1, _det1 = _check_1min(token, option_type, profile)
+                result["details_1m"] = _det1
+                result["entry_price"] = _det1.get("entry_price", 0.0)
+            except Exception:
+                pass
             return result
         if option_type == "PE" and spread_1m < D.SPREAD_1M_MIN_PE:
             logger.info("[ENGINE] PE 1m spread BLOCKED: " + str(round(spread_1m,1))
                         + " need +" + str(D.SPREAD_1M_MIN_PE))
+            try:
+                _ok1, _det1 = _check_1min(token, option_type, profile)
+                result["details_1m"] = _det1
+                result["entry_price"] = _det1.get("entry_price", 0.0)
+            except Exception:
+                pass
             return result
 
         # ── LAYER 4B: 1-MIN SIGNAL ───────────────────────────
