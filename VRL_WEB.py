@@ -255,7 +255,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     const barPct=minSpread>0?Math.min(100,Math.max(0,sig.spread_1m/minSpread*100)):0;
     const barClr=barPct>=100?'var(--gn)':barPct>=70?'var(--am)':'var(--rd)';
     const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')?'var(--rd)':'var(--am)';
-    let h='<div class="sect"><div class="sh">'+label+' '+mk.atm+' · ₹'+sig.ltp+'</div>';
+    let h='<div class="sect"><div class="sh">'+label+' '+(sig.strike||mk.atm)+' · ₹'+sig.ltp+'</div>';
     // 3-min gate
     h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:rgba(59,130,246,.05)">▸ 3-MIN GATE</div>';
     h+='<div class="row"><div class="k">STATUS</div><div class="v" style="color:'+(g.met>=3?'var(--gn)':'var(--rd)')+'">'+g.met+'/4'+(g.met>=3?' ✅':' ❌')+'</div></div>';

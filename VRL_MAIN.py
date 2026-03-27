@@ -967,6 +967,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 },
                 "ltp": round(result.get("entry_price", 0), 2),
                 "regime": result.get("regime", ""),
+                "strike": dir_strikes.get(opt_type, atm_strike),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
