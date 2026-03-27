@@ -824,8 +824,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         bias = ""
         try:
             bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
+            if not bias:
+                bias = ""
         except Exception:
-            pass
+            bias = ""
 
         straddle_open = getattr(D, "_straddle_open", 0)
         straddle_captured = getattr(D, "_straddle_captured", False)
@@ -918,6 +920,24 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
         pe_signal = _build_signal("PE", all_results.get("PE"))
+
+        # ── Fix LTP=0 when gate blocks early ──
+        try:
+            _tokens = D.get_option_tokens(None, atm_strike, expiry)
+            for _sig, _side in [(ce_signal, "CE"), (pe_signal, "PE")]:
+                if _sig.get("ltp", 0) == 0 and _side in _tokens:
+                    _ltp = D.get_ltp(_tokens[_side]["token"])
+                    if _ltp <= 0:
+                        try:
+                            _sym = _tokens[_side]["symbol"]
+                            _q = D._kite.ltp("NFO:" + _sym)
+                            _ltp = float(list(_q.values())[0]["last_price"])
+                        except Exception:
+                            pass
+                    if _ltp > 0:
+                        _sig["ltp"] = round(_ltp, 2)
+        except Exception:
+            pass
 
         # ── Position block ──
         position = {}
@@ -1015,6 +1035,11 @@ def _strategy_loop(kite):
     global _running
     today_str = date.today().isoformat()
     logger.info("[MAIN] Strategy loop started")
+    try:
+        D.compute_daily_bias(kite)
+        logger.info("[MAIN] Daily bias: " + str(D.get_daily_bias()))
+    except Exception as _be:
+        logger.debug("[MAIN] Bias: " + str(_be))
     with _state_lock:
         state["_last_1min_candle"] = ""
 

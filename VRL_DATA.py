@@ -1237,6 +1237,8 @@ def get_hourly_rsi():
 
 
 def check_vix_warning():
+    if not is_market_open():
+        return {"vix": 0, "warning": False, "level": "NORMAL", "msg": ""}
     vix = get_vix()
     result = {"vix": round(vix, 1), "warning": False, "level": "NORMAL", "msg": ""}
     if vix >= VIX_DANGER_LEVEL:
