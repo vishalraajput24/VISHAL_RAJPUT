@@ -36,8 +36,8 @@ FIELDNAMES_1M = [
     "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte",
     "session_block",
-    "body_pct", "rsi", "ema9", "ema9_gap", "volume_ratio",
-    "iv_pct", "delta",
+    "body_pct", "rsi", "ema9", "ema9_gap", "adx",
+    "volume_ratio", "iv_pct", "delta",
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
@@ -108,7 +108,7 @@ FIELDNAMES_5M = [
     "timestamp", "strike", "type",
     "open", "high", "low", "close", "volume",
     "spot_ref", "dte", "session_block",
-    "body_pct", "rsi", "ema9", "ema21", "ema_spread",
+    "body_pct", "rsi", "ema9", "ema21", "ema_spread", "adx",
     "volume_ratio", "iv_pct", "delta",
 ]
 
@@ -661,6 +661,23 @@ def collect_option_1min(kite, spot_ltp: float):
             df = D.add_indicators(df)
             # Use iloc[-2] which is warmed up now (has warmup history before it)
             indic = _compute_indicators(df, -2)
+            # ADX for 1m
+            try:
+                import numpy as _np
+                _up1 = df["high"].diff()
+                _dn1 = -df["low"].diff()
+                _pdm1 = _np.where((_up1 > _dn1) & (_up1 > 0), _up1, 0.0)
+                _ndm1 = _np.where((_dn1 > _up1) & (_dn1 > 0), _dn1, 0.0)
+                _tr1 = pd.concat([df["high"]-df["low"],
+                                  (df["high"]-df["close"].shift(1)).abs(),
+                                  (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+                _atr1 = _tr1.ewm(alpha=1/14, adjust=False).mean()
+                _pdi1 = 100 * pd.Series(_pdm1, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr1
+                _ndi1 = 100 * pd.Series(_ndm1, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr1
+                _adx1 = ((_pdi1-_ndi1).abs() / (_pdi1+_ndi1+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+                indic["adx"] = round(float(_adx1.iloc[-2]), 1)
+            except Exception:
+                indic["adx"] = 0
         except Exception:
             indic = {}
 
@@ -693,6 +710,7 @@ def collect_option_1min(kite, spot_ltp: float):
             "rsi"          : indic.get("rsi", 50),
             "ema9"         : indic.get("ema9", 0),
             "ema9_gap"     : indic.get("ema9_gap", 0),
+            "adx"          : indic.get("adx", 0),
             "volume_ratio" : indic.get("volume_ratio", 1),
             "iv_pct"       : greeks.get("iv_pct", 0),
             "delta"        : greeks.get("delta",  0),
@@ -1269,6 +1287,24 @@ def collect_option_5min(kite, spot_ltp: float):
             rng = h - l_val
             e9 = float(row.get("EMA_9", c))
             e21 = float(row.get("EMA_21", c))
+            # ADX for 5m
+            adx_val_5m = 0
+            try:
+                import numpy as _np
+                _up5 = df["high"].diff()
+                _dn5 = -df["low"].diff()
+                _pdm5 = _np.where((_up5 > _dn5) & (_up5 > 0), _up5, 0.0)
+                _ndm5 = _np.where((_dn5 > _up5) & (_dn5 > 0), _dn5, 0.0)
+                _tr5 = pd.concat([df["high"]-df["low"],
+                                  (df["high"]-df["close"].shift(1)).abs(),
+                                  (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+                _atr5 = _tr5.ewm(alpha=1/14, adjust=False).mean()
+                _pdi5 = 100 * pd.Series(_pdm5, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr5
+                _ndi5 = 100 * pd.Series(_ndm5, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr5
+                _adx5 = ((_pdi5-_ndi5).abs() / (_pdi5+_ndi5+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+                adx_val_5m = round(float(_adx5.iloc[-2]), 1)
+            except Exception:
+                pass
             vols = [df.iloc[i]["volume"] for i in range(-7, -2) if i >= -len(df) and df.iloc[i]["volume"] > 0]
             avg_v = sum(vols) / len(vols) if vols else 1
             greeks = D.get_full_greeks(c, spot_ltp, _current_atm_strike, _current_expiry, opt_type)
@@ -1282,7 +1318,7 @@ def collect_option_5min(kite, spot_ltp: float):
                 "body_pct": round(abs(c - o) / rng * 100, 1) if rng > 0 else 0,
                 "rsi": round(float(row.get("RSI", 50)), 1),
                 "ema9": round(e9, 2), "ema21": round(e21, 2),
-                "ema_spread": round(e9 - e21, 2),
+                "ema_spread": round(e9 - e21, 2), "adx": adx_val_5m,
                 "volume_ratio": round(last["volume"] / avg_v if avg_v > 0 else 1, 2),
                 "iv_pct": greeks.get("iv_pct", 0), "delta": greeks.get("delta", 0),
             })

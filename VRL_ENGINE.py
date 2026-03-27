@@ -335,7 +335,14 @@ def check_entry(token: int, option_type: str, profile: dict,
         if not permitted:
             logger.info("[ENGINE] " + option_type
                         + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
-            # Still fetch 1-min data for dashboard display
+            # Compute regime even on blocked path (for dashboard)
+            _sp3m = det_3m.get("ema_spread_3m", 0.0)
+            _abs_sp = abs(_sp3m)
+            if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
+            elif _abs_sp >= 5:  result["regime"] = "TRENDING"
+            elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
+            else:               result["regime"] = "CHOPPY"
+            # Still fetch 1-min data + greeks for dashboard display
             try:
                 _ok1, _det1 = _check_1min(token, option_type, profile)
                 result["details_1m"] = _det1
@@ -348,6 +355,9 @@ def check_entry(token: int, option_type: str, profile: dict,
                     result["spread_1m"] = round(
                         float(_l1.get("EMA_9", _l1["close"])) -
                         float(_l1.get("EMA_21", _l1["close"])), 2)
+                result["greeks"] = D.get_full_greeks(
+                    _det1.get("entry_price", 0.0), spot_ltp, strike,
+                    expiry_date, option_type)
             except Exception:
                 pass
             return result
@@ -377,6 +387,17 @@ def check_entry(token: int, option_type: str, profile: dict,
             else:
                 logger.info("[ENGINE] CE blocked — regime=" + result["regime"]
                             + " spot=" + spot_regime + " — both weak")
+                # Fetch 1-min data + greeks for dashboard display
+                try:
+                    _ok1, _det1 = _check_1min(token, option_type, profile)
+                    result["details_1m"] = _det1
+                    result["entry_price"] = _det1.get("entry_price", 0.0)
+                    result["spread_1m"] = get_option_ema_spread(token, dte)
+                    result["greeks"] = D.get_full_greeks(
+                        _det1.get("entry_price", 0.0), spot_ltp, strike,
+                        expiry_date, option_type)
+                except Exception:
+                    pass
                 return result
 
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
@@ -417,6 +438,9 @@ def check_entry(token: int, option_type: str, profile: dict,
                 _ok1, _det1 = _check_1min(token, option_type, profile)
                 result["details_1m"] = _det1
                 result["entry_price"] = _det1.get("entry_price", 0.0)
+                result["greeks"] = D.get_full_greeks(
+                    _det1.get("entry_price", 0.0), spot_ltp, strike,
+                    expiry_date, option_type)
             except Exception:
                 pass
             return result
@@ -427,6 +451,9 @@ def check_entry(token: int, option_type: str, profile: dict,
                 _ok1, _det1 = _check_1min(token, option_type, profile)
                 result["details_1m"] = _det1
                 result["entry_price"] = _det1.get("entry_price", 0.0)
+                result["greeks"] = D.get_full_greeks(
+                    _det1.get("entry_price", 0.0), spot_ltp, strike,
+                    expiry_date, option_type)
             except Exception:
                 pass
             return result
