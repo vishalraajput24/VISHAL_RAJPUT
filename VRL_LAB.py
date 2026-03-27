@@ -179,7 +179,7 @@ def collect_spot_1min(kite):
         return
     try:
         now     = datetime.now()
-        from_dt = now - timedelta(minutes=5)
+        from_dt = now - timedelta(minutes=60)
         candles = kite.historical_data(
             instrument_token=D.NIFTY_SPOT_TOKEN,
             from_date=from_dt, to_date=now,
@@ -1659,11 +1659,7 @@ def start_lab(kite):
     _lab_running = True
 
     def _start():
-        logger.info("[LAB] Starting — running backfill first")
-        try:
-            backfill_history(kite)
-        except Exception as e:
-            logger.error("[LAB] Backfill error: " + str(e))
+        logger.info("[LAB] Starting — skipping backfill, direct to collection")
         _lab_loop()
 
     thread = threading.Thread(target=_start, name="LabCollector", daemon=True)
@@ -1703,7 +1699,13 @@ def _lab_loop():
             if one_min_key != _last_1min and now.second >= 30:
                 _last_1min  = one_min_key
                 spot_ltp    = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                if spot_ltp <= 0:
+                    try:
+                        _q = _kite_ref.ltp("NSE:NIFTY 50")
+                        spot_ltp = float(list(_q.values())[0]["last_price"])
+                    except Exception:
+                        pass
+                if spot_ltp > 0:
                     try:
                         collect_option_1min(_kite_ref, spot_ltp)
                     except Exception as e:
@@ -1727,7 +1729,7 @@ def _lab_loop():
             if three_min_key != _last_3min and now.second >= 30:
                 _last_3min = three_min_key
                 spot_ltp   = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                if spot_ltp > 0:
                     try:
                         collect_option_3min(_kite_ref, spot_ltp)
                     except Exception as e:
@@ -1742,7 +1744,7 @@ def _lab_loop():
                     getattr(_lab_loop, '_last_5min', None) != five_min_key) and now.second >= 30:
                 _lab_loop._last_5min = five_min_key
                 spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                if spot_ltp > 0:
                     try:
                         collect_option_5min(_kite_ref, spot_ltp)
                     except Exception as e:
@@ -1768,7 +1770,7 @@ def _lab_loop():
                     getattr(_lab_loop, '_last_15min', None) != fifteen_min_key) and now.second >= 35:
                 _lab_loop._last_15min = fifteen_min_key
                 spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if spot_ltp > 0 and D.is_tick_live(D.NIFTY_SPOT_TOKEN):
+                if spot_ltp > 0:
                     try:
                         collect_option_15min(_kite_ref, spot_ltp)
                     except Exception as e:

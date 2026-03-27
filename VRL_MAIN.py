@@ -1035,11 +1035,31 @@ def _strategy_loop(kite):
     global _running
     today_str = date.today().isoformat()
     logger.info("[MAIN] Strategy loop started")
+    # Ensure state dir exists
+    os.makedirs(os.path.expanduser("~/state"), exist_ok=True)
+    # Compute bias
     try:
         D.compute_daily_bias(kite)
         logger.info("[MAIN] Daily bias: " + str(D.get_daily_bias()))
     except Exception as _be:
         logger.debug("[MAIN] Bias: " + str(_be))
+    # Compute hourly RSI
+    try:
+        D.check_hourly_rsi(kite)
+        logger.info("[MAIN] Hourly RSI: " + str(D.get_hourly_rsi()))
+    except Exception as _he:
+        logger.debug("[MAIN] H.RSI: " + str(_he))
+    # Capture straddle if after 9:30
+    try:
+        _now = datetime.now()
+        if _now.hour >= 9 and _now.minute >= 30:
+            _ss = D.get_active_strike_step(D.calculate_dte(expiry))
+            _sa = D.resolve_atm_strike(D.get_ltp(D.NIFTY_SPOT_TOKEN), _ss)
+            if _sa > 0:
+                D.capture_straddle(kite, _sa, expiry)
+                logger.info("[MAIN] Straddle captured at startup")
+    except Exception as _se:
+        logger.debug("[MAIN] Straddle: " + str(_se))
     with _state_lock:
         state["_last_1min_candle"] = ""
 
