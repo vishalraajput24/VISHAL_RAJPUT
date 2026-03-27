@@ -1533,6 +1533,10 @@ def _strategy_loop(kite):
 # ═══════════════════════════════════════════════════════════════
 import VRL_COMMANDS
 
+# ── Telegram listener state ───────────────────────────────────
+_tg_offset         = 0
+_tg_last_update_id = 0
+_tg_running        = False
 
 def _tg_get_updates(offset: int) -> list:
     url = _TG_BASE + D.TELEGRAM_TOKEN + "/getUpdates"
