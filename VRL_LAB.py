@@ -97,7 +97,8 @@ def _csv_path_scan(d: date) -> str:
 
 
 def _csv_path_spot() -> str:
-    return os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + today.strftime("%Y%m%d") + ".csv")
+    from datetime import date as _d
+    return os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + _d.today().strftime("%Y%m%d") + ".csv")
 
 
 # ─── 5-MIN + 15-MIN SCHEMAS ────────────────────────────────
