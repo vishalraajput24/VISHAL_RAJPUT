@@ -38,8 +38,6 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.expanduser("~/VISHAL_RAJPUT"))
 
 import pandas as pd
-import numpy as np
-
 from VRL_AUTH import get_kite
 import VRL_DATA as D
 

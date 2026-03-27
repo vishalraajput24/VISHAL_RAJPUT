@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15
 #  Master orchestration file.
-#  v12.14: Expiry breakout mode, fib pivots, /pivot command,
+#  v12.15: Expiry breakout mode, fib pivots, /pivot command,
 #          spot buffer feed, expiry-specific entry logic.
 # ═══════════════════════════════════════════════════════════════
 
@@ -384,7 +384,7 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "GATES (v12.14)\n"
+        "GATES (v12.15)\n"
         "3-min  : 3/4 conditions — option trending UP\n"
         "CE     : TRENDING regime + 1m spread ≥+6pts\n"
         "PE     : 3-min permitted + 1m spread ≥+4pts\n"
@@ -1159,7 +1159,7 @@ def _strategy_loop(kite):
             session = D.get_session_block(now.hour, now.minute)
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
-            # v12.14: Warning system
+            # v12.15: Warning system
             try:
                 _wmsg, _wupd = D.run_warnings(
                     kite, state, expiry, dte, spot_ltp, now)
@@ -1289,7 +1289,7 @@ def _strategy_loop(kite):
 
             # ── NO RE‑ENTRY WATCHING — removed ──────────────────
 
-            # v12.14: Feed spot buffer for consolidation detection
+            # v12.15: Feed spot buffer for consolidation detection
             if spot_ltp > 0:
                 D.update_spot_buffer({
                     "timestamp": now.isoformat(),
@@ -1303,7 +1303,7 @@ def _strategy_loop(kite):
                     and spot_ltp > 0
                     and expiry is not None):
 
-                # v12.14: Feed proper 1-min candle to spot buffer
+                # v12.15: Feed proper 1-min candle to spot buffer
                 try:
                     _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 5)
                     if not _spot_df.empty and len(_spot_df) >= 2:
@@ -1344,7 +1344,7 @@ def _strategy_loop(kite):
                     dir_tokens = tokens
                     dir_strikes = {"CE": atm_strike, "PE": atm_strike}
 
-                # v12.14: EXPIRY BREAKOUT MODE (DTE=0)
+                # v12.15: EXPIRY BREAKOUT MODE (DTE=0)
                 if dte == 0:
                     try:
                         eb_result = check_expiry_breakout(
@@ -1483,7 +1483,7 @@ def _strategy_loop(kite):
                         "pe"        : _scan_summary(pe_res),
                     }
 
-                # v12.14: Write dashboard snapshot for web
+                # v12.15: Write dashboard snapshot for web
                 try:
                     _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                                      profile, all_results, expiry, now,
@@ -2634,7 +2634,7 @@ def _cmd_trades(args):
     )
 
 # ═══════════════════════════════════════════════════════════════
-#  v12.14: PIVOT COMMAND
+#  v12.15: PIVOT COMMAND
 # ═══════════════════════════════════════════════════════════════
 
 def _cmd_pivot(args):
@@ -2905,7 +2905,7 @@ def main():
     except Exception as e:
         logger.warning("[MAIN] Gap calculation failed: " + str(e))
 
-    # v12.14: Calculate fib pivot points
+    # v12.15: Calculate fib pivot points
     try:
         pivots = D.calculate_fib_pivots()
         if pivots:

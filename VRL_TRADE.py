@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_TRADE.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_TRADE.py — VISHAL RAJPUT TRADE v12.15
 #  Sealed order execution machine.
 #  ONLY file that touches Kite orders.
 #  Paper mode: simulated fills. Live mode: real orders + verification.
@@ -27,19 +27,6 @@ def get_margin_available(kite) -> float:
         logger.error("[TRADE] Margin fetch error: " + str(e))
         return -1.0
 
-
-def get_required_margin(kite, symbol: str, qty: int) -> float:
-    """
-    Estimate required margin for MIS option position.
-    Rough: LTP × lot_size × 1.1 buffer.
-    """
-    try:
-        quote = kite.quote(["NFO:" + symbol])
-        ltp   = quote.get("NFO:" + symbol, {}).get("last_price", 0)
-        return ltp * qty * 1.1
-    except Exception as e:
-        logger.warning("[TRADE] Margin estimate error: " + str(e))
-        return 0.0
 
 
 # ─── ORDER VERIFICATION ───────────────────────────────────────

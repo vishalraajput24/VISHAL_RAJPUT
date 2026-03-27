@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_LAB.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_LAB.py — VISHAL RAJPUT TRADE v12.15
 #  Independent lab data collector. Separate process.
 #  Collects 1-min + 3-min option candles. EOD forward fill.
 #  Zero connection to trade loop. Cannot affect money.
@@ -58,10 +58,10 @@ FIELDNAMES_SCAN = [
     "vix",
     # v12.11: Spot columns
     "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime", "spot_gap",
-    # v12.14: Market context
+    # v12.15: Market context
     "bias", "hourly_rsi", "straddle_decay_pct",
     "near_fib_level", "fib_distance",
-    # v12.14: Blocked trade analysis (forward fill at EOD)
+    # v12.15: Blocked trade analysis (forward fill at EOD)
     "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]
 
@@ -257,129 +257,6 @@ def collect_spot_1min(kite):
     except Exception as e:
         logger.debug("[LAB] Spot 1m error: " + str(e))
 
-
-# ─── SIGNAL SCAN LOGGER ───────────────────────────────────────
-
-def _log_signal_scan(kite, spot_ltp: float, now: datetime):
-    """
-    v12.11: Every 1-min candle: run check_entry on CE + PE and log ALL indicators.
-    Fixed: correct field names, logs even when gate blocks, adds spot data.
-    """
-    if not _current_atm_tokens or not _current_expiry:
-        return
-    if not D.is_market_open():
-        return
-
-    try:
-        from VRL_ENGINE import check_entry as _check_entry
-    except Exception:
-        return
-
-    today   = date.today()
-    dte     = D.calculate_dte(_current_expiry)
-    profile = D.get_dte_profile(dte)
-    session = D.get_session_block(now.hour, now.minute)
-    vix     = D.get_vix()
-    ts_str  = now.strftime("%Y-%m-%d %H:%M:%S")
-    rows    = []
-
-    # v12.11: Spot data — fetched once per scan, shared by CE+PE rows
-    spot_3m   = D.get_spot_indicators("3minute")
-    spot_gap  = D.get_spot_gap()
-
-    for opt_type, info in _current_atm_tokens.items():
-        token = info["token"]
-        try:
-            result = _check_entry(
-                token       = token,
-                option_type = opt_type,
-                profile     = profile,
-                spot_ltp    = spot_ltp,
-                strike      = _current_atm_strike,
-                expiry_date = _current_expiry,
-                session     = session,
-            )
-
-            d1 = result.get("details_1m", {})
-            d3 = result.get("details_3m", {})
-            g  = result.get("greeks", {})
-
-            # Determine reject reason
-            if result.get("fired"):
-                reject = ""
-            elif d3.get("conditions_met", 0) < 3 and d3.get("conditions_met", 0) > 0:
-                reject = "3M_GATE_" + str(d3.get("conditions_met", 0)) + "/4"
-            elif d1.get("rsi_reject"):
-                reject = "RSI_ZONE"
-            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
-                reject = "BODY"
-            elif not d1.get("vol_ok") and d1.get("vol_ratio", 0) > 0:
-                reject = "VOLUME"
-            elif result.get("score", 0) > 0:
-                reject = "SCORE_" + str(result.get("score", 0))
-            else:
-                reject = "3M_BLOCK"
-
-            rows.append({
-                "timestamp"      : ts_str,
-                "session"        : session,
-                "dte"            : dte,
-                "atm_strike"     : _current_atm_strike,
-                "spot"           : round(spot_ltp, 2),
-                "direction"      : opt_type,
-                "entry_price"    : result.get("entry_price", 0),
-                # 1-min — use correct key names from details dict
-                "rsi_1m"         : d1.get("rsi_val", 0),
-                "body_pct_1m"    : d1.get("body_pct", 0),
-                "vol_ratio_1m"   : d1.get("vol_ratio", 0),
-                "rsi_rising_1m"  : int(d1.get("rsi_rising", False)),
-                # 3-min — fixed: rsi_val_3m not rsi_val, ema_spread_3m not ema_spread
-                "rsi_3m"         : d3.get("rsi_val_3m", 0),
-                "body_pct_3m"    : d3.get("body_pct_3m", 0),
-                "ema_spread_3m"  : d3.get("ema_spread_3m", 0),
-                "conditions_3m"  : d3.get("conditions_met", 0),
-                "mode_3m"        : d3.get("mode", ""),
-                # result
-                "score"          : result.get("score", 0),
-                "fired"          : int(result.get("fired", False)),
-                "reject_reason"  : reject,
-                # Greeks
-                "iv_pct"         : g.get("iv_pct", 0),
-                "delta"          : g.get("delta", 0),
-                # VIX
-                "vix"            : round(vix, 2),
-                # v12.11: Spot
-                "spot_rsi_3m"       : spot_3m.get("rsi", 0),
-                "spot_ema_spread_3m": spot_3m.get("spread", 0),
-                "spot_regime"       : spot_3m.get("regime", ""),
-                "spot_gap"          : round(spot_gap, 1),
-                # v12.14: Market context
-                "spread_1m"         : result.get("spread_1m", 0),
-                "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
-                "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
-                "straddle_decay_pct": 0.0,
-                "near_fib_level"    : D.get_nearest_fib_level(spot_ltp).get("level", "") if hasattr(D, "get_nearest_fib_level") else "",
-                "fib_distance"      : D.get_nearest_fib_level(spot_ltp).get("distance", 0) if hasattr(D, "get_nearest_fib_level") else 0,
-                # v12.14: Forward fill placeholders
-                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
-            })
-
-        except Exception as e:
-            logger.debug("[LAB] scan log error " + opt_type + ": " + str(e))
-            continue
-
-    if rows:
-        path   = _csv_path_scan(today)
-        is_new = not os.path.isfile(path)
-        try:
-            with open(path, "a", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=FIELDNAMES_SCAN, extrasaction="ignore")
-                if is_new:
-                    w.writeheader()
-                w.writerows(rows)
-                f.flush()
-        except Exception as e:
-            logger.warning("[LAB] scan write error: " + str(e))
 
 
 # ─── IO HELPERS ───────────────────────────────────────────────
@@ -727,124 +604,6 @@ def collect_option_1min(kite, spot_ltp: float):
 
 # ─── BACKFILL — 3-MIN ─────────────────────────────────────────
 
-def backfill_history(kite):
-    """Backfill up to 60 days of 3-min option data."""
-    logger.info("[LAB] Backfill starting")
-    today   = date.today()
-    filled  = skipped = failed = 0
-
-    for delta_days in range(1, 61):
-        target = today - timedelta(days=delta_days)
-        if target.weekday() >= 5:
-            continue
-        if os.path.isfile(_csv_path_3m(target)):
-            skipped += 1
-            continue
-
-        expiry = D.get_nearest_expiry(kite, reference_date=target)
-        if not expiry:
-            failed += 1
-            continue
-
-        spot_open = _read_spot_open(target)
-        if spot_open is None:
-            logger.warning("[LAB] No spot open for " + str(target) + " — skip")
-            failed += 1
-            continue
-
-        dte     = (expiry - target).days
-        step    = D.get_active_strike_step(dte)
-        strike  = D.resolve_atm_strike(spot_open, step)
-        tokens  = D.get_option_tokens(kite, strike, expiry)
-        if not tokens:
-            failed += 1
-            continue
-
-        from_dt = datetime.combine(target, datetime.min.time()).replace(
-            hour=D.MARKET_OPEN_HOUR, minute=D.MARKET_OPEN_MIN)
-        to_dt   = datetime.combine(target, datetime.min.time()).replace(
-            hour=D.MARKET_CLOSE_HOUR, minute=D.MARKET_CLOSE_MIN)
-
-        spot_map = _read_spot_1min_map(target)
-        all_rows = []
-
-        for opt_type, info in tokens.items():
-            candles = _fetch_candles(kite, info["token"], from_dt, to_dt, "3minute")
-            if not candles:
-                continue
-
-            try:
-                df = pd.DataFrame(candles)
-                df.rename(columns={"date": "timestamp"}, inplace=True)
-                df.set_index("timestamp", inplace=True)
-                df = D.add_indicators(df)
-            except Exception:
-                df = None
-
-            first_iv = 0.0
-
-            for i, c in enumerate(candles):
-                indic  = _compute_indicators(df, i) if df is not None else {}
-                ts_str = (c["date"].strftime("%Y-%m-%d %H:%M:%S")
-                          if hasattr(c["date"], "strftime") else str(c["date"]))
-
-                spot_at_candle = spot_map.get(ts_str[:16], spot_open)
-
-                greeks = D.get_full_greeks(
-                    c["close"], spot_at_candle, strike, expiry, opt_type
-                )
-
-                if i == 0:
-                    first_iv = greeks.get("iv_pct", 0)
-                iv_vs_open = round(greeks.get("iv_pct", 0) - first_iv, 2)
-
-                all_rows.append({
-                    "timestamp"    : ts_str,
-                    "strike"       : strike,
-                    "type"         : opt_type,
-                    "open"         : round(c["open"],  2),
-                    "high"         : round(c["high"],  2),
-                    "low"          : round(c["low"],   2),
-                    "close"        : round(c["close"], 2),
-                    "volume"       : int(c["volume"]),
-                    "spot_ref"     : round(spot_at_candle, 2),
-                    "atm_distance" : round(abs(spot_at_candle - strike), 0),
-                    "dte"          : dte,
-                    "session_block": D.get_session_block(
-                        c["date"].hour   if hasattr(c["date"], "hour")   else 9,
-                        c["date"].minute if hasattr(c["date"], "minute") else 15,
-                    ),
-                    "iv_vs_open"   : iv_vs_open,
-                    "body_pct"     : indic.get("body_pct", 0),
-                    "adx"          : indic.get("adx",      0),
-                    "rsi"          : indic.get("rsi",      50),
-                    "ema9"         : indic.get("ema9",     0),
-                    "ema9_gap"     : indic.get("ema9_gap", 0),
-                    "volume_ratio" : indic.get("volume_ratio", 1),
-                    "iv_pct"       : greeks.get("iv_pct", 0),
-                    "delta"        : greeks.get("delta",  0),
-                    "gamma"        : greeks.get("gamma",  0),
-                    "theta"        : greeks.get("theta",  0),
-                    "vega"         : greeks.get("vega",   0),
-                    "fwd_3c": "", "fwd_6c": "", "fwd_9c": "", "fwd_outcome": "",
-                })
-
-            time.sleep(0.4)
-
-        if all_rows:
-            all_rows.sort(key=lambda r: (r["timestamp"], r["type"]))
-            n = _append_rows(_csv_path_3m(target), FIELDNAMES_3M, all_rows)
-            logger.info("[LAB] Backfill " + str(target) + " wrote=" + str(n))
-            filled += 1
-        else:
-            failed += 1
-
-        time.sleep(0.5)
-
-    logger.info("[LAB] Backfill done: filled=" + str(filled)
-                + " skipped=" + str(skipped) + " failed=" + str(failed))
-    return filled, skipped, failed
-
 
 def _read_spot_open(target_date: date):
     paths = [
@@ -986,11 +745,11 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
 # ─── LAB SCHEDULER ────────────────────────────────────────────
 
 
-# ─── SCAN FORWARD FILL (v12.14) ──────────────────────────────
+# ─── SCAN FORWARD FILL (v12.15) ──────────────────────────────
 
 def fill_forward_scan(kite, target_date: date = None):
     """
-    v12.14: For each scan row, fill what the option price was
+    v12.15: For each scan row, fill what the option price was
     3/5/10 candles later. Answers: "What would have happened
     if we entered here?"
     Only fills rows where fired=0 (blocked entries) — these are
@@ -1071,7 +830,7 @@ def fill_forward_scan(kite, target_date: date = None):
         logger.error("[LAB] Scan fwd write: " + str(e))
 
 
-# ─── DAILY SUMMARY CSV (v12.14) ──────────────────────────────
+# ─── DAILY SUMMARY CSV (v12.15) ──────────────────────────────
 
 FIELDNAMES_DAILY = [
     "date", "day_of_week",
@@ -1098,7 +857,7 @@ FIELDNAMES_DAILY = [
 
 def generate_daily_summary(target_date: date = None):
     """
-    v12.14: Generate one-row-per-day summary CSV.
+    v12.15: Generate one-row-per-day summary CSV.
     Called at EOD from VRL_MAIN.
     """
     if target_date is None:
@@ -1709,10 +1468,6 @@ def start_lab(kite):
     thread.start()
     logger.info("[LAB] Collection thread started")
 
-
-def stop_lab():
-    global _lab_running
-    _lab_running = False
 
 
 def _lab_loop():

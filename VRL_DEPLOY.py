@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DEPLOY.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_DEPLOY.py — VISHAL RAJPUT TRADE v12.15
 #  Independent watchdog daemon. Runs separately from VRL_MAIN.
 #  Polls Telegram for /deploy, /serverstatus, /serverlog.
 #  Can restart the bot even when bot is dead.

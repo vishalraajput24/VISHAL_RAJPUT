@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.15
 #  Signal logic. Entry checks, exit management, scoring.
-#  v12.14: Expiry breakout mode (spot consolidation trigger),
+#  v12.15: Expiry breakout mode (spot consolidation trigger),
 #          fib pivot proximity, expiry-specific SL/trail.
 # ═══════════════════════════════════════════════════════════════
 
@@ -542,14 +542,14 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 def compute_entry_sl(entry_price: float, profile: dict, mode: str,
                      token: int = None, dte: int = 99) -> float:
-    """v12.12: ATR-based SL. v12.14: Expiry cap 20pts."""
+    """v12.12: ATR-based SL. v12.15: Expiry cap 20pts."""
     if mode in ("CONVICTION", "EXPIRY_BREAKOUT") and token:
         sl_pts = D.calculate_atr_sl(token, profile, entry_price)
     else:
         sl_pts = profile.get("conv_sl_pts", 20) if mode == "CONVICTION" else profile.get("scalp_sl_pts", 8)
         sl_pts = sl_pts or 8
     actual = max(sl_pts, _min_sl_pts(entry_price))
-    # v12.14: Tighter cap on expiry day
+    # v12.15: Tighter cap on expiry day
     sl_cap = D.EXPIRY_SL_MAX if dte == 0 else D.ATR_SL_MAX
     actual = min(actual, sl_cap)
     if actual != sl_pts:
@@ -570,7 +570,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
     if running_pnl > state.get("peak_pnl", 0):
         state["peak_pnl"] = running_pnl
 
-    # v12.14: Track trough (worst unrealized PNL) for SL calibration
+    # v12.15: Track trough (worst unrealized PNL) for SL calibration
     if running_pnl < state.get("trough_pnl", 0):
         state["trough_pnl"] = running_pnl
 
@@ -626,7 +626,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
     running   = round(option_ltp - entry, 2)
 
     # v12.12: Percentage-based drawdown (replaces flat 5/8pts)
-    # v12.14: Use tighter 20% on expiry (DTE=0), 25% otherwise
+    # v12.15: Use tighter 20% on expiry (DTE=0), 25% otherwise
     dte_at_entry = state.get("dte_at_entry", 99)
     drawdown_pct = D.EXPIRY_TRAIL_PCT if dte_at_entry == 0 else D.TRAIL_DRAWDOWN_PCT
     drawdown = peak - running
@@ -740,7 +740,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  EXPIRY BREAKOUT MODE (v12.14)
+#  EXPIRY BREAKOUT MODE (v12.15)
 #  Spot consolidation → breakout detection
 #  No option RSI/EMA gate — spot is the trigger
 #  Only active on DTE=0
@@ -749,7 +749,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
 def check_expiry_breakout(kite, spot_ltp: float, strike: int,
                           expiry_date, session: str) -> dict:
     """
-    v12.14: Expiry-specific entry based on spot breakout.
+    v12.15: Expiry-specific entry based on spot breakout.
     Returns same format as check_entry for compatibility.
     """
     result = {

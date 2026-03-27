@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.15
 #  Foundation layer. Settings, logging, market data, Greeks.
-#  v12.14: Fib pivot points, expiry breakout mode,
+#  v12.15: Fib pivot points, expiry breakout mode,
 #          spot consolidation detection, expiry-specific rules.
 # ═══════════════════════════════════════════════════════════════
 
@@ -16,7 +16,7 @@ from logging.handlers import TimedRotatingFileHandler
 import pandas as pd
 from kiteconnect import KiteTicker
 
-VERSION  = "v12.14"
+VERSION  = "v12.15"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 def _load_env_file(path: str):
@@ -97,7 +97,7 @@ ATR_SL_CANDLES    = 5      # Last N candles for ATR calculation
 TRAIL_DRAWDOWN_PCT     = 25   # Exit when drawdown > 25% of peak
 TRAIL_EMA_CANDLES_FAIL = 2    # Need 2 consecutive closes below EMA to exit
 
-# v12.14: Expiry breakout mode (DTE=0)
+# v12.15: Expiry breakout mode (DTE=0)
 EXPIRY_CONSOL_CANDLES  = 5    # Min candles for consolidation detection
 EXPIRY_CONSOL_RANGE    = 15   # Max range (pts) to qualify as consolidation
 EXPIRY_BREAKOUT_MIN    = 10   # Min pts beyond consolidation for breakout
@@ -966,7 +966,7 @@ def get_spot_regime(interval: str = "3minute") -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  FIB PIVOT POINTS (v12.14)
+#  FIB PIVOT POINTS (v12.15)
 #  Calculated once at startup from previous session's H/L/C
 #  Fibonacci ratios: 0.382, 0.618, 1.000
 # ═══════════════════════════════════════════════════════════════
@@ -1074,7 +1074,7 @@ def get_nearest_fib_level(spot_price: float) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  SPOT CONSOLIDATION DETECTOR (v12.14)
+#  SPOT CONSOLIDATION DETECTOR (v12.15)
 #  Tracks last N 1-min candles for tight-range detection
 #  Used by expiry breakout mode
 # ═══════════════════════════════════════════════════════════════
@@ -1162,7 +1162,7 @@ def is_expiry_window(now: datetime = None) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v12.14: WARNING SYSTEM (all warnings only — no blocking)
+#  v12.15: WARNING SYSTEM (all warnings only — no blocking)
 #  Bias 9:20 | Straddle 9:30 | VIX+Hourly RSI continuous
 #  Entry fire: 9:45-15:10 | Scan from 9:15
 # ═══════════════════════════════════════════════════════════════

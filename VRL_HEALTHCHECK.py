@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.15
 #  Runs at 9:30 AM — verifies all critical systems
 #  Rule: every major bug fix must add a check here
-#  v12.14: Spot gap check added
+#  v12.15: Spot gap check added
 #  5 consecutive clean days = ready for live trading
 # ═══════════════════════════════════════════════════════════════
 
@@ -267,7 +267,7 @@ def check_circuit_breaker_logic():
 
 
 def check_strike_step():
-    """v12.14: Verify 100-step strikes active + expiry fallback to 50."""
+    """v12.15: Verify 100-step strikes active + expiry fallback to 50."""
     try:
         from VRL_DATA import STRIKE_STEP, STRIKE_STEP_EXPIRY, get_active_strike_step
         issues = []
@@ -289,7 +289,7 @@ def check_strike_step():
 
 
 def check_spot_gap():
-    """v12.14: Verify spot gap detection works."""
+    """v12.15: Verify spot gap detection works."""
     try:
         gap_info = D.calculate_spot_gap()
         gap = gap_info.get("gap_pts", 0)
@@ -304,7 +304,7 @@ def check_spot_gap():
 
 
 def check_engine_ce_override():
-    """v12.14: Verify CE regime override has no orphaned return."""
+    """v12.15: Verify CE regime override has no orphaned return."""
     try:
         path = os.path.join(os.path.dirname(__file__), "VRL_ENGINE.py")
         with open(path) as f:
@@ -317,7 +317,7 @@ def check_engine_ce_override():
 
 
 def check_version_match():
-    """v12.14: All VRL files same version."""
+    """v12.15: All VRL files same version."""
     try:
         target = D.VERSION
         bad = []
@@ -335,7 +335,7 @@ def check_version_match():
 
 
 def check_warning_system():
-    """v12.14: Warning functions exist."""
+    """v12.15: Warning functions exist."""
     try:
         funcs = ["run_warnings", "compute_daily_bias", "check_hourly_rsi",
                  "check_vix_warning", "capture_straddle", "is_entry_fire_window"]
@@ -348,7 +348,7 @@ def check_warning_system():
 
 
 def check_entry_window():
-    """v12.14: Entry fire window configured."""
+    """v12.15: Entry fire window configured."""
     try:
         h = D.ENTRY_FIRE_HOUR; m = D.ENTRY_FIRE_MIN
         if h != 9 or m != 45:
@@ -363,7 +363,7 @@ def check_entry_window():
 def main():
     global _kite_ref
     now = datetime.now().strftime("%H:%M")
-    print(f"VRL HealthCheck v12.14 running at {now}")
+    print(f"VRL HealthCheck v12.15 running at {now}")
 
     try:
         kite = get_kite()
@@ -408,7 +408,7 @@ def main():
 
     status = "✅ ALL SYSTEMS OK — Ready to trade" if all_ok else "⚠️ ISSUES FOUND — Fix before trading"
     report = (
-        f"🩺 <b>HEALTHCHECK v12.14 — {now}</b>\n"
+        f"🩺 <b>HEALTHCHECK v12.15 — {now}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         + "\n".join(lines) +
         f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"

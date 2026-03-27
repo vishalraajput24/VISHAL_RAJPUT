@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.14
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.15
 DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.
 """
 import csv, json, os
@@ -23,7 +23,6 @@ def _read_dash():
     except: return {}
 
 import glob as _glob
-import urllib.parse as _up
 
 _FOLDERS = {
     "trade_log":    ("📒 Trade Log",              os.path.join(BASE, "lab_data")),
@@ -57,8 +56,6 @@ def _list_files(folder=""):
                 })
     return {"files": files[:30], "folder": folder, "folder_name": info[0]}
 
-
-import glob as _glob
 
 def _read_multitf():
     spot_dir = os.path.join(BASE, "lab_data", "spot")
@@ -546,6 +543,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v12.14 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v12.15 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()

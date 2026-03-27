@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_AUTH.py — VISHAL RAJPUT TRADE v12.14
+#  VRL_AUTH.py — VISHAL RAJPUT TRADE v12.15
 #  Zerodha Kite authentication. Auto-login via TOTP.
-#  v12.14: Standalone cron execution, stale token date check.
+#  v12.15: Standalone cron execution, stale token date check.
 # ═══════════════════════════════════════════════════════════════
 
 import json
@@ -122,7 +122,7 @@ def get_kite():
 
 
 def force_fresh_login():
-    """v12.14: Force fresh login, ignoring cached token. For cron use."""
+    """v12.15: Force fresh login, ignoring cached token. For cron use."""
     kite      = KiteConnect(api_key=D.KITE_API_KEY)
     today_str = date.today().isoformat()
     for attempt in range(3):
@@ -140,7 +140,7 @@ def force_fresh_login():
     return None
 
 
-# v12.14: Standalone execution for cron job at 8 AM
+# v12.15: Standalone execution for cron job at 8 AM
 # Previously cron ran `python3 VRL_AUTH.py` which did nothing (no __main__)
 # Now it forces fresh login and caches today's token
 def _tg_alert(msg):
