@@ -842,8 +842,11 @@ def _is_new_1min_candle(now: datetime) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
-                     profile, all_results, expiry, now):
+                     profile, all_results, expiry, now,
+                     dir_strikes=None):
     """Write everything the dashboard needs to a single JSON file."""
+    if dir_strikes is None:
+        dir_strikes = {}
     try:
         with _state_lock:
             st = dict(state)
@@ -878,11 +881,13 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                                 "met": 0, "spread": 0, "rsi_val": 0, "body_pct": 0, "mode": ""},
                     "spread_1m": 0, "spread_1m_min": D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE,
                     "entry_1m": {"body_pct": 0, "body_ok": False, "rsi": 0, "rsi_rising": False,
-                                 "rsi_ok": False, "vol": 0, "vol_ok": False},
+                                 "rsi_ok": False, "rsi_below_3m": False, "vol": 0, "vol_ok": False,
+                                 "spread_accel": False},
                     "score": 0, "score_min": D.SESSION_SCORE_MIN.get(session, 5),
                     "fired": False, "verdict": "NO DATA",
                     "greeks": {"delta": 0, "iv": 0, "theta": 0, "gamma": 0},
                     "ltp": 0, "regime": "",
+                    "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
             d3 = result.get("details_3m", {})
@@ -1480,7 +1485,8 @@ def _strategy_loop(kite):
                 # v12.14: Write dashboard snapshot for web
                 try:
                     _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
-                                     profile, all_results, expiry, now)
+                                     profile, all_results, expiry, now,
+                                     dir_strikes=dir_strikes)
                 except Exception as _de:
                     logger.debug("[DASH] " + str(_de))
 

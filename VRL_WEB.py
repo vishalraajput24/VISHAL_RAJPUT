@@ -330,15 +330,16 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var up=sp.filter(function(t){return t.spread>0&&t.adx>0}).length,dn=sp.filter(function(t){return t.spread<0&&t.adx>0}).length;
     var vc=trn>=3?'var(--gn)':trn>=2?'var(--am)':'var(--rd)';
     mh+='<div style="padding:5px 10px;font-size:10px;font-weight:700;color:'+vc+'">'+(trn>=3?'STRONG':trn>=2?'MODERATE':'WEAK')+' '+trn+'/'+tot+(up>=3?' \u2191 BULLISH':dn>=3?' \u2193 BEARISH':'')+'</div></div>'}
+  var ceLtp=ce.ltp||0, ceGk=ce.greeks||{}, peLtp=pe.ltp||0, peGk=pe.greeks||{};
   if(ceo.some(function(c){return c.rsi>0||c.ltp>0})){
     mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE OPTION MULTI-TF</div>';
     mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right">'+t.delta+'</div><div style="text-align:right;color:var(--gn)">\u20b9'+t.ltp+'</div></div>'});
+    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=ceLtp||t.ltp,iv=ceGk.iv||t.iv,dl=ceGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--gn)">\u20b9'+ltp+'</div></div>'});
     mh+='</div>'}
   if(peo.some(function(p){return p.rsi>0||p.ltp>0})){
     mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE OPTION MULTI-TF</div>';
     mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right">'+t.delta+'</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
+    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=peLtp||t.ltp,iv=peGk.iv||t.iv,dl=peGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--rd)">\u20b9'+ltp+'</div></div>'});
     mh+='</div>'}
 
   // Fib Pivot Section
