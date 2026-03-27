@@ -579,8 +579,8 @@ def calculate_atr_sl(token: int, profile: dict,
     return sl
 
 def get_active_strike_step(dte: int = None) -> int:
-    """v12.10: Returns 50-step on expiry day, 100-step otherwise."""
-    if dte is not None and dte == 0:
+    """v12.15: Returns 50-step for DTE ≤ 3, 100-step for DTE 4+."""
+    if dte is not None and dte <= 3:
         return STRIKE_STEP_EXPIRY
     return STRIKE_STEP
 
@@ -588,6 +588,79 @@ def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
     if step is None:
         step = STRIKE_STEP
     return int(round(spot_ltp / step) * step)
+
+# Premium filter constants for direction-aware strike selection
+STRIKE_PREMIUM_MIN = 100    # Below ₹100 = too OTM, skip
+STRIKE_PREMIUM_MAX = 400    # Above ₹400 = too deep ITM, use ATM instead
+
+def resolve_strike_for_direction(spot_ltp: float, step: int,
+                                  direction: str, dte: int,
+                                  kite=None, expiry_date=None) -> dict:
+    """
+    v12.15: Direction-aware strike selection.
+    CE → strike ≤ spot (ITM/ATM) for intrinsic value
+    PE → strike ≥ spot (ITM/ATM) for intrinsic value
+    Returns {"strike": int, "reason": str} or None if no good strike.
+    """
+    atm = resolve_atm_strike(spot_ltp, step)
+
+    if direction == "CE":
+        # CE wants strike ≤ spot (ITM)
+        if atm <= spot_ltp:
+            itm_strike = atm               # ATM is already ITM/ATM for CE
+        else:
+            itm_strike = atm - step         # ATM > spot, go 1 step down
+        candidates = [itm_strike, atm]      # prefer ITM, fallback ATM
+    else:
+        # PE wants strike ≥ spot (ITM)
+        if atm >= spot_ltp:
+            itm_strike = atm               # ATM is already ITM/ATM for PE
+        else:
+            itm_strike = atm + step         # ATM < spot, go 1 step up
+        candidates = [itm_strike, atm]      # prefer ITM, fallback ATM
+
+    # DTE-based preference: ITM more important on shorter DTE
+    # DTE 4+: ATM is fine, DTE ≤ 1: ITM required
+    prefer_itm = dte <= 3
+
+    # Try to get premium for candidates to filter
+    k = kite or _kite
+    if k and expiry_date:
+        for strike in candidates:
+            try:
+                tokens = get_option_tokens(k, strike, expiry_date)
+                opt_info = tokens.get(direction)
+                if not opt_info:
+                    continue
+                q = k.ltp(["NFO:" + opt_info["symbol"]])
+                premium = float(list(q.values())[0]["last_price"])
+
+                if premium < STRIKE_PREMIUM_MIN:
+                    logger.info("[DATA] Strike " + str(strike) + " " + direction
+                                + " premium ₹" + str(round(premium, 1))
+                                + " < ₹" + str(STRIKE_PREMIUM_MIN) + " — skip")
+                    continue
+                if premium > STRIKE_PREMIUM_MAX:
+                    logger.info("[DATA] Strike " + str(strike) + " " + direction
+                                + " premium ₹" + str(round(premium, 1))
+                                + " > ₹" + str(STRIKE_PREMIUM_MAX) + " — try next")
+                    continue
+
+                reason = "ITM" if strike != atm else "ATM"
+                if strike == itm_strike and strike != atm:
+                    reason = "1-STEP ITM"
+                logger.info("[DATA] Strike selected: " + str(strike) + " " + direction
+                            + " ₹" + str(round(premium, 1)) + " (" + reason + ")"
+                            + " spot=" + str(round(spot_ltp, 1)))
+                return {"strike": strike, "reason": reason, "premium": premium}
+            except Exception as e:
+                logger.debug("[DATA] Strike check error " + str(strike) + ": " + str(e))
+                continue
+
+    # Fallback: no premium check possible, use simple logic
+    if prefer_itm:
+        return {"strike": itm_strike, "reason": "ITM (no premium check)", "premium": 0}
+    return {"strike": atm, "reason": "ATM (fallback)", "premium": 0}
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:

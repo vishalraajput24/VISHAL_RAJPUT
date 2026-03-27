@@ -1299,12 +1299,29 @@ def _strategy_loop(kite):
 
                 step       = D.get_active_strike_step(dte)
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
-                tokens     = D.get_option_tokens(kite, atm_strike, expiry)
 
-                if not tokens:
-                    logger.warning("[MAIN] No tokens resolved for ATM=" + str(atm_strike))
-                    time.sleep(2)
-                    continue
+                # v12.15: Direction-aware strike selection
+                # Resolve per-direction strikes (CE→ITM/ATM below spot, PE→ITM/ATM above spot)
+                dir_strikes = {}
+                dir_tokens  = {}
+                for _dt in ("CE", "PE"):
+                    _ds = D.resolve_strike_for_direction(
+                        spot_ltp, step, _dt, dte, kite, expiry)
+                    if _ds:
+                        dir_strikes[_dt] = _ds["strike"]
+                        _tk = D.get_option_tokens(kite, _ds["strike"], expiry)
+                        if _tk.get(_dt):
+                            dir_tokens[_dt] = _tk[_dt]
+
+                # Fallback to ATM if direction-aware failed
+                if not dir_tokens:
+                    tokens = D.get_option_tokens(kite, atm_strike, expiry)
+                    if not tokens:
+                        logger.warning("[MAIN] No tokens resolved for ATM=" + str(atm_strike))
+                        time.sleep(2)
+                        continue
+                    dir_tokens = tokens
+                    dir_strikes = {"CE": atm_strike, "PE": atm_strike}
 
                 # v12.14: EXPIRY BREAKOUT MODE (DTE=0)
                 if dte == 0:
@@ -1347,9 +1364,11 @@ def _strategy_loop(kite):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
                 for opt_type in ("CE", "PE"):
-                    opt_info = tokens.get(opt_type)
+                    opt_info = dir_tokens.get(opt_type)
                     if not opt_info:
                         continue
+
+                    _opt_strike = dir_strikes.get(opt_type, atm_strike)
 
                     D.subscribe_tokens([opt_info["token"]])
                     time.sleep(0.3)
@@ -1359,7 +1378,7 @@ def _strategy_loop(kite):
                         option_type = opt_type,
                         profile     = profile,
                         spot_ltp    = spot_ltp,
-                        strike      = atm_strike,
+                        strike      = _opt_strike,
                         expiry_date = expiry,
                         session     = session,
                     )
