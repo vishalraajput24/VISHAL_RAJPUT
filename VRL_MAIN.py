@@ -445,7 +445,13 @@ def _alert_entry(symbol: str, option_type: str, entry_price: float,
             "Stretch      : +" + str(s) + "pts  ₹" + str(s * D.LOT_SIZE) + "\n"
         )
 
+    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
+    _vix = round(D.get_vix(), 1)
     _tg_send(
+        "🔵 <b>" + option_type + " " + str(state.get("strike", "")) + "</b>"
+        + "  ₹" + str(round(entry_price, 1))
+        + "  Score " + str(score) + "/" + str(D.SESSION_SCORE_MIN.get(session, 5)) + " ✅"
+        + "  " + regime + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>CONVICTION ENTRY — " + option_type + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -453,7 +459,8 @@ def _alert_entry(symbol: str, option_type: str, entry_price: float,
         "Entry   : ₹" + str(round(entry_price, 2)) + "\n"
         + _fmt_score_breakdown(score_breakdown, score)
         + "Regime  : " + regime + "  DTE:" + str(dte)
-        + "  VIX:" + str(round(D.get_vix(), 1)) + "\n"
+        + "  VIX:" + str(_vix) + "\n"
+        "Bias    : " + (_bias or "—") + "  Session: " + session + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "WHY THIS FIRED\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -526,16 +533,21 @@ def _alert_exit(symbol: str, entry: float, exit_price: float,
 
     dpnl_sign = "+" if daily_pnl >= 0 else ""
 
+    _ot = option_type_from_symbol(symbol)
+    _wl = "WIN" if pnl >= 0 else "LOSS"
+    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
     _tg_send(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + icon + " <b>EXIT — " + option_type_from_symbol(symbol) + "</b>\n"
+        icon + " <b>" + _wl + " " + pnl_sign + str(round(pnl,1)) + "pts</b>"
+        + "  " + _rs(pnl)
+        + "  |  " + _ot + " " + symbol.split("NIFTY")[-1].replace("CE","").replace("PE","").strip() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _now_str() + "  " + symbol + "\n"
-        "Entry  : " + str(round(entry,2))
-        + "  →  Exit: " + str(round(exit_price,2)) + "\n"
-        "PNL    : " + pnl_sign + str(round(pnl,1)) + "pts  " + _rs(pnl) + "\n"
-        "Peak   : +" + str(round(peak_pnl,1)) + "pts"
-        + "  Held: " + str(candles_held) + " candles\n"
+        "₹" + str(round(entry,1))
+        + " → ₹" + str(round(exit_price,1)) + "\n"
+        "Peak: +" + str(round(peak_pnl,1)) + "pts"
+        + "  Captured: " + str(captured) + "%\n"
+        "Held: " + str(candles_held) + "min"
+        + "  Phase: " + str(state.get("exit_phase", 0)) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "WHY EXITED\n"
         + reason_title + "\n"
@@ -543,9 +555,10 @@ def _alert_exit(symbol: str, entry: float, exit_price: float,
         + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "TRADE QUALITY\n"
         + quality + "\n"
-        "Regime : " + (regime or "—") + "  Score: " + str(score) + "\n"
+        "Regime : " + (regime or "—") + "  Score: " + str(score)
+        + "  Bias: " + (_bias or "—") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "TODAY  " + dpnl_sign + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "\n"
+        "📊 <b>TODAY</b>  " + dpnl_sign + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "\n"
         + str(daily_trades) + "T  W" + str(daily_wins) + " L" + str(daily_losses)
     )
 
@@ -1207,12 +1220,39 @@ def _strategy_loop(kite):
                         if milestone > last_ms and milestone > 0:
                             with _state_lock:
                                 state["_last_milestone"] = milestone
+                                _ms_phase = state.get("exit_phase", 1)
+                                _ms_entry = state.get("entry_price", 0)
+                                _ms_peak = state.get("peak_pnl", 0)
+                                _ms_symbol = state.get("symbol", "")
+                                _ms_held = state.get("candles_held", 0)
+                                _ms_p1sl = state.get("phase1_sl", 0)
+                                _ms_p2sl = state.get("phase2_sl", 0)
                             rs = "₹" + str(round(milestone * D.LOT_SIZE))
+                            # Current SL level
+                            if _ms_phase == 1:
+                                _sl_price = round(_ms_p1sl, 1)
+                                _sl_dist = round(option_ltp - _ms_p1sl, 1) if _ms_p1sl > 0 else 0
+                                _sl_label = "Phase 1 SL"
+                            elif _ms_phase == 2:
+                                _sl_price = round(_ms_p2sl, 1) if _ms_p2sl > 0 else round(_ms_entry + 2, 1)
+                                _sl_dist = round(option_ltp - _sl_price, 1)
+                                _sl_label = "Breakeven SL"
+                            else:
+                                _sl_price = round(_ms_p2sl, 1) if _ms_p2sl > 0 else round(_ms_entry + 2, 1)
+                                _sl_dist = round(option_ltp - _sl_price, 1)
+                                _sl_label = "Trail SL"
                             _tg_send(
-                                "🔥 <b>+" + str(milestone) + "pts</b>  " + rs + "\n"
-                                + state.get("symbol","") + "  |  "
-                                + "Phase " + str(state.get("exit_phase",1))
-                                + "  RSI check on /edge"
+                                "🟢 <b>MILESTONE +" + str(milestone) + "pts</b>  " + rs + "\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                + _ms_symbol + "  ₹" + str(round(_ms_entry, 1))
+                                + " → ₹" + str(round(option_ltp, 1)) + "\n"
+                                "P&L: +" + str(round(pnl, 1)) + "pts  " + _rs(pnl)  + "\n"
+                                "Peak: +" + str(round(_ms_peak, 1))
+                                + "  |  Held: " + str(_ms_held) + "min\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                "🎯 " + _sl_label + ": ₹" + str(_sl_price)
+                                + "  (" + str(_sl_dist) + "pts away)\n"
+                                "Phase " + str(_ms_phase) + "/3"
                             )
                         _save_state()
                         # Dashboard update during trade
