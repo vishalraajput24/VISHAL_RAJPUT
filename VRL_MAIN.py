@@ -110,7 +110,8 @@ _running = True
 def _save_state():
     try:
         persist_fields = D.STATE_PERSIST_FIELDS + ["_rsi_was_overbought"]
-        subset = {k: state.get(k) for k in persist_fields}
+        with _state_lock:
+            subset = {k: state.get(k) for k in persist_fields}
         tmp    = D.STATE_FILE_PATH + ".tmp"
         with open(tmp, "w") as f:
             json.dump(subset, f, indent=2, default=str)
@@ -289,7 +290,7 @@ def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> b
             return False
         return True
     except Exception as e:
-        logger.error("[TG] send error: " + str(e))
+        logger.error("[TG] send error: " + type(e).__name__)
         return False
 
 def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
@@ -318,7 +319,7 @@ def _tg_send_file(file_path: str, caption: str = "", chat_id: str = None) -> boo
             return False
         return True
     except Exception as e:
-        logger.error("[TG] send_file error: " + str(e))
+        logger.error("[TG] send_file error: " + type(e).__name__)
         return False
 
 def _tg_inline_keyboard(text: str, keyboard: list, chat_id: str = None) -> dict:
@@ -336,7 +337,7 @@ def _tg_inline_keyboard(text: str, keyboard: list, chat_id: str = None) -> dict:
         if resp.ok:
             return resp.json().get("result", {})
     except Exception as e:
-        logger.error("[TG] keyboard error: " + str(e))
+        logger.error("[TG] keyboard error: " + type(e).__name__)
     return {}
 
 def _tg_answer_callback(callback_query_id: str, text: str = ""):
@@ -1049,10 +1050,15 @@ def _strategy_loop(kite):
         logger.info("[MAIN] Hourly RSI: " + str(D.get_hourly_rsi()))
     except Exception as _he:
         logger.debug("[MAIN] H.RSI: " + str(_he))
-    # Capture straddle if after 9:30
+    with _state_lock:
+        state["_last_1min_candle"] = ""
+
+    expiry = D.get_nearest_expiry(kite)
+
+    # Capture straddle if after 9:30 (must be AFTER expiry is resolved)
     try:
         _now = datetime.now()
-        if _now.hour >= 9 and _now.minute >= 30:
+        if expiry and _now.hour >= 9 and _now.minute >= 30:
             _ss = D.get_active_strike_step(D.calculate_dte(expiry))
             _sa = D.resolve_atm_strike(D.get_ltp(D.NIFTY_SPOT_TOKEN), _ss)
             if _sa > 0:
@@ -1060,10 +1066,6 @@ def _strategy_loop(kite):
                 logger.info("[MAIN] Straddle captured at startup")
     except Exception as _se:
         logger.debug("[MAIN] Straddle: " + str(_se))
-    with _state_lock:
-        state["_last_1min_candle"] = ""
-
-    expiry = D.get_nearest_expiry(kite)
     if expiry:
         logger.info("[MAIN] Expiry on startup: " + str(expiry))
     else:
@@ -1114,14 +1116,19 @@ def _strategy_loop(kite):
             # v12.9 FIX: _error_count reset moved AFTER successful scan
             # (was here at top = circuit breaker never fired)
 
-            if check_profit_lock(state, state.get("daily_pnl", 0)):
-                _alert_profit_lock(state["daily_pnl"])
+            with _state_lock:
+                _pnl_snapshot = state.get("daily_pnl", 0)
+            if check_profit_lock(state, _pnl_snapshot):
+                _alert_profit_lock(_pnl_snapshot)
                 _save_state()
 
+            with _state_lock:
+                _eod_done = state.get("_eod_reported")
             if (now.hour == 15 and now.minute == 35
-                    and not state.get("_eod_reported")
+                    and not _eod_done
                     and now.second < 30):
-                state["_eod_reported"] = True
+                with _state_lock:
+                    state["_eod_reported"] = True
                 try:
                     _generate_eod_report()
                 except Exception as e:
@@ -1132,18 +1139,24 @@ def _strategy_loop(kite):
                 except Exception as e:
                     logger.warning("[MAIN] Daily summary: " + str(e))
 
-            if state.get("force_exit") and state.get("in_trade"):
-                option_ltp = D.get_ltp(state.get("token"))
-                _execute_exit(kite, option_ltp or state["entry_price"], "FORCE_EXIT")
+            with _state_lock:
+                _force = state.get("force_exit")
+                _in_trade = state.get("in_trade")
+                _token = state.get("token")
+                _symbol = state.get("symbol", "")
+                _entry_px = state.get("entry_price", 0)
+            if _force and _in_trade:
+                option_ltp = D.get_ltp(_token)
+                _execute_exit(kite, option_ltp or _entry_px, "FORCE_EXIT")
                 time.sleep(1)
                 continue
 
-            if state.get("in_trade"):
-                option_ltp = D.get_ltp(state.get("token"))
+            if _in_trade:
+                option_ltp = D.get_ltp(_token)
                 if option_ltp <= 0 and kite is not None:
                     try:
-                        q = kite.ltp(["NFO:" + state["symbol"]])
-                        option_ltp = float(q["NFO:" + state["symbol"]]["last_price"])
+                        q = kite.ltp(["NFO:" + _symbol])
+                        option_ltp = float(q["NFO:" + _symbol]["last_price"])
                         logger.info("[MAIN] Option LTP via REST: " + str(option_ltp))
                     except Exception as e:
                         logger.warning("[MAIN] REST option LTP failed: " + str(e))
@@ -1466,11 +1479,15 @@ def _handle_file_browser_callback(callback_data: str,
         return
 
     if len(parts) == 3:
-        filename  = parts[2]
+        filename  = os.path.basename(parts[2])  # sanitise: strip ../ traversal
         file_path = os.path.join(folder_path, filename)
-        if os.path.isfile(file_path):
-            size_kb = round(os.path.getsize(file_path) / 1024, 1)
-            _tg_send_file(file_path, caption=filename + " (" + str(size_kb) + " KB)")
+        resolved  = os.path.realpath(file_path)
+        if not resolved.startswith(os.path.realpath(folder_path)):
+            _tg_send("Access denied: invalid path")
+            return
+        if os.path.isfile(resolved):
+            size_kb = round(os.path.getsize(resolved) / 1024, 1)
+            _tg_send_file(resolved, caption=filename + " (" + str(size_kb) + " KB)")
         else:
             _tg_send("File not found: " + filename)
         return
@@ -2587,7 +2604,7 @@ def _tg_get_updates(offset: int) -> list:
         if resp.ok:
             return resp.json().get("result", [])
     except Exception as e:
-        logger.warning("[CTRL] getUpdates error: " + str(e))
+        logger.warning("[CTRL] getUpdates error: " + type(e).__name__)
     return []
 
 def _tg_authorized(message: dict) -> bool:
@@ -2611,6 +2628,10 @@ def _tg_handle_message(message: dict):
             _tg_send("Unknown command: " + raw_cmd + "\nType /help")
 
 def _tg_handle_callback(callback: dict):
+    # Auth check — same as _tg_handle_message
+    msg = callback.get("message", {})
+    if str(msg.get("chat", {}).get("id", "")) != str(D.TELEGRAM_CHAT_ID):
+        return
     query_id = callback.get("id", "")
     data     = callback.get("data", "")
     if data.startswith("FB:"):
@@ -2653,8 +2674,8 @@ def _start_telegram_listener():
                 _tg_offset = updates[-1]["update_id"] + 1
                 logger.info("[CTRL] Discarded " + str(len(updates))
                             + " pending updates on startup")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[CTRL] Startup getUpdates skip: " + type(e).__name__)
 
     thread = threading.Thread(target=_tg_poll_loop, name="TGListener", daemon=True)
     thread.start()

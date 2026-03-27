@@ -304,6 +304,9 @@ logger = logging.getLogger("vrl_live")
 _kite             = None
 _token_cache      = {}
 _token_cache_lock = threading.Lock()
+_nfo_instruments       = None
+_nfo_instruments_lock  = threading.Lock()
+_nfo_instruments_date  = None
 _ticker           = None
 _ticks            = {}
 _tick_lock        = threading.Lock()
@@ -431,12 +434,29 @@ def is_trading_window(now: datetime = None) -> bool:
     end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0)
     return start <= now <= end
 
+def _get_nfo_instruments(kite=None):
+    """Fetch NFO instruments once per day, cached."""
+    global _nfo_instruments, _nfo_instruments_date
+    from datetime import date as _d
+    today = _d.today()
+    with _nfo_instruments_lock:
+        if _nfo_instruments is not None and _nfo_instruments_date == today:
+            return _nfo_instruments
+    k = kite or _kite
+    if k is None:
+        return []
+    instruments = k.instruments("NFO")
+    with _nfo_instruments_lock:
+        _nfo_instruments = instruments
+        _nfo_instruments_date = today
+    return instruments
+
 def get_lot_size(kite=None) -> int:
     k = kite or _kite
     if k is None:
         return LOT_SIZE_BASE
     try:
-        instruments = k.instruments("NFO")
+        instruments = _get_nfo_instruments(k)
         for inst in instruments:
             if (inst.get("name") == "NIFTY"
                     and inst.get("instrument_type") == "CE"
@@ -513,8 +533,13 @@ def calculate_atr(token: int, interval: str = "minute",
         df = get_historical_data(token, interval, n_candles + 10)
         if df.empty or len(df) < n_candles + 1:
             return 0.0
-        # True Range = high - low for each candle
-        df["TR"] = df["high"] - df["low"]
+        # True Range = max(high-low, |high-prev_close|, |low-prev_close|)
+        prev_close = df["close"].shift(1)
+        df["TR"] = pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs()
+        ], axis=1).max(axis=1)
         # ATR = average of last N candles' true range
         atr = float(df["TR"].iloc[-n_candles - 1:-1].mean())
         return round(atr, 2)
@@ -570,7 +595,7 @@ def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if kite is None:
         raise RuntimeError("Kite not initialised")
     try:
-        instruments = kite.instruments("NFO")
+        instruments = _get_nfo_instruments(kite)
         expiries    = set()
         for inst in instruments:
             if inst.get("name") == "NIFTY" and inst.get("instrument_type") == "CE":
@@ -600,7 +625,7 @@ def get_option_tokens(kite, strike: int, expiry_date) -> dict:
         if key in _token_cache:
             return dict(_token_cache[key])
     try:
-        instruments = kite.instruments("NFO")
+        instruments = _get_nfo_instruments(kite)
         expiry_str  = expiry_date.isoformat() if expiry_date else ""
         result      = {}
         for inst in instruments:

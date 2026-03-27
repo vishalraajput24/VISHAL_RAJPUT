@@ -13,6 +13,9 @@ BASE = os.path.expanduser("~")
 DASH_FILE = os.path.join(BASE, "state", "vrl_dashboard.json")
 TRADE_LOG = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
 
+# Optional auth: set VRL_WEB_TOKEN env var to require ?token=<value> on all requests
+_WEB_TOKEN = os.environ.get("VRL_WEB_TOKEN", "")
+
 def _read_dash():
     if not os.path.isfile(DASH_FILE): return {}
     try:
@@ -432,11 +435,13 @@ class H(BaseHTTPRequestHandler):
             parts = path.split("/", 1)
             if len(parts) != 2:
                 self.send_error(404); return
-            folder_key, filename = parts[0], parts[1]
+            folder_key, filename = parts[0], os.path.basename(parts[1])  # sanitise traversal
             info = _FOLDERS.get(folder_key)
             if not info:
                 self.send_error(404); return
-            filepath = os.path.join(info[1], filename)
+            filepath = os.path.realpath(os.path.join(info[1], filename))
+            if not filepath.startswith(os.path.realpath(info[1])):
+                self.send_error(403); return
             if not os.path.isfile(filepath):
                 self.send_error(404); return
             self.send_response(200)
@@ -496,7 +501,19 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
 
+    def _check_auth(self):
+        if not _WEB_TOKEN:
+            return True
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        if q.get("token", [""])[0] == _WEB_TOKEN:
+            return True
+        self.send_error(403, "Forbidden: invalid or missing token")
+        return False
+
     def do_GET(self):
+        if not self._check_auth():
+            return
         p=urlparse(self.path).path
         if p=="/files" or p.startswith("/files?"):self._files_page();return
         if p in("/","/dashboard"):
@@ -510,7 +527,8 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/zones":
             zp = os.path.join(BASE, "state", "vrl_zones.json")
             if os.path.isfile(zp):
-                self._j(json.load(open(zp)))
+                with open(zp) as _zf:
+                    self._j(json.load(_zf))
             else:
                 self._j({"zones":[]})
         elif p=="/api/files":

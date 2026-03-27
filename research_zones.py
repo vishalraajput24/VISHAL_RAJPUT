@@ -176,12 +176,14 @@ def count_zone_tests(zones, df):
     for zone in zones:
         zone_date = zone["date"] + " " + zone["time"]
         tests = 0
-        
-        for idx in range(len(df)):
+        idx = 0
+
+        while idx < len(df):
             ts = str(df.index[idx])[:16]
             if ts <= zone_date:
+                idx += 1
                 continue
-            
+
             price = float(df.iloc[idx]["close"])
             if zone["zone_low"] <= price <= zone["zone_high"]:
                 tests += 1
@@ -193,10 +195,11 @@ def count_zone_tests(zones, df):
                         idx += 1
                     else:
                         break
-        
+            idx += 1
+
         zone["times_tested"] = tests
         zone["still_active"] = tests < ZONE_MAX_TESTS
-    
+
     return zones
 
 

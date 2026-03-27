@@ -71,6 +71,7 @@ _current_atm_strike = None
 _current_atm_tokens = None
 _current_expiry     = None
 _session_open_iv    = {}
+_lab_lock           = threading.Lock()   # protects the globals above
 
 _lab_running  = False
 _kite_ref     = None
@@ -491,10 +492,11 @@ def _fetch_candles(kite, token: int, from_dt: datetime,
 
 def reset_session():
     global _current_atm_strike, _current_atm_tokens, _current_expiry, _session_open_iv
-    _current_atm_strike = None
-    _current_atm_tokens = None
-    _current_expiry     = None
-    _session_open_iv    = {}
+    with _lab_lock:
+        _current_atm_strike = None
+        _current_atm_tokens = None
+        _current_expiry     = None
+        _session_open_iv    = {}
     logger.info("[LAB] Session reset")
 
 
@@ -515,28 +517,30 @@ def collect_option_3min(kite, spot_ltp: float):
     if not (start_mins <= cur_mins <= end_mins):
         return
 
+    # Lock protects reads/writes to _current_atm_* globals
     today = date.today()
 
-    if _current_expiry is None:
-        _current_expiry = D.get_nearest_expiry(kite)
-        if not _current_expiry:
-            logger.error("[LAB] Cannot resolve expiry")
-            return
+    with _lab_lock:
+        if _current_expiry is None:
+            _current_expiry = D.get_nearest_expiry(kite)
+            if not _current_expiry:
+                logger.error("[LAB] Cannot resolve expiry")
+                return
 
-    dte        = D.calculate_dte(_current_expiry)
-    step       = D.get_active_strike_step(dte)
-    new_strike = D.resolve_atm_strike(spot_ltp, step)
+        dte        = D.calculate_dte(_current_expiry)
+        step       = D.get_active_strike_step(dte)
+        new_strike = D.resolve_atm_strike(spot_ltp, step)
 
-    if (_current_atm_strike is None
-            or abs(new_strike - _current_atm_strike) >= step):
-        if _current_atm_strike and new_strike != _current_atm_strike:
-            logger.info("[LAB] ATM shift " + str(_current_atm_strike)
-                        + "→" + str(new_strike))
-        _current_atm_strike = new_strike
-        _current_atm_tokens = D.get_option_tokens(kite, new_strike, _current_expiry)
-        if not _current_atm_tokens:
-            logger.error("[LAB] Token resolve failed strike=" + str(new_strike))
-            return
+        if (_current_atm_strike is None
+                or abs(new_strike - _current_atm_strike) >= step):
+            if _current_atm_strike and new_strike != _current_atm_strike:
+                logger.info("[LAB] ATM shift " + str(_current_atm_strike)
+                            + "→" + str(new_strike))
+            _current_atm_strike = new_strike
+            _current_atm_tokens = D.get_option_tokens(kite, new_strike, _current_expiry)
+            if not _current_atm_tokens:
+                logger.error("[LAB] Token resolve failed strike=" + str(new_strike))
+                return
 
     from_dt  = min(now - timedelta(minutes=180), now - timedelta(days=3))
     to_dt    = now
@@ -903,10 +907,11 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
         logger.error("[LAB] Fwd fill read error: " + str(e))
         return
 
-    tokens_by_type = {}
-    if _current_atm_tokens:
-        for opt_type, info in _current_atm_tokens.items():
-            tokens_by_type[opt_type] = info["token"]
+    with _lab_lock:
+        tokens_by_type = {}
+        if _current_atm_tokens:
+            for opt_type, info in _current_atm_tokens.items():
+                tokens_by_type[opt_type] = info["token"]
 
     changed  = 0
     interval = "minute" if timeframe == "1min" else "3minute"
@@ -1001,8 +1006,9 @@ def fill_forward_scan(kite, target_date: date = None):
         # Also fill fired entries for comparison
         token = None
         opt_type = row.get("direction", "")
-        if _current_atm_tokens and opt_type in _current_atm_tokens:
-            token = _current_atm_tokens[opt_type]["token"]
+        with _lab_lock:
+            if _current_atm_tokens and opt_type in _current_atm_tokens:
+                token = _current_atm_tokens[opt_type]["token"]
 
         if not token:
             continue
@@ -1342,10 +1348,10 @@ def collect_option_15min(kite, spot_ltp: float):
             # MACD
             macd_hist = 0
             try:
-                sma12 = df["close"].rolling(12).mean()
-                sma26 = df["close"].rolling(26).mean()
-                macd_line = sma12 - sma26
-                macd_sig = macd_line.rolling(9).mean()
+                ema12 = df["close"].ewm(span=12, adjust=False).mean()
+                ema26 = df["close"].ewm(span=26, adjust=False).mean()
+                macd_line = ema12 - ema26
+                macd_sig = macd_line.ewm(span=9, adjust=False).mean()
                 macd_hist = round(float((macd_line - macd_sig).iloc[-2]), 2)
             except Exception:
                 pass
@@ -1695,17 +1701,20 @@ def _lab_loop():
                 _last_1min = None
                 logger.info("[LAB] Daily reset")
 
+            # ── Fetch spot LTP once per loop iteration ────────
+            _loop_spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            if _loop_spot_ltp <= 0:
+                try:
+                    _q = _kite_ref.ltp("NSE:NIFTY 50")
+                    _loop_spot_ltp = float(list(_q.values())[0]["last_price"])
+                except Exception:
+                    pass
+
             # ── 1-min collection at HH:MM:30 ──────────────────
             one_min_key = (today, now.hour, now.minute)
             if one_min_key != _last_1min and now.second >= 30:
                 _last_1min  = one_min_key
-                spot_ltp    = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if spot_ltp <= 0:
-                    try:
-                        _q = _kite_ref.ltp("NSE:NIFTY 50")
-                        spot_ltp = float(list(_q.values())[0]["last_price"])
-                    except Exception:
-                        pass
+                spot_ltp    = _loop_spot_ltp
                 if spot_ltp > 0:
                     try:
                         collect_option_1min(_kite_ref, spot_ltp)
@@ -1729,7 +1738,7 @@ def _lab_loop():
             three_min_key = (today, now.hour, candle_min)
             if three_min_key != _last_3min and now.second >= 30:
                 _last_3min = three_min_key
-                spot_ltp   = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                spot_ltp   = _loop_spot_ltp
                 if spot_ltp > 0:
                     try:
                         collect_option_3min(_kite_ref, spot_ltp)
@@ -1744,7 +1753,7 @@ def _lab_loop():
             if (not hasattr(_lab_loop, '_last_5min') or
                     getattr(_lab_loop, '_last_5min', None) != five_min_key) and now.second >= 30:
                 _lab_loop._last_5min = five_min_key
-                spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                spot_ltp = _loop_spot_ltp
                 if spot_ltp > 0:
                     try:
                         collect_option_5min(_kite_ref, spot_ltp)
@@ -1756,8 +1765,12 @@ def _lab_loop():
                         logger.debug("[LAB] spot 5m: " + str(e))
 
             # ── 60-min collection at hour boundary + 40s ─────
-            if now.minute == 0 and now.second >= 40 and now.second < 50:
-                spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            sixty_min_key = (today, now.hour)
+            if (now.minute == 0 and now.second >= 40 and now.second < 50
+                    and (not hasattr(_lab_loop, '_last_60min')
+                         or getattr(_lab_loop, '_last_60min', None) != sixty_min_key)):
+                _lab_loop._last_60min = sixty_min_key
+                spot_ltp = _loop_spot_ltp
                 if spot_ltp > 0:
                     try:
                         collect_spot_60min(_kite_ref)
@@ -1770,7 +1783,7 @@ def _lab_loop():
             if (not hasattr(_lab_loop, '_last_15min') or
                     getattr(_lab_loop, '_last_15min', None) != fifteen_min_key) and now.second >= 35:
                 _lab_loop._last_15min = fifteen_min_key
-                spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                spot_ltp = _loop_spot_ltp
                 if spot_ltp > 0:
                     try:
                         collect_option_15min(_kite_ref, spot_ltp)

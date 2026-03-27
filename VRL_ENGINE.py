@@ -38,8 +38,9 @@ def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> t
         df = D.get_historical_data(token, "3minute", D.LOOKBACK_3M)
         df = D.add_indicators(df)
         if df.empty or len(df) < 5:
-            details["permitted"] = True
-            return True, details, 0
+            logger.warning("[ENGINE] _check_3min: insufficient data (" + str(len(df)) + " candles) — blocking")
+            details["permitted"] = False
+            return False, details, 0
 
         last   = df.iloc[-2]
         o, h, l, c = last["open"], last["high"], last["low"], last["close"]
@@ -123,9 +124,9 @@ def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> t
 
         return permitted, details, bonus
     except Exception as e:
-        logger.warning("[ENGINE] _check_3min error: " + str(e) + " — allowing through")
-        details["permitted"] = True
-        return True, details, 0
+        logger.error("[ENGINE] _check_3min error: " + str(e) + " — blocking (fail-closed)")
+        details["permitted"] = False
+        return False, details, 0
 
 def get_option_ema_spread(token: int, dte: int = 99) -> float:
     try:
@@ -780,7 +781,7 @@ def check_expiry_breakout(kite, spot_ltp: float, strike: int,
             df1 = D.get_historical_data(token, "minute", 10)
             if not df1.empty and len(df1) >= 3:
                 last = df1.iloc[-2]
-                vols = [df1.iloc[i]["volume"] for i in range(-5, -1) if i < len(df1) and df1.iloc[i]["volume"] > 0]
+                vols = [df1.iloc[i]["volume"] for i in range(-5, -1) if abs(i) <= len(df1) and df1.iloc[i]["volume"] > 0]
                 avg_vol = sum(vols) / len(vols) if vols else 1
                 vol_ratio = last["volume"] / avg_vol if avg_vol > 0 else 1
                 vol_ok = vol_ratio >= 0.5  # Very relaxed — just needs some volume
