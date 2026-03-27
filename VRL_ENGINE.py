@@ -188,7 +188,8 @@ def loss_streak_gate(state: dict, score: int) -> bool:
                 + " score=" + str(score) + "<" + str(D.LOSS_STREAK_GATE_SCORE))
     return False
 
-def _check_1min(token: int, option_type: str, profile: dict) -> tuple:
+def _check_1min(token: int, option_type: str, profile: dict,
+                rsi_3m: float = 0.0) -> tuple:
     details = {
         "body_ok": False, "body_pct": 0.0,
         "rsi_ok": False,  "rsi_val":  0.0,
@@ -225,7 +226,7 @@ def _check_1min(token: int, option_type: str, profile: dict) -> tuple:
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.12: 1-min uses tighter RSI zone (45-65) — enter early with headroom
+        # v12.15: 1-min RSI zone tightened to 48-60
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)
         rsi_1m_hi = profile.get("rsi_1m_high", D.RSI_1M_HIGH)
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
@@ -236,6 +237,34 @@ def _check_1min(token: int, option_type: str, profile: dict) -> tuple:
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
             return False, details
+
+        # v12.15: RSI 1m must be BELOW 3m RSI — entering the dip within the trend
+        # When 1m RSI < 3m RSI, the 1-min just pulled back = sniper entry
+        # When 1m RSI > 3m RSI, the 1-min already ran ahead = chasing
+        details["rsi_1m_below_3m"] = False  # default for dashboard
+        if rsi_3m > 0:
+            rsi_below_3m = rsi < rsi_3m
+            details["rsi_1m_below_3m"] = rsi_below_3m
+            if not rsi_below_3m:
+                details["rsi_reject"] = True
+                logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
+                            + " ≥ 3m RSI " + str(round(rsi_3m, 1))
+                            + " — chasing, not entering dip")
+                return False, details
+
+        # v12.15: Spread acceleration — spread must be increasing vs previous candle
+        cur_ema9  = float(last.get("EMA_9", c))
+        cur_ema21 = float(last.get("EMA_21", c))
+        prev_ema9  = float(prev.get("EMA_9", prev["close"]))
+        prev_ema21 = float(prev.get("EMA_21", prev["close"]))
+        cur_spread  = cur_ema9 - cur_ema21
+        prev_spread = prev_ema9 - prev_ema21
+        spread_accel = cur_spread > prev_spread
+        details["spread_accel"] = spread_accel
+        if not spread_accel:
+            logger.info("[ENGINE] 1m spread decelerating: "
+                        + str(round(prev_spread, 1)) + " → " + str(round(cur_spread, 1))
+                        + " — momentum dying")
 
         body_ok = (c > o) and (body_pct >= profile["body_pct_min"])
         details["body_ok"] = body_ok
@@ -249,7 +278,8 @@ def _check_1min(token: int, option_type: str, profile: dict) -> tuple:
         breakout  = (c > prev["high"]) and (h > prev["high"])
         details["rejection_breakout"] = rejection and breakout
 
-        return body_ok and rsi_ok, details
+        # v12.15: All conditions must pass: body, RSI, spread accelerating, volume
+        return body_ok and rsi_ok and spread_accel and details["vol_ok"], details
     except Exception as e:
         logger.error("[ENGINE] _check_1min error: " + str(e))
         return False, details
@@ -370,35 +400,23 @@ def check_entry(token: int, option_type: str, profile: dict,
         elif abs_spread >= 2:  result["regime"] = "NEUTRAL"
         else:                  result["regime"] = "CHOPPY"
 
-        # v12.11: Spot regime backup when option is in momentum mode
-        if det_3m.get("mode") == "MOMENTUM" and result["regime"] in ("NEUTRAL", "CHOPPY"):
-            spot_regime = D.get_spot_regime("3minute")
-            if spot_regime in ("TRENDING", "TRENDING_STRONG"):
-                result["regime"] = spot_regime
-                logger.info("[ENGINE] Spot regime override: " + spot_regime
-                            + " (option was " + result["regime"] + ")")
-
-        # v12.14: CE uses spot regime backup when option shows NEUTRAL/CHOPPY
-        if option_type == "CE" and result["regime"] in ("NEUTRAL", "CHOPPY"):
-            spot_regime = D.get_spot_regime("3minute")
-            if spot_regime in ("TRENDING", "TRENDING_STRONG"):
-                logger.info("[ENGINE] CE spot override: " + spot_regime + " (option was " + result["regime"] + ")")
-                result["regime"] = spot_regime
-            else:
-                logger.info("[ENGINE] CE blocked — regime=" + result["regime"]
-                            + " spot=" + spot_regime + " — both weak")
-                # Fetch 1-min data + greeks for dashboard display
-                try:
-                    _ok1, _det1 = _check_1min(token, option_type, profile)
-                    result["details_1m"] = _det1
-                    result["entry_price"] = _det1.get("entry_price", 0.0)
-                    result["spread_1m"] = get_option_ema_spread(token, dte)
-                    result["greeks"] = D.get_full_greeks(
-                        _det1.get("entry_price", 0.0), spot_ltp, strike,
-                        expiry_date, option_type)
-                except Exception:
-                    pass
-                return result
+        # v12.15: Only TRENDING / TRENDING_STRONG allowed for entry
+        # NEUTRAL/CHOPPY = no clear direction, premiums die on pauses
+        if result["regime"] in ("NEUTRAL", "CHOPPY"):
+            logger.info("[ENGINE] " + option_type + " blocked — regime=" + result["regime"]
+                        + " — only TRENDING/TRENDING_STRONG allowed")
+            # Fetch 1-min data + greeks for dashboard display
+            try:
+                _ok1, _det1 = _check_1min(token, option_type, profile)
+                result["details_1m"] = _det1
+                result["entry_price"] = _det1.get("entry_price", 0.0)
+                result["spread_1m"] = get_option_ema_spread(token, dte)
+                result["greeks"] = D.get_full_greeks(
+                    _det1.get("entry_price", 0.0), spot_ltp, strike,
+                    expiry_date, option_type)
+            except Exception:
+                pass
+            return result
 
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
         if spread_3m > 5 and option_type == "PE":
@@ -459,7 +477,8 @@ def check_entry(token: int, option_type: str, profile: dict,
             return result
 
         # ── LAYER 4B: 1-MIN SIGNAL ───────────────────────────
-        ok_1m, det_1m = _check_1min(token, option_type, profile)
+        _rsi_3m_val = det_3m.get("rsi_val_3m", 0.0)
+        ok_1m, det_1m = _check_1min(token, option_type, profile, rsi_3m=_rsi_3m_val)
         result["details_1m"] = det_1m
         result["entry_price"] = det_1m.get("entry_price", 0.0)
 
@@ -560,10 +579,11 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
         if sl > 0 and option_ltp <= sl:
             return True, "PHASE1_SL", option_ltp
 
-        # Stale entry: 5 candles held, peak < 5pts — cut early
+        # v12.15: Stale entry: 3 candles held, peak < 5pts — cut early
+        # Data shows: move happens in first 3 candles or it doesn't happen
         candles_held = state.get("candles_held", 0)
         peak_pnl     = state.get("peak_pnl", 0)
-        if candles_held >= 5 and peak_pnl < 5.0:
+        if candles_held >= 3 and peak_pnl < 5.0:
             logger.info("[ENGINE] STALE_ENTRY: " + str(candles_held)
                         + " candles peak=" + str(peak_pnl) + "pts < 5")
             return True, "STALE_ENTRY", option_ltp

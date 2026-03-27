@@ -83,8 +83,8 @@ SPREAD_1M_MIN_CE = 6    # CE needs +6pts — fights premium decay
 SPREAD_1M_MIN_PE = 4    # PE needs +4pts — velocity advantage
 
 # v12.12: Separate RSI zones per timeframe
-RSI_1M_LOW  = 45   # 1-min entry zone lower
-RSI_1M_HIGH = 65   # 1-min entry zone upper (20pt window — enter early)
+RSI_1M_LOW  = 48   # v12.15: tightened — enter at start of move, not late
+RSI_1M_HIGH = 60   # v12.15: RSI 60+ = move already 70% done, too late
 RSI_3M_LOW  = 42   # 3-min permission zone lower
 RSI_3M_HIGH = 72   # 3-min permission zone upper (30pt window — wider trend)
 
@@ -178,8 +178,8 @@ DTE_PROFILES = {
     "6+" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,           # 3-min zone (30pt window)
-        "rsi_1m_low": 45, "rsi_1m_high": 65,     # 1-min zone (20pt window)
-        "max_gap_ema": 15, "volume_ratio_min": 1.0,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,     # 1-min zone (20pt window)
+        "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 20, "conv_breakeven_pts": 15,
         "conv_trail_tf": "5minute", "conv_tighten_tf": "3minute",
@@ -191,8 +191,8 @@ DTE_PROFILES = {
     "3-5": {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 45, "rsi_1m_high": 65,
-        "max_gap_ema": 13, "volume_ratio_min": 1.0,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "max_gap_ema": 13, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 18, "conv_breakeven_pts": 14,
         "conv_trail_tf": "5minute", "conv_tighten_tf": "3minute",
@@ -204,8 +204,8 @@ DTE_PROFILES = {
     "2" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 45, "rsi_1m_high": 65,
-        "max_gap_ema": 12, "volume_ratio_min": 1.0,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 15, "conv_breakeven_pts": 12,
         "conv_trail_tf": "3minute", "conv_tighten_tf": "1minute",
@@ -217,8 +217,8 @@ DTE_PROFILES = {
     "1" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 45, "rsi_1m_high": 65,
-        "max_gap_ema": 12, "volume_ratio_min": 1.0,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 12, "conv_breakeven_pts": 10,
         "conv_trail_tf": "3minute", "conv_tighten_tf": "1minute",
@@ -230,8 +230,8 @@ DTE_PROFILES = {
     "0" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 45, "rsi_1m_high": 65,
-        "max_gap_ema": 15, "volume_ratio_min": 1.0,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.30, "delta_max": 0.70,
         "conv_sl_pts": 10, "conv_breakeven_pts": 8,
         "conv_trail_tf": "1minute", "conv_tighten_tf": "1minute",
