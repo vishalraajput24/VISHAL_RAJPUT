@@ -226,9 +226,17 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.15: 1-min RSI zone tightened to 48-60
+        # v12.15: Adaptive RSI zone — wider in strong trends
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)
-        rsi_1m_hi = profile.get("rsi_1m_high", D.RSI_1M_HIGH)
+        try:
+            _spot_rsi = D.get_spot_indicators("3minute")
+            _spot_adx_rsi = float(_spot_rsi.get("adx", 0))
+        except Exception:
+            _spot_adx_rsi = 0
+        if _spot_adx_rsi >= 30:
+            rsi_1m_hi = D.RSI_1M_HIGH_STRONG   # 58 — strong trend continuation
+        else:
+            rsi_1m_hi = D.RSI_1M_HIGH_NORMAL    # 50 — normal cap
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
         if not (rsi_ok and rsi_rising):
@@ -529,6 +537,18 @@ def check_entry(token: int, option_type: str, profile: dict,
             logger.info("[ENGINE] 3m gate bonus +1 (all 4 + spread≥8)")
         else:
             breakdown["gate_bonus"] = 0
+
+        # v12.15: Bias-aware scoring — against bias needs +1 score
+        try:
+            _bias = D.get_daily_bias()
+            if _bias == "BEAR" and option_type == "CE":
+                session_min = max(session_min, 6)
+                logger.info("[ENGINE] CE against BEAR bias — need score ≥ 6")
+            elif _bias == "BULL" and option_type == "PE":
+                session_min = max(session_min, 6)
+                logger.info("[ENGINE] PE against BULL bias — need score ≥ 6")
+        except Exception:
+            pass
 
         result["score"]           = score
         result["score_breakdown"] = breakdown

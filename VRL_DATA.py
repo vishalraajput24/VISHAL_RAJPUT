@@ -84,7 +84,8 @@ SPREAD_1M_MIN_PE = 4    # PE needs +4pts — velocity advantage
 
 # v12.12: Separate RSI zones per timeframe
 RSI_1M_LOW  = 30   # v12.15: enter when momentum STARTING (data: 30-45 = 66% WR)
-RSI_1M_HIGH = 50   # v12.15: RSI 50+ = move already running, too late
+RSI_1M_HIGH_NORMAL = 50   # v12.15: default cap
+RSI_1M_HIGH_STRONG = 58   # v12.15: extended when spot ADX ≥ 30 (strong trend continuation)
 RSI_3M_LOW  = 42   # 3-min permission zone lower
 RSI_3M_HIGH = 72   # 3-min permission zone upper (30pt window — wider trend)
 
