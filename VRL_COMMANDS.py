@@ -265,13 +265,15 @@ def _cmd_help(args):
         "/forceexit — emergency exit\n"
         "/restart   — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>SERVER</b>\n"
         "/deploy       — git pull + restart bot\n"
         "/serverstatus — server + bot health\n"
         "/serverlog    — last 20 log lines\n"
         "/gitlog       — last 5 commits\n"
-        "Mode: " + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE") + " | ATM: 100-step"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
+        + " | Regime: Spot ADX | RSI 30-50/58\n"
+        + "Gate 2/4 + bypass | ITM strikes | Score ≥5/8"
     )
 
 def _cmd_status(args):
