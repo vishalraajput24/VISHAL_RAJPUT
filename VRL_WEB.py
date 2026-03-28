@@ -462,24 +462,103 @@ class H(BaseHTTPRequestHandler):
 
     def _files_page(self):
         import urllib.parse
+        import time as _t
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         folder = q.get("f",[""])[0]
-        html = '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VRL Files</title>'
-        html += '<style>body{background:#080810;color:#e4e4e7;font-family:monospace;font-size:13px;padding:10px;max-width:500px;margin:0 auto}'
-        html += 'a{color:#3b82f6;text-decoration:none}.f{display:block;margin:4px 0;padding:10px;background:#111118;border:1px solid #1e1e30;border-radius:6px}'
-        html += '.f:active{background:#1e1e30}.sz{float:right;color:#555;font-size:11px}.bk{display:inline-block;margin:8px 0;padding:6px 12px;background:#1e1e30;border-radius:6px}</style></head><body>'
+        today_str = date.today().strftime("%Y%m%d")
+        today_iso = date.today().isoformat()
+
+        css = ('<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VRL Files</title>'
+               '<style>'
+               'body{background:#080810;color:#e4e4e7;font-family:monospace;font-size:13px;padding:10px;max-width:520px;margin:0 auto}'
+               'a{color:#3b82f6;text-decoration:none}'
+               '.f{display:block;margin:4px 0;padding:10px 12px;background:#111118;border:1px solid #1e1e30;border-radius:6px}'
+               '.f:active{background:#1e1e30}'
+               '.sz{float:right;color:#555;font-size:11px}'
+               '.bk{display:inline-block;margin:8px 4px;padding:6px 12px;background:#1e1e30;border-radius:6px}'
+               '.sh{color:#888;font-size:11px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:1px}'
+               '.badge{background:#22c55e;color:#000;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px}'
+               '.badge-r{background:#ef4444}'
+               '.cnt{color:#555;font-size:11px;margin-left:6px}'
+               '</style></head><body>')
+
+        html = css
         html += '<h2 style="color:#3b82f6;font-size:15px">VISHAL RAJPUT FILES</h2>'
-        html += '<a href="/" class="bk">War Room</a><br>'
+        html += '<a href="/" class="bk">War Room</a>'
+
         if not folder:
-            for k, v in _FOLDERS.items():
-                html += '<a href="/files?f=' + k + '" class="f">' + v[0] + '</a>'
+            # ── TODAY section ──
+            html += '<div class="sh">TODAY (' + today_iso + ')</div>'
+
+            # Count today's trades
+            trade_count = 0
+            tl_path = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
+            if os.path.isfile(tl_path):
+                try:
+                    with open(tl_path) as _tf:
+                        for r in csv.DictReader(_tf):
+                            if r.get("date") == today_iso:
+                                trade_count += 1
+                except Exception:
+                    pass
+
+            # Today's files - quick links
+            today_items = [
+                ("📊 Today's Option Data", "options_1min", "nifty_option_1min_" + today_str),
+                ("📈 Today's Spot Data", "spot", "nifty_spot_1min_" + today_str),
+                ("📒 Today's Trades", "trade_log", None),
+                ("📋 Today's Scan Log", "options_1min", "nifty_signal_scan_" + today_str),
+            ]
+            for label, fkey, prefix in today_items:
+                badge = ""
+                if "Trades" in label and trade_count > 0:
+                    badge = '<span class="badge">' + str(trade_count) + '</span>'
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + badge + '</a>'
+
+            # ── HISTORICAL DATA section ──
+            html += '<div class="sh">HISTORICAL DATA</div>'
+            hist_items = [
+                ("spot", "📈 Spot (1m/5m/15m/D)"),
+                ("options_3min", "📊 Options 3-Min CE+PE"),
+                ("options_1min", "📊 Options 1m/5m/15m/Scan"),
+                ("reports", "📑 Daily Summary Reports"),
+            ]
+            for fkey, label in hist_items:
+                info = _FOLDERS.get(fkey)
+                cnt = ""
+                if info and os.path.isdir(info[1]):
+                    try:
+                        n = len([f for f in os.listdir(info[1]) if os.path.isfile(os.path.join(info[1], f)) and os.path.getsize(os.path.join(info[1], f)) > 0])
+                        cnt = '<span class="cnt">' + str(n) + ' files</span>'
+                    except Exception:
+                        pass
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + cnt + '</a>'
+
+            # ── ANALYSIS section ──
+            html += '<div class="sh">ANALYSIS</div>'
+            analysis_items = [
+                ("research", "🔭 Demand/Supply Zones"),
+                ("sessions", "🗂 Trade Sessions Archive"),
+            ]
+            for fkey, label in analysis_items:
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
+
+            # ── SYSTEM section ──
+            html += '<div class="sh">SYSTEM</div>'
+            system_items = [
+                ("state", "⚙️ State + Config"),
+                ("logs", "📋 Logs"),
+            ]
+            for fkey, label in system_items:
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
+
         else:
+            # ── File listing for a specific folder ──
             html += '<a href="/files" class="bk">Back</a>'
             info = _FOLDERS.get(folder)
             if info and os.path.isdir(info[1]):
                 html += '<h3 style="color:#888;font-size:12px">' + info[0] + '</h3>'
                 files = sorted(os.listdir(info[1]), reverse=True)
-                import time as _t
                 file_list = []
                 for fname in files:
                     fp = os.path.join(info[1], fname)
@@ -488,12 +567,18 @@ class H(BaseHTTPRequestHandler):
                         mt = os.path.getmtime(fp)
                         file_list.append((fname, sz, mt, fp))
                 file_list.sort(key=lambda x: x[2], reverse=True)
-                for fname, sz, mt, fp in file_list[:40]:
+                if not file_list:
+                    html += '<div style="color:#555;padding:20px">No files found</div>'
+                for fname, sz, mt, fp in file_list[:50]:
                     sz_str = str(round(sz / 1024, 1)) + ' KB' if sz < 1024*1024 else str(round(sz / (1024*1024), 1)) + ' MB'
                     mod = _t.strftime('%d %b %H:%M', _t.localtime(mt))
-                    html += '<a href="/api/download/' + folder + '/' + fname + '" class="f">' + fname + '<span class="sz">' + sz_str + ' · ' + mod + '</span></a>'
+                    # Highlight today's files
+                    is_today = today_str in fname
+                    style = ' style="border-left:3px solid #22c55e"' if is_today else ''
+                    html += '<a href="/api/download/' + folder + '/' + fname + '" class="f"' + style + '>' + fname + '<span class="sz">' + sz_str + ' · ' + mod + '</span></a>'
             else:
                 html += '<div style="color:#555;padding:20px">Folder not found</div>'
+
         html += '</body></html>'
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
