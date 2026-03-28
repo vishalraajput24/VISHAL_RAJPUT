@@ -86,18 +86,29 @@ def _read_multitf():
         try: return round(float(r.get(k, d)), 3)
         except: return d
     spot = []
-    for label, prefix in [("1m","nifty_spot_1min"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("60m","nifty_spot_60min_"),("D","nifty_spot_daily")]:
+    for label, prefix in [("1m","nifty_spot_1min"),("3m","nifty_spot_3min_"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("D","nifty_spot_daily")]:
         r = _last(_latest(spot_dir, prefix))
-        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread"))})
-        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0})
-    ce = []; pe = []
+        if not r and label == "3m":
+            # 3m spot comes from get_spot_indicators, not CSV — use dashboard JSON
+            try:
+                d = _read_dash()
+                mk = d.get("market", {})
+                r = {"adx": 0, "rsi": mk.get("spot_rsi", 0), "ema_spread": mk.get("spot_spread", 0), "regime": mk.get("regime", "")}
+            except Exception:
+                r = None
+        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread")),"regime":r.get("regime","")})
+        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0,"regime":""})
+    ce = []; pe = []; ce_strike = 0; pe_strike = 0
     for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_"),("5m",opt1_dir,"nifty_option_5min_"),("15m",opt1_dir,"nifty_option_15min_")]:
         p = _latest(d, prefix)
         for side, arr in [("CE",ce),("PE",pe)]:
             r = _lasttype(p, side)
-            if r: arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close")})
-            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0})
-    return {"spot":spot,"ce":ce,"pe":pe}
+            if r:
+                arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close"),"body":_f(r,"body_pct"),"spread":_f(r,"ema_spread",_f(r,"ema9_gap")),"strike":r.get("strike","")})
+                if side == "CE" and not ce_strike: ce_strike = r.get("strike", "")
+                if side == "PE" and not pe_strike: pe_strike = r.get("strike", "")
+            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0,"body":0,"spread":0,"strike":""})
+    return {"spot":spot,"ce":ce,"pe":pe,"ce_strike":ce_strike,"pe_strike":pe_strike}
 
 def _read_trades():
     if not os.path.isfile(TRADE_LOG): return []
@@ -321,21 +332,21 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   if(sp.some(function(s){return s.adx>0||s.rsi>0})){
     mh+='<div class="sect"><div class="sh">\ud83d\udcc8 SPOT MULTI-TF</div>';
     mh+=hdr(4,['TF','ADX','RSI','SPREAD']);
-    sp.forEach(function(t){if(!t.adx&&!t.rsi)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
-    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0}).length;
-    var up=sp.filter(function(t){return t.spread>0&&t.adx>0}).length,dn=sp.filter(function(t){return t.spread<0&&t.adx>0}).length;
+    sp.forEach(function(t){if(!t.adx&&!t.rsi&&!t.spread)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
+    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0||t.rsi>0}).length;
+    var up=sp.filter(function(t){return t.spread>0&&(t.adx>0||t.rsi>0)}).length,dn=sp.filter(function(t){return t.spread<0&&(t.adx>0||t.rsi>0)}).length;
     var vc=trn>=3?'var(--gn)':trn>=2?'var(--am)':'var(--rd)';
     mh+='<div style="padding:5px 10px;font-size:10px;font-weight:700;color:'+vc+'">'+(trn>=3?'STRONG':trn>=2?'MODERATE':'WEAK')+' '+trn+'/'+tot+(up>=3?' \u2191 BULLISH':dn>=3?' \u2193 BEARISH':'')+'</div></div>'}
-  var ceLtp=ce.ltp||0, ceGk=ce.greeks||{}, peLtp=pe.ltp||0, peGk=pe.greeks||{};
+  var ceStk=mtf.ce_strike||'',peStk=mtf.pe_strike||'';
   if(ceo.some(function(c){return c.rsi>0||c.ltp>0})){
-    mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE OPTION MULTI-TF</div>';
-    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=ceLtp||t.ltp,iv=ceGk.iv||t.iv,dl=ceGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--gn)">\u20b9'+ltp+'</div></div>'});
+    mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE '+(ceStk||'')+' OPTION MULTI-TF</div>';
+    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
+    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--gn)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
   if(peo.some(function(p){return p.rsi>0||p.ltp>0})){
-    mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE OPTION MULTI-TF</div>';
-    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=peLtp||t.ltp,iv=peGk.iv||t.iv,dl=peGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--rd)">\u20b9'+ltp+'</div></div>'});
+    mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE '+(peStk||'')+' OPTION MULTI-TF</div>';
+    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
+    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
 
   // Fib Pivot Section

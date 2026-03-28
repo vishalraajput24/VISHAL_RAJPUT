@@ -26,7 +26,7 @@ FIELDNAMES_3M = [
     "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte",
     "session_block", "iv_vs_open",
-    "body_pct", "adx", "rsi", "ema9", "ema9_gap", "volume_ratio",
+    "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap", "volume_ratio",
     "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
@@ -439,6 +439,27 @@ def collect_option_3min(kite, spot_ltp: float):
             df.set_index("timestamp", inplace=True)
             df = D.add_indicators(df)
             indic = _compute_indicators(df, -2)
+            # Add ema21 + ema_spread
+            _row3 = df.iloc[-2]
+            indic["ema21"] = round(float(_row3.get("EMA_21", _row3["close"])), 2)
+            indic["ema_spread"] = round(float(_row3.get("EMA_9", _row3["close"])) - float(_row3.get("EMA_21", _row3["close"])), 2)
+            # Inline ADX calculation (D.add_indicators doesn't compute ADX)
+            try:
+                import numpy as _np
+                _up3 = df["high"].diff()
+                _dn3 = -df["low"].diff()
+                _pdm3 = _np.where((_up3 > _dn3) & (_up3 > 0), _up3, 0.0)
+                _ndm3 = _np.where((_dn3 > _up3) & (_dn3 > 0), _dn3, 0.0)
+                _tr3 = pd.concat([df["high"]-df["low"],
+                                  (df["high"]-df["close"].shift(1)).abs(),
+                                  (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+                _atr3 = _tr3.ewm(alpha=1/14, adjust=False).mean()
+                _pdi3 = 100 * pd.Series(_pdm3, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr3
+                _ndi3 = 100 * pd.Series(_ndm3, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr3
+                _adx3 = ((_pdi3-_ndi3).abs() / (_pdi3+_ndi3+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+                indic["adx"] = round(float(_adx3.iloc[-2]), 1)
+            except Exception:
+                indic["adx"] = 0
         except Exception:
             indic = {}
 
@@ -477,6 +498,8 @@ def collect_option_3min(kite, spot_ltp: float):
             "adx"          : indic.get("adx", 0),
             "rsi"          : indic.get("rsi", 50),
             "ema9"         : indic.get("ema9", 0),
+            "ema21"        : indic.get("ema21", 0),
+            "ema_spread"   : indic.get("ema_spread", 0),
             "ema9_gap"     : indic.get("ema9_gap", 0),
             "volume_ratio" : indic.get("volume_ratio", 1),
             "iv_pct"       : greeks.get("iv_pct", 0),
