@@ -6,6 +6,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 import logging
+import os
 from datetime import datetime
 import pandas as pd
 import VRL_DATA as D
@@ -549,6 +550,49 @@ def check_entry(token: int, option_type: str, profile: dict,
                 logger.info("[ENGINE] PE against BULL bias — need score ≥ 6")
         except Exception:
             pass
+
+        # v12.15: Zone score modifier — demand/supply zones affect score ±1
+        try:
+            import json as _json
+            _zone_path = os.path.expanduser("~/state/vrl_zones.json")
+            if os.path.isfile(_zone_path):
+                with open(_zone_path) as _zf:
+                    _zone_data = _json.load(_zf)
+                _zones = _zone_data.get("zones", [])
+                for _z in _zones:
+                    if not _z.get("still_active"):
+                        continue
+                    _zone_mid = float(_z.get("zone_mid", 0))
+                    _zone_type = _z.get("zone_type", "")
+                    _zdist = abs(spot_ltp - _zone_mid)
+                    if _zdist > 60:
+                        continue
+                    _zmod = 0
+                    if _zdist <= 30:
+                        if option_type == "CE" and _zone_type == "DEMAND":
+                            _zmod = +1
+                        elif option_type == "PE" and _zone_type == "SUPPLY":
+                            _zmod = +1
+                        elif option_type == "CE" and _zone_type == "SUPPLY":
+                            _zmod = -1
+                        elif option_type == "PE" and _zone_type == "DEMAND":
+                            _zmod = -1
+                    elif _zdist <= 60:
+                        if option_type == "CE" and _zone_type == "SUPPLY":
+                            _zmod = -1
+                        elif option_type == "PE" and _zone_type == "DEMAND":
+                            _zmod = -1
+                    if _zmod != 0:
+                        score += _zmod
+                        breakdown["zone_modifier"] = _zmod
+                        logger.info("[ENGINE] Zone " + _zone_type
+                                    + " dist=" + str(round(_zdist, 0))
+                                    + " modifier=" + str(_zmod))
+                        break
+                if "zone_modifier" not in breakdown:
+                    breakdown["zone_modifier"] = 0
+        except Exception:
+            breakdown["zone_modifier"] = 0
 
         result["score"]           = score
         result["score_breakdown"] = breakdown

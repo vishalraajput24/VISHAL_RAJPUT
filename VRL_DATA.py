@@ -596,21 +596,26 @@ STRIKE_PREMIUM_MAX = 400    # Above ₹400 = too deep ITM, use ATM instead
 
 def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
     """
-    v12.15: Direction-aware strike selection.
-    CE → strike at or below spot (ITM/ATM, has intrinsic value)
-    PE → strike at or above spot (ITM/ATM, has intrinsic value)
-    Step 50 for DTE <= 3, step 100 for DTE >= 4
+    v12.15: Smart strike selection with tolerance zone.
+    DTE 0: step 50, tolerance ±20
+    DTE 1+: step 100, tolerance ±40
+
+    Within tolerance: same strike for both CE/PE (ATM)
+    Outside tolerance: CE rounds down, PE rounds up (ITM)
     """
-    step = 50 if dte <= 3 else 100
+    step = 50 if dte == 0 else 100
+    tolerance = 20 if step == 50 else 40
 
-    if direction == "CE":
-        # Round DOWN to nearest step
-        strike = int(spot // step) * step
-    else:  # PE
-        # Round UP to nearest step (ceiling)
-        strike = int(-(-spot // step)) * step
+    nearest = round(spot / step) * step
+    distance = abs(spot - nearest)
 
-    return strike
+    if distance <= tolerance:
+        return int(nearest)
+    else:
+        if direction == "CE":
+            return int(spot // step) * step
+        else:
+            return int(-(-spot // step)) * step
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
