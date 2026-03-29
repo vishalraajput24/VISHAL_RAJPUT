@@ -30,7 +30,6 @@ _FOLDERS = {
     "options_3min": ("📊 Options 3-Min CE+PE",    os.path.join(BASE, "lab_data", "options_3min")),
     "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
     "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
-    "sessions":     ("🗂 Trade Sessions",         os.path.join(BASE, "lab_data", "sessions")),
     "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
     "state":        ("⚙️ State + Config",         os.path.join(BASE, "state")),
     "logs":         ("📋 Logs",                   os.path.join(BASE, "logs", "live")),
@@ -549,7 +548,7 @@ class H(BaseHTTPRequestHandler):
             html += '<div class="sh">ANALYSIS</div>'
             analysis_items = [
                 ("research", "🔭 Demand/Supply Zones"),
-                ("sessions", "🗂 Trade Sessions Archive"),
+                ("trade_log", "📒 Full Trade History"),
             ]
             for fkey, label in analysis_items:
                 html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
