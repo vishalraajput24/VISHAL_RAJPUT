@@ -906,7 +906,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             regime = result.get("regime", "")
             if result.get("fired"):
                 verdict = "FIRED"
-            elif conds < 3:
+            elif conds < 2:
                 verdict = "3M BLOCKED " + str(conds) + "/4"
             elif regime in ("NEUTRAL", "CHOPPY"):
                 verdict = "REGIME " + regime
