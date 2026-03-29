@@ -1515,6 +1515,19 @@ def _lab_loop():
                 _last_1min = None
                 logger.info("[LAB] Daily reset")
 
+                # Auto-cleanup: old logs (>7 days) + stale zips
+                import glob as _cg
+                _cleaned = 0
+                for _old_log in _cg.glob(os.path.expanduser("~/logs/live/vrl_live.log.*")):
+                    if os.path.getmtime(_old_log) < time.time() - 7 * 86400:
+                        os.remove(_old_log)
+                        _cleaned += 1
+                for _old_zip in _cg.glob(os.path.expanduser("~/state/today_*.zip")):
+                    os.remove(_old_zip)
+                    _cleaned += 1
+                if _cleaned:
+                    logger.info("[LAB] Cleanup: deleted " + str(_cleaned) + " old files")
+
             # ── Fetch spot LTP once per loop iteration ────────
             _loop_spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
             if _loop_spot_ltp <= 0:

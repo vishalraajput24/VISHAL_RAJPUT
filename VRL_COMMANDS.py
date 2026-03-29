@@ -214,6 +214,11 @@ def _send_today_download():
         size_mb = round(os.path.getsize(zip_path) / (1024 * 1024), 2)
         _tg_send_file(zip_path, caption="Today's data — " + today_str
                       + " (" + str(size_mb) + " MB)")
+        # Don't persist zip — delete after sending
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
     except Exception as e:
         _tg_send("Today zip error: " + str(e))
 
