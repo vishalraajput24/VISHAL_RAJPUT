@@ -83,9 +83,9 @@ SPREAD_1M_MIN_CE = 6    # CE needs +6pts — fights premium decay
 SPREAD_1M_MIN_PE = 4    # PE needs +4pts — velocity advantage
 
 # v12.12: Separate RSI zones per timeframe
-RSI_1M_LOW  = 30   # v12.15: enter when momentum STARTING (data: 30-45 = 66% WR)
-RSI_1M_HIGH_NORMAL = 50   # v12.15: default cap
-RSI_1M_HIGH_STRONG = 58   # v12.15: extended when spot ADX ≥ 30 (strong trend continuation)
+RSI_1M_LOW  = 30   # v12.16: enter when momentum STARTING (data: 30-45 = 66% WR)
+RSI_1M_HIGH_NORMAL = 50   # v12.16: default cap — enter before move is done
+RSI_1M_HIGH_STRONG = 58   # v12.16: extended when spot ADX >= 30 (strong trend continuation)
 RSI_1M_HIGH = RSI_1M_HIGH_NORMAL  # backward compat alias
 RSI_3M_LOW  = 42   # 3-min permission zone lower
 RSI_3M_HIGH = 72   # 3-min permission zone upper (30pt window — wider trend)
@@ -180,7 +180,7 @@ DTE_PROFILES = {
     "6+" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,           # 3-min zone (30pt window)
-        "rsi_1m_low": 30, "rsi_1m_high": 50,     # v12.15: 30-50 (adaptive 58 in strong trend)
+        "rsi_1m_low": 48, "rsi_1m_high": 60,     # 1-min zone (20pt window)
         "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 20, "conv_breakeven_pts": 15,
@@ -193,7 +193,7 @@ DTE_PROFILES = {
     "3-5": {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
         "max_gap_ema": 13, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 18, "conv_breakeven_pts": 14,
@@ -206,7 +206,7 @@ DTE_PROFILES = {
     "2" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
         "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 15, "conv_breakeven_pts": 12,
@@ -219,7 +219,7 @@ DTE_PROFILES = {
     "1" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
         "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 12, "conv_breakeven_pts": 10,
@@ -232,10 +232,10 @@ DTE_PROFILES = {
     "0" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
+        "rsi_1m_low": 48, "rsi_1m_high": 60,
         "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.30, "delta_max": 0.70,
-        "conv_sl_pts": 15, "conv_breakeven_pts": 10,    # v12.15: faster lock (was 8/7)
+        "conv_sl_pts": 10, "conv_breakeven_pts": 8,
         "conv_trail_tf": "1minute", "conv_tighten_tf": "1minute",
         "conv_rsi_tighten": 70, "peak_drawdown_pct": 30, "peak_drawdown_min": 40,
         "rsi_exhaustion_min": 72, "rsi_exhaustion_pnl": 6,
@@ -593,31 +593,89 @@ def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
 
 # Premium filter constants for direction-aware strike selection
 STRIKE_PREMIUM_MIN = 100    # Below ₹100 = too OTM, skip
-STRIKE_PREMIUM_MIN_DTE0 = 50  # DTE 0: premiums naturally low, allow ₹50+
 STRIKE_PREMIUM_MAX = 400    # Above ₹400 = too deep ITM, use ATM instead
 
-def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
+def resolve_strike_for_direction(spot_ltp: float, step: int,
+                                  direction: str, dte: int,
+                                  kite=None, expiry_date=None) -> dict:
     """
-    v12.15: Smart strike selection with tolerance zone.
-    DTE 0: step 50, tolerance ±20
-    DTE 1+: step 100, tolerance ±40
-
-    Within tolerance: same strike for both CE/PE (ATM)
-    Outside tolerance: CE rounds down, PE rounds up (ITM)
+    v12.15: Direction-aware strike selection.
+    DTE 0: handled by expiry breakout mode, this returns ATM (step=50).
+    DTE 1+: step=100.
+      CE → ATM if ATM ≤ spot (already ITM), else ATM-step
+      PE → ATM+step if ATM < spot (go 1 step above for ITM), else ATM
+    Example: spot=22930, step=100 → ATM=22900
+      CE = 22900 (ATM ≤ spot → keep)
+      PE = 23000 (ATM < spot → ATM+100)
+    Returns {"strike": int, "reason": str, "premium": float}
     """
-    step = 50 if dte == 0 else 100
-    tolerance = 20 if step == 50 else 40
+    atm = resolve_atm_strike(spot_ltp, step)
 
-    nearest = round(spot / step) * step
-    distance = abs(spot - nearest)
+    # DTE=0: use ATM, expiry breakout handles its own strike logic
+    if dte == 0:
+        return {"strike": atm, "reason": "ATM (expiry)", "premium": 0}
 
-    if distance <= tolerance:
-        return int(nearest)
-    else:
-        if direction == "CE":
-            return int(spot // step) * step
+    # DTE 1+: direction-aware ITM selection
+    if direction == "CE":
+        # CE wants strike ≤ spot for intrinsic value
+        if atm <= spot_ltp:
+            selected = atm       # ATM is at or below spot → ITM for CE
+            reason = "ATM"
         else:
-            return int(-(-spot // step)) * step
+            selected = atm - step  # ATM above spot → go 1 step down
+            reason = "1-STEP ITM"
+    else:
+        # PE wants strike ≥ spot for intrinsic value
+        if atm >= spot_ltp:
+            selected = atm       # ATM is at or above spot → ITM for PE
+            reason = "ATM"
+        else:
+            selected = atm + step  # ATM below spot → go 1 step up
+            reason = "1-STEP ITM"
+
+    # Premium filter: check if premium is in ₹100-400 range
+    k = kite or _kite
+    if k and expiry_date:
+        try:
+            tokens = get_option_tokens(k, selected, expiry_date)
+            opt_info = tokens.get(direction)
+            if opt_info:
+                q = k.ltp(["NFO:" + opt_info["symbol"]])
+                premium = float(list(q.values())[0]["last_price"])
+
+                if premium < STRIKE_PREMIUM_MIN:
+                    logger.info("[DATA] Strike " + str(selected) + " " + direction
+                                + " premium ₹" + str(round(premium, 1))
+                                + " < ₹" + str(STRIKE_PREMIUM_MIN) + " — too OTM, skip")
+                    return None
+                if premium > STRIKE_PREMIUM_MAX:
+                    # Fall back to ATM
+                    logger.info("[DATA] Strike " + str(selected) + " " + direction
+                                + " premium ₹" + str(round(premium, 1))
+                                + " > ₹" + str(STRIKE_PREMIUM_MAX) + " — using ATM")
+                    selected = atm
+                    reason = "ATM (premium cap)"
+                    # Re-check ATM premium
+                    tokens = get_option_tokens(k, atm, expiry_date)
+                    opt_info = tokens.get(direction)
+                    if opt_info:
+                        q = k.ltp(["NFO:" + opt_info["symbol"]])
+                        premium = float(list(q.values())[0]["last_price"])
+                    else:
+                        premium = 0
+
+                logger.info("[DATA] Strike " + str(selected) + " " + direction
+                            + " ₹" + str(round(premium, 1)) + " (" + reason + ")"
+                            + " spot=" + str(round(spot_ltp, 1)))
+                return {"strike": selected, "reason": reason, "premium": premium}
+        except Exception as e:
+            logger.debug("[DATA] Strike premium check error: " + str(e))
+
+    # Fallback: no premium check, use direction logic
+    logger.info("[DATA] Strike " + str(selected) + " " + direction
+                + " (" + reason + ") spot=" + str(round(spot_ltp, 1))
+                + " [no premium check]")
+    return {"strike": selected, "reason": reason, "premium": 0}
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
@@ -800,7 +858,6 @@ def get_full_greeks(market_price, spot_ltp, strike, expiry_date, option_type, r=
 
 _spot_gap      = 0.0
 _spot_prev_close = 0.0
-_prev_spot_spread_3m = None   # for spread_prev in compute_spot_regime
 
 def get_spot_indicators(interval: str = "3minute") -> dict:
     """
@@ -835,70 +892,9 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
         elif abs_sp >= 5:  result["regime"] = "TRENDING"
         elif abs_sp >= 2:  result["regime"] = "NEUTRAL"
         else:              result["regime"] = "CHOPPY"
-        # ADX inline
-        try:
-            import numpy as _np
-            _up = df["high"].diff()
-            _dn = -df["low"].diff()
-            _pdm = _np.where((_up > _dn) & (_up > 0), _up, 0.0)
-            _ndm = _np.where((_dn > _up) & (_dn > 0), _dn, 0.0)
-            _tr = pd.concat([df["high"]-df["low"],
-                             (df["high"]-df["close"].shift(1)).abs(),
-                             (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
-            _atr = _tr.ewm(alpha=1/14, adjust=False).mean()
-            _pdi = 100 * pd.Series(_pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
-            _ndi = 100 * pd.Series(_ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
-            _adx = ((_pdi-_ndi).abs() / (_pdi+_ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
-            result["adx"] = round(float(_adx.iloc[-2]), 1)
-        except Exception:
-            result["adx"] = 0
-        # Track spread_prev for regime scoring
-        if interval == "3minute":
-            global _prev_spot_spread_3m
-            result["spread_prev"] = _prev_spot_spread_3m if _prev_spot_spread_3m is not None else spread
-            _prev_spot_spread_3m = spread
     except Exception as e:
         logger.warning("[SPOT] get_spot_indicators error: " + str(e))
     return result
-
-
-def compute_spot_regime() -> str:
-    """
-    v12.15: Compute market regime from spot 3-min and 5-min indicators.
-    Uses ADX + EMA spread + multi-TF confirmation.
-    """
-    try:
-        spot_3m = get_spot_indicators("3minute")
-        spot_5m = get_spot_indicators("5minute")
-
-        score = 0
-
-        # Check 1: Spot 3m ADX
-        adx_3m = float(spot_3m.get("adx", 0))
-        if adx_3m >= 30: score += 2
-        elif adx_3m >= 20: score += 1
-
-        # Check 2: Spot 3m EMA spread (absolute value)
-        spread_3m = abs(float(spot_3m.get("spread", 0)))
-        if spread_3m >= 15: score += 2
-        elif spread_3m >= 8: score += 1
-
-        # Check 3: Spot 5m ADX confirmation
-        adx_5m = float(spot_5m.get("adx", 0))
-        if adx_5m >= 25: score += 1
-
-        # Check 4: Spread direction (widening = trend accelerating)
-        spread_now = abs(float(spot_3m.get("spread", 0)))
-        spread_prev = abs(float(spot_3m.get("spread_prev", spread_now)))
-        if spread_now > spread_prev: score += 1
-        elif spread_now < spread_prev - 2: score -= 1
-
-        if score >= 5: return "TRENDING_STRONG"
-        if score >= 3: return "TRENDING"
-        if score >= 2: return "NEUTRAL"
-        return "CHOPPY"
-    except Exception:
-        return "UNKNOWN"
 
 
 def calculate_spot_gap() -> dict:
