@@ -6,6 +6,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 import logging
+import os
 from datetime import datetime
 import pandas as pd
 import VRL_DATA as D
@@ -363,6 +364,52 @@ def score_entry(det_1m: dict, greeks: dict, profile: dict,
     except Exception:
         breakdown["multi_tf_adx"] = 0
 
+    # v12.15: Zone modifier — demand/supply zones affect score ±1
+    try:
+        import json as _json
+        _zone_path = os.path.expanduser("~/state/vrl_zones.json")
+        if os.path.isfile(_zone_path):
+            with open(_zone_path) as _zf:
+                _zone_data = _json.load(_zf)
+            _zones = _zone_data.get("zones", [])
+            _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN) if hasattr(D, "NIFTY_SPOT_TOKEN") else 0
+            for _z in _zones:
+                if not _z.get("still_active"):
+                    continue
+                _zone_mid = float(_z.get("zone_mid", 0))
+                _zone_type = _z.get("zone_type", "")
+                _zdist = abs(_spot - _zone_mid)
+                if _zdist > 60:
+                    continue
+                _zmod = 0
+                if _zdist <= 30:
+                    if option_type == "CE" and _zone_type == "DEMAND":
+                        _zmod = +1
+                    elif option_type == "PE" and _zone_type == "SUPPLY":
+                        _zmod = +1
+                    elif option_type == "CE" and _zone_type == "SUPPLY":
+                        _zmod = -1
+                    elif option_type == "PE" and _zone_type == "DEMAND":
+                        _zmod = -1
+                elif _zdist <= 60:
+                    if option_type == "CE" and _zone_type == "SUPPLY":
+                        _zmod = -1
+                    elif option_type == "PE" and _zone_type == "DEMAND":
+                        _zmod = -1
+                if _zmod != 0:
+                    score += _zmod
+                    breakdown["zone_modifier"] = _zmod
+                    logger.info("[ENGINE] Zone " + _zone_type
+                                + " dist=" + str(round(_zdist, 0))
+                                + " modifier=" + str(_zmod))
+                    break
+            if "zone_modifier" not in breakdown:
+                breakdown["zone_modifier"] = 0
+        else:
+            breakdown["zone_modifier"] = 0
+    except Exception:
+        breakdown["zone_modifier"] = 0
+
     breakdown["total"] = score
     return score, breakdown
 
@@ -592,6 +639,18 @@ def check_entry(token: int, option_type: str, profile: dict,
         else:
             breakdown["gate_bonus"] = 0
 
+        # v12.15: Bias-aware scoring — against bias needs +1 score
+        try:
+            _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else "UNKNOWN"
+        except Exception:
+            _bias = "UNKNOWN"
+        if _bias == "BEAR" and option_type == "CE":
+            session_min = max(session_min, 6)
+            logger.info("[ENGINE] CE against BEAR bias — need score >= 6")
+        elif _bias == "BULL" and option_type == "PE":
+            session_min = max(session_min, 6)
+            logger.info("[ENGINE] PE against BULL bias — need score >= 6")
+
         result["score"]           = score
         result["score_breakdown"] = breakdown
         result["prediction"]      = D.predict_trade(result["regime"], session, score)
@@ -678,6 +737,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
             logger.info("[ENGINE] STALE_ENTRY: " + str(candles_held)
                         + " candles peak=" + str(peak_pnl) + "pts < 5")
             return True, "STALE_ENTRY", option_ltp
+
+        # v12.16: DTE 0 max hold — 5 candles, then exit regardless
+        dte_at_entry = state.get("dte_at_entry", 99)
+        if dte_at_entry == 0 and candles_held >= 5:
+            logger.info("[ENGINE] DTE0_MAX_HOLD: " + str(candles_held) + " candles")
+            return True, "DTE0_MAX_HOLD", option_ltp
 
         if mode == "CONVICTION":
             be_pts = profile.get("conv_breakeven_pts", 20)
@@ -814,8 +879,22 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
         except Exception as e:
             logger.warning("[TRAIL] EMA spread check: " + str(e))
 
-    tf    = profile.get("conv_tighten_tf", "3minute") if tightened else profile.get("conv_trail_tf", "5minute")
-    label = "TIGHT" if tightened else "WIDE"
+    # v12.15: Adaptive EMA trail — timeframe + candles based on running PNL
+    # < 15pts: conservative 5-min, need 2 candles below EMA9
+    # 15-25pts: moderate 3-min, need 2 candles below EMA9
+    # > 25pts: aggressive 1-min, need 1 candle below EMA9
+    if running > 25:
+        tf = "minute"
+        candles_needed = 1
+        label = "AGGRESSIVE"
+    elif running >= 15:
+        tf = "3minute"
+        candles_needed = 2
+        label = "MODERATE"
+    else:
+        tf = "5minute"
+        candles_needed = 2
+        label = "CONSERVATIVE"
 
     peak_min = profile.get("peak_drawdown_min") or 0
     if peak_min and peak >= peak_min:
@@ -823,9 +902,7 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
         if running <= floor:
             return True, "PEAK_DRAWDOWN_" + label, option_ltp
 
-    # v12.12: 2-candle EMA close rule
-    # Need 2 consecutive closes below EMA9 to exit (not just 1)
-    # One close below could be a wick/spike. Two = real reversal.
+    # Adaptive EMA close rule
     try:
         df = D.get_historical_data(token, tf, D.LOOKBACK_5M)
         df = D.add_indicators(df)
@@ -839,16 +916,22 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
         close_p  = prev["close"]
         floor    = round(last["low"] - 12.0, 2)
 
-        # Both current AND previous candle must close below EMA9
         below_now  = close < ema9
         below_prev = close_p < ema9_p
-        if below_now and below_prev:
-            logger.info("[TRAIL] 2-candle EMA exit: " + str(round(close, 1))
-                        + "<" + str(round(ema9, 1)) + " AND prev "
-                        + str(round(close_p, 1)) + "<" + str(round(ema9_p, 1)))
-            return True, "TRAIL_" + label, option_ltp
-        elif below_now:
-            logger.debug("[TRAIL] 1 candle below EMA — waiting for confirmation")
+        if candles_needed == 1:
+            if below_now:
+                logger.info("[TRAIL] 1-candle EMA exit (" + label + "): "
+                            + str(round(close, 1)) + "<" + str(round(ema9, 1)))
+                return True, "TRAIL_" + label, option_ltp
+        else:
+            if below_now and below_prev:
+                logger.info("[TRAIL] 2-candle EMA exit (" + label + "): "
+                            + str(round(close, 1)) + "<" + str(round(ema9, 1))
+                            + " AND prev " + str(round(close_p, 1))
+                            + "<" + str(round(ema9_p, 1)))
+                return True, "TRAIL_" + label, option_ltp
+            elif below_now:
+                logger.debug("[TRAIL] 1 candle below EMA — waiting for confirmation")
         if option_ltp < floor:
             return True, "FLOOR_" + label, option_ltp
         return False, "", 0.0
