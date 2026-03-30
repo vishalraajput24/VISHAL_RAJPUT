@@ -105,7 +105,8 @@ TRAIL_EMA_CANDLES_FAIL = 2    # Need 2 consecutive closes below EMA to exit
 EXPIRY_CONSOL_CANDLES  = 5    # Min candles for consolidation detection
 EXPIRY_CONSOL_RANGE    = 15   # Max range (pts) to qualify as consolidation
 EXPIRY_BREAKOUT_MIN    = 10   # Min pts beyond consolidation for breakout
-EXPIRY_SL_MAX          = 20   # Hard cap SL on expiry (not 25)
+EXPIRY_SL_MAX          = 15   # v12.16: Hard cap SL on expiry (was 20)
+STRIKE_PREMIUM_MIN_DTE0 = 50  # v12.16: DTE 0 premiums naturally low, allow ₹50+
 EXPIRY_TRAIL_PCT       = 20   # Tighter trail on expiry (not 25%)
 EXPIRY_START_HOUR      = 9    # Expiry entry window start
 EXPIRY_START_MIN       = 45
@@ -645,10 +646,11 @@ def resolve_strike_for_direction(spot_ltp: float, step: int,
                 q = k.ltp(["NFO:" + opt_info["symbol"]])
                 premium = float(list(q.values())[0]["last_price"])
 
-                if premium < STRIKE_PREMIUM_MIN:
+                _prem_min = STRIKE_PREMIUM_MIN_DTE0 if dte == 0 else STRIKE_PREMIUM_MIN
+                if premium < _prem_min:
                     logger.info("[DATA] Strike " + str(selected) + " " + direction
                                 + " premium ₹" + str(round(premium, 1))
-                                + " < ₹" + str(STRIKE_PREMIUM_MIN) + " — too OTM, skip")
+                                + " < ₹" + str(_prem_min) + " — too OTM, skip")
                     return None
                 if premium > STRIKE_PREMIUM_MAX:
                     # Fall back to ATM
