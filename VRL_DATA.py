@@ -16,7 +16,7 @@ from logging.handlers import TimedRotatingFileHandler
 import pandas as pd
 from kiteconnect import KiteTicker
 
-VERSION  = "v12.15"
+VERSION  = "v12.15.1"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 def _load_env_file(path: str):
