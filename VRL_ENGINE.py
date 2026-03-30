@@ -108,7 +108,7 @@ def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> t
 
         details["candle_count_3m"] = len(df)
         details["conditions_met"] = conditions_met
-        permitted = conditions_met >= 3
+        permitted = conditions_met >= 2
         details["permitted"] = permitted
         bonus = 1 if (conditions_met == 4 and abs(spread) >= 8) else 0
         details["bonus"] = bonus
@@ -355,6 +355,25 @@ def score_entry(det_1m: dict, greeks: dict, profile: dict,
                      + " 1m=" + str(round(spread_1m,1)))
     else:
         breakdown["double_align"] = 0
+
+    # v12.15: Multi-TF ADX bonus — spot 3m+5m+15m all trending
+    try:
+        _sp3 = D.get_spot_indicators("3minute")
+        _sp5 = D.get_spot_indicators("5minute")
+        _sp15 = D.get_spot_indicators("15minute")
+        _adx3 = float(_sp3.get("adx", 0))
+        _adx5 = float(_sp5.get("adx", 0))
+        _adx15 = float(_sp15.get("adx", 0))
+        if _adx3 >= 25 and _adx5 >= 25 and _adx15 >= 25:
+            score += 1
+            breakdown["multi_tf_adx"] = 1
+            logger.info("[ENGINE] Multi-TF ADX bonus: 3m=" + str(round(_adx3, 1))
+                        + " 5m=" + str(round(_adx5, 1))
+                        + " 15m=" + str(round(_adx15, 1)))
+        else:
+            breakdown["multi_tf_adx"] = 0
+    except Exception:
+        breakdown["multi_tf_adx"] = 0
 
     breakdown["total"] = score
     return score, breakdown
@@ -715,6 +734,25 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
     drawdown_pct = D.EXPIRY_TRAIL_PCT if dte_at_entry == 0 else D.TRAIL_DRAWDOWN_PCT
     drawdown = peak - running
     max_drawdown = peak * (drawdown_pct / 100.0) if peak > 0 else 999
+
+    # v12.15: Hard profit floors — checked BEFORE percentage drawdown
+    # Lock in minimum profit at each peak level
+    if peak >= 50 and running <= peak * 0.60:
+        logger.info("[TRAIL] PROFIT_FLOOR_50: peak=" + str(peak)
+                    + " running=" + str(running) + " floor=" + str(round(peak * 0.60, 1)))
+        return True, "PROFIT_FLOOR_50", option_ltp
+    if peak >= 30 and running <= 20:
+        logger.info("[TRAIL] PROFIT_FLOOR_30: peak=" + str(peak)
+                    + " running=" + str(running) + " floor=20")
+        return True, "PROFIT_FLOOR_30", option_ltp
+    if peak >= 20 and running <= 12:
+        logger.info("[TRAIL] PROFIT_FLOOR_20: peak=" + str(peak)
+                    + " running=" + str(running) + " floor=12")
+        return True, "PROFIT_FLOOR_20", option_ltp
+    if peak >= 10 and running <= 5:
+        logger.info("[TRAIL] PROFIT_FLOOR_10: peak=" + str(peak)
+                    + " running=" + str(running) + " floor=5")
+        return True, "PROFIT_FLOOR_10", option_ltp
 
     if peak >= 15 and drawdown > max_drawdown:
         logger.info("[TRAIL] DRAWDOWN_EXIT: peak=" + str(peak)
