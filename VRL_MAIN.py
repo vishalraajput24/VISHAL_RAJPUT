@@ -911,14 +911,17 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
             elif d1.get("rsi_reject"):
                 rsi_v = d1.get("rsi_val", 0)
-                if rsi_v > 60:
+                _rsi_reason = d1.get("rsi_reject_reason", "")
+                if _rsi_reason == "RSI_TOO_HIGH":
                     verdict = "RSI " + str(rsi_v) + " TOO HIGH"
-                elif not d1.get("rsi_1m_below_3m", True):
+                elif _rsi_reason == "RSI_TOO_LOW":
+                    verdict = "RSI " + str(rsi_v) + " TOO LOW"
+                elif _rsi_reason == "1M_ABOVE_3M":
                     verdict = "RSI " + str(rsi_v) + " > 3m (CHASING)"
-                elif not d1.get("rsi_rising", False):
+                elif _rsi_reason == "RSI_NOT_RISING":
                     verdict = "RSI " + str(rsi_v) + " NOT RISING"
                 else:
-                    verdict = "RSI " + str(rsi_v) + " OUT OF ZONE"
+                    verdict = "RSI " + str(rsi_v) + " REJECT"
             elif not d1.get("spread_accel", True):
                 verdict = "SPREAD DECELERATING"
             elif not d1.get("vol_ok", False) and d1.get("vol_ratio", 0) > 0:

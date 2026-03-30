@@ -197,6 +197,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
         "vol_ok": False,  "vol_ratio": 0.0,
         "entry_price": 0.0,
         "rsi_reject": False,
+        "rsi_reject_reason": "",
         "rejection_breakout": False,
     }
     try:
@@ -226,16 +227,31 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.15: 1-min RSI zone tightened to 48-60
-        rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)
-        rsi_1m_hi = profile.get("rsi_1m_high", D.RSI_1M_HIGH)
+        # v12.16: Adaptive RSI zone — wider in strong trends (ADX >= 30 → up to 58)
+        rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
+        try:
+            _spot_rsi = D.get_spot_indicators("3minute")
+            _spot_adx_rsi = float(_spot_rsi.get("adx", 0))
+        except Exception:
+            _spot_adx_rsi = 0
+        if _spot_adx_rsi >= 30:
+            rsi_1m_hi = D.RSI_1M_HIGH_STRONG   # 58 — strong trend continuation
+        else:
+            rsi_1m_hi = D.RSI_1M_HIGH_NORMAL    # 50 — normal cap
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
         if not (rsi_ok and rsi_rising):
             details["rsi_reject"] = True
-            if rsi > rsi_1m_hi:
+            if rsi < rsi_1m_lo:
+                details["rsi_reject_reason"] = "RSI_TOO_LOW"
+            elif rsi > rsi_1m_hi:
+                details["rsi_reject_reason"] = "RSI_TOO_HIGH"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
+            elif not rsi_rising:
+                details["rsi_reject_reason"] = "RSI_NOT_RISING"
+            else:
+                details["rsi_reject_reason"] = "RSI_CHECK_FAIL"
             return False, details
 
         # v12.15: RSI 1m must be BELOW 3m RSI — entering the dip within the trend
@@ -247,6 +263,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
             details["rsi_1m_below_3m"] = rsi_below_3m
             if not rsi_below_3m:
                 details["rsi_reject"] = True
+                details["rsi_reject_reason"] = "1M_ABOVE_3M"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " ≥ 3m RSI " + str(round(rsi_3m, 1))
                             + " — chasing, not entering dip")
@@ -400,9 +417,21 @@ def check_entry(token: int, option_type: str, profile: dict,
         elif abs_spread >= 2:  result["regime"] = "NEUTRAL"
         else:                  result["regime"] = "CHOPPY"
 
-        # v12.15: Only TRENDING / TRENDING_STRONG allowed for entry
-        # NEUTRAL/CHOPPY = no clear direction, premiums die on pauses
-        if result["regime"] in ("NEUTRAL", "CHOPPY"):
+        # v12.16: DTE 0 allowed through CHOPPY — faster moves, lower ADX still tradeable
+        # Non-DTE-0: Only TRENDING / TRENDING_STRONG allowed
+        _dte0_choppy_pass = False
+        if dte == 0 and result["regime"] == "CHOPPY":
+            try:
+                _sp3m_dte0 = D.get_spot_indicators("3minute")
+                _adx_dte0 = float(_sp3m_dte0.get("adx", 0))
+            except Exception:
+                _adx_dte0 = 0
+            if _adx_dte0 >= 15:
+                _dte0_choppy_pass = True
+                logger.info("[ENGINE] " + option_type + " DTE0 CHOPPY pass: ADX="
+                            + str(round(_adx_dte0, 1)) + " >= 15")
+
+        if result["regime"] in ("NEUTRAL", "CHOPPY") and not _dte0_choppy_pass:
             logger.info("[ENGINE] " + option_type + " blocked — regime=" + result["regime"]
                         + " — only TRENDING/TRENDING_STRONG allowed")
             # Fetch 1-min data + greeks for dashboard display
@@ -482,9 +511,38 @@ def check_entry(token: int, option_type: str, profile: dict,
         result["details_1m"] = det_1m
         result["entry_price"] = det_1m.get("entry_price", 0.0)
 
-        if det_1m.get("rsi_reject"):
+        # ── v12.16: DTE 0 MOMENTUM SPIKE BYPASS ────────────
+        # If premium moves 10%+ in 2 candles on DTE 0: skip RSI zone check
+        # Only need body >= 40% and volume >= 1.0x — catches fast gamma spikes
+        _dte0_spike = False
+        if dte == 0:
+            try:
+                _df_spike = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
+                _df_spike = D.add_indicators(_df_spike)
+                if not _df_spike.empty and len(_df_spike) >= 4:
+                    _c_now  = float(_df_spike.iloc[-2]["close"])
+                    _c_2ago = float(_df_spike.iloc[-4]["close"])
+                    _prem_move_pct = ((_c_now - _c_2ago) / max(_c_2ago, 0.01)) * 100
+                    _body_pct_spike = det_1m.get("body_pct", 0)
+                    _vol_ratio_spike = det_1m.get("vol_ratio", 0)
+                    if (_prem_move_pct >= 10
+                            and _body_pct_spike >= 40
+                            and _vol_ratio_spike >= 1.0):
+                        _dte0_spike = True
+                        det_1m["rsi_reject"] = False
+                        det_1m["rsi_reject_reason"] = ""
+                        result["mode"] = "DTE0_SPIKE"
+                        logger.info("[ENGINE] " + option_type
+                                    + " DTE0_SPIKE: premium +" + str(round(_prem_move_pct, 1))
+                                    + "% in 2 candles, body=" + str(round(_body_pct_spike, 1))
+                                    + " vol=" + str(round(_vol_ratio_spike, 2))
+                                    + " — RSI zone bypassed")
+            except Exception:
+                pass
+
+        if det_1m.get("rsi_reject") and not _dte0_spike:
             return result
-        if not ok_1m:
+        if not ok_1m and not _dte0_spike:
             return result
 
         greeks = D.get_full_greeks(det_1m.get("entry_price", 0.0),
@@ -507,7 +565,7 @@ def check_entry(token: int, option_type: str, profile: dict,
 
         if score >= session_min:
             result["fired"] = True
-            result["mode"]  = "CONVICTION"
+            result["mode"]  = result.get("mode") or "CONVICTION"
         else:
             logger.info("[ENGINE] " + option_type + " score=" + str(score)
                         + "<" + str(session_min) + " — blocked")
@@ -837,7 +895,7 @@ def check_expiry_breakout(kite, spot_ltp: float, strike: int,
                     "rsi_val": round(float(last.get("RSI", 50)), 1),
                     "body_pct": 0, "vol_ratio": round(vol_ratio, 2),
                     "rsi_rising": True, "rsi_ok": True, "body_ok": True,
-                    "vol_ok": vol_ok, "rsi_reject": False,
+                    "vol_ok": vol_ok, "rsi_reject": False, "rsi_reject_reason": "",
                 }
         except Exception:
             pass
