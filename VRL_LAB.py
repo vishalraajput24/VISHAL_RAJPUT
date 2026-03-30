@@ -258,6 +258,125 @@ def collect_spot_1min(kite):
         logger.debug("[LAB] Spot 1m error: " + str(e))
 
 
+def _log_signal_scan(kite, spot_ltp: float, now: datetime):
+    """
+    v12.11: Every 1-min candle: run check_entry on CE + PE and log ALL indicators.
+    Logs to nifty_signal_scan_YYYYMMDD.csv with forward fill columns.
+    Critical for strategy validation — DO NOT REMOVE.
+    """
+    if not _current_atm_tokens or not _current_expiry:
+        return
+    if not D.is_market_open():
+        return
+
+    try:
+        from VRL_ENGINE import check_entry as _check_entry
+    except Exception:
+        return
+
+    today   = date.today()
+    dte     = D.calculate_dte(_current_expiry)
+    profile = D.get_dte_profile(dte)
+    session = D.get_session_block(now.hour, now.minute)
+    vix     = D.get_vix()
+    ts_str  = now.strftime("%Y-%m-%d %H:%M:%S")
+    rows    = []
+
+    spot_3m   = D.get_spot_indicators("3minute")
+    spot_gap  = D.get_spot_gap()
+
+    for opt_type, info in _current_atm_tokens.items():
+        token = info["token"]
+        try:
+            result = _check_entry(
+                token       = token,
+                option_type = opt_type,
+                profile     = profile,
+                spot_ltp    = spot_ltp,
+                strike      = _current_atm_strike,
+                expiry_date = _current_expiry,
+                session     = session,
+            )
+
+            d1 = result.get("details_1m", {})
+            d3 = result.get("details_3m", {})
+            g  = result.get("greeks", {})
+
+            if result.get("fired"):
+                reject = ""
+            elif d3.get("conditions_met", 0) < 2 and d3.get("conditions_met", 0) > 0:
+                reject = "3M_GATE_" + str(d3.get("conditions_met", 0)) + "/4"
+            elif d1.get("rsi_reject"):
+                reject = "RSI_ZONE"
+            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
+                reject = "BODY"
+            elif not d1.get("vol_ok") and d1.get("vol_ratio", 0) > 0:
+                reject = "VOLUME"
+            elif result.get("score", 0) > 0:
+                reject = "SCORE_" + str(result.get("score", 0))
+            else:
+                reject = "BLOCKED"
+
+            rows.append({
+                "timestamp"      : ts_str,
+                "session"        : session,
+                "dte"            : dte,
+                "atm_strike"     : _current_atm_strike,
+                "spot"           : round(spot_ltp, 2),
+                "direction"      : opt_type,
+                "entry_price"    : result.get("entry_price", 0),
+                "rsi_1m"         : d1.get("rsi_val", 0),
+                "body_pct_1m"    : d1.get("body_pct", 0),
+                "vol_ratio_1m"   : d1.get("vol_ratio", 0),
+                "rsi_rising_1m"  : int(d1.get("rsi_rising", False)),
+                "rsi_3m"         : d3.get("rsi_val_3m", 0),
+                "body_pct_3m"    : d3.get("body_pct_3m", 0),
+                "ema_spread_3m"  : d3.get("ema_spread_3m", 0),
+                "conditions_3m"  : d3.get("conditions_met", 0),
+                "mode_3m"        : d3.get("mode", ""),
+                "score"          : result.get("score", 0),
+                "fired"          : int(result.get("fired", False)),
+                "reject_reason"  : reject,
+                "iv_pct"         : g.get("iv_pct", 0),
+                "delta"          : g.get("delta", 0),
+                "vix"            : round(vix, 2),
+                "spot_rsi_3m"       : spot_3m.get("rsi", 0),
+                "spot_ema_spread_3m": spot_3m.get("spread", 0),
+                "spot_regime"       : spot_3m.get("regime", ""),
+                "spot_gap"          : round(spot_gap, 1),
+                "spread_1m"         : result.get("spread_1m", 0),
+                "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
+                "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
+                "straddle_decay_pct": 0.0,
+                "near_fib_level"    : "",
+                "fib_distance"      : 0,
+                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
+            })
+
+            try:
+                fib = D.get_nearest_fib_level(spot_ltp)
+                rows[-1]["near_fib_level"] = fib.get("level", "")
+                rows[-1]["fib_distance"] = fib.get("distance", 0)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug("[LAB] scan log error " + opt_type + ": " + str(e))
+            continue
+
+    if rows:
+        path   = _csv_path_scan(today)
+        is_new = not os.path.isfile(path)
+        try:
+            with open(path, "a", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=FIELDNAMES_SCAN, extrasaction="ignore")
+                if is_new:
+                    w.writeheader()
+                w.writerows(rows)
+                f.flush()
+        except Exception as e:
+            logger.warning("[LAB] scan write error: " + str(e))
+
 
 # ─── IO HELPERS ───────────────────────────────────────────────
 
@@ -1552,8 +1671,11 @@ def _lab_loop():
                         collect_spot_1min(_kite_ref)
                     except Exception as e:
                         logger.debug("[LAB] spot 1m: " + str(e))
-                    # Signal scan disabled — VRL_MAIN already scans and writes dashboard
-                    # _log_signal_scan was duplicating check_entry calls + API load
+                    # Signal scan — log every minute, fired or not
+                    try:
+                        _log_signal_scan(_kite_ref, spot_ltp, now)
+                    except Exception as e:
+                        logger.debug("[LAB] scan log: " + str(e))
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 1m skip — spot LTP not available yet")
 
