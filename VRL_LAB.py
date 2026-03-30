@@ -1480,6 +1480,11 @@ def _lab_loop():
             now   = datetime.now()
             today = date.today()
 
+            # v12.16: Weekend guard — no collection on Sat/Sun
+            if today.weekday() >= 5:
+                time.sleep(60)
+                continue
+
             # ── Daily reset at 9:14 — only once per day ───────────
             reset_key = today.isoformat()
             if (now.hour == 9 and now.minute == 14
@@ -1553,8 +1558,10 @@ def _lab_loop():
                         logger.debug("[LAB] spot 5m: " + str(e))
 
             # ── 60-min collection at hour boundary + 40s ─────
+            # v12.16: Fire at 10:00-15:00 (market hours only), with dedup
             sixty_min_key = (today, now.hour)
-            if (now.minute == 0 and now.second >= 40 and now.second < 50
+            if (now.minute == 0 and now.second >= 40 and now.second < 55
+                    and 10 <= now.hour <= 15
                     and (not hasattr(_lab_loop, '_last_60min')
                          or getattr(_lab_loop, '_last_60min', None) != sixty_min_key)):
                 _lab_loop._last_60min = sixty_min_key
@@ -1562,6 +1569,7 @@ def _lab_loop():
                 if spot_ltp > 0:
                     try:
                         collect_spot_60min(_kite_ref)
+                        logger.info("[LAB] 60m spot collected")
                     except Exception as e:
                         logger.debug("[LAB] spot 60m: " + str(e))
 
@@ -1582,10 +1590,16 @@ def _lab_loop():
                     except Exception as e:
                         logger.debug("[LAB] spot 15m: " + str(e))
 
-            # ── Daily spot at 15:36 ───────────────────────────
-            if now.hour == 15 and now.minute == 36 and now.second < 30:
+            # ── Daily spot at 15:30 ───────────────────────────
+            # v12.16: dedup guard, fire once at 15:30
+            _daily_spot_key = (today, "daily_spot")
+            if (now.hour == 15 and now.minute == 30 and now.second < 30
+                    and (not hasattr(_lab_loop, '_last_daily_spot')
+                         or getattr(_lab_loop, '_last_daily_spot', None) != _daily_spot_key)):
+                _lab_loop._last_daily_spot = _daily_spot_key
                 try:
                     collect_spot_daily(_kite_ref)
+                    logger.info("[LAB] daily spot collected")
                 except Exception as e:
                     logger.debug("[LAB] daily spot: " + str(e))
 
