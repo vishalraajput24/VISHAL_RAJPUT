@@ -242,9 +242,16 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["rsi_ok"] = rsi_ok
         if not (rsi_ok and rsi_rising):
             details["rsi_reject"] = True
-            if rsi > rsi_1m_hi:
+            if rsi < rsi_1m_lo:
+                details["rsi_reject_reason"] = "RSI_TOO_LOW"
+            elif rsi > rsi_1m_hi:
+                details["rsi_reject_reason"] = "RSI_TOO_HIGH"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
+            elif not rsi_rising:
+                details["rsi_reject_reason"] = "RSI_NOT_RISING"
+            else:
+                details["rsi_reject_reason"] = "RSI_ZONE"
             return False, details
 
         # v12.15: RSI 1m must be BELOW 3m RSI — entering the dip within the trend
@@ -256,6 +263,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
             details["rsi_1m_below_3m"] = rsi_below_3m
             if not rsi_below_3m:
                 details["rsi_reject"] = True
+                details["rsi_reject_reason"] = "1M_ABOVE_3M"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " ≥ 3m RSI " + str(round(rsi_3m, 1))
                             + " — chasing, not entering dip")
