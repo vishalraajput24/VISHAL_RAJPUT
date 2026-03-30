@@ -189,7 +189,7 @@ def loss_streak_gate(state: dict, score: int) -> bool:
     return False
 
 def _check_1min(token: int, option_type: str, profile: dict,
-                rsi_3m: float = 0.0) -> tuple:
+                rsi_3m: float = 0.0, dte: int = 99) -> tuple:
     details = {
         "body_ok": False, "body_pct": 0.0,
         "rsi_ok": False,  "rsi_val":  0.0,
@@ -227,17 +227,21 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.16: Adaptive RSI zone — wider in strong trends (ADX >= 30 → up to 58)
+        # v12.16: Adaptive RSI zone
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
-        try:
-            _spot_rsi = D.get_spot_indicators("3minute")
-            _spot_adx_rsi = float(_spot_rsi.get("adx", 0))
-        except Exception:
-            _spot_adx_rsi = 0
-        if _spot_adx_rsi >= 30:
-            rsi_1m_hi = D.RSI_1M_HIGH_STRONG   # 58 — strong trend continuation
+        if dte == 0:
+            # DTE 0: explosive moves — RSI hits 70 in 1 candle, 72% of RSI_TOO_HIGH were winners
+            rsi_1m_hi = 70
         else:
-            rsi_1m_hi = D.RSI_1M_HIGH_NORMAL    # 50 — normal cap
+            try:
+                _spot_rsi = D.get_spot_indicators("3minute")
+                _spot_adx_rsi = float(_spot_rsi.get("adx", 0))
+            except Exception:
+                _spot_adx_rsi = 0
+            if _spot_adx_rsi >= 30:
+                rsi_1m_hi = D.RSI_1M_HIGH_STRONG   # 58 — strong trend continuation
+            else:
+                rsi_1m_hi = D.RSI_1M_HIGH_NORMAL    # 50 — normal cap
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
         if not (rsi_ok and rsi_rising):
@@ -376,38 +380,60 @@ def check_entry(token: int, option_type: str, profile: dict,
             return result
 
         # ── LAYER 1: 3-MIN PERMISSION GATE ──────────────────
-        permitted, det_3m, bonus_3m = _check_3min(token, option_type, profile, dte)
-        result["details_3m"] = det_3m
-
-        if not permitted:
-            logger.info("[ENGINE] " + option_type
-                        + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
-            # Compute regime even on blocked path (for dashboard)
-            _sp3m = det_3m.get("ema_spread_3m", 0.0)
-            _abs_sp = abs(_sp3m)
-            if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
-            elif _abs_sp >= 5:  result["regime"] = "TRENDING"
-            elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
-            else:               result["regime"] = "CHOPPY"
-            # Still fetch 1-min data + greeks for dashboard display
+        # v12.16: DTE 0 completely skips _check_3min — uses spot direction instead
+        # Data: 33 blocked entries on DTE 0 were ALL winners (+57pts avg)
+        if dte == 0:
+            bonus_3m = 0
             try:
-                _ok1, _det1 = _check_1min(token, option_type, profile)
-                result["details_1m"] = _det1
-                result["entry_price"] = _det1.get("entry_price", 0.0)
-                # 1-min spread
-                _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-                _df1 = D.add_indicators(_df1)
-                if not _df1.empty and len(_df1) >= 3:
-                    _l1 = _df1.iloc[-2]
-                    result["spread_1m"] = round(
-                        float(_l1.get("EMA_9", _l1["close"])) -
-                        float(_l1.get("EMA_21", _l1["close"])), 2)
-                result["greeks"] = D.get_full_greeks(
-                    _det1.get("entry_price", 0.0), spot_ltp, strike,
-                    expiry_date, option_type)
+                _sp3m_dte0 = D.get_spot_indicators("3minute")
+                _sp_adx0 = float(_sp3m_dte0.get("adx", 0))
+                _sp_spread0 = float(_sp3m_dte0.get("spread", 0))
+                _sp_rsi0 = float(_sp3m_dte0.get("rsi", 50))
             except Exception:
-                pass
-            return result
+                _sp_adx0, _sp_spread0, _sp_rsi0 = 0, 0, 50
+            det_3m = {
+                "conditions_met": 0, "mode": "DTE0_SPOT",
+                "ema_spread_3m": _sp_spread0,
+                "rsi_val_3m": _sp_rsi0,
+                "body_pct_3m": 0, "adx_3m": _sp_adx0,
+                "permitted": True, "ema_aligned": True,
+                "body_ok": True, "rsi_ok": True, "price_ok": True,
+            }
+            result["details_3m"] = det_3m
+            logger.info("[ENGINE] " + option_type + " DTE0 skip 3m gate — spot ADX="
+                        + str(round(_sp_adx0, 1)) + " spread=" + str(round(_sp_spread0, 1)))
+        else:
+            permitted, det_3m, bonus_3m = _check_3min(token, option_type, profile, dte)
+            result["details_3m"] = det_3m
+
+            if not permitted:
+                logger.info("[ENGINE] " + option_type
+                            + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
+                # Compute regime even on blocked path (for dashboard)
+                _sp3m = det_3m.get("ema_spread_3m", 0.0)
+                _abs_sp = abs(_sp3m)
+                if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
+                elif _abs_sp >= 5:  result["regime"] = "TRENDING"
+                elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
+                else:               result["regime"] = "CHOPPY"
+                # Still fetch 1-min data + greeks for dashboard display
+                try:
+                    _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
+                    result["details_1m"] = _det1
+                    result["entry_price"] = _det1.get("entry_price", 0.0)
+                    _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
+                    _df1 = D.add_indicators(_df1)
+                    if not _df1.empty and len(_df1) >= 3:
+                        _l1 = _df1.iloc[-2]
+                        result["spread_1m"] = round(
+                            float(_l1.get("EMA_9", _l1["close"])) -
+                            float(_l1.get("EMA_21", _l1["close"])), 2)
+                    result["greeks"] = D.get_full_greeks(
+                        _det1.get("entry_price", 0.0), spot_ltp, strike,
+                        expiry_date, option_type)
+                except Exception:
+                    pass
+                return result
 
         # ── LAYER 2: REGIME ──────────────────────────────────
         spread_3m  = det_3m.get("ema_spread_3m", 0.0)
@@ -436,7 +462,7 @@ def check_entry(token: int, option_type: str, profile: dict,
                         + " — only TRENDING/TRENDING_STRONG allowed")
             # Fetch 1-min data + greeks for dashboard display
             try:
-                _ok1, _det1 = _check_1min(token, option_type, profile)
+                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
                 result["entry_price"] = _det1.get("entry_price", 0.0)
                 result["spread_1m"] = get_option_ema_spread(token, dte)
@@ -482,7 +508,7 @@ def check_entry(token: int, option_type: str, profile: dict,
             logger.info("[ENGINE] CE 1m spread BLOCKED: " + str(round(spread_1m,1))
                         + " need +" + str(D.SPREAD_1M_MIN_CE))
             try:
-                _ok1, _det1 = _check_1min(token, option_type, profile)
+                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
                 result["entry_price"] = _det1.get("entry_price", 0.0)
                 result["greeks"] = D.get_full_greeks(
@@ -495,7 +521,7 @@ def check_entry(token: int, option_type: str, profile: dict,
             logger.info("[ENGINE] PE 1m spread BLOCKED: " + str(round(spread_1m,1))
                         + " need +" + str(D.SPREAD_1M_MIN_PE))
             try:
-                _ok1, _det1 = _check_1min(token, option_type, profile)
+                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
                 result["entry_price"] = _det1.get("entry_price", 0.0)
                 result["greeks"] = D.get_full_greeks(
@@ -507,7 +533,7 @@ def check_entry(token: int, option_type: str, profile: dict,
 
         # ── LAYER 4B: 1-MIN SIGNAL ───────────────────────────
         _rsi_3m_val = det_3m.get("rsi_val_3m", 0.0)
-        ok_1m, det_1m = _check_1min(token, option_type, profile, rsi_3m=_rsi_3m_val)
+        ok_1m, det_1m = _check_1min(token, option_type, profile, rsi_3m=_rsi_3m_val, dte=dte)
         result["details_1m"] = det_1m
         result["entry_price"] = det_1m.get("entry_price", 0.0)
 
