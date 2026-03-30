@@ -92,7 +92,7 @@ def _read_multitf():
             try:
                 d = _read_dash()
                 mk = d.get("market", {})
-                r = {"adx": 0, "rsi": mk.get("spot_rsi", 0), "ema_spread": mk.get("spot_spread", 0), "regime": mk.get("regime", "")}
+                r = {"adx": mk.get("spot_adx_3m", 0), "rsi": mk.get("spot_rsi", 0), "ema_spread": mk.get("spot_spread", 0), "regime": mk.get("regime", "")}
             except Exception:
                 r = None
         if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread")),"regime":r.get("regime","")})
@@ -107,6 +107,17 @@ def _read_multitf():
                 if side == "CE" and not ce_strike: ce_strike = r.get("strike", "")
                 if side == "PE" and not pe_strike: pe_strike = r.get("strike", "")
             else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0,"body":0,"spread":0,"strike":""})
+    # Override LTP with current websocket price (same across all TFs)
+    try:
+        d = _read_dash()
+        ce_live = d.get("ce", {}).get("ltp", 0)
+        pe_live = d.get("pe", {}).get("ltp", 0)
+        if ce_live:
+            for row in ce: row["ltp"] = round(ce_live, 1)
+        if pe_live:
+            for row in pe: row["ltp"] = round(pe_live, 1)
+    except Exception:
+        pass
     return {"spot":spot,"ce":ce,"pe":pe,"ce_strike":ce_strike,"pe_strike":pe_strike}
 
 def _read_trades():
