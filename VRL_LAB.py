@@ -304,10 +304,12 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
 
             if result.get("fired"):
                 reject = ""
+            elif result.get("regime") in ("CHOPPY", "UNKNOWN"):
+                reject = "REGIME_" + result.get("regime", "")
             elif d3.get("conditions_met", 0) < 2 and d3.get("conditions_met", 0) > 0:
                 reject = "3M_GATE_" + str(d3.get("conditions_met", 0)) + "/4"
             elif d1.get("rsi_reject"):
-                reject = "RSI_ZONE"
+                reject = d1.get("rsi_reject_reason", "RSI_ZONE")
             elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
                 reject = "BODY"
             elif not d1.get("vol_ok") and d1.get("vol_ratio", 0) > 0:
