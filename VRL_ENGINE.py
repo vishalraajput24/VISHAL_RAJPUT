@@ -273,19 +273,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
                             + " — chasing, not entering dip")
                 return False, details
 
-        # v12.15: Spread acceleration — spread must be increasing vs previous candle
-        cur_ema9  = float(last.get("EMA_9", c))
-        cur_ema21 = float(last.get("EMA_21", c))
-        prev_ema9  = float(prev.get("EMA_9", prev["close"]))
-        prev_ema21 = float(prev.get("EMA_21", prev["close"]))
-        cur_spread  = cur_ema9 - cur_ema21
-        prev_spread = prev_ema9 - prev_ema21
-        spread_accel = cur_spread > prev_spread
-        details["spread_accel"] = spread_accel
-        if not spread_accel:
-            logger.info("[ENGINE] 1m spread decelerating: "
-                        + str(round(prev_spread, 1)) + " → " + str(round(cur_spread, 1))
-                        + " — momentum dying")
+        details["spread_accel"] = True  # v12.16: spread deceleration check removed
 
         body_ok = (c > o) and (body_pct >= profile["body_pct_min"])
         details["body_ok"] = body_ok
@@ -300,7 +288,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["rejection_breakout"] = rejection and breakout
 
         # v12.15: All conditions must pass: body, RSI, spread accelerating, volume
-        return body_ok and rsi_ok and spread_accel and details["vol_ok"], details
+        return body_ok and rsi_ok and details["vol_ok"], details
     except Exception as e:
         logger.error("[ENGINE] _check_1min error: " + str(e))
         return False, details
@@ -520,12 +508,12 @@ def check_entry(token: int, option_type: str, profile: dict,
             pass
         result["spread_1m"] = spread_1m
 
-        # Hard gate: CE needs +8pts, PE needs -6pts
-        # Both CE and PE: option must be trending UP (spread positive)
-        # CE needs stronger momentum (fighting premium decay)
-        if option_type == "CE" and spread_1m < D.SPREAD_1M_MIN_CE:
+        # v12.16: Spread gate — DTE 0 uses lower thresholds
+        _spread_min_ce = D.SPREAD_1M_MIN_CE_DTE0 if dte == 0 else D.SPREAD_1M_MIN_CE
+        _spread_min_pe = D.SPREAD_1M_MIN_PE_DTE0 if dte == 0 else D.SPREAD_1M_MIN_PE
+        if option_type == "CE" and spread_1m < _spread_min_ce:
             logger.info("[ENGINE] CE 1m spread BLOCKED: " + str(round(spread_1m,1))
-                        + " need +" + str(D.SPREAD_1M_MIN_CE))
+                        + " need +" + str(_spread_min_ce))
             try:
                 _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
@@ -536,9 +524,9 @@ def check_entry(token: int, option_type: str, profile: dict,
             except Exception:
                 pass
             return result
-        if option_type == "PE" and spread_1m < D.SPREAD_1M_MIN_PE:
+        if option_type == "PE" and spread_1m < _spread_min_pe:
             logger.info("[ENGINE] PE 1m spread BLOCKED: " + str(round(spread_1m,1))
-                        + " need +" + str(D.SPREAD_1M_MIN_PE))
+                        + " need +" + str(_spread_min_pe))
             try:
                 _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
@@ -754,7 +742,15 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
                     + " running=" + str(running) + " floor=5")
         return True, "PROFIT_FLOOR_10", option_ltp
 
-    if peak >= 15 and drawdown > max_drawdown:
+    # v12.15: Drawdown exit only if running is BELOW the profit floor for that peak
+    # Prevents drawdown % from exiting when we're still above the hard floor
+    _floor_for_peak = 0
+    if peak >= 50:   _floor_for_peak = peak * 0.60
+    elif peak >= 30: _floor_for_peak = 20
+    elif peak >= 20: _floor_for_peak = 12
+    elif peak >= 10: _floor_for_peak = 5
+
+    if peak >= 15 and drawdown > max_drawdown and running <= _floor_for_peak:
         logger.info("[TRAIL] DRAWDOWN_EXIT: peak=" + str(peak)
                     + " drop=" + str(round(drawdown, 1))
                     + " limit=" + str(round(max_drawdown, 1))

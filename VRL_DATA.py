@@ -79,8 +79,10 @@ LOSS_STREAK_GATE_SCORE  = 5
 EXCELLENCE_BYPASS_SCORE = 6
 
 # v12.8: 1-min spread gates
-SPREAD_1M_MIN_CE = 6    # CE needs +6pts — fights premium decay
-SPREAD_1M_MIN_PE = 4    # PE needs +4pts — velocity advantage
+SPREAD_1M_MIN_CE = 2    # v12.16: lowered (was 6)
+SPREAD_1M_MIN_PE = 2    # v12.16: lowered (was 4)
+SPREAD_1M_MIN_CE_DTE0 = 1  # v12.16: DTE 0 minimal spread needed
+SPREAD_1M_MIN_PE_DTE0 = 1  # v12.16: DTE 0 minimal spread needed
 
 # v12.12: Separate RSI zones per timeframe
 RSI_1M_LOW  = 30   # v12.16: enter when momentum STARTING (data: 30-45 = 66% WR)
