@@ -290,7 +290,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+='<div class="row"><div class="k">BODY</div><div class="v" style="color:'+(e.body_ok?'var(--gn)':'var(--rd)')+'">'+e.body_pct+'%'+(e.body_ok?' ✅':' ❌')+'</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rClr+'">'+e.rsi+(e.rsi_rising?' ↑':' ↓')+(e.rsi_ok?' ✅':' ❌')+'</div></div>';
     h+='<div class="row"><div class="k">RSI vs 3m</div><div class="v" style="color:'+(e.rsi_below_3m?'var(--gn)':'var(--rd)')+'">'+( e.rsi_below_3m?'DIP ✅':'CHASING ❌')+'</div></div>';
-    h+='<div class="row"><div class="k">SPREAD</div><div class="v" style="color:'+(e.spread_accel?'var(--gn)':'var(--rd)')+'">'+( e.spread_accel?'ACCEL ✅':'DECEL ❌')+'</div></div>';
+    /* spread decel removed in v12.15.1 */
     h+='<div class="row"><div class="k">VOLUME</div><div class="v" style="color:'+(e.vol_ok?'var(--gn)':'var(--rd)')+'">'+e.vol+'x'+(e.vol_ok?' ✅':' ❌')+'</div></div>';
     // Score
     h+='<div class="row"><div class="k">SCORE</div><div class="v" style="color:'+(sig.score>=sig.score_min?'var(--gn)':'var(--rd)')+'">'+sig.score+'/'+sig.score_min+'</div></div>';

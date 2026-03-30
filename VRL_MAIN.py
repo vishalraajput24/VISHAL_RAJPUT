@@ -479,7 +479,6 @@ def _alert_entry(symbol: str, option_type: str, entry_price: float,
         + ("  DIP✅" if det_1m.get("rsi_1m_below_3m") else "")
         + "  Vol:" + str(det_1m.get("vol_ratio", 0)) + "x\n"
         "  Spread:" + str(round(spread_1m, 1)) + "pts"
-        + (" ACCEL✅" if det_1m.get("spread_accel") else " DECEL⚠️")
         + ("  🔥DOUBLE" if abs(spread_3m) >= 5 and spread_1m > 0 else "") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "GREEKS  Delta:" + str(greeks.get("delta","—"))
@@ -884,8 +883,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                                 "met": 0, "spread": 0, "rsi_val": 0, "body_pct": 0, "mode": ""},
                     "spread_1m": 0, "spread_1m_min": D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE,
                     "entry_1m": {"body_pct": 0, "body_ok": False, "rsi": 0, "rsi_rising": False,
-                                 "rsi_ok": False, "rsi_below_3m": False, "vol": 0, "vol_ok": False,
-                                 "spread_accel": False},
+                                 "rsi_ok": False, "rsi_below_3m": False, "vol": 0, "vol_ok": False},
                     "score": 0, "score_min": D.SESSION_SCORE_MIN.get(session, 5),
                     "fired": False, "verdict": "NO DATA",
                     "greeks": {"delta": 0, "iv": 0, "theta": 0, "gamma": 0},
@@ -925,8 +923,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     verdict = "RSI " + str(rsi_v) + " NOT RISING"
                 else:
                     verdict = "RSI " + str(rsi_v) + " REJECT"
-            elif not d1.get("spread_accel", True):
-                verdict = "SPREAD DECELERATING"
             elif not d1.get("vol_ok", False) and d1.get("vol_ratio", 0) > 0:
                 verdict = "VOL " + str(d1.get("vol_ratio", 0)) + "x < 1.5x"
             elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
@@ -964,7 +960,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "rsi_below_3m": d1.get("rsi_1m_below_3m", False),
                     "vol": round(d1.get("vol_ratio", 0), 2),
                     "vol_ok": d1.get("vol_ok", False),
-                    "spread_accel": d1.get("spread_accel", False),
+                    "spread_accel": True,  # v12.15.1: decel check removed
                 },
                 "score": score,
                 "score_min": session_min,
