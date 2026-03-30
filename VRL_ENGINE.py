@@ -420,8 +420,32 @@ def check_entry(token: int, option_type: str, profile: dict,
             session_min = max(session_min, 6)
 
         # ── LAYER 2: 3-MIN PERMISSION GATE ──────────────────
-        permitted, det_3m, bonus_3m = _check_3min(token, option_type, profile, dte)
-        result["details_3m"] = det_3m
+        # DTE 0: Skip 3-min option gate, use spot direction instead
+        if dte == 0:
+            spot_3m_dte0 = D.get_spot_indicators("3minute")
+            _sp_adx0 = float(spot_3m_dte0.get("adx", 0))
+            _sp_spread0 = float(spot_3m_dte0.get("spread", 0))
+            if option_type == "CE" and _sp_spread0 > 5 and _sp_adx0 >= 20:
+                permitted = True
+            elif option_type == "PE" and _sp_spread0 < -5 and _sp_adx0 >= 20:
+                permitted = True
+            else:
+                permitted = False
+            det_3m = {"conditions_met": 0, "mode": "DTE0_SPOT", "ema_spread_3m": _sp_spread0,
+                       "rsi_val_3m": float(spot_3m_dte0.get("rsi", 50)),
+                       "body_pct_3m": 0, "adx_3m": _sp_adx0, "permitted": permitted}
+            bonus_3m = 0
+            result["details_3m"] = det_3m
+            if not permitted:
+                logger.info("[ENGINE] " + option_type + " DTE0 spot direction BLOCKED: adx="
+                            + str(round(_sp_adx0, 1)) + " spread=" + str(round(_sp_spread0, 1)))
+                _fetch_dashboard_data()
+                return result
+            logger.info("[ENGINE] " + option_type + " DTE0 spot direction OK: adx="
+                        + str(round(_sp_adx0, 1)) + " spread=" + str(round(_sp_spread0, 1)))
+        else:
+            permitted, det_3m, bonus_3m = _check_3min(token, option_type, profile, dte)
+            result["details_3m"] = det_3m
 
         if not permitted:
             # Check strong signal bypass using spot data
@@ -475,14 +499,18 @@ def check_entry(token: int, option_type: str, profile: dict,
             pass
         result["spread_1m"] = spread_1m
 
-        if option_type == "CE" and spread_1m < D.SPREAD_1M_MIN_CE:
+        # v12.15: DTE 0 reduced spread thresholds
+        _spread_min_ce = 4 if dte == 0 else D.SPREAD_1M_MIN_CE
+        _spread_min_pe = 3 if dte == 0 else D.SPREAD_1M_MIN_PE
+
+        if option_type == "CE" and spread_1m < _spread_min_ce:
             logger.info("[ENGINE] CE 1m spread BLOCKED: " + str(round(spread_1m, 1))
-                        + " need +" + str(D.SPREAD_1M_MIN_CE))
+                        + " need +" + str(_spread_min_ce))
             _fetch_dashboard_data()
             return result
-        if option_type == "PE" and spread_1m < D.SPREAD_1M_MIN_PE:
+        if option_type == "PE" and spread_1m < _spread_min_pe:
             logger.info("[ENGINE] PE 1m spread BLOCKED: " + str(round(spread_1m, 1))
-                        + " need +" + str(D.SPREAD_1M_MIN_PE))
+                        + " need +" + str(_spread_min_pe))
             _fetch_dashboard_data()
             return result
 
@@ -512,9 +540,10 @@ def check_entry(token: int, option_type: str, profile: dict,
 
         # ── Premium range filter ────────────────────────────
         entry_price = det_1m.get("entry_price", 0.0)
-        if entry_price < 100:
+        _prem_min = D.STRIKE_PREMIUM_MIN_DTE0 if dte == 0 else D.STRIKE_PREMIUM_MIN
+        if entry_price < _prem_min:
             logger.info("[ENGINE] " + option_type + " premium too low: "
-                        + str(round(entry_price, 1)) + " (min 100)")
+                        + str(round(entry_price, 1)) + " (min " + str(_prem_min) + ")")
             result["details_1m"] = det_1m
             result["entry_price"] = entry_price
             return result
@@ -673,13 +702,18 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
             return True, "PHASE1_SL", option_ltp
 
         # v12.15: Stale entry: 3 candles held, peak < 5pts — cut early
-        # Data shows: move happens in first 3 candles or it doesn't happen
         candles_held = state.get("candles_held", 0)
         peak_pnl     = state.get("peak_pnl", 0)
         if candles_held >= 3 and peak_pnl < 5.0:
             logger.info("[ENGINE] STALE_ENTRY: " + str(candles_held)
                         + " candles peak=" + str(peak_pnl) + "pts < 5")
             return True, "STALE_ENTRY", option_ltp
+
+        # v12.15: DTE 0 max hold — theta decay is brutal
+        dte_at_entry = state.get("dte_at_entry", 99)
+        if dte_at_entry == 0 and candles_held >= 5:
+            logger.info("[ENGINE] DTE0_MAX_HOLD: " + str(candles_held) + " candles")
+            return True, "DTE0_MAX_HOLD", option_ltp
 
         if mode == "CONVICTION":
             be_pts = profile.get("conv_breakeven_pts", 20)

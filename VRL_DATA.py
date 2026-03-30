@@ -179,7 +179,7 @@ DTE_PROFILES = {
     "6+" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,           # 3-min zone (30pt window)
-        "rsi_1m_low": 48, "rsi_1m_high": 60,     # 1-min zone (20pt window)
+        "rsi_1m_low": 30, "rsi_1m_high": 50,     # v12.15: 30-50 (adaptive 58 in strong trend)
         "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 20, "conv_breakeven_pts": 15,
@@ -192,7 +192,7 @@ DTE_PROFILES = {
     "3-5": {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "rsi_1m_low": 30, "rsi_1m_high": 50,
         "max_gap_ema": 13, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 18, "conv_breakeven_pts": 14,
@@ -205,7 +205,7 @@ DTE_PROFILES = {
     "2" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "rsi_1m_low": 30, "rsi_1m_high": 50,
         "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 15, "conv_breakeven_pts": 12,
@@ -218,7 +218,7 @@ DTE_PROFILES = {
     "1" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "rsi_1m_low": 30, "rsi_1m_high": 50,
         "max_gap_ema": 12, "volume_ratio_min": 1.5,
         "delta_min": 0.35, "delta_max": 0.65,
         "conv_sl_pts": 12, "conv_breakeven_pts": 10,
@@ -231,10 +231,10 @@ DTE_PROFILES = {
     "0" : {
         "body_pct_min": 40,
         "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 48, "rsi_1m_high": 60,
+        "rsi_1m_low": 30, "rsi_1m_high": 50,
         "max_gap_ema": 15, "volume_ratio_min": 1.5,
         "delta_min": 0.30, "delta_max": 0.70,
-        "conv_sl_pts": 10, "conv_breakeven_pts": 8,
+        "conv_sl_pts": 15, "conv_breakeven_pts": 10,    # v12.15: faster lock (was 8/7)
         "conv_trail_tf": "1minute", "conv_tighten_tf": "1minute",
         "conv_rsi_tighten": 70, "peak_drawdown_pct": 30, "peak_drawdown_min": 40,
         "rsi_exhaustion_min": 72, "rsi_exhaustion_pnl": 6,
@@ -592,6 +592,7 @@ def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
 
 # Premium filter constants for direction-aware strike selection
 STRIKE_PREMIUM_MIN = 100    # Below ₹100 = too OTM, skip
+STRIKE_PREMIUM_MIN_DTE0 = 50  # DTE 0: premiums naturally low, allow ₹50+
 STRIKE_PREMIUM_MAX = 400    # Above ₹400 = too deep ITM, use ATM instead
 
 def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
