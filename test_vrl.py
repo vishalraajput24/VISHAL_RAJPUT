@@ -327,7 +327,7 @@ with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot_low_adx):
 
 section("VERSION")
 
-test("VERSION = v12.15", D.VERSION == "v12.15", "got " + str(D.VERSION))
+test("VERSION = v12.15.1", D.VERSION == "v12.15", "got " + str(D.VERSION))
 
 
 # ═══════════════════════════════════════════════════════════════
