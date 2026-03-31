@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 import pandas as pd
 import VRL_DATA as D
+import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
 
@@ -231,8 +232,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
         # v12.16: Adaptive RSI zone
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
         if dte == 0:
-            # DTE 0: explosive moves — RSI hits 70 in 1 candle, 72% of RSI_TOO_HIGH were winners
-            rsi_1m_hi = 70
+            rsi_1m_hi = CFG.rsi("1m_high_dte0", 70)
         else:
             try:
                 _spot_rsi = D.get_spot_indicators("3minute")
@@ -353,7 +353,8 @@ def score_entry(det_1m: dict, greeks: dict, profile: dict,
         _adx3 = float(_sp3.get("adx", 0))
         _adx5 = float(_sp5.get("adx", 0))
         _adx15 = float(_sp15.get("adx", 0))
-        if _adx3 >= 25 and _adx5 >= 25 and _adx15 >= 25:
+        _mtf_min = CFG.get().get("strategy", {}).get("adx", {}).get("multi_tf_bonus", 25)
+        if _adx3 >= _mtf_min and _adx5 >= _mtf_min and _adx15 >= _mtf_min:
             score += 1
             breakdown["multi_tf_adx"] = 1
             logger.info("[ENGINE] Multi-TF ADX bonus: 3m=" + str(round(_adx3, 1))
@@ -367,7 +368,9 @@ def score_entry(det_1m: dict, greeks: dict, profile: dict,
     # v12.15: Zone modifier — demand/supply zones affect score ±1
     try:
         import json as _json
-        _zone_path = os.path.expanduser("~/state/vrl_zones.json")
+        if not CFG.zones_enabled():
+            raise Exception("zones disabled")
+        _zone_path = CFG.zones_file()
         if os.path.isfile(_zone_path):
             with open(_zone_path) as _zf:
                 _zone_data = _json.load(_zf)
@@ -506,10 +509,11 @@ def check_entry(token: int, option_type: str, profile: dict,
                 _adx_dte0 = float(_sp3m_dte0.get("adx", 0))
             except Exception:
                 _adx_dte0 = 0
-            if _adx_dte0 >= 15:
+            _choppy_min = CFG.get().get("strategy", {}).get("adx", {}).get("choppy_bypass", 15)
+            if _adx_dte0 >= _choppy_min:
                 _dte0_choppy_pass = True
                 logger.info("[ENGINE] " + option_type + " DTE0 CHOPPY pass: ADX="
-                            + str(round(_adx_dte0, 1)) + " >= 15")
+                            + str(round(_adx_dte0, 1)) + " >= " + str(_choppy_min))
 
         if result["regime"] in ("NEUTRAL", "CHOPPY") and not _dte0_choppy_pass:
             logger.info("[ENGINE] " + option_type + " blocked — regime=" + result["regime"]
@@ -605,7 +609,8 @@ def check_entry(token: int, option_type: str, profile: dict,
                     _prem_move_pct = ((_c_now - _c_2ago) / max(_c_2ago, 0.01)) * 100
                     _body_pct_spike = det_1m.get("body_pct", 0)
                     _vol_ratio_spike = det_1m.get("vol_ratio", 0)
-                    if (_prem_move_pct >= 10
+                    _spike_pct = CFG.dte0_cfg("spike_pct", 10)
+                    if (_prem_move_pct >= _spike_pct
                             and _body_pct_spike >= 40
                             and _vol_ratio_spike >= 1.0):
                         _dte0_spike = True
@@ -733,14 +738,17 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
         # Data shows: move happens in first 3 candles or it doesn't happen
         candles_held = state.get("candles_held", 0)
         peak_pnl     = state.get("peak_pnl", 0)
-        if candles_held >= 3 and peak_pnl < 5.0:
+        _stale_candles = CFG.risk("stale_entry_candles", 3)
+        _stale_peak = CFG.risk("stale_entry_peak", 5.0)
+        if candles_held >= _stale_candles and peak_pnl < _stale_peak:
             logger.info("[ENGINE] STALE_ENTRY: " + str(candles_held)
                         + " candles peak=" + str(peak_pnl) + "pts < 5")
             return True, "STALE_ENTRY", option_ltp
 
         # v12.16: DTE 0 max hold — 5 candles, then exit regardless
         dte_at_entry = state.get("dte_at_entry", 99)
-        if dte_at_entry == 0 and candles_held >= 5:
+        _max_hold_dte0 = CFG.risk("max_hold_dte0", 5)
+        if dte_at_entry == 0 and candles_held >= _max_hold_dte0:
             logger.info("[ENGINE] DTE0_MAX_HOLD: " + str(candles_held) + " candles")
             return True, "DTE0_MAX_HOLD", option_ltp
 
@@ -789,31 +797,25 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
     max_drawdown = peak * (drawdown_pct / 100.0) if peak > 0 else 999
 
     # v12.15: Hard profit floors — checked BEFORE percentage drawdown
-    # Lock in minimum profit at each peak level
-    if peak >= 50 and running <= peak * 0.60:
-        logger.info("[TRAIL] PROFIT_FLOOR_50: peak=" + str(peak)
-                    + " running=" + str(running) + " floor=" + str(round(peak * 0.60, 1)))
-        return True, "PROFIT_FLOOR_50", option_ltp
-    if peak >= 30 and running <= 20:
-        logger.info("[TRAIL] PROFIT_FLOOR_30: peak=" + str(peak)
-                    + " running=" + str(running) + " floor=20")
-        return True, "PROFIT_FLOOR_30", option_ltp
-    if peak >= 20 and running <= 12:
-        logger.info("[TRAIL] PROFIT_FLOOR_20: peak=" + str(peak)
-                    + " running=" + str(running) + " floor=12")
-        return True, "PROFIT_FLOOR_20", option_ltp
-    if peak >= 10 and running <= 5:
-        logger.info("[TRAIL] PROFIT_FLOOR_10: peak=" + str(peak)
-                    + " running=" + str(running) + " floor=5")
-        return True, "PROFIT_FLOOR_10", option_ltp
+    _pf = CFG.profit_floors()  # {10: 5, 20: 12, 30: 20, 50: 60}
+    for _pf_level in sorted(_pf.keys(), reverse=True):
+        _pf_val = _pf[_pf_level]
+        if peak >= _pf_level:
+            # 50→60 means 60% of peak; others are absolute pts
+            _floor = peak * (_pf_val / 100.0) if _pf_level >= 50 else _pf_val
+            if running <= _floor:
+                logger.info("[TRAIL] PROFIT_FLOOR_" + str(_pf_level) + ": peak=" + str(peak)
+                            + " running=" + str(running) + " floor=" + str(round(_floor, 1)))
+                return True, "PROFIT_FLOOR_" + str(_pf_level), option_ltp
+            break  # Only check highest applicable floor
 
     # v12.15: Drawdown exit only if running is BELOW the profit floor for that peak
-    # Prevents drawdown % from exiting when we're still above the hard floor
     _floor_for_peak = 0
-    if peak >= 50:   _floor_for_peak = peak * 0.60
-    elif peak >= 30: _floor_for_peak = 20
-    elif peak >= 20: _floor_for_peak = 12
-    elif peak >= 10: _floor_for_peak = 5
+    for _pf_level in sorted(_pf.keys(), reverse=True):
+        if peak >= _pf_level:
+            _pf_val = _pf[_pf_level]
+            _floor_for_peak = peak * (_pf_val / 100.0) if _pf_level >= 50 else _pf_val
+            break
 
     if peak >= 15 and drawdown > max_drawdown and running <= _floor_for_peak:
         logger.info("[TRAIL] DRAWDOWN_EXIT: peak=" + str(peak)
@@ -879,21 +881,21 @@ def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
         except Exception as e:
             logger.warning("[TRAIL] EMA spread check: " + str(e))
 
-    # v12.15: Adaptive EMA trail — timeframe + candles based on running PNL
-    # < 15pts: conservative 5-min, need 2 candles below EMA9
-    # 15-25pts: moderate 3-min, need 2 candles below EMA9
-    # > 25pts: aggressive 1-min, need 1 candle below EMA9
+    # Adaptive EMA trail — timeframe + candles based on running PNL (from config)
     if running > 25:
-        tf = "minute"
-        candles_needed = 1
+        _ema_cfg = CFG.adaptive_ema("high")
+        tf = _ema_cfg.get("timeframe", "minute")
+        candles_needed = _ema_cfg.get("candles", 1)
         label = "AGGRESSIVE"
     elif running >= 15:
-        tf = "3minute"
-        candles_needed = 2
+        _ema_cfg = CFG.adaptive_ema("mid")
+        tf = _ema_cfg.get("timeframe", "3minute")
+        candles_needed = _ema_cfg.get("candles", 2)
         label = "MODERATE"
     else:
-        tf = "5minute"
-        candles_needed = 2
+        _ema_cfg = CFG.adaptive_ema("low")
+        tf = _ema_cfg.get("timeframe", "5minute")
+        candles_needed = _ema_cfg.get("candles", 2)
         label = "CONSERVATIVE"
 
     peak_min = profile.get("peak_drawdown_min") or 0
