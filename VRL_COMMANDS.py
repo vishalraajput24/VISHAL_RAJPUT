@@ -65,7 +65,6 @@ _BROWSER_ROOTS = {
     "lab_options" : D.OPTIONS_3MIN_DIR,
     "lab_1min"    : D.OPTIONS_1MIN_DIR,
     "lab_reports" : D.REPORTS_DIR,
-    "lab_sessions": D.SESSIONS_DIR,
     "research"    : _RESEARCH_DIR,
     "state"       : D.STATE_DIR,
     "logs_live"   : D.LIVE_LOG_DIR,
@@ -77,7 +76,6 @@ _BROWSER_LABELS = {
     "lab_options" : "📊 Options 3-Min CE+PE",
     "lab_1min"    : "📊 Options 1m/5m/15m/Scan",
     "lab_reports" : "📑 Daily Summary",
-    "lab_sessions": "🗂 Trade Sessions",
     "research"    : "🔭 Zones + Research",
     "state"       : "⚙️ State + Config",
     "logs_live"   : "📋 Logs",
@@ -216,6 +214,11 @@ def _send_today_download():
         size_mb = round(os.path.getsize(zip_path) / (1024 * 1024), 2)
         _tg_send_file(zip_path, caption="Today's data — " + today_str
                       + " (" + str(size_mb) + " MB)")
+        # Don't persist zip — delete after sending
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
     except Exception as e:
         _tg_send("Today zip error: " + str(e))
 
@@ -265,13 +268,15 @@ def _cmd_help(args):
         "/forceexit — emergency exit\n"
         "/restart   — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>SERVER</b>\n"
         "/deploy       — git pull + restart bot\n"
         "/serverstatus — server + bot health\n"
         "/serverlog    — last 20 log lines\n"
         "/gitlog       — last 5 commits\n"
-        "Mode: " + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE") + " | ATM: 100-step"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
+        + " | Regime: Spot ADX | RSI 30-50/58\n"
+        + "Gate 2/4 + bypass | ITM strikes | Score ≥5/8"
     )
 
 def _cmd_status(args):

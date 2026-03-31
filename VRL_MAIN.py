@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15.1
 #  Master orchestration file.
 #  v12.15: Expiry breakout mode, fib pivots, /pivot command,
 #          spot buffer feed, expiry-specific entry logic.
@@ -384,12 +384,14 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "GATES (v12.15)\n"
-        "3-min  : 3/4 conditions — option trending UP\n"
-        "CE     : TRENDING regime + 1m spread ≥+6pts\n"
-        "PE     : 3-min permitted + 1m spread ≥+4pts\n"
-        "Both   : Option must trend UP (EMA9 > EMA21)\n"
-        "Score  : ≥5 to fire  |  ≥6 after streak\n"
+        "STRATEGY (v12.15.1)\n"
+        "Regime : Spot ADX+spread scoring (CHOPPY blocked)\n"
+        "Gate   : 2/4 + spot override bypass\n"
+        "RSI    : 30-50 (58 in strong trend)\n"
+        "Dip    : 1m RSI must be below 3m RSI\n"
+        "Strike : CE ITM/ATM, PE ITM/ATM (direction-aware)\n"
+        "Score  : ≥5 to fire | ≥6 against bias/streak\n"
+        "Trail  : Profit floors + adaptive 5m→3m→1m EMA\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "P-Lock : +" + str(D.PROFIT_LOCK_PTS) + "pts\n"
         "/help for commands."
@@ -398,7 +400,7 @@ def _alert_bot_started():
 # ── Score breakdown formatter ──────────────────────────────────
 def _fmt_score_breakdown(bd: dict, score: int) -> str:
     if not bd:
-        return "Score   : " + str(score) + "/7\n"
+        return "Score   : " + str(score) + "/8\n"
     parts = []
     if bd.get("body"):         parts.append("Body")
     if bd.get("body_bonus"):   parts.append("+Bonus")
@@ -406,8 +408,9 @@ def _fmt_score_breakdown(bd: dict, score: int) -> str:
     if bd.get("volume"):       parts.append("Vol")
     if bd.get("delta"):        parts.append("Delta")
     if bd.get("double_align"): parts.append("2xAlign")
-    if bd.get("gate_bonus"):   parts.append("GateBonus")
-    return "Score   : " + str(score) + "/7  [" + " ".join(parts) + "]\n"
+    if bd.get("gate_bonus"):   parts.append("Gate")
+    if bd.get("multi_tf_adx"): parts.append("MTF-ADX")
+    return "Score   : " + str(score) + "/8  [" + " ".join(parts) + "]\n"
 
 def _alert_entry(symbol: str, option_type: str, entry_price: float,
                  mode: str, score: int, profile: dict,
@@ -901,7 +904,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             regime = result.get("regime", "")
             if result.get("fired"):
                 verdict = "FIRED"
-            elif conds < 3:
+            elif conds < 2:
                 verdict = "3M BLOCKED " + str(conds) + "/4"
             elif regime in ("NEUTRAL", "CHOPPY"):
                 verdict = "REGIME " + regime
@@ -1061,6 +1064,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "spot_ema21": spot_3m.get("ema21", 0),
                 "spot_spread": spot_3m.get("spread", 0),
                 "spot_rsi": spot_3m.get("rsi", 0),
+                "spot_adx_3m": spot_3m.get("adx", 0),
                 "hourly_rsi": round(hourly_rsi, 1),
                 "fib_nearest": fib_info.get("level", ""),
                 "fib_price": fib_info.get("price", 0),
@@ -1321,17 +1325,17 @@ def _strategy_loop(kite):
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
 
                 # v12.15: Direction-aware strike selection
-                # Resolve per-direction strikes (CE→ITM/ATM below spot, PE→ITM/ATM above spot)
+                # CE → at/below spot (ITM), PE → at/above spot (ITM)
                 dir_strikes = {}
                 dir_tokens  = {}
                 for _dt in ("CE", "PE"):
-                    _ds = D.resolve_strike_for_direction(
-                        spot_ltp, step, _dt, dte, kite, expiry)
-                    if _ds:
-                        dir_strikes[_dt] = _ds["strike"]
-                        _tk = D.get_option_tokens(kite, _ds["strike"], expiry)
-                        if _tk.get(_dt):
-                            dir_tokens[_dt] = _tk[_dt]
+                    _strike = D.resolve_strike_for_direction(spot_ltp, _dt, dte)
+                    dir_strikes[_dt] = _strike
+                    _tk = D.get_option_tokens(kite, _strike, expiry)
+                    if _tk.get(_dt):
+                        dir_tokens[_dt] = _tk[_dt]
+                    logger.info("[MAIN] Strike " + str(_strike) + " " + _dt
+                                + " spot=" + str(round(spot_ltp, 1)))
 
                 # Fallback to ATM if direction-aware failed
                 if not dir_tokens:

@@ -26,7 +26,7 @@ FIELDNAMES_3M = [
     "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte",
     "session_block", "iv_vs_open",
-    "body_pct", "adx", "rsi", "ema9", "ema9_gap", "volume_ratio",
+    "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap", "volume_ratio",
     "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
@@ -258,6 +258,127 @@ def collect_spot_1min(kite):
         logger.debug("[LAB] Spot 1m error: " + str(e))
 
 
+def _log_signal_scan(kite, spot_ltp: float, now: datetime):
+    """
+    v12.11: Every 1-min candle: run check_entry on CE + PE and log ALL indicators.
+    Logs to nifty_signal_scan_YYYYMMDD.csv with forward fill columns.
+    Critical for strategy validation — DO NOT REMOVE.
+    """
+    if not _current_atm_tokens or not _current_expiry:
+        return
+    if not D.is_market_open():
+        return
+
+    try:
+        from VRL_ENGINE import check_entry as _check_entry
+    except Exception:
+        return
+
+    today   = date.today()
+    dte     = D.calculate_dte(_current_expiry)
+    profile = D.get_dte_profile(dte)
+    session = D.get_session_block(now.hour, now.minute)
+    vix     = D.get_vix()
+    ts_str  = now.strftime("%Y-%m-%d %H:%M:%S")
+    rows    = []
+
+    spot_3m   = D.get_spot_indicators("3minute")
+    spot_gap  = D.get_spot_gap()
+
+    for opt_type, info in _current_atm_tokens.items():
+        token = info["token"]
+        try:
+            result = _check_entry(
+                token       = token,
+                option_type = opt_type,
+                profile     = profile,
+                spot_ltp    = spot_ltp,
+                strike      = _current_atm_strike,
+                expiry_date = _current_expiry,
+                session     = session,
+            )
+
+            d1 = result.get("details_1m", {})
+            d3 = result.get("details_3m", {})
+            g  = result.get("greeks", {})
+
+            if result.get("fired"):
+                reject = ""
+            elif result.get("regime") in ("CHOPPY", "UNKNOWN"):
+                reject = "REGIME_" + result.get("regime", "")
+            elif d3.get("conditions_met", 0) < 2 and d3.get("conditions_met", 0) > 0:
+                reject = "3M_GATE_" + str(d3.get("conditions_met", 0)) + "/4"
+            elif d1.get("rsi_reject"):
+                reject = d1.get("rsi_reject_reason", "RSI_ZONE")
+            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
+                reject = "BODY"
+            elif not d1.get("vol_ok") and d1.get("vol_ratio", 0) > 0:
+                reject = "VOLUME"
+            elif result.get("score", 0) > 0:
+                reject = "SCORE_" + str(result.get("score", 0))
+            else:
+                reject = "BLOCKED"
+
+            rows.append({
+                "timestamp"      : ts_str,
+                "session"        : session,
+                "dte"            : dte,
+                "atm_strike"     : _current_atm_strike,
+                "spot"           : round(spot_ltp, 2),
+                "direction"      : opt_type,
+                "entry_price"    : result.get("entry_price", 0),
+                "rsi_1m"         : d1.get("rsi_val", 0),
+                "body_pct_1m"    : d1.get("body_pct", 0),
+                "vol_ratio_1m"   : d1.get("vol_ratio", 0),
+                "rsi_rising_1m"  : int(d1.get("rsi_rising", False)),
+                "rsi_3m"         : d3.get("rsi_val_3m", 0),
+                "body_pct_3m"    : d3.get("body_pct_3m", 0),
+                "ema_spread_3m"  : d3.get("ema_spread_3m", 0),
+                "conditions_3m"  : d3.get("conditions_met", 0),
+                "mode_3m"        : d3.get("mode", ""),
+                "score"          : result.get("score", 0),
+                "fired"          : int(result.get("fired", False)),
+                "reject_reason"  : reject,
+                "iv_pct"         : g.get("iv_pct", 0),
+                "delta"          : g.get("delta", 0),
+                "vix"            : round(vix, 2),
+                "spot_rsi_3m"       : spot_3m.get("rsi", 0),
+                "spot_ema_spread_3m": spot_3m.get("spread", 0),
+                "spot_regime"       : spot_3m.get("regime", ""),
+                "spot_gap"          : round(spot_gap, 1),
+                "spread_1m"         : result.get("spread_1m", 0),
+                "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
+                "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
+                "straddle_decay_pct": 0.0,
+                "near_fib_level"    : "",
+                "fib_distance"      : 0,
+                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
+            })
+
+            try:
+                fib = D.get_nearest_fib_level(spot_ltp)
+                rows[-1]["near_fib_level"] = fib.get("level", "")
+                rows[-1]["fib_distance"] = fib.get("distance", 0)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug("[LAB] scan log error " + opt_type + ": " + str(e))
+            continue
+
+    if rows:
+        path   = _csv_path_scan(today)
+        is_new = not os.path.isfile(path)
+        try:
+            with open(path, "a", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=FIELDNAMES_SCAN, extrasaction="ignore")
+                if is_new:
+                    w.writeheader()
+                w.writerows(rows)
+                f.flush()
+        except Exception as e:
+            logger.warning("[LAB] scan write error: " + str(e))
+
 
 # ─── IO HELPERS ───────────────────────────────────────────────
 
@@ -439,6 +560,27 @@ def collect_option_3min(kite, spot_ltp: float):
             df.set_index("timestamp", inplace=True)
             df = D.add_indicators(df)
             indic = _compute_indicators(df, -2)
+            # Add ema21 + ema_spread
+            _row3 = df.iloc[-2]
+            indic["ema21"] = round(float(_row3.get("EMA_21", _row3["close"])), 2)
+            indic["ema_spread"] = round(float(_row3.get("EMA_9", _row3["close"])) - float(_row3.get("EMA_21", _row3["close"])), 2)
+            # Inline ADX calculation (D.add_indicators doesn't compute ADX)
+            try:
+                import numpy as _np
+                _up3 = df["high"].diff()
+                _dn3 = -df["low"].diff()
+                _pdm3 = _np.where((_up3 > _dn3) & (_up3 > 0), _up3, 0.0)
+                _ndm3 = _np.where((_dn3 > _up3) & (_dn3 > 0), _dn3, 0.0)
+                _tr3 = pd.concat([df["high"]-df["low"],
+                                  (df["high"]-df["close"].shift(1)).abs(),
+                                  (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
+                _atr3 = _tr3.ewm(alpha=1/14, adjust=False).mean()
+                _pdi3 = 100 * pd.Series(_pdm3, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr3
+                _ndi3 = 100 * pd.Series(_ndm3, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr3
+                _adx3 = ((_pdi3-_ndi3).abs() / (_pdi3+_ndi3+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
+                indic["adx"] = round(float(_adx3.iloc[-2]), 1)
+            except Exception:
+                indic["adx"] = 0
         except Exception:
             indic = {}
 
@@ -477,6 +619,8 @@ def collect_option_3min(kite, spot_ltp: float):
             "adx"          : indic.get("adx", 0),
             "rsi"          : indic.get("rsi", 50),
             "ema9"         : indic.get("ema9", 0),
+            "ema21"        : indic.get("ema21", 0),
+            "ema_spread"   : indic.get("ema_spread", 0),
             "ema9_gap"     : indic.get("ema9_gap", 0),
             "volume_ratio" : indic.get("volume_ratio", 1),
             "iv_pct"       : greeks.get("iv_pct", 0),
@@ -792,18 +936,37 @@ def fill_forward_scan(kite, target_date: date = None):
 
         try:
             ts = datetime.fromisoformat(row["timestamp"])
-            prices = []
-            for mins in [3, 5, 10]:
-                fwd_t = ts + timedelta(minutes=mins)
-                candles = _fetch_candles(kite, token,
-                                         fwd_t - timedelta(minutes=1),
-                                         fwd_t + timedelta(minutes=2),
-                                         "minute")
-                prices.append(round(candles[-1]["close"], 2) if candles else None)
-                time.sleep(0.25)
-
             entry = float(row.get("entry_price", 0))
-            if entry > 0 and all(p is not None for p in prices):
+            if entry <= 0:
+                continue
+
+            # v12.15.1: Fetch forward prices at 3, 5, 10 CANDLES (not minutes)
+            # Use 1-min candles from entry time, look ahead N candles
+            fwd_from = ts - timedelta(minutes=1)
+            fwd_to = ts + timedelta(minutes=15)  # 15min window covers 10 candles
+            candles = _fetch_candles(kite, token, fwd_from, fwd_to, "minute")
+            time.sleep(0.3)
+
+            if not candles or len(candles) < 3:
+                continue
+
+            # Find the candle at entry time (closest to ts)
+            entry_idx = 0
+            for i, c in enumerate(candles):
+                c_time = c["date"] if isinstance(c["date"], datetime) else datetime.fromisoformat(str(c["date"]))
+                if c_time <= ts:
+                    entry_idx = i
+
+            # Forward prices at 3, 5, 10 candles after entry
+            prices = []
+            for n_candles in [3, 5, 10]:
+                idx = entry_idx + n_candles
+                if idx < len(candles):
+                    prices.append(round(float(candles[idx]["close"]), 2))
+                else:
+                    prices.append(None)
+
+            if all(p is not None for p in prices):
                 row["fwd_3c"]  = prices[0]
                 row["fwd_5c"]  = prices[1]
                 row["fwd_10c"] = prices[2]
@@ -1497,6 +1660,19 @@ def _lab_loop():
                 _last_1min = None
                 logger.info("[LAB] Daily reset")
 
+                # Auto-cleanup: old logs (>7 days) + stale zips
+                import glob as _cg
+                _cleaned = 0
+                for _old_log in _cg.glob(os.path.expanduser("~/logs/live/vrl_live.log.*")):
+                    if os.path.getmtime(_old_log) < time.time() - 7 * 86400:
+                        os.remove(_old_log)
+                        _cleaned += 1
+                for _old_zip in _cg.glob(os.path.expanduser("~/state/today_*.zip")):
+                    os.remove(_old_zip)
+                    _cleaned += 1
+                if _cleaned:
+                    logger.info("[LAB] Cleanup: deleted " + str(_cleaned) + " old files")
+
             # ── Fetch spot LTP once per loop iteration ────────
             _loop_spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
             if _loop_spot_ltp <= 0:
@@ -1521,8 +1697,11 @@ def _lab_loop():
                         collect_spot_1min(_kite_ref)
                     except Exception as e:
                         logger.debug("[LAB] spot 1m: " + str(e))
-                    # Signal scan disabled — VRL_MAIN already scans and writes dashboard
-                    # _log_signal_scan was duplicating check_entry calls + API load
+                    # Signal scan — log every minute, fired or not
+                    try:
+                        _log_signal_scan(_kite_ref, spot_ltp, now)
+                    except Exception as e:
+                        logger.debug("[LAB] scan log: " + str(e))
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 1m skip — spot LTP not available yet")
 

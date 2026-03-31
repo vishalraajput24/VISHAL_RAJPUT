@@ -30,7 +30,6 @@ _FOLDERS = {
     "options_3min": ("📊 Options 3-Min CE+PE",    os.path.join(BASE, "lab_data", "options_3min")),
     "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
     "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
-    "sessions":     ("🗂 Trade Sessions",         os.path.join(BASE, "lab_data", "sessions")),
     "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
     "state":        ("⚙️ State + Config",         os.path.join(BASE, "state")),
     "logs":         ("📋 Logs",                   os.path.join(BASE, "logs", "live")),
@@ -86,18 +85,40 @@ def _read_multitf():
         try: return round(float(r.get(k, d)), 3)
         except: return d
     spot = []
-    for label, prefix in [("1m","nifty_spot_1min"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("60m","nifty_spot_60min_"),("D","nifty_spot_daily")]:
+    for label, prefix in [("1m","nifty_spot_1min"),("3m","nifty_spot_3min_"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("D","nifty_spot_daily")]:
         r = _last(_latest(spot_dir, prefix))
-        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread"))})
-        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0})
-    ce = []; pe = []
+        if not r and label == "3m":
+            # 3m spot comes from get_spot_indicators, not CSV — use dashboard JSON
+            try:
+                d = _read_dash()
+                mk = d.get("market", {})
+                r = {"adx": mk.get("spot_adx_3m", 0), "rsi": mk.get("spot_rsi", 0), "ema_spread": mk.get("spot_spread", 0), "regime": mk.get("regime", "")}
+            except Exception:
+                r = None
+        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread")),"regime":r.get("regime","")})
+        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0,"regime":""})
+    ce = []; pe = []; ce_strike = 0; pe_strike = 0
     for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_"),("5m",opt1_dir,"nifty_option_5min_"),("15m",opt1_dir,"nifty_option_15min_")]:
         p = _latest(d, prefix)
         for side, arr in [("CE",ce),("PE",pe)]:
             r = _lasttype(p, side)
-            if r: arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close")})
-            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0})
-    return {"spot":spot,"ce":ce,"pe":pe}
+            if r:
+                arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close"),"body":_f(r,"body_pct"),"spread":_f(r,"ema_spread",_f(r,"ema9_gap")),"strike":r.get("strike","")})
+                if side == "CE" and not ce_strike: ce_strike = r.get("strike", "")
+                if side == "PE" and not pe_strike: pe_strike = r.get("strike", "")
+            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0,"body":0,"spread":0,"strike":""})
+    # Override LTP with current websocket price (same across all TFs)
+    try:
+        d = _read_dash()
+        ce_live = d.get("ce", {}).get("ltp", 0)
+        pe_live = d.get("pe", {}).get("ltp", 0)
+        if ce_live:
+            for row in ce: row["ltp"] = round(ce_live, 1)
+        if pe_live:
+            for row in pe: row["ltp"] = round(pe_live, 1)
+    except Exception:
+        pass
+    return {"spot":spot,"ce":ce,"pe":pe,"ce_strike":ce_strike,"pe_strike":pe_strike}
 
 def _read_trades():
     if not os.path.isfile(TRADE_LOG): return []
@@ -321,21 +342,21 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   if(sp.some(function(s){return s.adx>0||s.rsi>0})){
     mh+='<div class="sect"><div class="sh">\ud83d\udcc8 SPOT MULTI-TF</div>';
     mh+=hdr(4,['TF','ADX','RSI','SPREAD']);
-    sp.forEach(function(t){if(!t.adx&&!t.rsi)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
-    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0}).length;
-    var up=sp.filter(function(t){return t.spread>0&&t.adx>0}).length,dn=sp.filter(function(t){return t.spread<0&&t.adx>0}).length;
+    sp.forEach(function(t){if(!t.adx&&!t.rsi&&!t.spread)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
+    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0||t.rsi>0}).length;
+    var up=sp.filter(function(t){return t.spread>0&&(t.adx>0||t.rsi>0)}).length,dn=sp.filter(function(t){return t.spread<0&&(t.adx>0||t.rsi>0)}).length;
     var vc=trn>=3?'var(--gn)':trn>=2?'var(--am)':'var(--rd)';
     mh+='<div style="padding:5px 10px;font-size:10px;font-weight:700;color:'+vc+'">'+(trn>=3?'STRONG':trn>=2?'MODERATE':'WEAK')+' '+trn+'/'+tot+(up>=3?' \u2191 BULLISH':dn>=3?' \u2193 BEARISH':'')+'</div></div>'}
-  var ceLtp=ce.ltp||0, ceGk=ce.greeks||{}, peLtp=pe.ltp||0, peGk=pe.greeks||{};
+  var ceStk=mtf.ce_strike||'',peStk=mtf.pe_strike||'';
   if(ceo.some(function(c){return c.rsi>0||c.ltp>0})){
-    mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE OPTION MULTI-TF</div>';
-    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=ceLtp||t.ltp,iv=ceGk.iv||t.iv,dl=ceGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--gn)">\u20b9'+ltp+'</div></div>'});
+    mh+='<div class="sect"><div class="sh">\ud83d\udfe2 CE '+(ceStk||'')+' OPTION MULTI-TF</div>';
+    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
+    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--gn)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
   if(peo.some(function(p){return p.rsi>0||p.ltp>0})){
-    mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE OPTION MULTI-TF</div>';
-    mh+=hdr(6,['TF','ADX','RSI','IV','DELTA','LTP']);
-    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;var ltp=peLtp||t.ltp,iv=peGk.iv||t.iv,dl=peGk.delta||t.delta;mh+='<div style="'+gr(6)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+iv+'%</div><div style="text-align:right">'+dl+'</div><div style="text-align:right;color:var(--rd)">\u20b9'+ltp+'</div></div>'});
+    mh+='<div class="sect"><div class="sh">\ud83d\udd34 PE '+(peStk||'')+' OPTION MULTI-TF</div>';
+    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
+    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
 
   // Fib Pivot Section
@@ -462,24 +483,103 @@ class H(BaseHTTPRequestHandler):
 
     def _files_page(self):
         import urllib.parse
+        import time as _t
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         folder = q.get("f",[""])[0]
-        html = '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VRL Files</title>'
-        html += '<style>body{background:#080810;color:#e4e4e7;font-family:monospace;font-size:13px;padding:10px;max-width:500px;margin:0 auto}'
-        html += 'a{color:#3b82f6;text-decoration:none}.f{display:block;margin:4px 0;padding:10px;background:#111118;border:1px solid #1e1e30;border-radius:6px}'
-        html += '.f:active{background:#1e1e30}.sz{float:right;color:#555;font-size:11px}.bk{display:inline-block;margin:8px 0;padding:6px 12px;background:#1e1e30;border-radius:6px}</style></head><body>'
+        today_str = date.today().strftime("%Y%m%d")
+        today_iso = date.today().isoformat()
+
+        css = ('<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VRL Files</title>'
+               '<style>'
+               'body{background:#080810;color:#e4e4e7;font-family:monospace;font-size:13px;padding:10px;max-width:520px;margin:0 auto}'
+               'a{color:#3b82f6;text-decoration:none}'
+               '.f{display:block;margin:4px 0;padding:10px 12px;background:#111118;border:1px solid #1e1e30;border-radius:6px}'
+               '.f:active{background:#1e1e30}'
+               '.sz{float:right;color:#555;font-size:11px}'
+               '.bk{display:inline-block;margin:8px 4px;padding:6px 12px;background:#1e1e30;border-radius:6px}'
+               '.sh{color:#888;font-size:11px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:1px}'
+               '.badge{background:#22c55e;color:#000;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px}'
+               '.badge-r{background:#ef4444}'
+               '.cnt{color:#555;font-size:11px;margin-left:6px}'
+               '</style></head><body>')
+
+        html = css
         html += '<h2 style="color:#3b82f6;font-size:15px">VISHAL RAJPUT FILES</h2>'
-        html += '<a href="/" class="bk">War Room</a><br>'
+        html += '<a href="/" class="bk">War Room</a>'
+
         if not folder:
-            for k, v in _FOLDERS.items():
-                html += '<a href="/files?f=' + k + '" class="f">' + v[0] + '</a>'
+            # ── TODAY section ──
+            html += '<div class="sh">TODAY (' + today_iso + ')</div>'
+
+            # Count today's trades
+            trade_count = 0
+            tl_path = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
+            if os.path.isfile(tl_path):
+                try:
+                    with open(tl_path) as _tf:
+                        for r in csv.DictReader(_tf):
+                            if r.get("date") == today_iso:
+                                trade_count += 1
+                except Exception:
+                    pass
+
+            # Today's files - quick links
+            today_items = [
+                ("📊 Today's Option Data", "options_1min", "nifty_option_1min_" + today_str),
+                ("📈 Today's Spot Data", "spot", "nifty_spot_1min_" + today_str),
+                ("📒 Today's Trades", "trade_log", None),
+                ("📋 Today's Scan Log", "options_1min", "nifty_signal_scan_" + today_str),
+            ]
+            for label, fkey, prefix in today_items:
+                badge = ""
+                if "Trades" in label and trade_count > 0:
+                    badge = '<span class="badge">' + str(trade_count) + '</span>'
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + badge + '</a>'
+
+            # ── HISTORICAL DATA section ──
+            html += '<div class="sh">HISTORICAL DATA</div>'
+            hist_items = [
+                ("spot", "📈 Spot (1m/5m/15m/D)"),
+                ("options_3min", "📊 Options 3-Min CE+PE"),
+                ("options_1min", "📊 Options 1m/5m/15m/Scan"),
+                ("reports", "📑 Daily Summary Reports"),
+            ]
+            for fkey, label in hist_items:
+                info = _FOLDERS.get(fkey)
+                cnt = ""
+                if info and os.path.isdir(info[1]):
+                    try:
+                        n = len([f for f in os.listdir(info[1]) if os.path.isfile(os.path.join(info[1], f)) and os.path.getsize(os.path.join(info[1], f)) > 0])
+                        cnt = '<span class="cnt">' + str(n) + ' files</span>'
+                    except Exception:
+                        pass
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + cnt + '</a>'
+
+            # ── ANALYSIS section ──
+            html += '<div class="sh">ANALYSIS</div>'
+            analysis_items = [
+                ("research", "🔭 Demand/Supply Zones"),
+                ("trade_log", "📒 Full Trade History"),
+            ]
+            for fkey, label in analysis_items:
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
+
+            # ── SYSTEM section ──
+            html += '<div class="sh">SYSTEM</div>'
+            system_items = [
+                ("state", "⚙️ State + Config"),
+                ("logs", "📋 Logs"),
+            ]
+            for fkey, label in system_items:
+                html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
+
         else:
+            # ── File listing for a specific folder ──
             html += '<a href="/files" class="bk">Back</a>'
             info = _FOLDERS.get(folder)
             if info and os.path.isdir(info[1]):
                 html += '<h3 style="color:#888;font-size:12px">' + info[0] + '</h3>'
                 files = sorted(os.listdir(info[1]), reverse=True)
-                import time as _t
                 file_list = []
                 for fname in files:
                     fp = os.path.join(info[1], fname)
@@ -488,12 +588,18 @@ class H(BaseHTTPRequestHandler):
                         mt = os.path.getmtime(fp)
                         file_list.append((fname, sz, mt, fp))
                 file_list.sort(key=lambda x: x[2], reverse=True)
-                for fname, sz, mt, fp in file_list[:40]:
+                if not file_list:
+                    html += '<div style="color:#555;padding:20px">No files found</div>'
+                for fname, sz, mt, fp in file_list[:50]:
                     sz_str = str(round(sz / 1024, 1)) + ' KB' if sz < 1024*1024 else str(round(sz / (1024*1024), 1)) + ' MB'
                     mod = _t.strftime('%d %b %H:%M', _t.localtime(mt))
-                    html += '<a href="/api/download/' + folder + '/' + fname + '" class="f">' + fname + '<span class="sz">' + sz_str + ' · ' + mod + '</span></a>'
+                    # Highlight today's files
+                    is_today = today_str in fname
+                    style = ' style="border-left:3px solid #22c55e"' if is_today else ''
+                    html += '<a href="/api/download/' + folder + '/' + fname + '" class="f"' + style + '>' + fname + '<span class="sz">' + sz_str + ' · ' + mod + '</span></a>'
             else:
                 html += '<div style="color:#555;padding:20px">Folder not found</div>'
+
         html += '</body></html>'
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
