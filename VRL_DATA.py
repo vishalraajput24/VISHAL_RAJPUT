@@ -12,12 +12,25 @@ import logging
 import threading
 from datetime import date, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from kiteconnect import KiteTicker
 
+import VRL_CONFIG as CFG
+
+# Load config at import time — fails fast if config.yaml is missing/invalid
+CFG.load()
+
 VERSION  = "v12.15.1"
 BOT_NAME = "VISHAL RAJPUT TRADE"
+
+# ── Timezone ──
+IST = ZoneInfo("Asia/Kolkata")
+
+def now_ist() -> datetime:
+    """Return current time in IST, timezone-aware."""
+    return datetime.now(IST)
 
 def _load_env_file(path: str):
     if not os.path.isfile(path):
@@ -33,7 +46,7 @@ def _load_env_file(path: str):
 
 _load_env_file(os.path.expanduser("~/.env"))
 
-PAPER_MODE       = True
+PAPER_MODE       = CFG.is_paper()
 KITE_API_KEY     = os.getenv("KITE_API_KEY", "")
 KITE_API_SECRET  = os.getenv("KITE_API_SECRET", "")
 TELEGRAM_TOKEN   = os.getenv("TG_TOKEN", "")
@@ -60,85 +73,76 @@ STATE_FILE_PATH  = os.path.join(STATE_DIR,    "vrl_live_state.json")
 PID_FILE_PATH    = os.path.join(STATE_DIR,    "vrl_live.pid")
 TOKEN_FILE_PATH  = os.path.join(STATE_DIR,    "access_token.json")
 
-INSTRUMENT_NAME  = "NIFTY"
-EXCHANGE_NFO     = "NFO"
-EXCHANGE_NSE     = "NSE"
-LOT_SIZE_BASE    = 65
+# ── All constants now read from config.yaml via VRL_CONFIG ──
+INSTRUMENT_NAME  = CFG.instrument_name()
+EXCHANGE_NFO     = CFG.get()["instrument"].get("exchange_nfo", "NFO")
+EXCHANGE_NSE     = CFG.get()["instrument"].get("exchange_nse", "NSE")
+LOT_SIZE_BASE    = CFG.lot_size()
 LOT_SIZE         = LOT_SIZE_BASE
-STRIKE_STEP         = 100    # v12.10: 100-step for indicator stability
-STRIKE_STEP_EXPIRY  = 50     # DTE=0: tighter step for liquid premiums
-NIFTY_SPOT_TOKEN = 256265
-INDIA_VIX_TOKEN  = 264969
-RISK_FREE_RATE   = 0.065
+STRIKE_STEP         = CFG.strike_cfg("step", 100)
+STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
+NIFTY_SPOT_TOKEN = CFG.spot_token()
+INDIA_VIX_TOKEN  = CFG.vix_token()
+RISK_FREE_RATE   = CFG.risk("risk_free_rate", 0.065)
 
-MAX_DAILY_TRADES        = 999
-MAX_DAILY_LOSSES        = 999
-PROFIT_LOCK_PTS         = 150
+MAX_DAILY_TRADES        = CFG.risk("max_daily_trades", 999)
+MAX_DAILY_LOSSES        = CFG.risk("max_daily_losses", 999)
+PROFIT_LOCK_PTS         = CFG.risk("profit_lock_pts", 150)
 PROFIT_LOCK_TRAIL_TF    = "3minute"
-LOSS_STREAK_GATE_SCORE  = 5
-EXCELLENCE_BYPASS_SCORE = 6
+LOSS_STREAK_GATE_SCORE  = CFG.scoring("loss_streak_gate", 5)
+EXCELLENCE_BYPASS_SCORE = CFG.scoring("excellence_bypass", 6)
 
-# v12.8: 1-min spread gates
-SPREAD_1M_MIN_CE = 2    # v12.16: lowered (was 6)
-SPREAD_1M_MIN_PE = 2    # v12.16: lowered (was 4)
-SPREAD_1M_MIN_CE_DTE0 = 1  # v12.16: DTE 0 minimal spread needed
-SPREAD_1M_MIN_PE_DTE0 = 1  # v12.16: DTE 0 minimal spread needed
+SPREAD_1M_MIN_CE      = CFG.spread("ce_min", 2)
+SPREAD_1M_MIN_PE      = CFG.spread("pe_min", 2)
+SPREAD_1M_MIN_CE_DTE0 = CFG.spread("ce_min_dte0", 1)
+SPREAD_1M_MIN_PE_DTE0 = CFG.spread("pe_min_dte0", 1)
 
-# v12.12: Separate RSI zones per timeframe
-RSI_1M_LOW  = 30   # v12.15: enter when momentum STARTING (data: 30-45 = 66% WR)
-RSI_1M_HIGH_NORMAL = 50   # v12.15: default cap
-RSI_1M_HIGH_STRONG = 58   # v12.15: extended when spot ADX ≥ 30 (strong trend continuation)
-RSI_1M_HIGH = RSI_1M_HIGH_NORMAL  # backward compat alias
-RSI_3M_LOW  = 42   # 3-min permission zone lower
-RSI_3M_HIGH = 72   # 3-min permission zone upper (30pt window — wider trend)
+RSI_1M_LOW         = CFG.rsi("1m_low", 30)
+RSI_1M_HIGH_NORMAL = CFG.rsi("1m_high_normal", 50)
+RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 58)
+RSI_1M_HIGH        = RSI_1M_HIGH_NORMAL
+RSI_3M_LOW         = CFG.rsi("3m_low", 42)
+RSI_3M_HIGH        = CFG.rsi("3m_high", 72)
 
-# v12.12: ATR-based SL
-ATR_SL_MULTIPLIER = 2.0
-ATR_SL_MAX        = 25     # Hard cap — never more than 25pts
-ATR_SL_CANDLES    = 5      # Last N candles for ATR calculation
+ATR_SL_MULTIPLIER = CFG.risk("sl_multiplier", 2.0)
+ATR_SL_MAX        = CFG.risk("sl_max", 25)
+ATR_SL_CANDLES    = CFG.risk("sl_candles", 5)
 
-# v12.12: Trail drawdown
-TRAIL_DRAWDOWN_PCT     = 25   # Exit when drawdown > 25% of peak
-TRAIL_EMA_CANDLES_FAIL = 2    # Need 2 consecutive closes below EMA to exit
+TRAIL_DRAWDOWN_PCT     = CFG.trail("drawdown_pct", 25)
+TRAIL_EMA_CANDLES_FAIL = CFG.trail("ema_candles_fail", 2)
 
-# v12.15: Expiry breakout mode (DTE=0)
-EXPIRY_CONSOL_CANDLES  = 5    # Min candles for consolidation detection
-EXPIRY_CONSOL_RANGE    = 15   # Max range (pts) to qualify as consolidation
-EXPIRY_BREAKOUT_MIN    = 10   # Min pts beyond consolidation for breakout
-EXPIRY_SL_MAX          = 15   # Hard cap SL on expiry (not 25)
-EXPIRY_TRAIL_PCT       = 20   # Tighter trail on expiry (not 25%)
-EXPIRY_START_HOUR      = 9    # Expiry entry window start
-EXPIRY_START_MIN       = 45
-EXPIRY_CUTOFF_HOUR     = 15   # Expiry entry window end
-EXPIRY_CUTOFF_MIN      = 0
-EXPIRY_FIB_PROXIMITY   = 20   # Within 20pts of fib level = near zone
+EXPIRY_CONSOL_CANDLES  = CFG.expiry_cfg("consol_candles", 5)
+EXPIRY_CONSOL_RANGE    = CFG.expiry_cfg("consol_range", 15)
+EXPIRY_BREAKOUT_MIN    = CFG.expiry_cfg("breakout_min", 10)
+EXPIRY_SL_MAX          = CFG.risk("sl_dte0", 15)
+EXPIRY_TRAIL_PCT       = CFG.expiry_cfg("trail_pct", 20)
+EXPIRY_START_HOUR      = CFG.expiry_cfg("start_hour", 9)
+EXPIRY_START_MIN       = CFG.expiry_cfg("start_min", 45)
+EXPIRY_CUTOFF_HOUR     = CFG.expiry_cfg("cutoff_hour", 15)
+EXPIRY_CUTOFF_MIN      = CFG.expiry_cfg("cutoff_min", 0)
+EXPIRY_FIB_PROXIMITY   = CFG.expiry_cfg("fib_proximity", 20)
 
 SCALP_MODE_ENABLED = False
 
-LOOKBACK_1M = 50
-LOOKBACK_3M = 60
-LOOKBACK_5M = 10
+LOOKBACK_1M = CFG.lookback("1m")
+LOOKBACK_3M = CFG.lookback("3m")
+LOOKBACK_5M = CFG.lookback("5m")
 
-TRADE_START_HOUR  = 9
-TRADE_START_MIN   = 15
-ENTRY_CUTOFF_HOUR = 15
-ENTRY_CUTOFF_MIN  = 10
-MARKET_OPEN_HOUR  = 9
-MARKET_OPEN_MIN   = 15
-MARKET_CLOSE_HOUR = 15
-MARKET_CLOSE_MIN  = 30
+TRADE_START_HOUR  = CFG.market_hours("trade_start_hour", 9)
+TRADE_START_MIN   = CFG.market_hours("trade_start_min", 15)
+ENTRY_CUTOFF_HOUR = CFG.market_hours("entry_cutoff_hour", 15)
+ENTRY_CUTOFF_MIN  = CFG.market_hours("entry_cutoff_min", 10)
+MARKET_OPEN_HOUR  = CFG.market_hours("open_hour", 9)
+MARKET_OPEN_MIN   = CFG.market_hours("open_min", 15)
+MARKET_CLOSE_HOUR = CFG.market_hours("close_hour", 15)
+MARKET_CLOSE_MIN  = CFG.market_hours("close_min", 30)
 
-REENTRY_COOLDOWN_MIN = 5
+REENTRY_COOLDOWN_MIN = CFG.risk("reentry_cooldown_min", 5)
 
-SESSION_SCORE_MIN = {
-    "OPEN"     : 5,
-    "MORNING"  : 5,
-    "AFTERNOON": 5,
-    "LATE"     : 6,
-}
+SESSION_SCORE_MIN = CFG.session_score_min()
 
-WS_RECONNECT_DELAY = 5
-TICK_STALE_SECS    = 8
+WS_RECONNECT_DELAY = CFG.ws_reconnect_delay()
+TICK_STALE_SECS    = CFG.ws_tick_stale_secs()
 
 STATE_PERSIST_FIELDS = [
     "in_trade", "symbol", "token", "direction",
@@ -153,105 +157,20 @@ STATE_PERSIST_FIELDS = [
     "_last_trail_candle",
 ]
 
-# v12.8: Prediction table — avg peak pts by (regime, session)
-# Source: 4-day research data (moves CSV analysis)
-PREDICTION_TABLE = {
-    ("TRENDING_STRONG", "OPEN")      : 35,
-    ("TRENDING_STRONG", "MORNING")   : 32,
-    ("TRENDING_STRONG", "AFTERNOON") : 28,
-    ("TRENDING_STRONG", "LATE")      : 42,
-    ("TRENDING",        "OPEN")      : 25,
-    ("TRENDING",        "MORNING")   : 22,
-    ("TRENDING",        "AFTERNOON") : 20,
-    ("TRENDING",        "LATE")      : 30,
-    ("NEUTRAL",         "OPEN")      : 8,
-    ("NEUTRAL",         "MORNING")   : 7,
-    ("NEUTRAL",         "AFTERNOON") : 7,
-    ("NEUTRAL",         "LATE")      : 6,
-    ("CHOPPY",          "OPEN")      : 4,
-    ("CHOPPY",          "MORNING")   : 4,
-    ("CHOPPY",          "AFTERNOON") : 4,
-    ("CHOPPY",          "LATE")      : 4,
-    ("UNKNOWN",         "OPEN")      : 8,
-    ("UNKNOWN",         "MORNING")   : 7,
-    ("UNKNOWN",         "AFTERNOON") : 7,
-    ("UNKNOWN",         "LATE")      : 6,
-}
+# ── Prediction table + DTE profiles — read from config.yaml ──
+def _build_prediction_table() -> dict:
+    pred = CFG.get().get("prediction_table", {})
+    table = {}
+    for regime, sessions in pred.items():
+        for session, value in sessions.items():
+            table[(regime, session)] = value
+    return table
 
-DTE_PROFILES = {
-    "6+" : {
-        "body_pct_min": 40,
-        "rsi_low": 42, "rsi_high": 72,           # 3-min zone (30pt window)
-        "rsi_1m_low": 30, "rsi_1m_high": 50,     # v12.15: 30-50 (adaptive 58 in strong trend)
-        "max_gap_ema": 15, "volume_ratio_min": 1.5,
-        "delta_min": 0.35, "delta_max": 0.65,
-        "conv_sl_pts": 20, "conv_breakeven_pts": 15,
-        "conv_trail_tf": "5minute", "conv_tighten_tf": "3minute",
-        "conv_rsi_tighten": 76, "peak_drawdown_pct": 40, "peak_drawdown_min": 80,
-        "rsi_exhaustion_min": 76, "rsi_exhaustion_pnl": 12,
-        "gamma_rider_rsi_drop": 65, "gamma_rider_min_pnl": 8,
-        "score_conv_min": 5, "conviction_allowed": True,
-    },
-    "3-5": {
-        "body_pct_min": 40,
-        "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
-        "max_gap_ema": 13, "volume_ratio_min": 1.5,
-        "delta_min": 0.35, "delta_max": 0.65,
-        "conv_sl_pts": 18, "conv_breakeven_pts": 14,
-        "conv_trail_tf": "5minute", "conv_tighten_tf": "3minute",
-        "conv_rsi_tighten": 75, "peak_drawdown_pct": 40, "peak_drawdown_min": 80,
-        "rsi_exhaustion_min": 76, "rsi_exhaustion_pnl": 12,
-        "gamma_rider_rsi_drop": 65, "gamma_rider_min_pnl": 8,
-        "score_conv_min": 5, "conviction_allowed": True,
-    },
-    "2" : {
-        "body_pct_min": 40,
-        "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
-        "max_gap_ema": 12, "volume_ratio_min": 1.5,
-        "delta_min": 0.35, "delta_max": 0.65,
-        "conv_sl_pts": 15, "conv_breakeven_pts": 12,
-        "conv_trail_tf": "3minute", "conv_tighten_tf": "1minute",
-        "conv_rsi_tighten": 74, "peak_drawdown_pct": 38, "peak_drawdown_min": 70,
-        "rsi_exhaustion_min": 75, "rsi_exhaustion_pnl": 10,
-        "gamma_rider_rsi_drop": 64, "gamma_rider_min_pnl": 8,
-        "score_conv_min": 5, "conviction_allowed": True,
-    },
-    "1" : {
-        "body_pct_min": 40,
-        "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
-        "max_gap_ema": 12, "volume_ratio_min": 1.5,
-        "delta_min": 0.35, "delta_max": 0.65,
-        "conv_sl_pts": 12, "conv_breakeven_pts": 10,
-        "conv_trail_tf": "3minute", "conv_tighten_tf": "1minute",
-        "conv_rsi_tighten": 72, "peak_drawdown_pct": 35, "peak_drawdown_min": 60,
-        "rsi_exhaustion_min": 74, "rsi_exhaustion_pnl": 8,
-        "gamma_rider_rsi_drop": 63, "gamma_rider_min_pnl": 6,
-        "score_conv_min": 5, "conviction_allowed": True,
-    },
-    "0" : {
-        "body_pct_min": 40,
-        "rsi_low": 42, "rsi_high": 72,
-        "rsi_1m_low": 30, "rsi_1m_high": 50,
-        "max_gap_ema": 15, "volume_ratio_min": 1.5,
-        "delta_min": 0.30, "delta_max": 0.70,
-        "conv_sl_pts": 15, "conv_breakeven_pts": 10,    # v12.15: faster lock (was 8/7)
-        "conv_trail_tf": "1minute", "conv_tighten_tf": "1minute",
-        "conv_rsi_tighten": 70, "peak_drawdown_pct": 30, "peak_drawdown_min": 40,
-        "rsi_exhaustion_min": 72, "rsi_exhaustion_pnl": 6,
-        "gamma_rider_rsi_drop": 60, "gamma_rider_min_pnl": 5,
-        "score_conv_min": 5, "conviction_allowed": True,
-    },
-}
+PREDICTION_TABLE = _build_prediction_table()
+DTE_PROFILES     = CFG.get()["dte_profiles"]
 
 def get_dte_profile(dte: int) -> dict:
-    if dte >= 6:   return DTE_PROFILES["6+"]
-    elif dte >= 3: return DTE_PROFILES["3-5"]
-    elif dte == 2: return DTE_PROFILES["2"]
-    elif dte == 1: return DTE_PROFILES["1"]
-    else:          return DTE_PROFILES["0"]
+    return CFG.dte_profile(dte)
 
 def get_session_block(hour: int, minute: int) -> str:
     mins = hour * 60 + minute
@@ -423,20 +342,20 @@ def get_vix() -> float:
     return 0.0
 
 def is_market_open() -> bool:
-    now = datetime.now()
+    now = now_ist()
     if now.weekday() >= 5:
         return False
-    start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0)
-    end   = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MIN, second=0)
+    start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
+    end   = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MIN, second=0, microsecond=0)
     return start <= now <= end
 
 def is_trading_window(now: datetime = None) -> bool:
     if now is None:
-        now = datetime.now()
+        now = now_ist()
     if not is_market_open():
         return False
-    start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0)
-    end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0)
+    start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
+    end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
     return start <= now <= end
 
 def _get_nfo_instruments(kite=None):
@@ -473,14 +392,39 @@ def get_lot_size(kite=None) -> int:
         logger.warning("[DATA] Lot size fetch failed: " + str(e))
     return LOT_SIZE_BASE
 
+# ── Historical data cache — avoids duplicate API calls within same minute ──
+_hist_cache = {}
+_hist_cache_lock = threading.Lock()
+_HIST_CACHE_TTL = 30  # seconds
+
+def _hist_cache_key(token: int, interval: str, lookback: int) -> str:
+    return str(token) + "|" + interval + "|" + str(lookback)
+
+def _hist_cache_get(key: str):
+    with _hist_cache_lock:
+        entry = _hist_cache.get(key)
+        if entry and (time.time() - entry["ts"]) < _HIST_CACHE_TTL:
+            return entry["df"].copy()
+    return None
+
+def _hist_cache_put(key: str, df):
+    with _hist_cache_lock:
+        _hist_cache[key] = {"df": df.copy(), "ts": time.time()}
+        # Evict old entries
+        now = time.time()
+        stale = [k for k, v in _hist_cache.items() if now - v["ts"] > _HIST_CACHE_TTL * 2]
+        for k in stale:
+            del _hist_cache[k]
+
 def get_historical_data(token: int, interval: str, lookback: int,
                         today_only: bool = False) -> pd.DataFrame:
     if _kite is None:
         return pd.DataFrame()
-    # v12.11 FIX: Always go back at least 3 calendar days
-    # Covers weekends (Sat+Sun) so Monday always gets Friday's data
-    # Kite returns only market-hours candles — extra days cost nothing
-    # This single fix solves: option EMA warmup, RSI warmup, gap detection
+    # Check cache first — avoids duplicate API calls within same 30s window
+    cache_key = _hist_cache_key(token, interval, lookback)
+    cached = _hist_cache_get(cache_key)
+    if cached is not None:
+        return cached
     min_from = datetime.now() - timedelta(days=3)
     minutes_per_candle = {
         "minute": 1, "3minute": 3, "5minute": 5,
@@ -488,7 +432,6 @@ def get_historical_data(token: int, interval: str, lookback: int,
     }.get(interval, 1)
     total_minutes  = lookback * minutes_per_candle * 2.5
     candidate_from = datetime.now() - timedelta(minutes=int(total_minutes) + 60)
-    # Use whichever reaches further back
     from_dt = min(candidate_from, min_from)
     to_dt   = datetime.now()
     raw   = None
@@ -511,6 +454,7 @@ def get_historical_data(token: int, interval: str, lookback: int,
     df = df[["open", "high", "low", "close", "volume"]].copy()
     df = df.apply(pd.to_numeric, errors="coerce")
     df.dropna(inplace=True)
+    _hist_cache_put(cache_key, df)
     return df
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -593,10 +537,10 @@ def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
         step = STRIKE_STEP
     return int(round(spot_ltp / step) * step)
 
-# Premium filter constants for direction-aware strike selection
-STRIKE_PREMIUM_MIN = 100    # Below ₹100 = too OTM, skip
-STRIKE_PREMIUM_MIN_DTE0 = 50  # DTE 0: premiums naturally low, allow ₹50+
-STRIKE_PREMIUM_MAX = 400    # Above ₹400 = too deep ITM, use ATM instead
+# Premium filter — from config
+STRIKE_PREMIUM_MIN      = CFG.strike_cfg("premium_min", 100)
+STRIKE_PREMIUM_MIN_DTE0 = CFG.strike_cfg("premium_min_dte0", 50)
+STRIKE_PREMIUM_MAX      = CFG.strike_cfg("premium_max", 400)
 
 def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
     """
@@ -1452,3 +1396,33 @@ def reset_daily_warnings():
     _hourly_rsi = 0.0
     _hourly_rsi_ts = 0
     _straddle_check_ts = 0
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LAB DATA RETENTION — delete CSVs older than N days
+# ═══════════════════════════════════════════════════════════════
+
+def cleanup_old_lab_data(retention_days: int = None):
+    """Delete lab CSV files older than retention_days. Called daily."""
+    if retention_days is None:
+        retention_days = CFG.lab("retention_days", 30)
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    dirs_to_clean = [OPTIONS_1MIN_DIR, OPTIONS_3MIN_DIR, SPOT_DIR, REPORTS_DIR]
+    removed = 0
+    for d in dirs_to_clean:
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            if not os.path.isfile(fp) or not f.endswith(".csv"):
+                continue
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(fp))
+                if mtime < cutoff:
+                    os.remove(fp)
+                    removed += 1
+            except Exception:
+                pass
+    if removed > 0:
+        logger.info("[DATA] Lab cleanup: removed " + str(removed)
+                    + " files older than " + str(retention_days) + " days")

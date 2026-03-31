@@ -29,7 +29,15 @@ from VRL_ENGINE import (
     loss_streak_gate, check_profit_lock,
     compute_entry_sl, check_expiry_breakout,
 )
-from VRL_TRADE  import place_entry, place_exit
+# Auto paper/live trade module switch — based on config.yaml mode
+import VRL_CONFIG as CFG
+if CFG.is_live():
+    from VRL_TRADE_LIVE import place_entry, place_exit
+    logger_boot = logging.getLogger("vrl_live")
+    logger_boot.info("[MAIN] LIVE mode — using VRL_TRADE_LIVE")
+else:
+    from VRL_TRADE import place_entry, place_exit
+
 from VRL_LAB    import start_lab
 
 # ── Loggers ─────────────────────────────────────────────────────
@@ -141,6 +149,73 @@ def _load_state():
             )
     except Exception as e:
         logger.error("[MAIN] State load error: " + str(e))
+
+
+def _reconcile_positions(kite):
+    """
+    Startup position reconciliation — compare saved state with broker.
+    If bot crashed mid-trade and position is gone at broker, reset state.
+    If broker has position but state says no trade, alert for manual resolution.
+    """
+    if kite is None or D.PAPER_MODE:
+        return
+    try:
+        positions = kite.positions()
+        net = positions.get("net", [])
+        # Find NFO positions with non-zero quantity
+        nfo_positions = [p for p in net
+                         if p.get("exchange") == "NFO"
+                         and p.get("quantity", 0) != 0
+                         and "NIFTY" in p.get("tradingsymbol", "")]
+
+        saved_in_trade = state.get("in_trade", False)
+        saved_symbol = state.get("symbol", "")
+
+        if saved_in_trade and not nfo_positions:
+            logger.warning("[RECONCILE] State says in_trade but NO broker position for "
+                           + saved_symbol + " — resetting state")
+            _tg_send(
+                "⚠️ <b>POSITION MISMATCH</b>\n"
+                "State : in_trade (" + saved_symbol + ")\n"
+                "Broker: NO position found\n"
+                "Action: State reset. Position was likely squared off manually."
+            )
+            with _state_lock:
+                state["in_trade"] = False
+                state["symbol"] = ""
+                state["token"] = None
+
+        elif not saved_in_trade and nfo_positions:
+            symbols = [p["tradingsymbol"] for p in nfo_positions]
+            logger.warning("[RECONCILE] State says NOT in_trade but broker has positions: "
+                           + str(symbols))
+            _tg_send(
+                "⚠️ <b>POSITION MISMATCH</b>\n"
+                "State : NOT in trade\n"
+                "Broker: " + ", ".join(symbols) + "\n"
+                "Action: Manual resolution needed. Bot will NOT auto-exit."
+            )
+
+        elif saved_in_trade and nfo_positions:
+            broker_syms = [p["tradingsymbol"] for p in nfo_positions]
+            if saved_symbol not in broker_syms:
+                logger.warning("[RECONCILE] Symbol mismatch: state=" + saved_symbol
+                               + " broker=" + str(broker_syms))
+                _tg_send(
+                    "⚠️ <b>SYMBOL MISMATCH</b>\n"
+                    "State : " + saved_symbol + "\n"
+                    "Broker: " + ", ".join(broker_syms) + "\n"
+                    "Manual resolution needed."
+                )
+            else:
+                logger.info("[RECONCILE] Position confirmed: " + saved_symbol)
+        else:
+            logger.info("[RECONCILE] Clean — no positions, no saved trade")
+
+    except Exception as e:
+        logger.error("[RECONCILE] Position check failed: " + str(e)
+                     + " — continuing with saved state")
+
 
 def _reset_daily(today_str: str):
     with _state_lock:
@@ -1666,6 +1741,13 @@ def main():
     logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
 
     _load_state()
+    _reconcile_positions(kite)
+
+    # Run daily lab data cleanup
+    try:
+        D.cleanup_old_lab_data()
+    except Exception as e:
+        logger.warning("[MAIN] Lab cleanup failed: " + str(e))
 
     # Wire Telegram commands module
     VRL_COMMANDS.setup(

@@ -13,6 +13,16 @@ from datetime import datetime
 
 import VRL_DATA as D
 
+try:
+    from kiteconnect.exceptions import (
+        TokenException, NetworkException, GeneralException,
+        OrderException, InputException,
+    )
+except ImportError:
+    # Fallback if kiteconnect not installed (test environment)
+    TokenException = NetworkException = GeneralException = Exception
+    OrderException = InputException = Exception
+
 logger = logging.getLogger("vrl_live")
 
 
@@ -123,8 +133,20 @@ def place_entry(kite, symbol: str, token: int,
             "error"     : "",
         }
 
+    except TokenException as e:
+        logger.error("[TRADE] Entry auth error (token expired?): " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "AUTH_EXPIRED: " + str(e)}
+    except OrderException as e:
+        logger.error("[TRADE] Entry order rejected by broker: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "ORDER_REJECTED: " + str(e)}
+    except NetworkException as e:
+        logger.error("[TRADE] Entry network error: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "NETWORK: " + str(e)}
     except Exception as e:
-        logger.error("[TRADE] Entry order error: " + str(e))
+        logger.error("[TRADE] Entry unexpected error: " + type(e).__name__ + " " + str(e))
         return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
                 "order_id": "", "error": str(e)}
 
@@ -181,8 +203,15 @@ def place_exit(kite, symbol: str, token: int,
             logger.warning("[TRADE] Exit attempt " + str(attempt + 1) + " not filled")
             time.sleep(1)
 
+        except TokenException as e:
+            logger.error("[TRADE] Exit auth error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
+        except (OrderException, NetworkException) as e:
+            logger.error("[TRADE] Exit order/network error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
         except Exception as e:
-            logger.error("[TRADE] Exit error attempt=" + str(attempt + 1) + ": " + str(e))
+            logger.error("[TRADE] Exit unexpected error attempt=" + str(attempt + 1)
+                         + ": " + type(e).__name__ + " " + str(e))
             time.sleep(1)
 
     # Both attempts failed — manual intervention required
