@@ -57,19 +57,92 @@ Paper-mode rule-based options trading system targeting consistent daily gains th
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `VRL_MAIN.py` | ~1,770 | Master orchestrator. Strategy loop, trade execution, state management, alerts, dashboard writer |
+| `config.yaml` | ~310 | **Central configuration**. All tunable values — strategy, risk, trail, DTE profiles, market hours. Change here, restart bot, done. |
+| `VRL_CONFIG.py` | ~290 | Config loader + validator. Typed accessors, fails fast on missing/invalid config. Immutable at runtime. |
+| `VRL_MAIN.py` | ~1,850 | Master orchestrator. Strategy loop, trade execution, state management, alerts, dashboard writer, position reconciliation |
 | `VRL_COMMANDS.py` | ~1,230 | Telegram command handlers. `/edge`, `/status`, `/files`, all 22 commands |
 | `VRL_ENGINE.py` | ~1,050 | Signal brain. 3-min gate, 1-min entry, scoring, exit management (3-phase), expiry breakout, DTE 0 spike mode |
-| `VRL_DATA.py` | ~1,450 | Foundation. Settings, WebSocket, indicators, Greeks (Newton-Raphson IV), spot analysis, fib pivots, direction-aware strike selection |
+| `VRL_DATA.py` | ~1,450 | Foundation. Settings from config, WebSocket, indicators, Greeks (Newton-Raphson IV), spot analysis, fib pivots, data cache, timezone (IST), lab cleanup |
 | `VRL_LAB.py` | ~1,600 | Data collector. 1m/3m/5m/15m/60m/daily spot + option candles with ADX, forward fill, daily summary, weekend guard |
 | `VRL_AUTH.py` | ~180 | Kite authentication. Auto-login via TOTP, stale token protection, Telegram alerts |
-| `VRL_TRADE.py` | ~160 | Order machine. Paper fills, margin checks. Only file that touches Kite orders |
-| `VRL_TRADE_LIVE.py` | ~430 | Production order execution. Slippage logging, LIMIT orders, position verify. For go-live |
+| `VRL_TRADE.py` | ~180 | Order machine. Paper fills, margin checks, specific Kite exception handling. Only file that touches Kite orders |
+| `VRL_TRADE_LIVE.py` | ~430 | Production order execution. Slippage logging, LIMIT orders, position verify. Auto-loaded when `mode: live` in config |
 | `VRL_WEB.py` | ~550 | War Room dashboard. Dumb renderer — reads JSON, zero calculations. Signal monitor + market data + file browser |
 | `VRL_HEALTHCHECK.py` | ~420 | Pre-market system verification. 20+ checks, Telegram report at 9:18 AM |
 | `VRL_DEPLOY.py` | ~280 | Telegram-triggered deployment. Git pull + restart via /deploy command |
 | `research_zones.py` | ~520 | Demand/supply zone detector. 60-day historical scan, multi-timeframe, Telegram alert |
+| `research_ml.py` | ~270 | ML training. Decision Tree + Gradient Boosting on scan logs, walk-forward validation |
 | `test_vrl.py` | ~390 | Automated test suite. 49 tests covering strike selection, RSI, regime, scoring, exits |
+
+---
+
+## Central Configuration — `config.yaml`
+
+**One file controls the entire bot.** Every tunable value lives in `config.yaml` — no code changes needed for strategy tuning.
+
+```yaml
+mode: paper          # paper | live — auto-switches trade module
+
+instrument:
+  name: NIFTY
+  lot_size: 65
+
+strategy:
+  rsi:
+    1m_low: 30
+    1m_high_normal: 50
+    1m_high_strong: 58
+    1m_high_dte0: 70
+  adx:
+    choppy_bypass: 15
+    multi_tf_bonus: 25
+  spread:
+    ce_min: 2
+    pe_min: 2
+
+risk:
+  sl_max: 25
+  sl_dte0: 15
+  max_hold_dte0: 5
+
+trail:
+  profit_floors:
+    10: 5       # peak 10 → lock 5pts
+    20: 12
+    30: 20
+    50: 60      # peak 50 → lock 60% of peak
+  adaptive_ema:
+    low:  { timeframe: 5minute, candles: 2 }
+    mid:  { timeframe: 3minute, candles: 2 }
+    high: { timeframe: minute,  candles: 1 }
+```
+
+### Common Scenarios
+
+| Change | What to Edit | Restart? |
+|--------|-------------|----------|
+| Tune RSI zone | `strategy.rsi.1m_low` / `1m_high_normal` | Yes |
+| Tighter SL on expiry | `risk.sl_dte0` | Yes |
+| Go live | `mode: live` | Yes |
+| Add BankNifty | Duplicate as `config_banknifty.yaml`, change `instrument` | New instance |
+| Change lot size | `instrument.lot_size` | Yes |
+
+### Validation
+
+Config validates on load — missing keys = bot refuses to start with a clear error. Secrets (API keys, tokens) stay in `~/.env`, never in config.
+
+---
+
+## Production Improvements (v12.15.1)
+
+| Feature | Description |
+|---------|-------------|
+| **Auto Paper/Live Switch** | `mode: live` in config auto-imports `VRL_TRADE_LIVE.py`. No manual file copying. |
+| **Position Reconciliation** | On startup, compares saved state with broker positions. Alerts on mismatch via Telegram. |
+| **Specific Exception Handling** | `TokenException`, `OrderException`, `NetworkException` instead of broad `except` in trade execution. |
+| **Data Caching** | 30-second TTL cache on `get_historical_data()` — eliminates duplicate API calls within same scan cycle. |
+| **Timezone Awareness** | All timestamps use `Asia/Kolkata` (IST) via `zoneinfo`. Critical for cron jobs and market hour checks. |
+| **Lab Data Retention** | Auto-deletes lab CSVs older than 30 days on startup. Configurable via `lab.retention_days`. |
 
 ---
 
@@ -362,3 +435,41 @@ Dumb renderer. Reads `~/state/vrl_dashboard.json` written by VRL_MAIN.py every s
 - Multi-TF ADX bonus
 - Score entry mechanics
 - Regime blocks
+
+Run: `~/kite_env/bin/python test_vrl.py`
+
+---
+
+## Setup
+
+### Requirements
+```bash
+pip install kiteconnect pandas pyotp pyyaml requests
+```
+
+### Environment Variables (`~/.env`)
+```
+KITE_API_KEY=your_key
+KITE_API_SECRET=your_secret
+KITE_TOTP_KEY=your_totp
+TG_TOKEN=your_telegram_bot_token
+TG_GROUP_ID=your_chat_id
+```
+
+### Crontab (Mon-Fri)
+```
+PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
+0  8 * * 1-5  cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 VRL_AUTH.py
+0  9 * * 1-5  cd ~/VISHAL_RAJPUT && nohup ~/kite_env/bin/python3 VRL_WEB.py &
+8  9 * * 1-5  cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 research_zones.py
+10 9 * * 1-5  cd ~/VISHAL_RAJPUT && nohup ~/kite_env/bin/python3 VRL_MAIN.py &
+18 9 * * 1-5  cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 VRL_HEALTHCHECK.py
+40 15 * * 1-5 cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 research_ml.py
+```
+
+### Quick Start
+```bash
+cd ~/VISHAL_RAJPUT
+~/kite_env/bin/python test_vrl.py     # verify 49/49
+~/kite_env/bin/python VRL_MAIN.py     # start bot
+```
