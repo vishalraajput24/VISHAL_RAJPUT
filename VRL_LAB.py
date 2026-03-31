@@ -936,18 +936,37 @@ def fill_forward_scan(kite, target_date: date = None):
 
         try:
             ts = datetime.fromisoformat(row["timestamp"])
-            prices = []
-            for mins in [3, 5, 10]:
-                fwd_t = ts + timedelta(minutes=mins)
-                candles = _fetch_candles(kite, token,
-                                         fwd_t - timedelta(minutes=1),
-                                         fwd_t + timedelta(minutes=2),
-                                         "minute")
-                prices.append(round(candles[-1]["close"], 2) if candles else None)
-                time.sleep(0.25)
-
             entry = float(row.get("entry_price", 0))
-            if entry > 0 and all(p is not None for p in prices):
+            if entry <= 0:
+                continue
+
+            # v12.15.1: Fetch forward prices at 3, 5, 10 CANDLES (not minutes)
+            # Use 1-min candles from entry time, look ahead N candles
+            fwd_from = ts - timedelta(minutes=1)
+            fwd_to = ts + timedelta(minutes=15)  # 15min window covers 10 candles
+            candles = _fetch_candles(kite, token, fwd_from, fwd_to, "minute")
+            time.sleep(0.3)
+
+            if not candles or len(candles) < 3:
+                continue
+
+            # Find the candle at entry time (closest to ts)
+            entry_idx = 0
+            for i, c in enumerate(candles):
+                c_time = c["date"] if isinstance(c["date"], datetime) else datetime.fromisoformat(str(c["date"]))
+                if c_time <= ts:
+                    entry_idx = i
+
+            # Forward prices at 3, 5, 10 candles after entry
+            prices = []
+            for n_candles in [3, 5, 10]:
+                idx = entry_idx + n_candles
+                if idx < len(candles):
+                    prices.append(round(float(candles[idx]["close"]), 2))
+                else:
+                    prices.append(None)
+
+            if all(p is not None for p in prices):
                 row["fwd_3c"]  = prices[0]
                 row["fwd_5c"]  = prices[1]
                 row["fwd_10c"] = prices[2]

@@ -30,7 +30,7 @@ scan_files = sorted(glob.glob(os.path.expanduser(
 dfs = []
 for f in scan_files:
     try:
-        df = pd.read_csv(f)
+        df = pd.read_csv(f, on_bad_lines="skip")
         dfs.append(df)
     except Exception as e:
         print(f"  Skip {f}: {e}")
@@ -65,9 +65,17 @@ print("\n" + "=" * 60)
 print("  FEATURE ENGINEERING")
 print("=" * 60)
 
-# Label: did entry win after 5 candles?
-all_scans["win"] = (all_scans["fwd_5c"] > all_scans["entry_price"]).astype(int)
+# Label: use fwd_outcome if available, else PNL-based
+# WIN = max move >= 10pts in 3/5/10 candles
+# Also compute PNL at each forward point
+all_scans["pnl_3c"] = pd.to_numeric(all_scans.get("fwd_3c", 0), errors="coerce").fillna(0) - all_scans["entry_price"]
 all_scans["pnl_5c"] = all_scans["fwd_5c"] - all_scans["entry_price"]
+all_scans["fwd_10c_num"] = pd.to_numeric(all_scans.get("fwd_10c", 0), errors="coerce").fillna(0)
+all_scans["pnl_10c"] = all_scans["fwd_10c_num"] - all_scans["entry_price"]
+
+# Win = gained at least 5pts by candle 10 (realistic for options)
+all_scans["best_pnl"] = all_scans[["pnl_3c", "pnl_5c", "pnl_10c"]].max(axis=1)
+all_scans["win"] = (all_scans["best_pnl"] >= 5).astype(int)
 
 # Features — all numeric columns from scan log
 feature_cols = [
