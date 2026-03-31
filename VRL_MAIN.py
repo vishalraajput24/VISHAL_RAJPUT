@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15.1
 #  Master orchestration file.
 #  v12.15: Expiry breakout mode, fib pivots, /pivot command,
 #          spot buffer feed, expiry-specific entry logic.
@@ -384,7 +384,7 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "STRATEGY (v12.15)\n"
+        "STRATEGY (v12.15.1)\n"
         "Regime : Spot ADX+spread scoring (CHOPPY blocked)\n"
         "Gate   : 2/4 + spot override bypass\n"
         "RSI    : 30-50 (58 in strong trend)\n"

@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.15.1
 #  Signal logic. Entry checks, exit management, scoring.
 #  v12.15: Expiry breakout mode (spot consolidation trigger),
 #          fib pivot proximity, expiry-specific SL/trail.
