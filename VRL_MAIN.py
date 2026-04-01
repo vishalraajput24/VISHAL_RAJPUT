@@ -112,6 +112,47 @@ state   = deepcopy(DEFAULT_STATE)
 _running = True
 
 # ═══════════════════════════════════════════════════════════════
+#  STRIKE LOCKING — stable scanning, no flickering
+# ═══════════════════════════════════════════════════════════════
+
+_locked_ce_strike = None
+_locked_pe_strike = None
+_locked_at_spot   = None
+_locked_tokens    = {}
+_LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
+
+def _lock_strikes(spot, dte, kite=None, expiry=None):
+    """Lock CE/PE strikes and subscribe tokens. Only called on relock."""
+    global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
+    _locked_ce_strike = D.resolve_strike_for_direction(spot, "CE", dte)
+    _locked_pe_strike = D.resolve_strike_for_direction(spot, "PE", dte)
+    _locked_at_spot = spot
+    _locked_tokens = {}
+
+    if kite and expiry:
+        for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
+            _tk = D.get_option_tokens(kite, _strike, expiry)
+            if _tk.get(_dt):
+                _locked_tokens[_dt] = _tk[_dt]
+
+        # Subscribe tokens permanently — no unsub/resub flicker
+        _sub_tokens = [v["token"] for v in _locked_tokens.values() if v.get("token")]
+        if _sub_tokens:
+            D.subscribe_tokens(_sub_tokens)
+
+    logger.info("[MAIN] Strikes LOCKED: CE=" + str(_locked_ce_strike)
+                + " PE=" + str(_locked_pe_strike)
+                + " at spot=" + str(round(spot, 1)))
+
+def _reset_strike_lock():
+    """Reset lock after trade exit or session start."""
+    global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
+    _locked_ce_strike = None
+    _locked_pe_strike = None
+    _locked_at_spot = None
+    _locked_tokens = {}
+
+# ═══════════════════════════════════════════════════════════════
 #  STATE PERSISTENCE
 # ═══════════════════════════════════════════════════════════════
 
@@ -232,6 +273,7 @@ def _reset_daily(today_str: str):
         state["_straddle_alerted"]     = False
     D.clear_token_cache()
     D.reset_daily_warnings()
+    _reset_strike_lock()
     logger.info("[MAIN] Daily reset")
     _save_state()
 
@@ -885,6 +927,9 @@ def _execute_exit(kite, option_ltp: float, reason: str):
     if old_token:
         D.unsubscribe_tokens([old_token])
 
+    # Reset strike lock after trade exit — re-evaluate for next entry
+    _reset_strike_lock()
+
     _save_state()
     _alert_exit(symbol, entry, actual_exit, pnl, reason, mode, peak,
                 candles_held=candles, regime=regime, score=score,
@@ -1129,6 +1174,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "market": {
                 "spot": round(spot_ltp, 1),
                 "atm": atm_strike,
+                "locked_ce": _locked_ce_strike,
+                "locked_pe": _locked_pe_strike,
+                "locked_at_spot": round(_locked_at_spot, 1) if _locked_at_spot else 0,
                 "dte": dte,
                 "vix": round(vix_ltp, 1),
                 "session": session,
@@ -1399,20 +1447,24 @@ def _strategy_loop(kite):
                 step       = D.get_active_strike_step(dte)
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
 
-                # v12.15: Direction-aware strike selection
-                # CE → at/below spot (ITM), PE → at/above spot (ITM)
-                dir_strikes = {}
-                dir_tokens  = {}
-                for _dt in ("CE", "PE"):
-                    _strike = D.resolve_strike_for_direction(spot_ltp, _dt, dte)
-                    dir_strikes[_dt] = _strike
-                    _tk = D.get_option_tokens(kite, _strike, expiry)
-                    if _tk.get(_dt):
-                        dir_tokens[_dt] = _tk[_dt]
-                    logger.info("[MAIN] Strike " + str(_strike) + " " + _dt
-                                + " spot=" + str(round(spot_ltp, 1)))
+                # ── STRIKE LOCKING — stable scanning ──────────────
+                # Lock strikes until spot moves 150+ pts or trade exits
+                _relock = False
+                if _locked_at_spot is None:
+                    _relock = True
+                elif abs(spot_ltp - _locked_at_spot) > _LOCK_SHIFT_THRESHOLD:
+                    _relock = True
+                    logger.info("[MAIN] Spot moved " + str(round(abs(spot_ltp - _locked_at_spot), 1))
+                                + "pts from lock — RELOCKING")
 
-                # Fallback to ATM if direction-aware failed
+                if _relock:
+                    _lock_strikes(spot_ltp, dte, kite, expiry)
+
+                # Use locked strikes — no recalculation per cycle
+                dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
+                dir_tokens = dict(_locked_tokens)
+
+                # Fallback to ATM if locked tokens empty
                 if not dir_tokens:
                     tokens = D.get_option_tokens(kite, atm_strike, expiry)
                     if not tokens:
@@ -1469,9 +1521,7 @@ def _strategy_loop(kite):
 
                     _opt_strike = dir_strikes.get(opt_type, atm_strike)
 
-                    D.subscribe_tokens([opt_info["token"]])
-                    time.sleep(0.3)
-
+                    # Tokens already subscribed at lock time — no per-cycle sub needed
                     result = check_entry(
                         token       = opt_info["token"],
                         option_type = opt_type,
@@ -1486,7 +1536,6 @@ def _strategy_loop(kite):
                     all_results[opt_type] = result
 
                     if not result["fired"]:
-                        D.unsubscribe_tokens([opt_info["token"]])
                         continue
 
                     logger.info("[MAIN] Signal passed gate — type=" + opt_type + " score=" + str(result["score"]))
@@ -1496,7 +1545,6 @@ def _strategy_loop(kite):
                             result["score"],
                             D.LOSS_STREAK_GATE_SCORE
                         )
-                        D.unsubscribe_tokens([opt_info["token"]])
                         continue
 
                     option_ltp_now = D.get_ltp(opt_info["token"])
