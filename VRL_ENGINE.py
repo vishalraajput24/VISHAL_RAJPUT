@@ -1,8 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v12.16
-#  Signal logic. Entry checks, exit management, scoring.
-#  v12.15: Expiry breakout mode (spot consolidation trigger),
-#          fib pivot proximity, expiry-specific SL/trail.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.0
+#  Minimal signal logic. EMA gap + RSI entry. 2-lot exit.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -14,121 +12,9 @@ import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
 
-def _min_sl_pts(option_price: float) -> float:
-    if option_price >= 300:   return 15.0
-    elif option_price >= 200: return 12.0
-    elif option_price >= 100: return 10.0
-    elif option_price >= 50:  return 8.0
-    else:                     return 6.0
-
 # ═══════════════════════════════════════════════════════════════
-#  LAYER 1 — 3-MIN PERMISSION GATE
-#  "Should we be trading at all right now?"
+#  DASHBOARD UTILITY
 # ═══════════════════════════════════════════════════════════════
-
-def _check_3min(token: int, option_type: str, profile: dict, dte: int = 99) -> tuple:
-    """Returns (permitted, details, bonus_score)"""
-    details = {
-        "ema_aligned": False, "body_ok": False,
-        "rsi_ok": False, "price_ok": False,
-        "ema_spread_3m": 0.0, "rsi_val_3m": 0.0,
-        "body_pct_3m": 0.0, "conditions_met": 0,
-        "permitted": False, "bonus": 0,
-        "mode": "EMA",  # v12.11: "EMA" or "MOMENTUM"
-    }
-    try:
-        df = D.get_historical_data(token, "3minute", D.LOOKBACK_3M)
-        df = D.add_indicators(df)
-        if df.empty or len(df) < 5:
-            logger.warning("[ENGINE] _check_3min: insufficient data (" + str(len(df)) + " candles) — blocking")
-            details["permitted"] = False
-            return False, details, 0
-
-        last   = df.iloc[-2]
-        o, h, l, c = last["open"], last["high"], last["low"], last["close"]
-        ema9   = last.get("EMA_9",  c)
-        ema21  = last.get("EMA_21", c)
-        rsi    = last.get("RSI",   50.0)
-        rng    = h - l
-        body   = abs(c - o)
-        body_pct = round(body / rng * 100, 1) if rng > 0 else 0
-
-        # v12.11: Momentum fallback ONLY on DTE ≤ 1 AND candles < 25
-        # Normal days (DTE 2+): Kite returns multi-day history, EMA works fine
-        # DTE ≤ 1: weekly expiry tokens have zero yesterday data
-        n_candles = len(df)
-        use_momentum = (dte <= 1 and n_candles < 25)
-
-        if use_momentum:
-            details["mode"] = "MOMENTUM"
-            lookback_idx = min(5, n_candles - 2)
-            ref_close = df.iloc[-2 - lookback_idx]["close"]
-            momentum  = round(c - ref_close, 2)
-            spread    = momentum
-            details["ema_aligned"] = (momentum > 0)
-            avg_price = df.iloc[-min(6, n_candles):]["close"].mean()
-            details["price_ok"] = (c >= avg_price)
-            logger.info("[ENGINE] 3m MOMENTUM (" + str(n_candles) + "c DTE=" + str(dte) + ")"
-                        + " ref=" + str(round(ref_close, 1))
-                        + " now=" + str(round(c, 1))
-                        + " mom=" + str(momentum))
-        else:
-            details["mode"] = "EMA"
-            spread = round(ema9 - ema21, 2)
-            details["ema_aligned"] = (ema9 > ema21)
-            details["price_ok"]    = (c >= ema9)
-
-        details["ema_spread_3m"] = spread
-        details["rsi_val_3m"]    = round(rsi, 1)
-        details["body_pct_3m"]   = body_pct
-
-        rsi_lo = profile.get("rsi_low",  45)
-        rsi_hi = profile.get("rsi_high", 72)
-
-        details["body_ok"]     = body_pct >= 40
-        details["rsi_ok"]      = rsi_lo <= rsi <= rsi_hi
-
-        conditions_met = sum([details["ema_aligned"], details["body_ok"],
-                              details["rsi_ok"],       details["price_ok"]])
-        # ADX
-        try:
-            import numpy as _np
-            _up = df["high"].diff()
-            _dn = -df["low"].diff()
-            _pdm = _np.where((_up > _dn) & (_up > 0), _up, 0.0)
-            _ndm = _np.where((_dn > _up) & (_dn > 0), _dn, 0.0)
-            _tr = pd.concat([df["high"]-df["low"],
-                             (df["high"]-df["close"].shift(1)).abs(),
-                             (df["low"]-df["close"].shift(1)).abs()], axis=1).max(axis=1)
-            _atr = _tr.ewm(alpha=1/14, adjust=False).mean()
-            _pdi = 100 * pd.Series(_pdm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
-            _ndi = 100 * pd.Series(_ndm, index=df.index).ewm(alpha=1/14, adjust=False).mean() / _atr
-            _adx = ((_pdi-_ndi).abs() / (_pdi+_ndi+1e-9) * 100).ewm(alpha=1/14, adjust=False).mean()
-            details["adx_3m"] = round(float(_adx.iloc[-2]), 1)
-        except Exception:
-            details["adx_3m"] = 0
-
-        details["candle_count_3m"] = len(df)
-        details["conditions_met"] = conditions_met
-        permitted = conditions_met >= 2
-        details["permitted"] = permitted
-        bonus = 1 if (conditions_met == 4 and abs(spread) >= 8) else 0
-        details["bonus"] = bonus
-
-        logger.info("[ENGINE] 3m gate " + option_type
-                    + " ema=" + str(details["ema_aligned"])
-                    + " body=" + str(body_pct) + "%"
-                    + " rsi=" + str(round(rsi, 1))
-                    + " price=" + str(details["price_ok"])
-                    + " spread=" + str(spread)
-                    + " met=" + str(conditions_met) + "/4"
-                    + " → " + ("PERMIT" + ("+BONUS" if bonus else "") if permitted else "BLOCK"))
-
-        return permitted, details, bonus
-    except Exception as e:
-        logger.error("[ENGINE] _check_3min error: " + str(e) + " — blocking (fail-closed)")
-        details["permitted"] = False
-        return False, details, 0
 
 def get_option_ema_spread(token: int, dte: int = 99) -> float:
     try:
@@ -137,7 +23,7 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
         if df.empty or len(df) < 4:
             return 0.0
         last = df.iloc[-2]
-        # v12.11: Momentum fallback only on DTE ≤ 1 with thin candles
+        # Momentum fallback only on DTE <= 1 with thin candles
         if dte <= 1 and len(df) < 25:
             lookback_idx = min(5, len(df) - 2)
             ref_close = df.iloc[-2 - lookback_idx]["close"]
@@ -146,6 +32,10 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
     except Exception as e:
         logger.warning("[ENGINE] EMA spread error: " + str(e))
         return 0.0
+
+# ═══════════════════════════════════════════════════════════════
+#  PRE-ENTRY GUARDS
+# ═══════════════════════════════════════════════════════════════
 
 def pre_entry_checks(kite, token: int, state: dict,
                      option_ltp: float, profile: dict,
@@ -178,500 +68,78 @@ def pre_entry_checks(kite, token: int, state: dict,
             pass
     return True, ""
 
-def loss_streak_gate(state: dict, score: int) -> bool:
-    losses = state.get("consecutive_losses", 0)
-    if losses < 2:
-        return True
-    if score >= D.EXCELLENCE_BYPASS_SCORE:
-        logger.info("[ENGINE] ⚡ Excellence bypass: streak=" + str(losses)
-                    + " score=" + str(score) + " — entering")
-        return True
-    logger.info("[ENGINE] Streak gate blocked: streak=" + str(losses)
-                + " score=" + str(score) + "<" + str(D.LOSS_STREAK_GATE_SCORE))
-    return False
+def loss_streak_gate(state: dict) -> bool:
+    """v13.0: Always permit — streak management handled upstream."""
+    return True
 
-def _check_1min(token: int, option_type: str, profile: dict,
-                rsi_3m: float = 0.0, dte: int = 99) -> tuple:
-    details = {
-        "body_ok": False, "body_pct": 0.0,
-        "rsi_ok": False,  "rsi_val":  0.0,
-        "rsi_rising": False,
-        "vol_ok": False,  "vol_ratio": 0.0,
-        "entry_price": 0.0,
-        "rsi_reject": False,
-        "rsi_reject_reason": "",
-        "rejection_breakout": False,
-    }
-    try:
-        df = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-        df = D.add_indicators(df)
-        if df.empty or len(df) < 7:
-            return False, details
+# ═══════════════════════════════════════════════════════════════
+#  v13.0 ENTRY — 1-MIN EMA GAP + RSI ONLY
+# ═══════════════════════════════════════════════════════════════
 
-        last = df.iloc[-2]
-        prev = df.iloc[-3]
-        o, h, l, c = last["open"], last["high"], last["low"], last["close"]
-        rsi      = last.get("RSI", 50)
-        prev_rsi = prev.get("RSI", 50)
-
-        rng      = h - l
-        body     = abs(c - o)
-        body_pct = (body / rng * 100) if rng > 0 else 0
-
-        vols     = [df.iloc[i]["volume"] for i in range(-7, -2) if df.iloc[i]["volume"] > 0]
-        avg_vol  = sum(vols) / len(vols) if vols else 1
-        vol_ratio= round(last["volume"] / avg_vol if avg_vol > 0 else 1.0, 2)
-
-        rsi_rising = rsi > prev_rsi
-        details["rsi_rising"]  = rsi_rising
-        details["body_pct"]    = round(body_pct, 1)
-        details["rsi_val"]     = round(rsi, 1)
-        details["vol_ratio"]   = vol_ratio
-        details["entry_price"] = round(c, 2)
-
-        # RSI entry: only lower bound matters. Upper cap REMOVED.
-        # RSI exhaustion is handled by EXIT logic (RSI_EXHAUSTION exit), not entry block.
-        rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
-        rsi_ok = rsi >= rsi_1m_lo
-        details["rsi_ok"] = rsi_ok
-
-        if not rsi_ok:
-            details["rsi_reject"] = True
-            details["rsi_reject_reason"] = "RSI_TOO_LOW"
-            return False, details
-
-        details["rsi_1m_below_3m"] = True  # removed as blocking check
-        details["spread_accel"] = True
-
-        body_ok = (c > o) and (body_pct >= profile["body_pct_min"])
-        details["body_ok"] = body_ok
-        details["vol_ok"]  = True  # removed volume as blocking check
-        details["vol_ratio_raw"] = vol_ratio  # keep for dashboard display
-
-        prev_upper_wick = prev["high"] - max(prev["open"], prev["close"])
-        prev_body  = abs(prev["close"] - prev["open"])
-        prev_range = prev["high"] - prev["low"]
-        prev_wick_ratio = prev_upper_wick / prev_range if prev_range > 0 else 0
-        rejection = prev_wick_ratio > 0.6 and (prev_body / prev_range) < 0.3
-        breakout  = (c > prev["high"]) and (h > prev["high"])
-        details["rejection_breakout"] = rejection and breakout
-
-        # Simplified: only body + RSI zone must pass
-        return body_ok and rsi_ok, details
-    except Exception as e:
-        logger.error("[ENGINE] _check_1min error: " + str(e))
-        return False, details
-
-def score_entry(det_1m: dict, greeks: dict, profile: dict,
-                ema_spread: float, spread_1m: float = 0.0,
-                option_type: str = "") -> tuple:
-    """Returns (score: int, breakdown: dict)"""
-    breakdown = {}
-    score = 0
-
-    if det_1m.get("body_ok"):
-        score += 1
-        breakdown["body"] = 1
-        if det_1m.get("body_pct", 0) >= 50:
-            score += 1
-            breakdown["body_bonus"] = 1
-        else:
-            breakdown["body_bonus"] = 0
-    else:
-        breakdown["body"] = 0
-        breakdown["body_bonus"] = 0
-
-    if det_1m.get("rsi_ok") and det_1m.get("rsi_rising"):
-        score += 1
-        breakdown["rsi"] = 1
-    else:
-        breakdown["rsi"] = 0
-
-    if det_1m.get("vol_ok"):
-        score += 1
-        breakdown["volume"] = 1
-    else:
-        breakdown["volume"] = 0
-
-    delta = greeks.get("delta", 0)
-    if profile.get("delta_min", 0) <= abs(delta) <= profile.get("delta_max", 1):
-        score += 1
-        breakdown["delta"] = 1
-    else:
-        breakdown["delta"] = 0
-
-    # Double alignment bonus: 3-min strong + 1-min aligned same direction
-    spread_3m_strong = abs(ema_spread) >= 5
-    # Both CE and PE: we enter when the OPTION is trending UP (EMA9 > EMA21 = positive spread)
-    spread_1m_aligned = spread_1m > 0
-
-    if spread_3m_strong and spread_1m_aligned:
-        score += 1
-        breakdown["double_align"] = 1
-        logger.debug("[ENGINE] Double align bonus: 3m=" + str(round(ema_spread,1))
-                     + " 1m=" + str(round(spread_1m,1)))
-    else:
-        breakdown["double_align"] = 0
-
-    # v12.15: Multi-TF ADX bonus — spot 3m+5m+15m all trending
-    try:
-        _sp3 = D.get_spot_indicators("3minute")
-        _sp5 = D.get_spot_indicators("5minute")
-        _sp15 = D.get_spot_indicators("15minute")
-        _adx3 = float(_sp3.get("adx", 0))
-        _adx5 = float(_sp5.get("adx", 0))
-        _adx15 = float(_sp15.get("adx", 0))
-        _mtf_min = CFG.get().get("strategy", {}).get("adx", {}).get("multi_tf_bonus", 25)
-        if _adx3 >= _mtf_min and _adx5 >= _mtf_min and _adx15 >= _mtf_min:
-            score += 1
-            breakdown["multi_tf_adx"] = 1
-            logger.info("[ENGINE] Multi-TF ADX bonus: 3m=" + str(round(_adx3, 1))
-                        + " 5m=" + str(round(_adx5, 1))
-                        + " 15m=" + str(round(_adx15, 1)))
-        else:
-            breakdown["multi_tf_adx"] = 0
-    except Exception:
-        breakdown["multi_tf_adx"] = 0
-
-    # v12.15: Zone modifier — demand/supply zones affect score ±1
-    try:
-        import json as _json
-        if not CFG.zones_enabled():
-            raise Exception("zones disabled")
-        _zone_path = CFG.zones_file()
-        if os.path.isfile(_zone_path):
-            with open(_zone_path) as _zf:
-                _zone_data = _json.load(_zf)
-            _zones = _zone_data.get("zones", [])
-            _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN) if hasattr(D, "NIFTY_SPOT_TOKEN") else 0
-            for _z in _zones:
-                if not _z.get("still_active"):
-                    continue
-                _zone_mid = float(_z.get("zone_mid", 0))
-                _zone_type = _z.get("zone_type", "")
-                _zdist = abs(_spot - _zone_mid)
-                if _zdist > 60:
-                    continue
-                _zmod = 0
-                if _zdist <= 30:
-                    if option_type == "CE" and _zone_type == "DEMAND":
-                        _zmod = +1
-                    elif option_type == "PE" and _zone_type == "SUPPLY":
-                        _zmod = +1
-                    elif option_type == "CE" and _zone_type == "SUPPLY":
-                        _zmod = -1
-                    elif option_type == "PE" and _zone_type == "DEMAND":
-                        _zmod = -1
-                elif _zdist <= 60:
-                    if option_type == "CE" and _zone_type == "SUPPLY":
-                        _zmod = -1
-                    elif option_type == "PE" and _zone_type == "DEMAND":
-                        _zmod = -1
-                if _zmod != 0:
-                    score += _zmod
-                    breakdown["zone_modifier"] = _zmod
-                    logger.info("[ENGINE] Zone " + _zone_type
-                                + " dist=" + str(round(_zdist, 0))
-                                + " modifier=" + str(_zmod))
-                    break
-            if "zone_modifier" not in breakdown:
-                breakdown["zone_modifier"] = 0
-        else:
-            breakdown["zone_modifier"] = 0
-    except Exception:
-        breakdown["zone_modifier"] = 0
-
-    breakdown["total"] = score
-    return score, breakdown
-
-def check_entry(token: int, option_type: str, profile: dict,
-                spot_ltp: float, strike: int, expiry_date,
-                session: str) -> dict:
+def check_entry(token: int, option_type: str, spot_ltp: float = 0,
+                dte: int = 99, expiry_date=None, kite=None) -> dict:
+    """v13.0 minimal entry — 1-min EMA gap + RSI only."""
     result = {
-        "fired": False, "mode": "", "score": 0,
-        "details_1m": {}, "details_3m": {}, "greeks": {},
-        "entry_price": 0.0, "ema_spread": 0.0,
-        "regime": "UNKNOWN",
-        "spread_1m": 0.0,
-        "score_breakdown": {},
-        "prediction": {},
+        "fired": False, "option_type": option_type,
+        "entry_price": 0, "ema9": 0, "ema21": 0,
+        "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
+        "ema_ok": False, "rsi_ok": False,
     }
     try:
-        dte         = D.calculate_dte(expiry_date)
-        session_min = D.SESSION_SCORE_MIN.get(session, 5)
-        if dte == 0 and option_type == "CE":
-            session_min = max(session_min, 6)
-        if session_min >= 999:
+        df = D.get_historical_data(token, "minute", 20)
+        df = D.add_indicators(df)
+        if df.empty or len(df) < 3:
             return result
 
-        # ── LAYER 1: 3-MIN PERMISSION GATE ──────────────────
-        # v12.16: DTE 0 completely skips _check_3min — uses spot direction instead
-        # Data: 33 blocked entries on DTE 0 were ALL winners (+57pts avg)
-        if dte == 0:
-            bonus_3m = 0
-            try:
-                _sp3m_dte0 = D.get_spot_indicators("3minute")
-                _sp_adx0 = float(_sp3m_dte0.get("adx", 0))
-                _sp_spread0 = float(_sp3m_dte0.get("spread", 0))
-                _sp_rsi0 = float(_sp3m_dte0.get("rsi", 50))
-            except Exception:
-                _sp_adx0, _sp_spread0, _sp_rsi0 = 0, 0, 50
-            det_3m = {
-                "conditions_met": 0, "mode": "DTE0_SPOT",
-                "ema_spread_3m": _sp_spread0,
-                "rsi_val_3m": _sp_rsi0,
-                "body_pct_3m": 0, "adx_3m": _sp_adx0,
-                "permitted": True, "ema_aligned": True,
-                "body_ok": True, "rsi_ok": True, "price_ok": True,
-            }
-            result["details_3m"] = det_3m
-            logger.info("[ENGINE] " + option_type + " DTE0 skip 3m gate — spot ADX="
-                        + str(round(_sp_adx0, 1)) + " spread=" + str(round(_sp_spread0, 1)))
-        else:
-            permitted, det_3m, bonus_3m = _check_3min(token, option_type, profile, dte)
-            result["details_3m"] = det_3m
+        curr = df.iloc[-2]
+        prev = df.iloc[-3]
 
-            if not permitted:
-                logger.info("[ENGINE] " + option_type
-                            + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
+        entry_price = float(curr["close"])
+        ema9 = float(curr.get("EMA_9", 0))
+        ema21 = float(curr.get("EMA_21", 0))
+        ema_gap = round(ema9 - ema21, 2)
+        rsi = float(curr.get("RSI", 50))
+        rsi_prev = float(prev.get("RSI", 50))
 
-                # Spot bypass: if spot is TRENDING_STRONG (ADX >= 25), override 3m gate block
-                # Option 3m gate can be unreliable when option has thin candles
-                # but spot confirms strong directional move
-                _bypass = False
-                try:
-                    _sp3m_bypass = D.get_spot_indicators("3minute")
-                    _spot_adx_bypass = float(_sp3m_bypass.get("adx", 0))
-                    _spot_regime = D.compute_spot_regime()
-                    if _spot_regime == "TRENDING_STRONG" and _spot_adx_bypass >= 25:
-                        _bypass = True
-                        bonus_3m = 0
-                        det_3m["permitted"] = True
-                        det_3m["mode"] = "SPOT_BYPASS"
-                        logger.info("[ENGINE] " + option_type + " SPOT BYPASS: regime="
-                                    + _spot_regime + " ADX=" + str(round(_spot_adx_bypass, 1))
-                                    + " — overriding 3m gate block")
-                except Exception:
-                    pass
+        result.update({
+            "entry_price": round(entry_price, 2),
+            "ema9": round(ema9, 2), "ema21": round(ema21, 2),
+            "ema_gap": ema_gap, "rsi": round(rsi, 1),
+            "rsi_prev": round(rsi_prev, 1),
+        })
 
-                if not _bypass:
-                    # Compute regime even on blocked path (for dashboard)
-                    _sp3m = det_3m.get("ema_spread_3m", 0.0)
-                    _abs_sp = abs(_sp3m)
-                    if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
-                    elif _abs_sp >= 5:  result["regime"] = "TRENDING"
-                    elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
-                    else:               result["regime"] = "CHOPPY"
-                    # Still fetch 1-min data + greeks for dashboard display
-                    try:
-                        _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
-                        result["details_1m"] = _det1
-                        result["entry_price"] = _det1.get("entry_price", 0.0)
-                        _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-                        _df1 = D.add_indicators(_df1)
-                        if not _df1.empty and len(_df1) >= 3:
-                            _l1 = _df1.iloc[-2]
-                            result["spread_1m"] = round(
-                                float(_l1.get("EMA_9", _l1["close"])) -
-                                float(_l1.get("EMA_21", _l1["close"])), 2)
-                        result["greeks"] = D.get_full_greeks(
-                            _det1.get("entry_price", 0.0), spot_ltp, strike,
-                            expiry_date, option_type)
-                    except Exception:
-                        pass
-                    return result
+        import VRL_CONFIG as CFG
+        ema_min = CFG.get().get("entry", {}).get("ema_gap_min", 3)
+        rsi_min = CFG.get().get("entry", {}).get("rsi_min", 50)
 
-        # ── LAYER 2: REGIME ──────────────────────────────────
-        spread_3m  = det_3m.get("ema_spread_3m", 0.0)
-        abs_spread = abs(spread_3m)
-        if abs_spread >= 12:   result["regime"] = "TRENDING_STRONG"
-        elif abs_spread >= 5:  result["regime"] = "TRENDING"
-        elif abs_spread >= 2:  result["regime"] = "NEUTRAL"
-        else:                  result["regime"] = "CHOPPY"
+        ema_ok = ema_gap >= ema_min
+        rsi_ok = rsi >= rsi_min and rsi > rsi_prev
+        result["ema_ok"] = ema_ok
+        result["rsi_ok"] = rsi_ok
 
-        # v12.16: DTE 0 allowed through CHOPPY — faster moves, lower ADX still tradeable
-        # Non-DTE-0: Only TRENDING / TRENDING_STRONG allowed
-        _dte0_choppy_pass = False
-        if dte == 0 and result["regime"] == "CHOPPY":
-            try:
-                _sp3m_dte0 = D.get_spot_indicators("3minute")
-                _adx_dte0 = float(_sp3m_dte0.get("adx", 0))
-            except Exception:
-                _adx_dte0 = 0
-            _choppy_min = CFG.get().get("strategy", {}).get("adx", {}).get("choppy_bypass", 15)
-            if _adx_dte0 >= _choppy_min:
-                _dte0_choppy_pass = True
-                logger.info("[ENGINE] " + option_type + " DTE0 CHOPPY pass: ADX="
-                            + str(round(_adx_dte0, 1)) + " >= " + str(_choppy_min))
-
-        # Regime filter: only CHOPPY hard blocks
-        if result["regime"] == "CHOPPY" and not _dte0_choppy_pass:
-            logger.info("[ENGINE] " + option_type + " blocked — regime=CHOPPY")
-            try:
-                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
-                result["details_1m"] = _det1
-                result["entry_price"] = _det1.get("entry_price", 0.0)
-                result["spread_1m"] = get_option_ema_spread(token, dte)
-                result["greeks"] = D.get_full_greeks(
-                    _det1.get("entry_price", 0.0), spot_ltp, strike,
-                    expiry_date, option_type)
-            except Exception:
-                pass
-            return result
-        # NEUTRAL, TRENDING, TRENDING_STRONG, UNKNOWN — all pass through
-
-        # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
-        if spread_3m > 5 and option_type == "PE":
-            session_min += 1
-        elif spread_3m < -5 and option_type == "CE":
-            session_min += 1
-
-        # ── LAYER 4A: 1-MIN SPREAD GATE ─────────────────────
-        ema_spread = get_option_ema_spread(token, dte)
-        result["ema_spread"] = ema_spread
-
-        spread_1m = 0.0
-        try:
-            df1s = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-            df1s = D.add_indicators(df1s)
-            if not df1s.empty and len(df1s) >= 3:
-                l1s = df1s.iloc[-2]
-                # v12.11: Momentum fallback only DTE ≤ 1
-                if dte <= 1 and len(df1s) < 25:
-                    lb = min(5, len(df1s) - 2)
-                    spread_1m = round(float(l1s["close"]) - float(df1s.iloc[-2 - lb]["close"]), 2)
-                else:
-                    spread_1m = round(
-                        float(l1s.get("EMA_9",  l1s["close"])) -
-                        float(l1s.get("EMA_21", l1s["close"])), 2)
-        except Exception:
-            pass
-        result["spread_1m"] = spread_1m
-
-        # v12.16: Spread gate — DTE 0 uses lower thresholds
-        _spread_min_ce = D.SPREAD_1M_MIN_CE_DTE0 if dte == 0 else D.SPREAD_1M_MIN_CE
-        _spread_min_pe = D.SPREAD_1M_MIN_PE_DTE0 if dte == 0 else D.SPREAD_1M_MIN_PE
-        if option_type == "CE" and spread_1m < _spread_min_ce:
-            logger.info("[ENGINE] CE 1m spread BLOCKED: " + str(round(spread_1m,1))
-                        + " need +" + str(_spread_min_ce))
-            try:
-                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
-                result["details_1m"] = _det1
-                result["entry_price"] = _det1.get("entry_price", 0.0)
-                result["greeks"] = D.get_full_greeks(
-                    _det1.get("entry_price", 0.0), spot_ltp, strike,
-                    expiry_date, option_type)
-            except Exception:
-                pass
-            return result
-        if option_type == "PE" and spread_1m < _spread_min_pe:
-            logger.info("[ENGINE] PE 1m spread BLOCKED: " + str(round(spread_1m,1))
-                        + " need +" + str(_spread_min_pe))
-            try:
-                _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
-                result["details_1m"] = _det1
-                result["entry_price"] = _det1.get("entry_price", 0.0)
-                result["greeks"] = D.get_full_greeks(
-                    _det1.get("entry_price", 0.0), spot_ltp, strike,
-                    expiry_date, option_type)
-            except Exception:
-                pass
-            return result
-
-        # ── LAYER 4B: 1-MIN SIGNAL ───────────────────────────
-        _rsi_3m_val = det_3m.get("rsi_val_3m", 0.0)
-        ok_1m, det_1m = _check_1min(token, option_type, profile, rsi_3m=_rsi_3m_val, dte=dte)
-        result["details_1m"] = det_1m
-        result["entry_price"] = det_1m.get("entry_price", 0.0)
-
-        # ── v12.16: DTE 0 MOMENTUM SPIKE BYPASS ────────────
-        # If premium moves 10%+ in 2 candles on DTE 0: skip RSI zone check
-        # Only need body >= 40% and volume >= 1.0x — catches fast gamma spikes
-        _dte0_spike = False
-        if dte == 0:
-            try:
-                _df_spike = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-                _df_spike = D.add_indicators(_df_spike)
-                if not _df_spike.empty and len(_df_spike) >= 4:
-                    _c_now  = float(_df_spike.iloc[-2]["close"])
-                    _c_2ago = float(_df_spike.iloc[-4]["close"])
-                    _prem_move_pct = ((_c_now - _c_2ago) / max(_c_2ago, 0.01)) * 100
-                    _body_pct_spike = det_1m.get("body_pct", 0)
-                    _vol_ratio_spike = det_1m.get("vol_ratio", 0)
-                    _spike_pct = CFG.dte0_cfg("spike_pct", 10)
-                    if (_prem_move_pct >= _spike_pct
-                            and _body_pct_spike >= 40
-                            and _vol_ratio_spike >= 1.0):
-                        _dte0_spike = True
-                        det_1m["rsi_reject"] = False
-                        det_1m["rsi_reject_reason"] = ""
-                        result["mode"] = "DTE0_SPIKE"
-                        logger.info("[ENGINE] " + option_type
-                                    + " DTE0_SPIKE: premium +" + str(round(_prem_move_pct, 1))
-                                    + "% in 2 candles, body=" + str(round(_body_pct_spike, 1))
-                                    + " vol=" + str(round(_vol_ratio_spike, 2))
-                                    + " — RSI zone bypassed")
-            except Exception:
-                pass
-
-        if det_1m.get("rsi_reject") and not _dte0_spike:
-            return result
-        if not ok_1m and not _dte0_spike:
-            return result
-
-        greeks = D.get_full_greeks(det_1m.get("entry_price", 0.0),
-                                   spot_ltp, strike, expiry_date, option_type)
-        result["greeks"] = greeks
-
-        # ── LAYER 5: SCORING ─────────────────────────────────
-        score, breakdown = score_entry(det_1m, greeks, profile,
-                                       ema_spread, spread_1m, option_type)
-        if bonus_3m:
-            score += bonus_3m
-            breakdown["gate_bonus"] = 1
-            logger.info("[ENGINE] 3m gate bonus +1 (all 4 + spread≥8)")
-        else:
-            breakdown["gate_bonus"] = 0
-
-        # v12.15: Bias-aware scoring — against bias needs +1 score
-        try:
-            _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else "UNKNOWN"
-        except Exception:
-            _bias = "UNKNOWN"
-        if _bias == "BEAR" and option_type == "CE":
-            session_min = max(session_min, 5)
-            logger.info("[ENGINE] CE against BEAR bias — need score >= 5")
-        elif _bias == "BULL" and option_type == "PE":
-            session_min = max(session_min, 5)
-            logger.info("[ENGINE] PE against BULL bias — need score >= 5")
-
-        result["score"]           = score
-        result["score_breakdown"] = breakdown
-        result["prediction"]      = D.predict_trade(result["regime"], session, score)
-
-        if score >= session_min:
+        if ema_ok and rsi_ok:
             result["fired"] = True
-            result["mode"]  = result.get("mode") or "CONVICTION"
+            logger.info("[ENGINE] " + option_type + " ENTRY SIGNAL"
+                + " ema_gap=" + str(ema_gap)
+                + " rsi=" + str(round(rsi,1)) + ">" + str(round(rsi_prev,1))
+                + " entry=" + str(entry_price))
         else:
-            logger.info("[ENGINE] " + option_type + " score=" + str(score)
-                        + "<" + str(session_min) + " — blocked")
+            logger.info("[ENGINE] " + option_type
+                + " ema=" + str(ema_gap) + ("✅" if ema_ok else "❌")
+                + " rsi=" + str(round(rsi,1)) + ("✅" if rsi_ok else "❌"))
 
-        logger.info(
-            "[ENGINE] " + option_type
-            + " 3m=" + str(det_3m.get("conditions_met")) + "/4"
-            + " regime=" + result["regime"]
-            + " 1mspread=" + str(round(spread_1m,1))
-            + " body=" + str(det_1m.get("body_pct"))
-            + " rsi=" + str(det_1m.get("rsi_val"))
-            + " rsi↑=" + str(det_1m.get("rsi_rising"))
-            + " vol=" + str(det_1m.get("vol_ratio"))
-            + " score=" + str(score) + "/" + str(session_min)
-            + " → " + (result["mode"] if result["fired"] else "SKIP")
-        )
         return result
     except Exception as e:
         logger.error("[ENGINE] check_entry error: " + str(e))
         return result
+
+# ═══════════════════════════════════════════════════════════════
+#  SL + PROFIT LOCK
+# ═══════════════════════════════════════════════════════════════
+
+def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
+    """v13.0: Simple fixed SL."""
+    return round(entry_price - hard_sl, 2)
 
 def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     if state.get("profit_locked"):
@@ -684,251 +152,124 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
         return True
     return False
 
-def compute_entry_sl(entry_price: float, profile: dict, mode: str,
-                     token: int = None, dte: int = 99) -> float:
-    """v12.12: ATR-based SL. v12.15: Expiry cap 20pts."""
-    if mode in ("CONVICTION", "EXPIRY_BREAKOUT") and token:
-        sl_pts = D.calculate_atr_sl(token, profile, entry_price)
-    else:
-        sl_pts = profile.get("conv_sl_pts", 20) if mode == "CONVICTION" else profile.get("scalp_sl_pts", 8)
-        sl_pts = sl_pts or 8
-    actual = max(sl_pts, _min_sl_pts(entry_price))
-    # v12.15: Tighter cap on expiry day
-    sl_cap = D.EXPIRY_SL_MAX if dte == 0 else D.ATR_SL_MAX
-    actual = min(actual, sl_cap)
-    if actual != sl_pts:
-        logger.info("[ENGINE] SL adjusted " + str(round(sl_pts,1)) + "→" + str(actual)
-                    + "pts (@" + str(entry_price) + ")"
-                    + (" EXPIRY_CAP" if dte == 0 else ""))
-    return round(entry_price - actual, 2)
+# ═══════════════════════════════════════════════════════════════
+#  v13.0 EXIT — PROFIT FLOORS + RSI SPLIT + ATR TRAIL (2-LOT)
+# ═══════════════════════════════════════════════════════════════
 
-def manage_exit(state: dict, option_ltp: float, profile: dict) -> tuple:
+def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
+    """v13.0 exit — profit floors + RSI split + ATR trail.
+    Returns list of exit dicts: [{"lots": "ALL" or 1, "lot_id": "LOT1"/"LOT2"/"ALL", "reason": str, "price": float}]
+    Returns [] if no exit.
+    """
     if not state.get("in_trade"):
-        return False, "", 0.0
+        return []
 
-    entry       = state.get("entry_price", 0)
-    phase       = state.get("exit_phase", 1)
-    mode        = state.get("mode", "CONVICTION")
-    running_pnl = round(option_ltp - entry, 2)
+    entry = state.get("entry_price", 0)
+    running = round(option_ltp - entry, 2)
+    peak = state.get("peak_pnl", 0)
+    candles = state.get("candles_held", 0)
+    lots_split = state.get("lots_split", False)
+    lot1_active = state.get("lot1_active", True)
+    lot2_active = state.get("lot2_active", True)
 
-    if running_pnl > state.get("peak_pnl", 0):
-        state["peak_pnl"] = running_pnl
+    if running > peak:
+        state["peak_pnl"] = running
+        peak = running
+    if running < state.get("trough_pnl", 0):
+        state["trough_pnl"] = running
 
-    # v12.15: Track trough (worst unrealized PNL) for SL calibration
-    if running_pnl < state.get("trough_pnl", 0):
-        state["trough_pnl"] = running_pnl
-
-    if phase == 1:
-        sl = state.get("phase1_sl", 0)
-        if sl > 0 and option_ltp <= sl:
-            return True, "PHASE1_SL", option_ltp
-
-        # v12.15: Stale entry: 3 candles held, peak < 5pts — cut early
-        # Data shows: move happens in first 3 candles or it doesn't happen
-        candles_held = state.get("candles_held", 0)
-        peak_pnl     = state.get("peak_pnl", 0)
-        _stale_candles = CFG.risk("stale_entry_candles", 3)
-        _stale_peak = CFG.risk("stale_entry_peak", 5.0)
-        if candles_held >= _stale_candles and peak_pnl < _stale_peak:
-            logger.info("[ENGINE] STALE_ENTRY: " + str(candles_held)
-                        + " candles peak=" + str(peak_pnl) + "pts < 5")
-            return True, "STALE_ENTRY", option_ltp
-
-        # v12.16: DTE 0 max hold — 5 candles, then exit regardless
-        dte_at_entry = state.get("dte_at_entry", 99)
-        _max_hold_dte0 = CFG.risk("max_hold_dte0", 5)
-        if dte_at_entry == 0 and candles_held >= _max_hold_dte0:
-            logger.info("[ENGINE] DTE0_MAX_HOLD: " + str(candles_held) + " candles")
-            return True, "DTE0_MAX_HOLD", option_ltp
-
-        if mode == "CONVICTION":
-            be_pts = profile.get("conv_breakeven_pts", 20)
-            if running_pnl >= be_pts:
-                state["exit_phase"] = 2
-                state["phase2_sl"]  = round(entry + 2.0, 2)
-                logger.info("[ENGINE] Phase 1→2 @" + str(running_pnl)
-                            + "pts SL=" + str(round(entry + 2.0, 2)))
-
-    if state.get("exit_phase") == 2:
-        if option_ltp <= state.get("phase2_sl", entry + 2.0):
-            return True, "BREAKEVEN_SL", option_ltp
-        be_pts = profile.get("conv_breakeven_pts", 20)
-
-        # Ratchet SL up every 5pts of profit
-        new_sl = round(entry + 2.0 + max(0, running_pnl - 10), 2)
-        if new_sl > state.get("phase2_sl", entry + 2.0):
-            old_sl = state["phase2_sl"]
-            state["phase2_sl"] = new_sl
-            logger.info("[ENGINE] Phase2 SL ratcheted "
-                        + str(old_sl) + "→" + str(new_sl))
-
-        if running_pnl >= be_pts * 1.2:
-            state["exit_phase"] = 3
-            logger.info("[ENGINE] Phase 2→3 trail @" + str(running_pnl) + "pts")
-
-    if state.get("exit_phase") == 3:
-        return _conviction_trail(state, option_ltp, profile)
-
-    return False, "", 0.0
-
-def _conviction_trail(state: dict, option_ltp: float, profile: dict) -> tuple:
-    token     = state.get("token")
-    entry     = state.get("entry_price", 0)
-    tightened = state.get("trail_tightened", False)
-    peak      = state.get("peak_pnl", 0)
-    running   = round(option_ltp - entry, 2)
-
-    # v12.12: Percentage-based drawdown (replaces flat 5/8pts)
-    # v12.15: Use tighter 20% on expiry (DTE=0), 25% otherwise
-    dte_at_entry = state.get("dte_at_entry", 99)
-    drawdown_pct = D.EXPIRY_TRAIL_PCT if dte_at_entry == 0 else D.TRAIL_DRAWDOWN_PCT
-    drawdown = peak - running
-    max_drawdown = peak * (drawdown_pct / 100.0) if peak > 0 else 999
-
-    # v12.15: Hard profit floors — checked BEFORE percentage drawdown
-    _pf = CFG.profit_floors()  # {10: 5, 20: 12, 30: 20, 50: 60}
-    for _pf_level in sorted(_pf.keys(), reverse=True):
-        _pf_val = _pf[_pf_level]
-        if peak >= _pf_level:
-            # 50→60 means 60% of peak; others are absolute pts
-            _floor = peak * (_pf_val / 100.0) if _pf_level >= 50 else _pf_val
-            if running <= _floor:
-                logger.info("[TRAIL] PROFIT_FLOOR_" + str(_pf_level) + ": peak=" + str(peak)
-                            + " running=" + str(running) + " floor=" + str(round(_floor, 1)))
-                return True, "PROFIT_FLOOR_" + str(_pf_level), option_ltp
-            break  # Only check highest applicable floor
-
-    # v12.15: Drawdown exit only if running is BELOW the profit floor for that peak
-    _floor_for_peak = 0
-    for _pf_level in sorted(_pf.keys(), reverse=True):
-        if peak >= _pf_level:
-            _pf_val = _pf[_pf_level]
-            _floor_for_peak = peak * (_pf_val / 100.0) if _pf_level >= 50 else _pf_val
-            break
-
-    if peak >= 15 and drawdown > max_drawdown and running <= _floor_for_peak:
-        logger.info("[TRAIL] DRAWDOWN_EXIT: peak=" + str(peak)
-                    + " drop=" + str(round(drawdown, 1))
-                    + " limit=" + str(round(max_drawdown, 1))
-                    + " (" + str(drawdown_pct) + "%"
-                    + (" EXPIRY" if dte_at_entry == 0 else "") + ")")
-        return True, "DRAWDOWN_EXIT", option_ltp
-
-    # RSI checks
-    rsi_1m = 0.0
+    # Get RSI
+    token = state.get("token")
+    rsi = 50
     try:
-        df1 = D.get_historical_data(token, "minute", 20)
-        df1 = D.add_indicators(df1)
-        if not df1.empty:
-            rsi_1m = round(df1.iloc[-1].get("RSI", 0), 1)
-    except Exception as e:
-        logger.warning("[TRAIL] RSI fetch: " + str(e))
-
-    rsi_exhaust_pnl = profile.get("rsi_exhaustion_pnl") or 15
-    if rsi_1m >= 76 and running >= rsi_exhaust_pnl:
-        logger.info("[TRAIL] RSI_EXHAUSTION: RSI=" + str(rsi_1m)
-                    + " pnl=+" + str(running))
-        state["_rsi_was_overbought"] = True
-        return True, "RSI_EXHAUSTION", option_ltp
-
-    if rsi_1m >= 76:
-        state["_rsi_was_overbought"] = True
-
-    gamma_rsi_drop = profile.get("gamma_rider_rsi_drop") or 65
-    gamma_min_pnl  = profile.get("gamma_rider_min_pnl")  or 10
-    if (state.get("_rsi_was_overbought")
-            and rsi_1m < gamma_rsi_drop
-            and running >= gamma_min_pnl):
-        logger.info("[TRAIL] GAMMA_RIDER: RSI dropped to " + str(rsi_1m)
-                    + " pnl=+" + str(running))
-        state["_rsi_was_overbought"] = False
-        return True, "GAMMA_RIDER", option_ltp
-
-    # Trail tightening logic (unchanged)
-    if not tightened:
-        if rsi_1m > (profile.get("conv_rsi_tighten") or 76):
-            state["trail_tightened"] = True
-            tightened = True
-            logger.info("[TRAIL] RSI=" + str(rsi_1m) + " trail tightened")
-
-    if state.get("profit_locked") and not tightened:
-        state["trail_tightened"] = True
-        tightened = True
-
-    if not tightened:
-        try:
-            df_s = D.get_historical_data(token, "3minute", D.LOOKBACK_3M)
-            df_s = D.add_indicators(df_s)
-            if len(df_s) >= 5:
-                s_now   = df_s.iloc[-2].get("EMA_9",0) - df_s.iloc[-2].get("EMA_21",0)
-                s_prev  = df_s.iloc[-3].get("EMA_9",0) - df_s.iloc[-3].get("EMA_21",0)
-                s_prev2 = df_s.iloc[-4].get("EMA_9",0) - df_s.iloc[-4].get("EMA_21",0)
-                if (abs(s_now) < abs(s_prev)) and (abs(s_prev) < abs(s_prev2)) and s_now > 0:
-                    state["trail_tightened"] = True
-                    tightened = True
-                    logger.info("[TRAIL] EMA spread narrowing 2c → trail tightened")
-        except Exception as e:
-            logger.warning("[TRAIL] EMA spread check: " + str(e))
-
-    # Adaptive EMA trail — timeframe + candles based on running PNL (from config)
-    if running > 25:
-        _ema_cfg = CFG.adaptive_ema("high")
-        tf = _ema_cfg.get("timeframe", "minute")
-        candles_needed = _ema_cfg.get("candles", 1)
-        label = "AGGRESSIVE"
-    elif running >= 15:
-        _ema_cfg = CFG.adaptive_ema("mid")
-        tf = _ema_cfg.get("timeframe", "3minute")
-        candles_needed = _ema_cfg.get("candles", 2)
-        label = "MODERATE"
-    else:
-        _ema_cfg = CFG.adaptive_ema("low")
-        tf = _ema_cfg.get("timeframe", "5minute")
-        candles_needed = _ema_cfg.get("candles", 2)
-        label = "CONSERVATIVE"
-
-    peak_min = profile.get("peak_drawdown_min") or 0
-    if peak_min and peak >= peak_min:
-        floor = peak * (1 - (profile.get("peak_drawdown_pct") or 40) / 100)
-        if running <= floor:
-            return True, "PEAK_DRAWDOWN_" + label, option_ltp
-
-    # Adaptive EMA close rule
-    try:
-        df = D.get_historical_data(token, tf, D.LOOKBACK_5M)
+        df = D.get_historical_data(token, "minute", 5)
         df = D.add_indicators(df)
-        if df.empty or len(df) < 3:
-            return False, "", 0.0
-        last     = df.iloc[-2]
-        prev     = df.iloc[-3]
-        ema9     = last.get("EMA_9", option_ltp)
-        ema9_p   = prev.get("EMA_9", option_ltp)
-        close    = last["close"]
-        close_p  = prev["close"]
-        floor    = round(last["low"] - 12.0, 2)
+        if not df.empty and len(df) >= 2:
+            rsi = float(df.iloc[-2].get("RSI", 50))
+    except Exception:
+        pass
+    state["current_rsi"] = round(rsi, 1)
 
-        below_now  = close < ema9
-        below_prev = close_p < ema9_p
-        if candles_needed == 1:
-            if below_now:
-                logger.info("[TRAIL] 1-candle EMA exit (" + label + "): "
-                            + str(round(close, 1)) + "<" + str(round(ema9, 1)))
-                return True, "TRAIL_" + label, option_ltp
-        else:
-            if below_now and below_prev:
-                logger.info("[TRAIL] 2-candle EMA exit (" + label + "): "
-                            + str(round(close, 1)) + "<" + str(round(ema9, 1))
-                            + " AND prev " + str(round(close_p, 1))
-                            + "<" + str(round(ema9_p, 1)))
-                return True, "TRAIL_" + label, option_ltp
-            elif below_now:
-                logger.debug("[TRAIL] 1 candle below EMA — waiting for confirmation")
-        if option_ltp < floor:
-            return True, "FLOOR_" + label, option_ltp
-        return False, "", 0.0
-    except Exception as e:
-        logger.error("[TRAIL] EMA trail error: " + str(e))
-        return False, "", 0.0
+    import VRL_CONFIG as CFG
+    hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
+    stale_candles = CFG.get().get("exit", {}).get("stale_candles", 3)
+    stale_peak = CFG.get().get("exit", {}).get("stale_peak_min", 3)
+    rsi_split = CFG.get().get("rsi_exit", {}).get("split_at", 70)
+    rsi_spike = CFG.get().get("rsi_exit", {}).get("sell_spike", 75)
+    rsi_blowoff = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
+
+    exits = []
+
+    # STALE EXIT
+    if candles >= stale_candles and peak < stale_peak:
+        logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + " candles, peak=" + str(peak))
+        return [{"lots": "ALL", "lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
+
+    # HARD SL
+    if running <= -hard_sl:
+        logger.info("[ENGINE] HARD_SL: running=" + str(running))
+        return [{"lots": "ALL", "lot_id": "ALL", "reason": "HARD_SL", "price": option_ltp}]
+
+    # PROFIT FLOOR calculation
+    floors = CFG.get().get("profit_floors", [])
+    floor_sl = entry - hard_sl
+    for f in sorted(floors, key=lambda x: x["peak"]):
+        if peak >= f["peak"]:
+            floor_sl = entry + f["lock"]
+    state["current_floor"] = round(floor_sl, 2)
+
+    # RSI BLOWOFF > 80
+    if rsi > rsi_blowoff and (lot1_active or lot2_active):
+        logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi,1)))
+        return [{"lots": "ALL", "lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
+
+    # RSI 75-80: sell lot 1
+    if rsi >= rsi_spike and rsi <= rsi_blowoff and lot1_active and lots_split:
+        logger.info("[ENGINE] RSI_SPIKE: lot1 exit, rsi=" + str(round(rsi,1)))
+        exits.append({"lots": 1, "lot_id": "LOT1", "reason": "RSI_SPIKE", "price": option_ltp})
+        state["lot1_active"] = False
+
+    # RSI >= 70: split lots
+    if rsi >= rsi_split and not lots_split:
+        state["lots_split"] = True
+        logger.info("[ENGINE] RSI " + str(round(rsi,1)) + " — lots SPLIT")
+
+    # LOT 2 ATR TRAIL (after split)
+    if lots_split and lot2_active:
+        try:
+            import pandas as pd
+            df2 = D.get_historical_data(token, "minute", 20)
+            if not df2.empty and len(df2) >= 15:
+                highs = df2["high"].astype(float)
+                lows = df2["low"].astype(float)
+                closes = df2["close"].astype(float).shift(1)
+                tr = pd.concat([highs-lows, (highs-closes).abs(), (lows-closes).abs()], axis=1).max(axis=1)
+                atr = float(tr.rolling(14).mean().iloc[-1])
+                atr_mult = CFG.get().get("trail", {}).get("atr_multiplier", 1.5)
+                atr_trail = option_ltp - (atr * atr_mult)
+                atr_trail = max(atr_trail, floor_sl)
+                prev_trail = state.get("lot2_trail_sl", floor_sl)
+                if atr_trail > prev_trail:
+                    state["lot2_trail_sl"] = round(atr_trail, 2)
+                if option_ltp <= state.get("lot2_trail_sl", floor_sl):
+                    logger.info("[ENGINE] ATR_TRAIL: lot2 exit at " + str(round(option_ltp,2)))
+                    exits.append({"lots": 1, "lot_id": "LOT2", "reason": "ATR_TRAIL", "price": option_ltp})
+                    state["lot2_active"] = False
+        except Exception:
+            pass
+
+    # PROFIT FLOOR HIT
+    if not lots_split:
+        if option_ltp <= floor_sl and peak >= 10:
+            logger.info("[ENGINE] PROFIT_FLOOR: both lots at " + str(round(floor_sl,2)))
+            return [{"lots": "ALL", "lot_id": "ALL", "reason": "PROFIT_FLOOR", "price": option_ltp}]
+    else:
+        if lot1_active and option_ltp <= floor_sl:
+            logger.info("[ENGINE] FLOOR_SL: lot1 at " + str(round(floor_sl,2)))
+            exits.append({"lots": 1, "lot_id": "LOT1", "reason": "FLOOR_SL", "price": option_ltp})
+            state["lot1_active"] = False
+
+    return exits
 
 
 # ═══════════════════════════════════════════════════════════════

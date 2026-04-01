@@ -1,10 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE — Central Configuration
-#  v12.15.1
-#  Change strategy/risk/thresholds here. No code changes needed.
+#  VISHAL RAJPUT TRADE v13.0 — Central Configuration
+#  Minimal strategy: EMA gap + RSI entry, 2-lot execution
 # ═══════════════════════════════════════════════════════════════
 
-mode: paper          # paper | live — auto-switches trade module
+version: "v13.0"
+bot_name: "VISHAL RAJPUT TRADE"
+mode: paper
 
 instrument:
   name: NIFTY
@@ -14,43 +15,65 @@ instrument:
   spot_token: 256265
   vix_token: 264969
 
-strategy:
-  timeframes: [1, 3, 5, 15]
-  primary_signal: 1
-  confirmation: 3
-  trend: [5, 15]
+lots:
+  count: 2
+  size: 65
 
+entry:
+  ema_gap_min: 3        # EMA9 - EMA21 minimum pts
+  rsi_min: 50           # RSI floor
+  rsi_must_rise: true   # RSI > previous candle
+
+exit:
+  hard_sl: 12           # initial SL points
+  stale_candles: 3      # candles with peak < stale_peak_min
+  stale_peak_min: 3     # minimum peak to not be stale
+
+profit_floors:
+  - peak: 10
+    lock: 2
+  - peak: 20
+    lock: 12
+  - peak: 30
+    lock: 22
+  - peak: 40
+    lock: 32
+
+rsi_exit:
+  split_at: 70          # split lots at RSI 70
+  sell_spike: 75        # sell lot 1 at RSI 75-80
+  blowoff: 80           # sell everything above 80
+
+trail:
+  method: atr
+  atr_multiplier: 1.5
+
+strategy:
   lookback:
     1m: 50
     3m: 60
     5m: 10
-
   rsi:
     1m_low: 30
-    1m_high_normal: 60       # TRENDING regime
-    1m_high_strong: 70       # TRENDING_STRONG regime
+    1m_high_normal: 60
+    1m_high_strong: 70
     1m_high_dte0: 70
     3m_low: 42
     3m_high: 72
-
   adx:
-    min_trend: 20
     choppy_bypass: 15
     multi_tf_bonus: 25
-
   spread:
     ce_min: 0
     pe_min: 0
     ce_min_dte0: 0
     pe_min_dte0: 0
-
   strike:
     step: 100
     step_expiry: 50
     premium_min: 100
     premium_min_dte0: 50
     premium_max: 400
-
   scoring:
     session_min:
       OPEN: 4
@@ -59,10 +82,16 @@ strategy:
       LATE: 5
     excellence_bypass: 5
     loss_streak_gate: 4
-
   3min_gate:
     min_conditions: 2
     body_pct_min: 30
+
+strike:
+  step_normal: 100
+  step_dte0: 50
+  tolerance_normal: 40
+  tolerance_dte0: 20
+  lock_shift: 150
 
 risk:
   sl_multiplier: 2.0
@@ -71,7 +100,7 @@ risk:
   sl_candles: 5
   max_hold_dte0: 5
   stale_entry_candles: 3
-  stale_entry_peak: 5.0
+  stale_entry_peak: 3.0
   max_daily_trades: 999
   max_daily_losses: 999
   profit_lock_pts: 150
@@ -79,25 +108,26 @@ risk:
   risk_free_rate: 0.065
   max_positions: 1
 
-trail:
-  drawdown_pct: 25
-  drawdown_pct_expiry: 20
-  ema_candles_fail: 2
-  profit_floors:
-    10: 5
-    20: 12
-    30: 20
-    50: 60          # percentage — peak 50 → floor at 60% of peak
-  adaptive_ema:
-    low:            # running < 15
-      timeframe: 5minute
-      candles: 2
-    mid:            # running 15-25
-      timeframe: 3minute
-      candles: 2
-    high:           # running > 25
-      timeframe: minute
-      candles: 1
+market_hours:
+  open_hour: 9
+  open_min: 15
+  close_hour: 15
+  close_min: 30
+  trade_start_hour: 9
+  trade_start_min: 20
+  entry_cutoff_hour: 15
+  entry_cutoff_min: 10
+
+expiry:
+  consol_candles: 5
+  consol_range: 15
+  breakout_min: 10
+  trail_pct: 20
+  start_hour: 9
+  start_min: 45
+  cutoff_hour: 15
+  cutoff_min: 0
+  fib_proximity: 20
 
 dte0:
   enabled: true
@@ -114,27 +144,6 @@ ml:
   enabled: false
   model_path: ~/state/ml_model.pkl
   score_weight: 0.5
-
-market_hours:
-  open_hour: 9
-  open_min: 15
-  close_hour: 15
-  close_min: 30
-  trade_start_hour: 9
-  trade_start_min: 15
-  entry_cutoff_hour: 15
-  entry_cutoff_min: 10
-
-expiry:
-  consol_candles: 5
-  consol_range: 15
-  breakout_min: 10
-  trail_pct: 20
-  start_hour: 9
-  start_min: 45
-  cutoff_hour: 15
-  cutoff_min: 0
-  fib_proximity: 20
 
 lab:
   collection_hours: [10, 11, 12, 13, 14]
@@ -158,14 +167,14 @@ web:
   port: 8080
   auth: false
 
-# DTE profiles — risk/trail per days-to-expiry
+# DTE profiles (kept for expiry breakout mode)
 dte_profiles:
   "6+":
     body_pct_min: 30
     rsi_low: 42
     rsi_high: 72
     rsi_1m_low: 30
-    rsi_1m_high: 50
+    rsi_1m_high: 60
     max_gap_ema: 15
     volume_ratio_min: 1.5
     delta_min: 0.35
@@ -181,14 +190,14 @@ dte_profiles:
     rsi_exhaustion_pnl: 12
     gamma_rider_rsi_drop: 65
     gamma_rider_min_pnl: 8
-    score_conv_min: 5
+    score_conv_min: 4
     conviction_allowed: true
   "3-5":
     body_pct_min: 30
     rsi_low: 42
     rsi_high: 72
     rsi_1m_low: 30
-    rsi_1m_high: 50
+    rsi_1m_high: 60
     max_gap_ema: 13
     volume_ratio_min: 1.5
     delta_min: 0.35
@@ -204,14 +213,14 @@ dte_profiles:
     rsi_exhaustion_pnl: 12
     gamma_rider_rsi_drop: 65
     gamma_rider_min_pnl: 8
-    score_conv_min: 5
+    score_conv_min: 4
     conviction_allowed: true
   "2":
     body_pct_min: 30
     rsi_low: 42
     rsi_high: 72
     rsi_1m_low: 30
-    rsi_1m_high: 50
+    rsi_1m_high: 60
     max_gap_ema: 12
     volume_ratio_min: 1.5
     delta_min: 0.35
@@ -227,14 +236,14 @@ dte_profiles:
     rsi_exhaustion_pnl: 10
     gamma_rider_rsi_drop: 64
     gamma_rider_min_pnl: 8
-    score_conv_min: 5
+    score_conv_min: 4
     conviction_allowed: true
   "1":
     body_pct_min: 30
     rsi_low: 42
     rsi_high: 72
     rsi_1m_low: 30
-    rsi_1m_high: 50
+    rsi_1m_high: 60
     max_gap_ema: 12
     volume_ratio_min: 1.5
     delta_min: 0.35
@@ -250,14 +259,14 @@ dte_profiles:
     rsi_exhaustion_pnl: 8
     gamma_rider_rsi_drop: 63
     gamma_rider_min_pnl: 6
-    score_conv_min: 5
+    score_conv_min: 4
     conviction_allowed: true
   "0":
     body_pct_min: 30
     rsi_low: 42
     rsi_high: 72
     rsi_1m_low: 30
-    rsi_1m_high: 50
+    rsi_1m_high: 70
     max_gap_ema: 15
     volume_ratio_min: 1.5
     delta_min: 0.30
@@ -273,10 +282,9 @@ dte_profiles:
     rsi_exhaustion_pnl: 6
     gamma_rider_rsi_drop: 60
     gamma_rider_min_pnl: 5
-    score_conv_min: 5
+    score_conv_min: 4
     conviction_allowed: true
 
-# Prediction table — avg peak pts by (regime, session)
 prediction_table:
   TRENDING_STRONG:
     OPEN: 35
@@ -304,12 +312,10 @@ prediction_table:
     AFTERNOON: 7
     LATE: 6
 
-# Websocket settings
 websocket:
   reconnect_delay: 5
   tick_stale_secs: 8
 
-# Regime thresholds (spot EMA spread)
 regime:
   trending_strong: 12
   trending: 5
