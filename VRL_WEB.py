@@ -224,10 +224,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('ver').textContent=d.version||'';
   let tags='<span class="tag '+(d.mode==='LIVE'?'tg':'tb')+'">'+esc(d.mode)+'</span>';
   tags+='<span class="tag '+(mk.dte<=1?'tr':'tb')+'">DTE '+mk.dte+'</span>';
-  tags+='<span class="tag tb">ATM '+mk.atm+'</span>';
+  tags+='<span class="tag tb">CE '+(mk.locked_ce||mk.atm)+' · PE '+(mk.locked_pe||mk.atm)+' 🔒</span>';
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
   if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
-  if(mk.regime)tags+='<span class="tag '+(mk.regime.includes('TREND')?'tg':'ta')+'">'+esc(mk.regime)+'</span>';
+  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'">'+esc(mk.regime)+'</span>';}
     if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
 
@@ -275,7 +275,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     const dotH=(ok,l)=>'<div class="dot dot-'+(ok?'g':'r')+'">'+l+'</div>';
     const barPct=minSpread>0?Math.min(100,Math.max(0,sig.spread_1m/minSpread*100)):0;
     const barClr=barPct>=100?'var(--gn)':barPct>=70?'var(--am)':'var(--rd)';
-    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')?'var(--rd)':'var(--am)';
+    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')||sig.verdict.includes('CHOPPY')?'var(--rd)':sig.verdict.includes('NEUTRAL')?'var(--am)':'var(--am)';
     let h='<div class="sect"><div class="sh">'+label+' '+(sig.strike||mk.atm)+' · ₹'+sig.ltp+'</div>';
     // 3-min gate
     h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:rgba(59,130,246,.05)">▸ 3-MIN GATE</div>';

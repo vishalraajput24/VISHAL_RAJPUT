@@ -502,12 +502,12 @@ def _alert_bot_started():
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "STRATEGY (v12.15.1)\n"
-        "Regime : Spot ADX+spread scoring (CHOPPY blocked)\n"
-        "Gate   : 2/4 + spot override bypass\n"
-        "RSI    : 30-50 (58 in strong trend)\n"
+        "Regime : CHOPPY=block | NEUTRAL=score≥6 | TRENDING=pass\n"
+        "Gate   : 2/4 + TRENDING_STRONG spot bypass\n"
+        "RSI    : 30-50 (65 in strong trend) | <40 skip rising\n"
         "Dip    : 1m RSI must be below 3m RSI\n"
-        "Strike : CE ITM/ATM, PE ITM/ATM (direction-aware)\n"
-        "Score  : ≥5 to fire | ≥6 against bias/streak\n"
+        "Strike : CE/PE locked until spot moves 150+pts\n"
+        "Score  : ≥5 to fire | ≥6 NEUTRAL/bias/streak\n"
         "Trail  : Profit floors + adaptive 5m→3m→1m EMA\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "P-Lock : +" + str(D.PROFIT_LOCK_PTS) + "pts\n"
@@ -1025,8 +1025,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = "FIRED"
             elif conds < 2:
                 verdict = "3M BLOCKED " + str(conds) + "/4"
-            elif regime in ("NEUTRAL", "CHOPPY"):
-                verdict = "REGIME " + regime
+            elif regime in ("CHOPPY", "UNKNOWN"):
+                verdict = "REGIME CHOPPY"
+            elif regime == "NEUTRAL":
+                verdict = "NEUTRAL (score >=6)"
             elif spread_1m < min_spread:
                 verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
             elif d1.get("rsi_reject"):
