@@ -12,6 +12,7 @@ import os
 from datetime import date, datetime, timedelta
 from unittest.mock import patch, MagicMock
 from copy import deepcopy
+import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -91,62 +92,62 @@ test("CE 22800 DTE3 → 22800 (exactly at strike)", s == 22800, "got " + str(s))
 section("RSI CONSTANTS")
 
 test("RSI_1M_LOW = 30", D.RSI_1M_LOW == 30, "got " + str(D.RSI_1M_LOW))
-test("RSI_1M_HIGH_NORMAL = 50", D.RSI_1M_HIGH_NORMAL == 50, "got " + str(D.RSI_1M_HIGH_NORMAL))
-test("RSI_1M_HIGH_STRONG = 65", D.RSI_1M_HIGH_STRONG == 65, "got " + str(D.RSI_1M_HIGH_STRONG))
+test("RSI_1M_HIGH_NORMAL = 55", D.RSI_1M_HIGH_NORMAL == 55, "got " + str(D.RSI_1M_HIGH_NORMAL))
+test("RSI_1M_HIGH_STRONG = 70", D.RSI_1M_HIGH_STRONG == 70, "got " + str(D.RSI_1M_HIGH_STRONG))
 test("RSI_3M_LOW = 42", D.RSI_3M_LOW == 42, "got " + str(D.RSI_3M_LOW))
 test("RSI_3M_HIGH = 72", D.RSI_3M_HIGH == 72, "got " + str(D.RSI_3M_HIGH))
 
 
-section("SPOT REGIME")
+section("SPOT REGIME — PRICE ACTION")
 
-# Mock get_spot_indicators to test compute_spot_regime
-def _mock_spot(interval):
-    if interval == "3minute":
-        return {"adx": 35, "spread": 20, "ema_spread": 20, "spread_prev": 18, "rsi": 45}
-    if interval == "5minute":
-        return {"adx": 30, "spread": 15, "rsi": 42}
-    return {"adx": 0, "spread": 0, "rsi": 50}
+import numpy as np
 
-with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot):
+def _make_candles_df(candle_list):
+    """Build a DataFrame from (open, high, low, close) tuples for regime testing."""
+    rows = []
+    base = datetime(2026, 4, 1, 9, 15)
+    for i, (o, h, l, c) in enumerate(candle_list):
+        rows.append({"open": o, "high": h, "low": l, "close": c, "volume": 1000})
+    df = pd.DataFrame(rows)
+    df.index = [base + timedelta(minutes=3*i) for i in range(len(rows))]
+    df.index.name = "timestamp"
+    return df
+
+# TRENDING_STRONG: higher highs + breakout
+_candles_strong = [(100,102,99,101), (101,104,100,103), (103,106,102,105),
+                   (105,108,104,107), (107,110,106,109), (109,112,108,111),
+                   (111,114,110,113), (113,118,112,117), (117,124,116,123),  # breakout
+                   (123,130,122,129)]  # big body
+with patch.object(D, 'get_historical_data', return_value=_make_candles_df(_candles_strong)):
     r = D.compute_spot_regime()
-    # adx_3m=35 → +2, spread=20 → +2, adx_5m=30 → +1, widening (20>18) → +1 = 6
-    test("Strong trend → TRENDING_STRONG", r == "TRENDING_STRONG", "got " + r)
+    test("HH + breakout → TRENDING_STRONG", r == "TRENDING_STRONG", "got " + r)
 
-def _mock_spot_choppy(interval):
-    if interval == "3minute":
-        return {"adx": 10, "spread": 3, "ema_spread": 3, "spread_prev": 4, "rsi": 50}
-    if interval == "5minute":
-        return {"adx": 12, "spread": 2, "rsi": 50}
-    return {"adx": 0, "spread": 0, "rsi": 50}
-
-with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot_choppy):
+# CHOPPY: wide range > 30pts, no HH/LL in last 3 (zigzag)
+_candles_choppy = [(100,120,90,110), (110,125,85,90), (90,130,80,120),
+                   (120,135,75,80), (80,125,70,115), (115,140,75,85),
+                   (85,130,70,120), (120,135,80,85), (85,120,75,110),
+                   (110,115,80,95)]  # last3 highs: 120,115 — NOT HH. range>30
+with patch.object(D, 'get_historical_data', return_value=_make_candles_df(_candles_choppy)):
     r = D.compute_spot_regime()
-    # adx_3m=10 → 0, spread=3 → 0, adx_5m=12 → 0, narrowing (3<4-2=2, no) → 0 = 0
-    test("Low ADX + low spread → CHOPPY", r == "CHOPPY", "got " + r)
+    test("Zigzag wide range → CHOPPY", r == "CHOPPY", "got " + r)
 
-def _mock_spot_trending(interval):
-    if interval == "3minute":
-        return {"adx": 25, "spread": 10, "ema_spread": 10, "spread_prev": 9, "rsi": 48}
-    if interval == "5minute":
-        return {"adx": 26, "spread": 8, "rsi": 45}
-    return {"adx": 0, "spread": 0, "rsi": 50}
-
-with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot_trending):
+# TRENDING: higher highs, no breakout (normal body size)
+_candles_trend = [(100,103,99,102), (102,105,101,104), (104,107,103,106),
+                  (106,109,105,108), (108,111,107,110), (110,113,109,112),
+                  (112,115,111,114), (114,117,113,116), (116,119,115,118),
+                  (118,121,117,120)]  # HH in last3, range=30, no breakout (bodies ~2)
+with patch.object(D, 'get_historical_data', return_value=_make_candles_df(_candles_trend)):
     r = D.compute_spot_regime()
-    # adx_3m=25 → +1, spread=10 → +1, adx_5m=26 → +1, widening (10>9) → +1 = 4
-    test("Moderate trend → TRENDING", r == "TRENDING", "got " + r)
+    test("Steady HH → TRENDING", r == "TRENDING", "got " + r)
 
-def _mock_spot_neutral(interval):
-    if interval == "3minute":
-        return {"adx": 22, "spread": 9, "ema_spread": 9, "spread_prev": 10, "rsi": 50}
-    if interval == "5minute":
-        return {"adx": 20, "spread": 5, "rsi": 50}
-    return {"adx": 0, "spread": 0, "rsi": 50}
-
-with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot_neutral):
+# NEUTRAL: tight range < 30pts, no HH/LL
+_candles_neutral = [(100,105,98,102), (102,106,99,101), (101,104,97,99),
+                    (99,103,96,101), (101,105,98,100), (100,104,97,102),
+                    (102,106,99,101), (101,104,97,99), (99,102,97,100),
+                    (100,103,98,99)]  # last3 highs: 104,102,103 — NOT HH. range<30
+with patch.object(D, 'get_historical_data', return_value=_make_candles_df(_candles_neutral)):
     r = D.compute_spot_regime()
-    # adx_3m=22 → +1, spread=9 → +1, adx_5m=20 → 0, narrowing (9<10-2=8, no) → 0 = 2
-    test("Moderate ADX + spread → NEUTRAL", r == "NEUTRAL", "got " + r)
+    test("Tight range < 30 → NEUTRAL", r == "NEUTRAL", "got " + r)
 
 
 section("PREMIUM FILTER CONSTANTS")
@@ -290,7 +291,6 @@ with patch.object(D, 'get_historical_data', side_effect=Exception("API error")):
          permitted == False, "got permitted=" + str(permitted))
 
 # _check_3min should return False on empty/short data
-import pandas as pd
 with patch.object(D, 'get_historical_data', return_value=pd.DataFrame()):
     permitted, det, bonus = E._check_3min(99999, "CE", {}, 3)
     test("_check_3min empty data → permitted=False",

@@ -234,17 +234,15 @@ def _check_1min(token: int, option_type: str, profile: dict,
         if dte == 0:
             rsi_1m_hi = CFG.rsi("1m_high_dte0", 70)
         else:
-            try:
-                _spot_rsi = D.get_spot_indicators("3minute")
-                _spot_adx_rsi = float(_spot_rsi.get("adx", 0))
-            except Exception:
-                _spot_adx_rsi = 0
-            if _spot_adx_rsi >= 30:
-                rsi_1m_hi = CFG.rsi("1m_high_strong", 65)
+            # RSI cap based on REGIME (price action) — not ADX
+            _regime_for_rsi = D.compute_spot_regime()
+            if _regime_for_rsi == "TRENDING_STRONG":
+                rsi_1m_hi = CFG.rsi("1m_high_strong", 70)
+            elif _regime_for_rsi == "TRENDING":
+                rsi_1m_hi = CFG.rsi("1m_high_normal", 55)
             else:
-                rsi_1m_hi = CFG.rsi("1m_high_normal", 50)
-            logger.info("[ENGINE] RSI cap=" + str(rsi_1m_hi) + " spot_adx=" + str(round(_spot_adx_rsi, 1))
-                        + (" STRONG" if _spot_adx_rsi >= 30 else " NORMAL"))
+                rsi_1m_hi = 50
+            logger.info("[ENGINE] RSI cap=" + str(rsi_1m_hi) + " regime=" + _regime_for_rsi)
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
 
