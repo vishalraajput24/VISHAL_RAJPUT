@@ -520,200 +520,10 @@ def _alert_bot_started():
         "/help for commands."
     )
 
-# ── Score breakdown formatter ──────────────────────────────────
-def _fmt_score_breakdown(bd: dict, score: int) -> str:
-    if not bd:
-        return "Score   : " + str(score) + "/8\n"
-    parts = []
-    if bd.get("body"):         parts.append("Body")
-    if bd.get("body_bonus"):   parts.append("+Bonus")
-    if bd.get("rsi"):          parts.append("RSI")
-    if bd.get("volume"):       parts.append("Vol")
-    if bd.get("delta"):        parts.append("Delta")
-    if bd.get("double_align"): parts.append("2xAlign")
-    if bd.get("gate_bonus"):   parts.append("Gate")
-    if bd.get("multi_tf_adx"): parts.append("MTF-ADX")
-    return "Score   : " + str(score) + "/8  [" + " ".join(parts) + "]\n"
-
-def _alert_entry(symbol: str, option_type: str, entry_price: float,
-                 mode: str, score: int, profile: dict,
-                 det_1m: dict, det_3m: dict, greeks: dict,
-                 dte: int, regime: str,
-                 score_breakdown: dict = None,
-                 prediction: dict = None,
-                 spread_1m: float = 0.0,
-                 session: str = "MORNING"):
-    sl_pts    = profile.get("conv_sl_pts", 20)
-    be_pts    = profile.get("conv_breakeven_pts", 14)
-    trail_pts = round(be_pts * 1.2)
-    spread_3m = round(det_3m.get("ema_spread_3m", 0), 1) if det_3m else 0
-    met_3m    = det_3m.get("conditions_met", 0) if det_3m else 0
-    bonus     = det_3m.get("bonus", 0) if det_3m else 0
-    rsi_3m    = det_3m.get("rsi_val_3m", 0) if det_3m else 0
-    body_3m   = det_3m.get("body_pct_3m", 0) if det_3m else 0
-
-    # Trend label
-    def trend_lbl(sp, ot):
-        if ot == "CE": return "UP 📈" if sp >= 5 else "WEAK" if sp >= 2 else "FLAT"
-        else:          return "DOWN 📈" if sp <= -5 else "WEAK" if sp <= -2 else "FLAT"
-
-    # Prediction block
-    pred_line = ""
-    if prediction:
-        c = prediction.get("conservative", 0)
-        t = prediction.get("target", 0)
-        s = prediction.get("stretch", 0)
-        pred_line = (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>PREDICTION</b>\n"
-            "Conservative : +" + str(c) + "pts  ₹" + str(c * D.LOT_SIZE) + "\n"
-            "Target       : +" + str(t) + "pts  ₹" + str(t * D.LOT_SIZE) + "\n"
-            "Stretch      : +" + str(s) + "pts  ₹" + str(s * D.LOT_SIZE) + "\n"
-        )
-
-    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
-    _vix = round(D.get_vix(), 1)
-    _tg_send(
-        "🔵 <b>" + option_type + " " + str(state.get("strike", "")) + "</b>"
-        + "  ₹" + str(round(entry_price, 1))
-        + "  Score " + str(score) + "/" + str(D.SESSION_SCORE_MIN.get(session, 5)) + " ✅"
-        + "  " + regime + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>CONVICTION ENTRY — " + option_type + "</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _now_str() + "  " + symbol + "\n"
-        "Entry   : ₹" + str(round(entry_price, 2)) + "\n"
-        + _fmt_score_breakdown(score_breakdown, score)
-        + "Regime  : " + regime + "  DTE:" + str(dte)
-        + "  VIX:" + str(_vix) + "\n"
-        "Bias    : " + (_bias or "—") + "  Session: " + session + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "WHY THIS FIRED\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "3-MIN  " + str(met_3m) + "/4 ✅  "
-        + trend_lbl(spread_3m, option_type)
-        + "  Gap:" + str(abs(spread_3m)) + "pts"
-        + ("  ⚡BONUS" if bonus else "") + "\n"
-        "  Body:" + str(body_3m) + "%  RSI:" + str(rsi_3m) + "\n"
-        "1-MIN  ✅ trigger clean\n"
-        "  Body:" + str(det_1m.get("body_pct", 0)) + "%"
-        + ("✅" if det_1m.get("body_ok") else "❌")
-        + "  RSI:" + str(det_1m.get("rsi_val", 0)) + "↑"
-        + ("  DIP✅" if det_1m.get("rsi_1m_below_3m") else "")
-        + "  Vol:" + str(det_1m.get("vol_ratio", 0)) + "x\n"
-        "  Spread:" + str(round(spread_1m, 1)) + "pts"
-        + ("  🔥DOUBLE" if abs(spread_3m) >= 5 and spread_1m > 0 else "") + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "GREEKS  Delta:" + str(greeks.get("delta","—"))
-        + "  IV:" + str(greeks.get("iv_pct","—")) + "%"
-        + "  Θ:" + str(greeks.get("theta","—")) + "/day\n"
-        + pred_line
-        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "EXIT PLAN\n"
-        "SL     : −" + str(sl_pts) + "pts  →  ₹" + str(sl_pts * D.LOT_SIZE) + "\n"
-        "Phase2 : +" + str(be_pts) + "pts  SL moves to entry+2\n"
-        "Phase3 : +" + str(trail_pts) + "pts  5-min EMA trail starts\n"
-        "Top    : RSI≥76 → RSI_EXHAUSTION exit 🎯"
-    )
-
-def _alert_exit(symbol: str, entry: float, exit_price: float,
-                pnl: float, reason: str, mode: str, peak_pnl: float,
-                candles_held: int = 0, regime: str = "", score: int = 0,
-                daily_pnl: float = 0.0, daily_trades: int = 0,
-                daily_wins: int = 0, daily_losses: int = 0):
-
-    pnl_sign = "+" if pnl >= 0 else ""
-    icon     = "✅" if pnl >= 0 else "❌"
-    captured = round(pnl / peak_pnl * 100) if peak_pnl > 0 else 0
-
-    reason_map = {
-        "PHASE1_SL"           : ("Stop loss hit", "Price moved against immediately — no momentum"),
-        "BREAKEVEN_SL"        : ("Stopped at breakeven", "Gave back all gains — move reversed at peak"),
-        "TRAIL_WIDE"          : ("5-min EMA trail exit", "Candle body closed below EMA9 — trend ended"),
-        "TRAIL_TIGHT"         : ("3-min EMA trail exit", "Tight trail triggered — momentum slowing"),
-        "FLOOR_WIDE"          : ("Floor breach exit", "Catastrophic reversal below low-12pts"),
-        "FLOOR_TIGHT"         : ("Floor breach — tight trail", ""),
-        "PEAK_DRAWDOWN_WIDE"  : ("Peak drawdown 40%", "Winner protected — gave back 40% from peak"),
-        "PEAK_DRAWDOWN_TIGHT" : ("Peak drawdown tight trail", ""),
-        "TIGHT_TRAIL"         : ("Tight trail triggered", "15pt+ profit, drawdown exceeded 5pts — gains locked"),
-        "MODERATE_DRAWDOWN"   : ("Moderate drawdown exit", "20pt+ peak, gave back 8pts — profit protected"),
-        "RSI_EXHAUSTION"      : ("RSI exhaustion exit 🎯", "RSI hit 76+ with profit — top captured"),
-        "GAMMA_RIDER"         : ("Gamma rider exit 🏄", "RSI dropped from overbought — reversal caught"),
-        "STALE_ENTRY"         : ("Stale entry cut 🔪", "3 candles, peak under 5pts — dead trade, saved full SL"),
-        "MARKET_CLOSE"        : ("Market close exit", "Forced exit at 15:28"),
-        "FORCE_EXIT"          : ("Manual force exit", ""),
-    }
-    reason_title, reason_why = reason_map.get(reason, (reason, ""))
-
-    # Trade quality assessment
-    if pnl > 0 and captured >= 70:
-        quality = "🌟 EXCELLENT  (captured " + str(captured) + "% of peak)"
-    elif pnl > 0 and captured >= 50:
-        quality = "✅ GOOD  (captured " + str(captured) + "% of peak)"
-    elif pnl > 0:
-        quality = "⚠️ OK  (captured " + str(captured) + "% of peak)"
-    elif reason == "STALE_ENTRY":
-        saved = round((18 - abs(pnl)) if abs(pnl) < 18 else 0, 1)
-        quality = "🛡 PROTECTED  (saved ~" + str(saved) + "pts vs full SL)"
-    else:
-        quality = "❌ LOSS  (peak was +" + str(round(peak_pnl, 1)) + "pts  trough " + str(round(state.get("trough_pnl", 0), 1)) + "pts)"
-
-    dpnl_sign = "+" if daily_pnl >= 0 else ""
-
-    _ot = option_type_from_symbol(symbol)
-    _wl = "WIN" if pnl >= 0 else "LOSS"
-    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
-    _tg_send(
-        icon + " <b>" + _wl + " " + pnl_sign + str(round(pnl,1)) + "pts</b>"
-        + "  " + _rs(pnl)
-        + "  |  " + _ot + " " + symbol.split("NIFTY")[-1].replace("CE","").replace("PE","").strip() + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _now_str() + "  " + symbol + "\n"
-        "₹" + str(round(entry,1))
-        + " → ₹" + str(round(exit_price,1)) + "\n"
-        "Peak: +" + str(round(peak_pnl,1)) + "pts"
-        + "  Captured: " + str(captured) + "%\n"
-        "Held: " + str(candles_held) + "min"
-        + "  Phase: " + str(state.get("exit_phase", 0)) + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "WHY EXITED\n"
-        + reason_title + "\n"
-        + (reason_why + "\n" if reason_why else "")
-        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "TRADE QUALITY\n"
-        + quality + "\n"
-        "Regime : " + (regime or "—") + "  Score: " + str(score)
-        + "  Bias: " + (_bias or "—") + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📊 <b>TODAY</b>  " + dpnl_sign + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "\n"
-        + str(daily_trades) + "T  W" + str(daily_wins) + " L" + str(daily_losses)
-    )
-
-def option_type_from_symbol(symbol: str) -> str:
-    if symbol.endswith("CE"): return "CE"
-    if symbol.endswith("PE"): return "PE"
-    return "?"
-
-def _alert_trail_tightened(symbol: str, rsi_val: float):
-    _tg_send(
-        "⚡ <b>TRAIL TIGHTENED — " + symbol + "</b>\n"
-        "RSI " + str(round(rsi_val,1)) + " — momentum peaked\n"
-        "5-min EMA → 3-min EMA now active\n"
-        "Riding with tighter net. No forced exit."
-    )
-
 def _alert_profit_lock(daily_pnl: float):
     _tg_send(
         "🔒 <b>PROFIT LOCK — +" + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "</b>\n"
-        "All trails tightened to 3-min EMA.\n"
         "New entries still open but protected mode on."
-    )
-
-def _alert_loss_streak_gate(streak: int, score: int, required: int):
-    _tg_send(
-        "⏸ <b>STREAK GATE — " + str(streak) + " losses</b>\n"
-        "Score " + str(score) + " below required " + str(required) + "\n"
-        "Waiting for stronger setup. Capital protected."
     )
 
 def _alert_exit_critical(symbol: str, qty: int):
@@ -1131,16 +941,13 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
                 "pnl": pnl,
                 "peak": round(st.get("peak_pnl", 0), 1),
-                "trough": round(st.get("trough_pnl", 0), 1),
-                "phase": st.get("exit_phase", 1),
                 "sl": round(sl, 2),
-                "sl_dist": round(opt_ltp - sl, 1) if opt_ltp > 0 and sl > 0 else 0,
-                "score": st.get("score_at_entry", 0),
                 "candles": st.get("candles_held", 0),
-                "trail_tightened": st.get("trail_tightened", False),
-                "rsi_overbought": st.get("_rsi_was_overbought", False),
-                "mode": st.get("mode", ""),
-                "regime": st.get("regime_at_entry", ""),
+                "lot1_active": st.get("lot1_active", True),
+                "lot2_active": st.get("lot2_active", True),
+                "lots_split": st.get("lots_split", False),
+                "current_floor": round(st.get("current_floor", 0), 2),
+                "current_rsi": round(st.get("current_rsi", 0), 1),
                 "strike": st.get("strike", 0),
             }
         else:

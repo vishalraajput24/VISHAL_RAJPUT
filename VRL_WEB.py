@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.16
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.0
 DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.
 """
 import csv, json, os
@@ -235,22 +235,21 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   let ph='';
   if(pos.in_trade){
     const clr=pos.pnl>=0?'var(--gn)':'var(--rd)';
-    const pct=pos.peak>0?Math.min(90,25+(pos.pnl/pos.peak)*55):30;
     ph='<div class="pos">'+
       '<div style="display:flex;justify-content:space-between;align-items:baseline">'+
       '<div><span style="color:var(--bl);font-weight:700">'+esc(pos.direction)+'</span> <span style="color:#555;font-size:10px">'+esc(pos.symbol)+'</span></div>'+
-      '<span style="color:#555;font-size:9px">Score '+pos.score+' · Ph'+pos.phase+'</span></div>'+
+      '<span style="color:#555;font-size:9px">'+pos.candles+' candles</span></div>'+
       '<div style="margin:6px 0"><span class="big" style="color:'+clr+'">'+(pos.pnl>=0?'+':'')+pos.pnl+'pts</span>'+
-      ' <span style="color:#555;font-size:11px">₹'+Math.round(pos.pnl*65)+'</span></div>'+
-      '<div class="prog"><div class="prog-fill" style="width:25%;background:rgba(239,68,68,.3)"></div>'+
-      '<div class="prog-fill" style="width:'+pct+'%;background:rgba(16,185,129,.3);position:absolute;left:25%;top:0;height:100%"></div></div>'+
+      ' <span style="color:#555;font-size:11px">₹'+Math.round(pos.pnl*65*2)+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#555">'+
       '<span style="color:var(--rd)">SL ₹'+pos.sl+'</span><span>Entry ₹'+pos.entry+'</span><span style="color:var(--gn)">Peak +'+pos.peak+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;margin-top:3px">'+
-      '<span>Trough '+pos.trough+'pts</span><span>SL dist '+pos.sl_dist+'pts</span><span>'+pos.candles+' candles</span></div>'+
+      '<span>LOT1: '+(pos.lot1_active?'ACTIVE':'SOLD')+'</span>'+
+      '<span>LOT2: '+(pos.lot2_active?'ACTIVE':'SOLD')+'</span>'+
+      '<span>'+(pos.lots_split?'SPLIT ⚡':'TOGETHER')+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;margin-top:3px">'+
-      '<span>Trail: '+(pos.trail_tightened?'3m TIGHT ⚡':'5m WIDE')+'</span>'+
-      '<span>RSI OB: '+(pos.rsi_overbought?'YES 🔥':'No')+'</span></div></div>';
+      '<span>Floor: ₹'+(pos.current_floor||0)+'</span>'+
+      '<span>RSI: '+(pos.current_rsi||0)+'</span></div></div>';
   }
   // Today summary bar
   const dpnl=td.pnl||0;
@@ -670,6 +669,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v12.16 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v13.0 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()
