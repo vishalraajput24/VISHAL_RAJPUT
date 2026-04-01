@@ -39,8 +39,8 @@ strategy:
     multi_tf_bonus: 25
 
   spread:
-    ce_min: 2
-    pe_min: 2
+    ce_min: 1
+    pe_min: 1
     ce_min_dte0: 1
     pe_min_dte0: 1
 
