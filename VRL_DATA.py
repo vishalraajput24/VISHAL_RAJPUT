@@ -105,7 +105,7 @@ SPREAD_1M_MIN_PE_DTE0 = CFG.spread("pe_min_dte0", 1)
 
 RSI_1M_LOW         = CFG.rsi("1m_low", 30)
 RSI_1M_HIGH_NORMAL = CFG.rsi("1m_high_normal", 50)
-RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 58)
+RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 65)
 RSI_1M_HIGH        = RSI_1M_HIGH_NORMAL
 RSI_3M_LOW         = CFG.rsi("3m_low", 42)
 RSI_3M_HIGH        = CFG.rsi("3m_high", 72)

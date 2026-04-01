@@ -229,7 +229,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.16: Adaptive RSI zone
+        # v12.16: Adaptive RSI zone — reads from config
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
         if dte == 0:
             rsi_1m_hi = CFG.rsi("1m_high_dte0", 70)
@@ -240,12 +240,20 @@ def _check_1min(token: int, option_type: str, profile: dict,
             except Exception:
                 _spot_adx_rsi = 0
             if _spot_adx_rsi >= 30:
-                rsi_1m_hi = D.RSI_1M_HIGH_STRONG   # 58 — strong trend continuation
+                rsi_1m_hi = CFG.rsi("1m_high_strong", 65)   # strong trend — from config
             else:
-                rsi_1m_hi = D.RSI_1M_HIGH_NORMAL    # 50 — normal cap
+                rsi_1m_hi = CFG.rsi("1m_high_normal", 50)   # normal — from config
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
-        if not (rsi_ok and rsi_rising):
+
+        # Bug fix: RSI < 40 = momentum just starting — don't require rising
+        # Rising check only matters at RSI 45+ where you could be chasing
+        if rsi < 40:
+            rsi_check_pass = rsi_ok
+        else:
+            rsi_check_pass = rsi_ok and rsi_rising
+
+        if not rsi_check_pass:
             details["rsi_reject"] = True
             if rsi < rsi_1m_lo:
                 details["rsi_reject_reason"] = "RSI_TOO_LOW"
@@ -253,7 +261,7 @@ def _check_1min(token: int, option_type: str, profile: dict,
                 details["rsi_reject_reason"] = "RSI_TOO_HIGH"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
-            elif not rsi_rising:
+            elif not rsi_rising and rsi >= 40:
                 details["rsi_reject_reason"] = "RSI_NOT_RISING"
             else:
                 details["rsi_reject_reason"] = "RSI_CHECK_FAIL"
@@ -466,31 +474,52 @@ def check_entry(token: int, option_type: str, profile: dict,
             if not permitted:
                 logger.info("[ENGINE] " + option_type
                             + " 3m gate BLOCKED: met=" + str(det_3m.get("conditions_met")) + "/4")
-                # Compute regime even on blocked path (for dashboard)
-                _sp3m = det_3m.get("ema_spread_3m", 0.0)
-                _abs_sp = abs(_sp3m)
-                if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
-                elif _abs_sp >= 5:  result["regime"] = "TRENDING"
-                elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
-                else:               result["regime"] = "CHOPPY"
-                # Still fetch 1-min data + greeks for dashboard display
+
+                # Spot bypass: if spot is TRENDING_STRONG (ADX >= 25), override 3m gate block
+                # Option 3m gate can be unreliable when option has thin candles
+                # but spot confirms strong directional move
+                _bypass = False
                 try:
-                    _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
-                    result["details_1m"] = _det1
-                    result["entry_price"] = _det1.get("entry_price", 0.0)
-                    _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
-                    _df1 = D.add_indicators(_df1)
-                    if not _df1.empty and len(_df1) >= 3:
-                        _l1 = _df1.iloc[-2]
-                        result["spread_1m"] = round(
-                            float(_l1.get("EMA_9", _l1["close"])) -
-                            float(_l1.get("EMA_21", _l1["close"])), 2)
-                    result["greeks"] = D.get_full_greeks(
-                        _det1.get("entry_price", 0.0), spot_ltp, strike,
-                        expiry_date, option_type)
+                    _sp3m_bypass = D.get_spot_indicators("3minute")
+                    _spot_adx_bypass = float(_sp3m_bypass.get("adx", 0))
+                    _spot_regime = D.compute_spot_regime()
+                    if _spot_regime == "TRENDING_STRONG" and _spot_adx_bypass >= 25:
+                        _bypass = True
+                        bonus_3m = 0
+                        det_3m["permitted"] = True
+                        det_3m["mode"] = "SPOT_BYPASS"
+                        logger.info("[ENGINE] " + option_type + " SPOT BYPASS: regime="
+                                    + _spot_regime + " ADX=" + str(round(_spot_adx_bypass, 1))
+                                    + " — overriding 3m gate block")
                 except Exception:
                     pass
-                return result
+
+                if not _bypass:
+                    # Compute regime even on blocked path (for dashboard)
+                    _sp3m = det_3m.get("ema_spread_3m", 0.0)
+                    _abs_sp = abs(_sp3m)
+                    if _abs_sp >= 12:   result["regime"] = "TRENDING_STRONG"
+                    elif _abs_sp >= 5:  result["regime"] = "TRENDING"
+                    elif _abs_sp >= 2:  result["regime"] = "NEUTRAL"
+                    else:               result["regime"] = "CHOPPY"
+                    # Still fetch 1-min data + greeks for dashboard display
+                    try:
+                        _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
+                        result["details_1m"] = _det1
+                        result["entry_price"] = _det1.get("entry_price", 0.0)
+                        _df1 = D.get_historical_data(token, "minute", D.LOOKBACK_1M)
+                        _df1 = D.add_indicators(_df1)
+                        if not _df1.empty and len(_df1) >= 3:
+                            _l1 = _df1.iloc[-2]
+                            result["spread_1m"] = round(
+                                float(_l1.get("EMA_9", _l1["close"])) -
+                                float(_l1.get("EMA_21", _l1["close"])), 2)
+                        result["greeks"] = D.get_full_greeks(
+                            _det1.get("entry_price", 0.0), spot_ltp, strike,
+                            expiry_date, option_type)
+                    except Exception:
+                        pass
+                    return result
 
         # ── LAYER 2: REGIME ──────────────────────────────────
         spread_3m  = det_3m.get("ema_spread_3m", 0.0)

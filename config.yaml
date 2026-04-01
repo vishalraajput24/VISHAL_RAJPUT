@@ -28,7 +28,7 @@ strategy:
   rsi:
     1m_low: 30
     1m_high_normal: 50
-    1m_high_strong: 58
+    1m_high_strong: 65
     1m_high_dte0: 70
     3m_low: 42
     3m_high: 72
