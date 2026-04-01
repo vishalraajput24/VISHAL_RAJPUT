@@ -1025,10 +1025,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = "FIRED"
             elif conds < 2:
                 verdict = "3M BLOCKED " + str(conds) + "/4"
-            elif regime in ("CHOPPY", "UNKNOWN"):
+            elif regime == "CHOPPY":
                 verdict = "REGIME CHOPPY"
-            elif regime == "NEUTRAL":
-                verdict = "NEUTRAL (score >=6)"
             elif spread_1m < min_spread:
                 verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
             elif d1.get("rsi_reject"):

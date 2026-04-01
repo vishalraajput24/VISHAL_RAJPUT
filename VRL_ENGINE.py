@@ -229,31 +229,26 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # v12.16: Adaptive RSI zone — reads from config
+        # RSI zone — regime-based cap, widened
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
         if dte == 0:
             rsi_1m_hi = CFG.rsi("1m_high_dte0", 70)
         else:
-            # RSI cap based on REGIME (price action) — not ADX
             _regime_for_rsi = D.compute_spot_regime()
             if _regime_for_rsi == "TRENDING_STRONG":
                 rsi_1m_hi = CFG.rsi("1m_high_strong", 70)
             elif _regime_for_rsi == "TRENDING":
-                rsi_1m_hi = CFG.rsi("1m_high_normal", 55)
+                rsi_1m_hi = CFG.rsi("1m_high_normal", 60)
+            elif _regime_for_rsi == "NEUTRAL":
+                rsi_1m_hi = 55
             else:
-                rsi_1m_hi = 50
+                rsi_1m_hi = 55
             logger.info("[ENGINE] RSI cap=" + str(rsi_1m_hi) + " regime=" + _regime_for_rsi)
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
 
-        # Bug fix: RSI < 40 = momentum just starting — don't require rising
-        # Rising check only matters at RSI 45+ where you could be chasing
-        if rsi < 40:
-            rsi_check_pass = rsi_ok
-        else:
-            rsi_check_pass = rsi_ok and rsi_rising
-
-        if not rsi_check_pass:
+        # Only block on RSI out of zone — no rising check, no 1m<3m check
+        if not rsi_ok:
             details["rsi_reject"] = True
             if rsi < rsi_1m_lo:
                 details["rsi_reject_reason"] = "RSI_TOO_LOW"
@@ -261,32 +256,17 @@ def _check_1min(token: int, option_type: str, profile: dict,
                 details["rsi_reject_reason"] = "RSI_TOO_HIGH"
                 logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
                             + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
-            elif not rsi_rising and rsi >= 40:
-                details["rsi_reject_reason"] = "RSI_NOT_RISING"
             else:
                 details["rsi_reject_reason"] = "RSI_CHECK_FAIL"
             return False, details
 
-        # v12.15: RSI 1m must be BELOW 3m RSI — entering the dip within the trend
-        # When 1m RSI < 3m RSI, the 1-min just pulled back = sniper entry
-        # When 1m RSI > 3m RSI, the 1-min already ran ahead = chasing
-        details["rsi_1m_below_3m"] = False  # default for dashboard
-        if rsi_3m > 0:
-            rsi_below_3m = rsi < rsi_3m
-            details["rsi_1m_below_3m"] = rsi_below_3m
-            if not rsi_below_3m:
-                details["rsi_reject"] = True
-                details["rsi_reject_reason"] = "1M_ABOVE_3M"
-                logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
-                            + " ≥ 3m RSI " + str(round(rsi_3m, 1))
-                            + " — chasing, not entering dip")
-                return False, details
-
-        details["spread_accel"] = True  # v12.16: spread deceleration check removed
+        details["rsi_1m_below_3m"] = True  # removed as blocking check
+        details["spread_accel"] = True
 
         body_ok = (c > o) and (body_pct >= profile["body_pct_min"])
         details["body_ok"] = body_ok
-        details["vol_ok"]  = vol_ratio >= profile["volume_ratio_min"]
+        details["vol_ok"]  = True  # removed volume as blocking check
+        details["vol_ratio_raw"] = vol_ratio  # keep for dashboard display
 
         prev_upper_wick = prev["high"] - max(prev["open"], prev["close"])
         prev_body  = abs(prev["close"] - prev["open"])
@@ -296,8 +276,8 @@ def _check_1min(token: int, option_type: str, profile: dict,
         breakout  = (c > prev["high"]) and (h > prev["high"])
         details["rejection_breakout"] = rejection and breakout
 
-        # v12.15: All conditions must pass: body, RSI, spread accelerating, volume
-        return body_ok and rsi_ok and details["vol_ok"], details
+        # Simplified: only body + RSI zone must pass
+        return body_ok and rsi_ok, details
     except Exception as e:
         logger.error("[ENGINE] _check_1min error: " + str(e))
         return False, details
@@ -544,14 +524,9 @@ def check_entry(token: int, option_type: str, profile: dict,
                 logger.info("[ENGINE] " + option_type + " DTE0 CHOPPY pass: ADX="
                             + str(round(_adx_dte0, 1)) + " >= " + str(_choppy_min))
 
-        # Regime filter:
-        #   CHOPPY/UNKNOWN → hard block (unless DTE0 with ADX bypass)
-        #   NEUTRAL → allow but raise score minimum to 6
-        #   TRENDING/TRENDING_STRONG → pass through
-        if result["regime"] in ("CHOPPY", "UNKNOWN") and not _dte0_choppy_pass:
-            logger.info("[ENGINE] " + option_type + " blocked — regime=" + result["regime"]
-                        + " — CHOPPY/UNKNOWN hard blocked")
-            # Fetch 1-min data + greeks for dashboard display
+        # Regime filter: only CHOPPY hard blocks
+        if result["regime"] == "CHOPPY" and not _dte0_choppy_pass:
+            logger.info("[ENGINE] " + option_type + " blocked — regime=CHOPPY")
             try:
                 _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
                 result["details_1m"] = _det1
@@ -563,10 +538,7 @@ def check_entry(token: int, option_type: str, profile: dict,
             except Exception:
                 pass
             return result
-
-        if result["regime"] == "NEUTRAL":
-            session_min = max(session_min, 6)
-            logger.info("[ENGINE] " + option_type + " NEUTRAL regime — score min raised to 6")
+        # NEUTRAL, TRENDING, TRENDING_STRONG, UNKNOWN — all pass through
 
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
         if spread_3m > 5 and option_type == "PE":
@@ -687,11 +659,11 @@ def check_entry(token: int, option_type: str, profile: dict,
         except Exception:
             _bias = "UNKNOWN"
         if _bias == "BEAR" and option_type == "CE":
-            session_min = max(session_min, 6)
-            logger.info("[ENGINE] CE against BEAR bias — need score >= 6")
+            session_min = max(session_min, 5)
+            logger.info("[ENGINE] CE against BEAR bias — need score >= 5")
         elif _bias == "BULL" and option_type == "PE":
-            session_min = max(session_min, 6)
-            logger.info("[ENGINE] PE against BULL bias — need score >= 6")
+            session_min = max(session_min, 5)
+            logger.info("[ENGINE] PE against BULL bias — need score >= 5")
 
         result["score"]           = score
         result["score_breakdown"] = breakdown

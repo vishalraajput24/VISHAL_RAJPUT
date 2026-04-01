@@ -92,7 +92,7 @@ test("CE 22800 DTE3 → 22800 (exactly at strike)", s == 22800, "got " + str(s))
 section("RSI CONSTANTS")
 
 test("RSI_1M_LOW = 30", D.RSI_1M_LOW == 30, "got " + str(D.RSI_1M_LOW))
-test("RSI_1M_HIGH_NORMAL = 55", D.RSI_1M_HIGH_NORMAL == 55, "got " + str(D.RSI_1M_HIGH_NORMAL))
+test("RSI_1M_HIGH_NORMAL = 60", D.RSI_1M_HIGH_NORMAL == 60, "got " + str(D.RSI_1M_HIGH_NORMAL))
 test("RSI_1M_HIGH_STRONG = 70", D.RSI_1M_HIGH_STRONG == 70, "got " + str(D.RSI_1M_HIGH_STRONG))
 test("RSI_3M_LOW = 42", D.RSI_3M_LOW == 42, "got " + str(D.RSI_3M_LOW))
 test("RSI_3M_HIGH = 72", D.RSI_3M_HIGH == 72, "got " + str(D.RSI_3M_HIGH))
