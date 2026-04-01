@@ -957,6 +957,9 @@ def fill_forward_scan(kite, target_date: date = None):
 
         try:
             ts = datetime.fromisoformat(row["timestamp"])
+            # Strip timezone for comparison with Kite candles
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
             entry = float(row.get("entry_price", 0))
             if entry <= 0:
                 continue
@@ -975,6 +978,8 @@ def fill_forward_scan(kite, target_date: date = None):
             entry_idx = 0
             for i, c in enumerate(candles):
                 c_time = c["date"] if isinstance(c["date"], datetime) else datetime.fromisoformat(str(c["date"]))
+                if hasattr(c_time, 'tzinfo') and c_time.tzinfo is not None:
+                    c_time = c_time.replace(tzinfo=None)
                 if c_time <= ts:
                     entry_idx = i
 
