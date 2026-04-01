@@ -869,7 +869,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     logger.info(
         "[MAIN] ENTRY " + option_type + " " + symbol
         + " price=" + str(actual_price)
-        + " score=" + str(entry_result["score"])
+        + " ema_gap=" + str(entry_result.get("ema_gap", 0))
+        + " rsi=" + str(entry_result.get("rsi", 0))
         + " SL=" + str(phase1_sl)
     )
 
@@ -1057,89 +1058,37 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
-            d3 = result.get("details_3m", {})
-            d1 = result.get("details_1m", {})
-            g  = result.get("greeks", {})
-            spread_1m = result.get("spread_1m", 0)
-            min_spread = D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE
-            score = result.get("score", 0)
-            session_min = D.SESSION_SCORE_MIN.get(session, 5)
+            # v13.0: Simple verdict from EMA gap + RSI
+            ema_gap = result.get("ema_gap", 0)
+            rsi_val = result.get("rsi", 0)
+            ema_ok = result.get("ema_ok", False)
+            rsi_ok = result.get("rsi_ok", False)
 
-            # Verdict logic
-            conds = d3.get("conditions_met", 0)
-            regime = result.get("regime", "")
             if result.get("fired"):
                 verdict = "FIRED"
-            elif conds < 2:
-                verdict = "3M BLOCKED " + str(conds) + "/4"
-            elif regime == "CHOPPY":
-                verdict = "REGIME CHOPPY"
-            elif spread_1m < min_spread:
-                verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
-            elif d1.get("rsi_reject"):
-                rsi_v = d1.get("rsi_val", 0)
-                _rsi_reason = d1.get("rsi_reject_reason", "")
-                if _rsi_reason == "RSI_TOO_HIGH":
-                    verdict = "RSI " + str(rsi_v) + " TOO HIGH"
-                elif _rsi_reason == "RSI_TOO_LOW":
-                    verdict = "RSI " + str(rsi_v) + " TOO LOW"
-                elif _rsi_reason == "1M_ABOVE_3M":
-                    verdict = "RSI " + str(rsi_v) + " > 3m (CHASING)"
-                elif _rsi_reason == "RSI_NOT_RISING":
-                    verdict = "RSI " + str(rsi_v) + " NOT RISING"
+            elif not ema_ok and not rsi_ok:
+                verdict = "EMA " + str(ema_gap) + " RSI " + str(rsi_val)
+            elif not ema_ok:
+                verdict = "EMA " + str(ema_gap) + " (need 3+)"
+            elif not rsi_ok:
+                if rsi_val < 50:
+                    verdict = "RSI " + str(rsi_val) + " (need 50+)"
                 else:
-                    verdict = "RSI " + str(rsi_v) + " REJECT"
-            elif not d1.get("vol_ok", False) and d1.get("vol_ratio", 0) > 0:
-                verdict = "VOL " + str(d1.get("vol_ratio", 0)) + "x < 1.5x"
-            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
-                verdict = "BODY " + str(d1.get("body_pct", 0)) + "% WEAK"
-            elif score < session_min:
-                verdict = "SCORE " + str(score) + "/" + str(session_min)
-            elif score >= session_min:
-                verdict = "READY"
+                    verdict = "RSI " + str(rsi_val) + " not rising"
             else:
-                verdict = "BLOCKED"
+                verdict = "READY"
 
             return {
-                "gate_3m": {
-                    "ema": d3.get("ema_aligned", False),
-                    "body": d3.get("body_ok", False),
-                    "rsi": d3.get("rsi_ok", False),
-                    "price": d3.get("price_ok", False),
-                    "met": d3.get("conditions_met", 0),
-                    "spread": round(d3.get("ema_spread_3m", 0), 1),
-                    "rsi_val": round(d3.get("rsi_val_3m", 0), 1),
-                    "body_pct": round(d3.get("body_pct_3m", 0), 1),
-                    "mode": d3.get("mode", ""),
-                    "adx": round(d3.get("adx_3m", 0), 1),
-                    "candles": d3.get("candle_count_3m", 0),
-                    "warm": d3.get("candle_count_3m", 0) >= 25,
-                },
-                "spread_1m": round(spread_1m, 1),
-                "spread_1m_min": min_spread,
-                "entry_1m": {
-                    "body_pct": round(d1.get("body_pct", 0), 1),
-                    "body_ok": d1.get("body_ok", False),
-                    "rsi": round(d1.get("rsi_val", 0), 1),
-                    "rsi_rising": d1.get("rsi_rising", False),
-                    "rsi_ok": d1.get("rsi_ok", False),
-                    "rsi_below_3m": d1.get("rsi_1m_below_3m", False),
-                    "vol": round(d1.get("vol_ratio", 0), 2),
-                    "vol_ok": d1.get("vol_ok", False),
-                    "spread_accel": True,  # v12.16: decel check removed
-                },
-                "score": score,
-                "score_min": session_min,
+                "ema9": result.get("ema9", 0),
+                "ema21": result.get("ema21", 0),
+                "ema_gap": round(ema_gap, 1),
+                "ema_ok": ema_ok,
+                "rsi": round(rsi_val, 1),
+                "rsi_prev": result.get("rsi_prev", 0),
+                "rsi_ok": rsi_ok,
                 "fired": result.get("fired", False),
                 "verdict": verdict,
-                "greeks": {
-                    "delta": round(g.get("delta", 0), 3),
-                    "iv": round(g.get("iv_pct", 0), 1),
-                    "theta": round(g.get("theta", 0), 2),
-                    "gamma": round(g.get("gamma", 0), 4),
-                },
                 "ltp": round(result.get("entry_price", 0), 2),
-                "regime": result.get("regime", ""),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
             }
 

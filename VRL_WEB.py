@@ -270,43 +270,22 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('position-area').innerHTML=ph;
 
   // ── SIGNAL TAB ──
-  function signalBlock(label, sig, minSpread){
-    const g=sig.gate_3m||{},e=sig.entry_1m||{};
-    const dotH=(ok,l)=>'<div class="dot dot-'+(ok?'g':'r')+'">'+l+'</div>';
-    const barPct=minSpread>0?Math.min(100,Math.max(0,sig.spread_1m/minSpread*100)):0;
-    const barClr=barPct>=100?'var(--gn)':barPct>=70?'var(--am)':'var(--rd)';
-    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')||sig.verdict.includes('CHOPPY')?'var(--rd)':sig.verdict.includes('NEUTRAL')?'var(--am)':'var(--am)';
+  function signalBlock(label, sig){
+    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':'var(--am)';
+    const emaClr=sig.ema_ok?'var(--gn)':'var(--rd)';
+    const rsiClr=sig.rsi_ok?'var(--gn)':'var(--rd)';
     let h='<div class="sect"><div class="sh">'+label+' '+(sig.strike||mk.atm)+' · ₹'+sig.ltp+'</div>';
-    // 3-min gate
-    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:rgba(59,130,246,.05)">▸ 3-MIN GATE</div>';
-    h+='<div class="row"><div class="k">STATUS</div><div class="v" style="color:'+(g.met>=3?'var(--gn)':'var(--rd)')+'">'+g.met+'/4'+(g.met>=3?' ✅':' ❌')+'</div></div>';
-    h+='<div class="gate">'+dotH(g.ema,'E')+dotH(g.body,'B')+dotH(g.rsi,'R')+dotH(g.price,'P')+'</div>';
-    if(g.rsi_val>0)h+='<div class="row"><div class="k">3m RSI</div><div class="v">'+g.rsi_val+'</div></div>';
-    if(g.spread!=0)h+='<div class="row"><div class="k">3m Spread</div><div class="v" style="color:'+(g.spread>0?'var(--gn)':'var(--rd)')+'">'+(g.spread>0?'+':'')+g.spread+'</div></div>';
-    var adxV=g.adx||0;if(adxV>0)h+='<div class="row"><div class="k">3m ADX</div><div class="v" style="color:'+(adxV>=25?'var(--gn)':adxV>=18?'var(--am)':'var(--rd)')+'">'+adxV+(adxV>=25?' TREND':adxV>=18?' WEAK':' FLAT')+'</div></div>';
-    var cc=g.candles||0;if(cc>0&&cc<25)h+='<div class="row"><div class="k">DATA</div><div class="v" style="color:var(--am);font-size:10px">'+cc+' candles (WARMUP '+(cc<15?'\u26a0\ufe0f cold':'\u23f3 warming')+')</div></div>';
-    // 1-min section
-    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);border-top:1px solid var(--bd);background:rgba(16,185,129,.05)">▸ 1-MIN ENTRY</div>';
-    h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
-    h+='<div class="bar"><div class="bar-fill" style="width:'+barPct+'%;background:'+barClr+'"></div></div></div>';
-    // 1-min entry
-    const rClr=(e.rsi_ok&&e.rsi_rising)?'var(--gn)':e.rsi>60?'var(--rd)':'var(--am)';
-    h+='<div class="row"><div class="k">BODY</div><div class="v" style="color:'+(e.body_ok?'var(--gn)':'var(--rd)')+'">'+e.body_pct+'%'+(e.body_ok?' ✅':' ❌')+'</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rClr+'">'+e.rsi+(e.rsi_rising?' ↑':' ↓')+(e.rsi_ok?' ✅':' ❌')+'</div></div>';
-    h+='<div class="row"><div class="k">RSI vs 3m</div><div class="v" style="color:'+(e.rsi_below_3m?'var(--gn)':'var(--rd)')+'">'+( e.rsi_below_3m?'DIP ✅':'CHASING ❌')+'</div></div>';
-    /* spread decel removed in v12.15.1 */
-    h+='<div class="row"><div class="k">VOLUME</div><div class="v" style="color:'+(e.vol_ok?'var(--gn)':'var(--rd)')+'">'+e.vol+'x'+(e.vol_ok?' ✅':' ❌')+'</div></div>';
-    // Score
-    h+='<div class="row"><div class="k">SCORE</div><div class="v" style="color:'+(sig.score>=sig.score_min?'var(--gn)':'var(--rd)')+'">'+sig.score+'/'+sig.score_min+'</div></div>';
-    // Greeks
-    if(sig.greeks&&sig.greeks.delta)h+='<div class="row"><div class="k">GREEKS</div><div class="v" style="font-size:10px">Δ'+sig.greeks.delta+' IV'+sig.greeks.iv+'% Θ'+sig.greeks.theta+'</div></div>';
-    // Verdict
+    h+='<div class="row"><div class="k">EMA9</div><div class="v">'+(sig.ema9||0)+'</div></div>';
+    h+='<div class="row"><div class="k">EMA21</div><div class="v">'+(sig.ema21||0)+'</div></div>';
+    h+='<div class="row"><div class="k">EMA GAP</div><div class="v" style="color:'+emaClr+'">'+(sig.ema_gap>0?'+':'')+sig.ema_gap+(sig.ema_ok?' ✅':' ❌ (need 3+)')+'</div></div>';
+    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+sig.rsi+(sig.rsi_ok?' ↑ ✅':' ❌')+'</div></div>';
+    h+='<div class="row"><div class="k">RSI prev</div><div class="v">'+(sig.rsi_prev||0)+'</div></div>';
     h+='<div class="verdict" style="color:'+vClr+'">'+esc(sig.verdict)+'</div></div>';
     return h}
 
   document.getElementById('p-sig').innerHTML=
     '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
-    signalBlock('CE',ce,ce.spread_1m_min||6)+signalBlock('PE',pe,pe.spread_1m_min||4)+'</div>';
+    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>';
 
   // ── MARKET TAB ──
   let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
