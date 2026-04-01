@@ -1083,6 +1083,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ema21": result.get("ema21", 0),
                 "ema_gap": round(ema_gap, 1),
                 "ema_ok": ema_ok,
+                "candle_green": result.get("candle_green", False),
+                "gap_widening": result.get("gap_widening", False),
                 "rsi": round(rsi_val, 1),
                 "rsi_prev": result.get("rsi_prev", 0),
                 "rsi_ok": rsi_ok,
@@ -1355,7 +1357,8 @@ def _strategy_loop(kite):
 
                     for _exit in exit_list:
                         _execute_exit_v13(kite, _exit)
-                    else:
+
+                    if not exit_list and state.get("in_trade"):
                         entry    = state.get("entry_price", 0)
                         pnl      = round(option_ltp - entry, 1)
                         last_ms  = state.get("_last_milestone", 0)

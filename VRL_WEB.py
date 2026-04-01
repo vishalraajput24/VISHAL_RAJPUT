@@ -277,9 +277,13 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     let h='<div class="sect"><div class="sh">'+label+' '+(sig.strike||mk.atm)+' · ₹'+sig.ltp+'</div>';
     h+='<div class="row"><div class="k">EMA9</div><div class="v">'+(sig.ema9||0)+'</div></div>';
     h+='<div class="row"><div class="k">EMA21</div><div class="v">'+(sig.ema21||0)+'</div></div>';
-    h+='<div class="row"><div class="k">EMA GAP</div><div class="v" style="color:'+emaClr+'">'+(sig.ema_gap>0?'+':'')+sig.ema_gap+(sig.ema_ok?' ✅':' ❌ (need 3+)')+'</div></div>';
+    h+='<div class="row"><div class="k">EMA GAP</div><div class="v" style="color:'+emaClr+'">'+(sig.ema_gap>0?'+':'')+sig.ema_gap+(sig.ema_ok?' ✅':' ❌')+'</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+sig.rsi+(sig.rsi_ok?' ↑ ✅':' ❌')+'</div></div>';
     h+='<div class="row"><div class="k">RSI prev</div><div class="v">'+(sig.rsi_prev||0)+'</div></div>';
+    var gcClr=sig.candle_green?'var(--gn)':'var(--rd)';
+    h+='<div class="row"><div class="k">CANDLE</div><div class="v" style="color:'+gcClr+'">'+(sig.candle_green?'GREEN ✅':'RED ❌')+'</div></div>';
+    var gwClr=sig.gap_widening?'var(--gn)':'var(--rd)';
+    h+='<div class="row"><div class="k">GAP TREND</div><div class="v" style="color:'+gwClr+'">'+(sig.gap_widening?'WIDENING ✅':'SHRINKING ❌')+'</div></div>';
     h+='<div class="verdict" style="color:'+vClr+'">'+esc(sig.verdict)+'</div></div>';
     return h}
 

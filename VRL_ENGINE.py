@@ -112,21 +112,45 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         ema_min = CFG.get().get("entry", {}).get("ema_gap_min", 3)
         rsi_min = CFG.get().get("entry", {}).get("rsi_min", 50)
 
+        # CHECK 1: EMA gap trending
         ema_ok = ema_gap >= ema_min
+
+        # CHECK 2: RSI rising above minimum
         rsi_ok = rsi >= rsi_min and rsi > rsi_prev
+
+        # CHECK 3: Green candle — last closed candle must be bullish
+        # Prevents entering on a red candle where momentum just died
+        candle_green = float(curr["close"]) > float(curr["open"])
+
+        # CHECK 4: EMA gap WIDENING — gap must be growing, not shrinking
+        # Prevents entering at the top when EMA gap already peaked
+        prev_ema9 = float(prev.get("EMA_9", 0))
+        prev_ema21 = float(prev.get("EMA_21", 0))
+        prev_gap = round(prev_ema9 - prev_ema21, 2)
+        gap_widening = ema_gap > prev_gap
+
         result["ema_ok"] = ema_ok
         result["rsi_ok"] = rsi_ok
+        result["candle_green"] = candle_green
+        result["gap_widening"] = gap_widening
 
-        if ema_ok and rsi_ok:
+        all_pass = ema_ok and rsi_ok and candle_green and gap_widening
+
+        if all_pass:
             result["fired"] = True
             logger.info("[ENGINE] " + option_type + " ENTRY SIGNAL"
-                + " ema_gap=" + str(ema_gap)
+                + " ema_gap=" + str(ema_gap) + "(w:" + str(prev_gap) + ")"
                 + " rsi=" + str(round(rsi,1)) + ">" + str(round(rsi_prev,1))
-                + " entry=" + str(entry_price))
+                + " green=Y entry=" + str(entry_price))
         else:
-            logger.info("[ENGINE] " + option_type
-                + " ema=" + str(ema_gap) + ("✅" if ema_ok else "❌")
-                + " rsi=" + str(round(rsi,1)) + ("✅" if rsi_ok else "❌"))
+            reasons = []
+            if not ema_ok: reasons.append("ema=" + str(ema_gap) + "❌")
+            else: reasons.append("ema=" + str(ema_gap) + "✅")
+            if not rsi_ok: reasons.append("rsi=" + str(round(rsi,1)) + "❌")
+            else: reasons.append("rsi=" + str(round(rsi,1)) + "✅")
+            if not candle_green: reasons.append("RED❌")
+            if not gap_widening: reasons.append("gap_shrink❌")
+            logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
 
         return result
     except Exception as e:
