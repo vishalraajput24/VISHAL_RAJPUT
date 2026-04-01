@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v12.16
 #  Telegram command handlers. Extracted from VRL_MAIN.py.
 # ═══════════════════════════════════════════════════════════════
 

@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15.1
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.16
 #  Master orchestration file.
 #  v12.15: Expiry breakout mode, fib pivots, /pivot command,
 #          spot buffer feed, expiry-specific entry logic.
@@ -501,13 +501,12 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "STRATEGY (v12.15.1)\n"
-        "Regime : CHOPPY=block | NEUTRAL=score≥6 | TRENDING=pass\n"
+        "STRATEGY (v12.16)\n"
+        "Regime : CHOPPY=block | rest=pass (price action)\n"
         "Gate   : 2/4 + TRENDING_STRONG spot bypass\n"
-        "RSI    : 30-50 (65 in strong trend) | <40 skip rising\n"
-        "Dip    : 1m RSI must be below 3m RSI\n"
+        "RSI    : ≥30 entry | no upper cap | exhaustion=EXIT\n"
+        "Body   : ≥30% | Score ≥4 (≥5 late/bias)\n"
         "Strike : CE/PE locked until spot moves 150+pts\n"
-        "Score  : ≥5 to fire | ≥6 NEUTRAL/bias/streak\n"
         "Trail  : Profit floors + adaptive 5m→3m→1m EMA\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "P-Lock : +" + str(D.PROFIT_LOCK_PTS) + "pts\n"
@@ -1079,7 +1078,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "rsi_below_3m": d1.get("rsi_1m_below_3m", False),
                     "vol": round(d1.get("vol_ratio", 0), 2),
                     "vol_ok": d1.get("vol_ok", False),
-                    "spread_accel": True,  # v12.15.1: decel check removed
+                    "spread_accel": True,  # v12.16: decel check removed
                 },
                 "score": score,
                 "score_min": session_min,

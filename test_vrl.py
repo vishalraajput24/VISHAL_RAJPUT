@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v12.15 Test Suite
+ test_vrl.py — VISHAL RAJPUT TRADE v12.16 Test Suite
  Imports ACTUAL code. No copies. No simulations.
  Run: python3 test_vrl.py
 ═══════════════════════════════════════════════════════════════
@@ -327,7 +327,7 @@ with patch.object(D, 'get_spot_indicators', side_effect=_mock_spot_low_adx):
 
 section("VERSION")
 
-test("VERSION = v12.15.1", D.VERSION == "v12.15.1", "got " + str(D.VERSION))
+test("VERSION = v12.16", D.VERSION == "v12.16", "got " + str(D.VERSION))
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.15
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.16
 DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.
 """
 import csv, json, os
@@ -687,6 +687,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v12.15 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v12.16 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()
