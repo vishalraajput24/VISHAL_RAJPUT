@@ -174,53 +174,49 @@ def _handle_download_callback(callback_data: str,
     except Exception as e:
         _tg_send("Zip error: " + str(e))
 
-def _send_today_download():
-    today_str = date.today().strftime("%Y%m%d")
-    zip_path  = os.path.join(D.STATE_DIR, "today_" + today_str + ".zip")
-    files_to_zip = []
+def _send_today_download(target_date: str = None):
+    """
+    Central log download — collects ALL logs + data for a date into one zip.
+    /download        → today's logs
+    /download 2026-04-01  → specific date logs
+    """
+    if target_date is None:
+        target_date = date.today().strftime("%Y-%m-%d")
 
-    for fname in os.listdir(D.LIVE_LOG_DIR):
-        if today_str in fname or fname == "vrl_live.log":
-            files_to_zip.append((os.path.join(D.LIVE_LOG_DIR, fname), fname))
+    files = D.collect_logs_for_date(target_date)
+    if not files:
+        _tg_send("No files found for " + target_date)
+        return
 
-    if os.path.isfile(D.TRADE_LOG_PATH):
-        files_to_zip.append((D.TRADE_LOG_PATH, "vrl_trade_log.csv"))
-
-    opt_csv = os.path.join(D.OPTIONS_3MIN_DIR, "nifty_option_3min_" + today_str + ".csv")
-    if os.path.isfile(opt_csv):
-        files_to_zip.append((opt_csv, "nifty_option_3min_" + today_str + ".csv"))
-
-    opt_1m = os.path.join(D.OPTIONS_1MIN_DIR, "nifty_option_1min_" + today_str + ".csv")
-    if os.path.isfile(opt_1m):
-        files_to_zip.append((opt_1m, "nifty_option_1min_" + today_str + ".csv"))
-    spot_csv = os.path.join(D.SPOT_DIR, "nifty_spot_1min_" + today_str + ".csv")
-    if os.path.isfile(spot_csv):
-        files_to_zip.append((spot_csv, "nifty_spot_1min_" + today_str + ".csv"))
-    scan_csv = os.path.join(D.OPTIONS_1MIN_DIR, "nifty_signal_scan_" + today_str + ".csv")
-    if os.path.isfile(scan_csv):
-        files_to_zip.append((scan_csv, "nifty_signal_scan_" + today_str + ".csv"))
-
-    if os.path.isfile(D.STATE_FILE_PATH):
-        files_to_zip.append((D.STATE_FILE_PATH, "vrl_live_state.json"))
-
-    if not files_to_zip:
-        _tg_send("No files found for today.")
+    zip_path = D.create_daily_zip(target_date)
+    if not zip_path or not os.path.isfile(zip_path):
+        _tg_send("Failed to create zip for " + target_date)
         return
 
     try:
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for fpath, arcname in files_to_zip:
-                zf.write(fpath, arcname)
         size_mb = round(os.path.getsize(zip_path) / (1024 * 1024), 2)
-        _tg_send_file(zip_path, caption="Today's data — " + today_str
-                      + " (" + str(size_mb) + " MB)")
-        # Don't persist zip — delete after sending
+        file_count = len(files)
+
+        # Build category summary
+        categories = {}
+        for _, arcname in files:
+            cat = arcname.split("/")[0]
+            categories[cat] = categories.get(cat, 0) + 1
+        cat_summary = " | ".join(k + ":" + str(v) for k, v in sorted(categories.items()))
+
+        _tg_send_file(
+            zip_path,
+            caption="📦 VRL Logs — " + target_date
+                    + "\n" + str(file_count) + " files | "
+                    + str(size_mb) + " MB"
+                    + "\n" + cat_summary
+        )
         try:
             os.remove(zip_path)
         except Exception:
             pass
     except Exception as e:
-        _tg_send("Today zip error: " + str(e))
+        _tg_send("Download error: " + str(e))
 
 # ═══════════════════════════════════════════════════════════════
 #  TELEGRAM COMMAND HANDLERS
@@ -779,7 +775,23 @@ def _cmd_score(args):
     _tg_send(msg)
 
 def _cmd_files(args):  _send_file_browser()
-def _cmd_download(args): _send_today_download()
+def _cmd_download(args):
+    """
+    /download        → today's logs
+    /download 2026-04-01  → specific date
+    """
+    target = None
+    if args and args.strip():
+        arg = args.strip()
+        # Accept YYYY-MM-DD or YYYYMMDD
+        if len(arg) == 8 and arg.isdigit():
+            target = arg[:4] + "-" + arg[4:6] + "-" + arg[6:8]
+        elif len(arg) == 10 and arg[4] == "-" and arg[7] == "-":
+            target = arg
+        else:
+            _tg_send("Usage: /download or /download 2026-04-01")
+            return
+    _send_today_download(target)
 
 def _cmd_slippage(args):
     try:

@@ -143,6 +143,11 @@ lab:
   forward_fill: [3, 5, 10]
   retention_days: 30
 
+logs:
+  retention_days: 30
+  error_retention_days: 90
+  backup_count: 30
+
 notifications:
   telegram: true
   trade_alerts: true
