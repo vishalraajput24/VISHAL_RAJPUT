@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  research_ml.py — VISHAL RAJPUT TRADE v12.15.1
+#  research_ml.py — VISHAL RAJPUT TRADE v12.16
 #  ML research: Train decision tree + gradient boosting on scan data.
 #  Output win probability for each entry configuration.
 #  Run daily after market close to retrain on latest data.

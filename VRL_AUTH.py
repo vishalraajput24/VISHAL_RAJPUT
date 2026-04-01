@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_AUTH.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_AUTH.py — VISHAL RAJPUT TRADE v12.16
 #  Zerodha Kite authentication. Auto-login via TOTP.
 #  v12.15: Standalone cron execution, stale token date check.
 # ═══════════════════════════════════════════════════════════════

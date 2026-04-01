@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_DATA.py — VISHAL RAJPUT TRADE v12.16
 #  Foundation layer. Settings, logging, market data, Greeks.
 #  v12.15: Fib pivot points, expiry breakout mode,
 #          spot consolidation detection, expiry-specific rules.
@@ -22,7 +22,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v12.15.1"
+VERSION  = "v13.0"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -104,8 +104,8 @@ SPREAD_1M_MIN_CE_DTE0 = CFG.spread("ce_min_dte0", 1)
 SPREAD_1M_MIN_PE_DTE0 = CFG.spread("pe_min_dte0", 1)
 
 RSI_1M_LOW         = CFG.rsi("1m_low", 30)
-RSI_1M_HIGH_NORMAL = CFG.rsi("1m_high_normal", 50)
-RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 65)
+RSI_1M_HIGH_NORMAL = CFG.rsi("1m_high_normal", 60)
+RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 70)
 RSI_1M_HIGH        = RSI_1M_HIGH_NORMAL
 RSI_3M_LOW         = CFG.rsi("3m_low", 42)
 RSI_3M_HIGH        = CFG.rsi("3m_high", 72)
@@ -982,39 +982,58 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
 
 def compute_spot_regime() -> str:
     """
-    v12.15: Compute market regime from spot 3-min and 5-min indicators.
-    Uses ADX + EMA spread + multi-TF confirmation.
+    Price action regime — instant, zero lag. No ADX dependency.
+    Uses higher highs/lower lows, range, breakout, momentum.
     """
     try:
-        spot_3m = get_spot_indicators("3minute")
-        spot_5m = get_spot_indicators("5minute")
+        df = get_historical_data(NIFTY_SPOT_TOKEN, "3minute", 15)
+        if df.empty or len(df) < 7:
+            return "UNKNOWN"
 
-        score = 0
+        candles = []
+        for i in range(-min(10, len(df)), 0):
+            row = df.iloc[i]
+            candles.append({
+                "open": float(row["open"]), "high": float(row["high"]),
+                "low": float(row["low"]), "close": float(row["close"]),
+            })
 
-        # Check 1: Spot 3m ADX
-        adx_3m = float(spot_3m.get("adx", 0))
-        if adx_3m >= 30: score += 2
-        elif adx_3m >= 20: score += 1
+        if len(candles) < 5:
+            return "UNKNOWN"
 
-        # Check 2: Spot 3m EMA spread (absolute value)
-        spread_3m = abs(float(spot_3m.get("spread", 0)))
-        if spread_3m >= 15: score += 2
-        elif spread_3m >= 8: score += 1
+        last5 = candles[-5:]
+        last3 = candles[-3:]
 
-        # Check 3: Spot 5m ADX confirmation
-        adx_5m = float(spot_5m.get("adx", 0))
-        if adx_5m >= 25: score += 1
+        # 1. HIGHER HIGHS / LOWER LOWS — directional move
+        hh = all(last3[i]["high"] > last3[i-1]["high"] for i in range(1, len(last3)))
+        ll = all(last3[i]["low"] < last3[i-1]["low"] for i in range(1, len(last3)))
+        trending = hh or ll
 
-        # Check 4: Spread direction (widening = trend accelerating)
-        spread_now = abs(float(spot_3m.get("spread", 0)))
-        spread_prev = abs(float(spot_3m.get("spread_prev", spread_now)))
-        if spread_now > spread_prev: score += 1
-        elif spread_now < spread_prev - 2: score -= 1
+        # 2. RANGE — last 5 candles total range
+        range_high = max(c["high"] for c in last5)
+        range_low = min(c["low"] for c in last5)
+        total_range = range_high - range_low
 
-        if score >= 5: return "TRENDING_STRONG"
-        if score >= 3: return "TRENDING"
-        if score >= 2: return "NEUTRAL"
-        return "CHOPPY"
+        # 3. BREAKOUT — current candle body vs average
+        bodies = [abs(c["close"] - c["open"]) for c in candles]
+        avg_body = sum(bodies) / len(bodies) if bodies else 1
+        curr_body = abs(candles[-1]["close"] - candles[-1]["open"])
+        breakout = curr_body > avg_body * 2
+
+        # 4. MOMENTUM — are candles getting bigger?
+        recent_bodies = [abs(c["close"] - c["open"]) for c in last3]
+        accelerating = recent_bodies[-1] > recent_bodies[0]
+
+        # REGIME DECISION — pure price action
+        if breakout and trending:
+            return "TRENDING_STRONG"
+        elif trending or (breakout and total_range > 30):
+            return "TRENDING"
+        elif total_range < 30:
+            return "NEUTRAL"
+        else:
+            return "CHOPPY"
+
     except Exception:
         return "UNKNOWN"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v12.15
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.0
 DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.
 """
 import csv, json, os
@@ -224,10 +224,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('ver').textContent=d.version||'';
   let tags='<span class="tag '+(d.mode==='LIVE'?'tg':'tb')+'">'+esc(d.mode)+'</span>';
   tags+='<span class="tag '+(mk.dte<=1?'tr':'tb')+'">DTE '+mk.dte+'</span>';
-  tags+='<span class="tag tb">ATM '+mk.atm+'</span>';
+  tags+='<span class="tag tb">CE '+(mk.locked_ce||mk.atm)+' · PE '+(mk.locked_pe||mk.atm)+' 🔒</span>';
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
   if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
-  if(mk.regime)tags+='<span class="tag '+(mk.regime.includes('TREND')?'tg':'ta')+'">'+esc(mk.regime)+'</span>';
+  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'">'+esc(mk.regime)+'</span>';}
     if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
 
@@ -235,22 +235,21 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   let ph='';
   if(pos.in_trade){
     const clr=pos.pnl>=0?'var(--gn)':'var(--rd)';
-    const pct=pos.peak>0?Math.min(90,25+(pos.pnl/pos.peak)*55):30;
     ph='<div class="pos">'+
       '<div style="display:flex;justify-content:space-between;align-items:baseline">'+
       '<div><span style="color:var(--bl);font-weight:700">'+esc(pos.direction)+'</span> <span style="color:#555;font-size:10px">'+esc(pos.symbol)+'</span></div>'+
-      '<span style="color:#555;font-size:9px">Score '+pos.score+' · Ph'+pos.phase+'</span></div>'+
+      '<span style="color:#555;font-size:9px">'+pos.candles+' candles</span></div>'+
       '<div style="margin:6px 0"><span class="big" style="color:'+clr+'">'+(pos.pnl>=0?'+':'')+pos.pnl+'pts</span>'+
-      ' <span style="color:#555;font-size:11px">₹'+Math.round(pos.pnl*65)+'</span></div>'+
-      '<div class="prog"><div class="prog-fill" style="width:25%;background:rgba(239,68,68,.3)"></div>'+
-      '<div class="prog-fill" style="width:'+pct+'%;background:rgba(16,185,129,.3);position:absolute;left:25%;top:0;height:100%"></div></div>'+
+      ' <span style="color:#555;font-size:11px">₹'+Math.round(pos.pnl*65*2)+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#555">'+
       '<span style="color:var(--rd)">SL ₹'+pos.sl+'</span><span>Entry ₹'+pos.entry+'</span><span style="color:var(--gn)">Peak +'+pos.peak+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;margin-top:3px">'+
-      '<span>Trough '+pos.trough+'pts</span><span>SL dist '+pos.sl_dist+'pts</span><span>'+pos.candles+' candles</span></div>'+
+      '<span>LOT1: '+(pos.lot1_active?'ACTIVE':'SOLD')+'</span>'+
+      '<span>LOT2: '+(pos.lot2_active?'ACTIVE':'SOLD')+'</span>'+
+      '<span>'+(pos.lots_split?'SPLIT ⚡':'TOGETHER')+'</span></div>'+
       '<div style="display:flex;justify-content:space-between;font-size:9px;color:#444;margin-top:3px">'+
-      '<span>Trail: '+(pos.trail_tightened?'3m TIGHT ⚡':'5m WIDE')+'</span>'+
-      '<span>RSI OB: '+(pos.rsi_overbought?'YES 🔥':'No')+'</span></div></div>';
+      '<span>Floor: ₹'+(pos.current_floor||0)+'</span>'+
+      '<span>RSI: '+(pos.current_rsi||0)+'</span></div></div>';
   }
   // Today summary bar
   const dpnl=td.pnl||0;
@@ -270,43 +269,26 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('position-area').innerHTML=ph;
 
   // ── SIGNAL TAB ──
-  function signalBlock(label, sig, minSpread){
-    const g=sig.gate_3m||{},e=sig.entry_1m||{};
-    const dotH=(ok,l)=>'<div class="dot dot-'+(ok?'g':'r')+'">'+l+'</div>';
-    const barPct=minSpread>0?Math.min(100,Math.max(0,sig.spread_1m/minSpread*100)):0;
-    const barClr=barPct>=100?'var(--gn)':barPct>=70?'var(--am)':'var(--rd)';
-    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':sig.verdict.startsWith('3M')?'var(--rd)':'var(--am)';
+  function signalBlock(label, sig){
+    const vClr=sig.verdict==='FIRED'?'var(--gn)':sig.verdict==='READY'?'var(--cy)':'var(--am)';
+    const emaClr=sig.ema_ok?'var(--gn)':'var(--rd)';
+    const rsiClr=sig.rsi_ok?'var(--gn)':'var(--rd)';
     let h='<div class="sect"><div class="sh">'+label+' '+(sig.strike||mk.atm)+' · ₹'+sig.ltp+'</div>';
-    // 3-min gate
-    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);background:rgba(59,130,246,.05)">▸ 3-MIN GATE</div>';
-    h+='<div class="row"><div class="k">STATUS</div><div class="v" style="color:'+(g.met>=3?'var(--gn)':'var(--rd)')+'">'+g.met+'/4'+(g.met>=3?' ✅':' ❌')+'</div></div>';
-    h+='<div class="gate">'+dotH(g.ema,'E')+dotH(g.body,'B')+dotH(g.rsi,'R')+dotH(g.price,'P')+'</div>';
-    if(g.rsi_val>0)h+='<div class="row"><div class="k">3m RSI</div><div class="v">'+g.rsi_val+'</div></div>';
-    if(g.spread!=0)h+='<div class="row"><div class="k">3m Spread</div><div class="v" style="color:'+(g.spread>0?'var(--gn)':'var(--rd)')+'">'+(g.spread>0?'+':'')+g.spread+'</div></div>';
-    var adxV=g.adx||0;if(adxV>0)h+='<div class="row"><div class="k">3m ADX</div><div class="v" style="color:'+(adxV>=25?'var(--gn)':adxV>=18?'var(--am)':'var(--rd)')+'">'+adxV+(adxV>=25?' TREND':adxV>=18?' WEAK':' FLAT')+'</div></div>';
-    var cc=g.candles||0;if(cc>0&&cc<25)h+='<div class="row"><div class="k">DATA</div><div class="v" style="color:var(--am);font-size:10px">'+cc+' candles (WARMUP '+(cc<15?'\u26a0\ufe0f cold':'\u23f3 warming')+')</div></div>';
-    // 1-min section
-    h+='<div style="padding:4px 10px;font-size:8px;color:#555;font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--bd);border-top:1px solid var(--bd);background:rgba(16,185,129,.05)">▸ 1-MIN ENTRY</div>';
-    h+='<div class="bar-wrap"><div class="bar-label"><span>SPREAD</span><span style="color:'+barClr+'">'+(sig.spread_1m>0?'+':'')+sig.spread_1m+' / +'+minSpread+'</span></div>';
-    h+='<div class="bar"><div class="bar-fill" style="width:'+barPct+'%;background:'+barClr+'"></div></div></div>';
-    // 1-min entry
-    const rClr=(e.rsi_ok&&e.rsi_rising)?'var(--gn)':e.rsi>60?'var(--rd)':'var(--am)';
-    h+='<div class="row"><div class="k">BODY</div><div class="v" style="color:'+(e.body_ok?'var(--gn)':'var(--rd)')+'">'+e.body_pct+'%'+(e.body_ok?' ✅':' ❌')+'</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rClr+'">'+e.rsi+(e.rsi_rising?' ↑':' ↓')+(e.rsi_ok?' ✅':' ❌')+'</div></div>';
-    h+='<div class="row"><div class="k">RSI vs 3m</div><div class="v" style="color:'+(e.rsi_below_3m?'var(--gn)':'var(--rd)')+'">'+( e.rsi_below_3m?'DIP ✅':'CHASING ❌')+'</div></div>';
-    /* spread decel removed in v12.15.1 */
-    h+='<div class="row"><div class="k">VOLUME</div><div class="v" style="color:'+(e.vol_ok?'var(--gn)':'var(--rd)')+'">'+e.vol+'x'+(e.vol_ok?' ✅':' ❌')+'</div></div>';
-    // Score
-    h+='<div class="row"><div class="k">SCORE</div><div class="v" style="color:'+(sig.score>=sig.score_min?'var(--gn)':'var(--rd)')+'">'+sig.score+'/'+sig.score_min+'</div></div>';
-    // Greeks
-    if(sig.greeks&&sig.greeks.delta)h+='<div class="row"><div class="k">GREEKS</div><div class="v" style="font-size:10px">Δ'+sig.greeks.delta+' IV'+sig.greeks.iv+'% Θ'+sig.greeks.theta+'</div></div>';
-    // Verdict
+    h+='<div class="row"><div class="k">EMA9</div><div class="v">'+(sig.ema9||0)+'</div></div>';
+    h+='<div class="row"><div class="k">EMA21</div><div class="v">'+(sig.ema21||0)+'</div></div>';
+    h+='<div class="row"><div class="k">EMA GAP</div><div class="v" style="color:'+emaClr+'">'+(sig.ema_gap>0?'+':'')+sig.ema_gap+(sig.ema_ok?' ✅':' ❌')+'</div></div>';
+    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+sig.rsi+(sig.rsi_ok?' ↑ ✅':' ❌')+'</div></div>';
+    h+='<div class="row"><div class="k">RSI prev</div><div class="v">'+(sig.rsi_prev||0)+'</div></div>';
+    var gcClr=sig.candle_green?'var(--gn)':'var(--rd)';
+    h+='<div class="row"><div class="k">CANDLE</div><div class="v" style="color:'+gcClr+'">'+(sig.candle_green?'GREEN ✅':'RED ❌')+'</div></div>';
+    var gwClr=sig.gap_widening?'var(--gn)':'var(--rd)';
+    h+='<div class="row"><div class="k">GAP TREND</div><div class="v" style="color:'+gwClr+'">'+(sig.gap_widening?'WIDENING ✅':'SHRINKING ❌')+'</div></div>';
     h+='<div class="verdict" style="color:'+vClr+'">'+esc(sig.verdict)+'</div></div>';
     return h}
 
   document.getElementById('p-sig').innerHTML=
     '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
-    signalBlock('CE',ce,ce.spread_1m_min||6)+signalBlock('PE',pe,pe.spread_1m_min||4)+'</div>';
+    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>';
 
   // ── MARKET TAB ──
   let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
@@ -687,6 +669,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v12.15 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v13.0 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()

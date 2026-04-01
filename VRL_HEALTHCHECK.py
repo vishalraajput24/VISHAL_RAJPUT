@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.15
+#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.16
 #  Runs at 9:30 AM — verifies all critical systems
 #  Rule: every major bug fix must add a check here
 #  v12.15: Spot gap check added
@@ -363,7 +363,7 @@ def check_entry_window():
 def main():
     global _kite_ref
     now = datetime.now().strftime("%H:%M")
-    print(f"VRL HealthCheck v12.15 running at {now}")
+    print(f"VRL HealthCheck v12.16 running at {now}")
 
     try:
         kite = get_kite()

@@ -1,8 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v12.15.1
-#  Master orchestration file.
-#  v12.15: Expiry breakout mode, fib pivots, /pivot command,
-#          spot buffer feed, expiry-specific entry logic.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.0
+#  Master orchestration. Minimal strategy: EMA gap + RSI.
+#  2-lot execution with profit floors + RSI split.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -28,6 +27,7 @@ from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     loss_streak_gate, check_profit_lock,
     compute_entry_sl, check_expiry_breakout,
+    get_option_ema_spread,
 )
 # Auto paper/live trade module switch — based on config.yaml mode
 import VRL_CONFIG as CFG
@@ -86,6 +86,13 @@ DEFAULT_STATE = {
     "paused"             : False,
     "force_exit"         : False,
     "candles_held"       : 0,
+    "lot1_active"        : True,
+    "lot2_active"        : True,
+    "lots_split"         : False,
+    "lot_count"          : 2,
+    "lot2_trail_sl"      : 0.0,
+    "current_rsi"        : 0.0,
+    "current_floor"      : 0.0,
     "_last_1min_candle"  : "",
     "_eod_reported"      : False,
     "_last_candle_held_min": "",
@@ -501,213 +508,22 @@ def _alert_bot_started():
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "STRATEGY (v12.15.1)\n"
-        "Regime : Spot ADX+spread scoring (CHOPPY blocked)\n"
-        "Gate   : 2/4 + spot override bypass\n"
-        "RSI    : 30-50 (58 in strong trend)\n"
-        "Dip    : 1m RSI must be below 3m RSI\n"
-        "Strike : CE ITM/ATM, PE ITM/ATM (direction-aware)\n"
-        "Score  : ≥5 to fire | ≥6 against bias/streak\n"
-        "Trail  : Profit floors + adaptive 5m→3m→1m EMA\n"
+        "STRATEGY (v13.0 MINIMAL)\n"
+        "Entry  : EMA gap ≥3 + RSI ≥50 rising (1-min only)\n"
+        "Lots   : 2 lots per entry\n"
+        "SL     : -12pts hard | Floors +10→2, +20→12, +30→22\n"
+        "Split  : RSI 70 splits lots | RSI 75 sells lot 1\n"
+        "Trail  : Lot 2 on ATR×1.5 after split\n"
+        "Strike : CE/PE locked until spot moves 150+pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "P-Lock : +" + str(D.PROFIT_LOCK_PTS) + "pts\n"
         "/help for commands."
     )
 
-# ── Score breakdown formatter ──────────────────────────────────
-def _fmt_score_breakdown(bd: dict, score: int) -> str:
-    if not bd:
-        return "Score   : " + str(score) + "/8\n"
-    parts = []
-    if bd.get("body"):         parts.append("Body")
-    if bd.get("body_bonus"):   parts.append("+Bonus")
-    if bd.get("rsi"):          parts.append("RSI")
-    if bd.get("volume"):       parts.append("Vol")
-    if bd.get("delta"):        parts.append("Delta")
-    if bd.get("double_align"): parts.append("2xAlign")
-    if bd.get("gate_bonus"):   parts.append("Gate")
-    if bd.get("multi_tf_adx"): parts.append("MTF-ADX")
-    return "Score   : " + str(score) + "/8  [" + " ".join(parts) + "]\n"
-
-def _alert_entry(symbol: str, option_type: str, entry_price: float,
-                 mode: str, score: int, profile: dict,
-                 det_1m: dict, det_3m: dict, greeks: dict,
-                 dte: int, regime: str,
-                 score_breakdown: dict = None,
-                 prediction: dict = None,
-                 spread_1m: float = 0.0,
-                 session: str = "MORNING"):
-    sl_pts    = profile.get("conv_sl_pts", 20)
-    be_pts    = profile.get("conv_breakeven_pts", 14)
-    trail_pts = round(be_pts * 1.2)
-    spread_3m = round(det_3m.get("ema_spread_3m", 0), 1) if det_3m else 0
-    met_3m    = det_3m.get("conditions_met", 0) if det_3m else 0
-    bonus     = det_3m.get("bonus", 0) if det_3m else 0
-    rsi_3m    = det_3m.get("rsi_val_3m", 0) if det_3m else 0
-    body_3m   = det_3m.get("body_pct_3m", 0) if det_3m else 0
-
-    # Trend label
-    def trend_lbl(sp, ot):
-        if ot == "CE": return "UP 📈" if sp >= 5 else "WEAK" if sp >= 2 else "FLAT"
-        else:          return "DOWN 📈" if sp <= -5 else "WEAK" if sp <= -2 else "FLAT"
-
-    # Prediction block
-    pred_line = ""
-    if prediction:
-        c = prediction.get("conservative", 0)
-        t = prediction.get("target", 0)
-        s = prediction.get("stretch", 0)
-        pred_line = (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>PREDICTION</b>\n"
-            "Conservative : +" + str(c) + "pts  ₹" + str(c * D.LOT_SIZE) + "\n"
-            "Target       : +" + str(t) + "pts  ₹" + str(t * D.LOT_SIZE) + "\n"
-            "Stretch      : +" + str(s) + "pts  ₹" + str(s * D.LOT_SIZE) + "\n"
-        )
-
-    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
-    _vix = round(D.get_vix(), 1)
-    _tg_send(
-        "🔵 <b>" + option_type + " " + str(state.get("strike", "")) + "</b>"
-        + "  ₹" + str(round(entry_price, 1))
-        + "  Score " + str(score) + "/" + str(D.SESSION_SCORE_MIN.get(session, 5)) + " ✅"
-        + "  " + regime + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>CONVICTION ENTRY — " + option_type + "</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _now_str() + "  " + symbol + "\n"
-        "Entry   : ₹" + str(round(entry_price, 2)) + "\n"
-        + _fmt_score_breakdown(score_breakdown, score)
-        + "Regime  : " + regime + "  DTE:" + str(dte)
-        + "  VIX:" + str(_vix) + "\n"
-        "Bias    : " + (_bias or "—") + "  Session: " + session + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "WHY THIS FIRED\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "3-MIN  " + str(met_3m) + "/4 ✅  "
-        + trend_lbl(spread_3m, option_type)
-        + "  Gap:" + str(abs(spread_3m)) + "pts"
-        + ("  ⚡BONUS" if bonus else "") + "\n"
-        "  Body:" + str(body_3m) + "%  RSI:" + str(rsi_3m) + "\n"
-        "1-MIN  ✅ trigger clean\n"
-        "  Body:" + str(det_1m.get("body_pct", 0)) + "%"
-        + ("✅" if det_1m.get("body_ok") else "❌")
-        + "  RSI:" + str(det_1m.get("rsi_val", 0)) + "↑"
-        + ("  DIP✅" if det_1m.get("rsi_1m_below_3m") else "")
-        + "  Vol:" + str(det_1m.get("vol_ratio", 0)) + "x\n"
-        "  Spread:" + str(round(spread_1m, 1)) + "pts"
-        + ("  🔥DOUBLE" if abs(spread_3m) >= 5 and spread_1m > 0 else "") + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "GREEKS  Delta:" + str(greeks.get("delta","—"))
-        + "  IV:" + str(greeks.get("iv_pct","—")) + "%"
-        + "  Θ:" + str(greeks.get("theta","—")) + "/day\n"
-        + pred_line
-        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "EXIT PLAN\n"
-        "SL     : −" + str(sl_pts) + "pts  →  ₹" + str(sl_pts * D.LOT_SIZE) + "\n"
-        "Phase2 : +" + str(be_pts) + "pts  SL moves to entry+2\n"
-        "Phase3 : +" + str(trail_pts) + "pts  5-min EMA trail starts\n"
-        "Top    : RSI≥76 → RSI_EXHAUSTION exit 🎯"
-    )
-
-def _alert_exit(symbol: str, entry: float, exit_price: float,
-                pnl: float, reason: str, mode: str, peak_pnl: float,
-                candles_held: int = 0, regime: str = "", score: int = 0,
-                daily_pnl: float = 0.0, daily_trades: int = 0,
-                daily_wins: int = 0, daily_losses: int = 0):
-
-    pnl_sign = "+" if pnl >= 0 else ""
-    icon     = "✅" if pnl >= 0 else "❌"
-    captured = round(pnl / peak_pnl * 100) if peak_pnl > 0 else 0
-
-    reason_map = {
-        "PHASE1_SL"           : ("Stop loss hit", "Price moved against immediately — no momentum"),
-        "BREAKEVEN_SL"        : ("Stopped at breakeven", "Gave back all gains — move reversed at peak"),
-        "TRAIL_WIDE"          : ("5-min EMA trail exit", "Candle body closed below EMA9 — trend ended"),
-        "TRAIL_TIGHT"         : ("3-min EMA trail exit", "Tight trail triggered — momentum slowing"),
-        "FLOOR_WIDE"          : ("Floor breach exit", "Catastrophic reversal below low-12pts"),
-        "FLOOR_TIGHT"         : ("Floor breach — tight trail", ""),
-        "PEAK_DRAWDOWN_WIDE"  : ("Peak drawdown 40%", "Winner protected — gave back 40% from peak"),
-        "PEAK_DRAWDOWN_TIGHT" : ("Peak drawdown tight trail", ""),
-        "TIGHT_TRAIL"         : ("Tight trail triggered", "15pt+ profit, drawdown exceeded 5pts — gains locked"),
-        "MODERATE_DRAWDOWN"   : ("Moderate drawdown exit", "20pt+ peak, gave back 8pts — profit protected"),
-        "RSI_EXHAUSTION"      : ("RSI exhaustion exit 🎯", "RSI hit 76+ with profit — top captured"),
-        "GAMMA_RIDER"         : ("Gamma rider exit 🏄", "RSI dropped from overbought — reversal caught"),
-        "STALE_ENTRY"         : ("Stale entry cut 🔪", "3 candles, peak under 5pts — dead trade, saved full SL"),
-        "MARKET_CLOSE"        : ("Market close exit", "Forced exit at 15:28"),
-        "FORCE_EXIT"          : ("Manual force exit", ""),
-    }
-    reason_title, reason_why = reason_map.get(reason, (reason, ""))
-
-    # Trade quality assessment
-    if pnl > 0 and captured >= 70:
-        quality = "🌟 EXCELLENT  (captured " + str(captured) + "% of peak)"
-    elif pnl > 0 and captured >= 50:
-        quality = "✅ GOOD  (captured " + str(captured) + "% of peak)"
-    elif pnl > 0:
-        quality = "⚠️ OK  (captured " + str(captured) + "% of peak)"
-    elif reason == "STALE_ENTRY":
-        saved = round((18 - abs(pnl)) if abs(pnl) < 18 else 0, 1)
-        quality = "🛡 PROTECTED  (saved ~" + str(saved) + "pts vs full SL)"
-    else:
-        quality = "❌ LOSS  (peak was +" + str(round(peak_pnl, 1)) + "pts  trough " + str(round(state.get("trough_pnl", 0), 1)) + "pts)"
-
-    dpnl_sign = "+" if daily_pnl >= 0 else ""
-
-    _ot = option_type_from_symbol(symbol)
-    _wl = "WIN" if pnl >= 0 else "LOSS"
-    _bias = D.get_daily_bias() if hasattr(D, "get_daily_bias") else ""
-    _tg_send(
-        icon + " <b>" + _wl + " " + pnl_sign + str(round(pnl,1)) + "pts</b>"
-        + "  " + _rs(pnl)
-        + "  |  " + _ot + " " + symbol.split("NIFTY")[-1].replace("CE","").replace("PE","").strip() + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _now_str() + "  " + symbol + "\n"
-        "₹" + str(round(entry,1))
-        + " → ₹" + str(round(exit_price,1)) + "\n"
-        "Peak: +" + str(round(peak_pnl,1)) + "pts"
-        + "  Captured: " + str(captured) + "%\n"
-        "Held: " + str(candles_held) + "min"
-        + "  Phase: " + str(state.get("exit_phase", 0)) + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "WHY EXITED\n"
-        + reason_title + "\n"
-        + (reason_why + "\n" if reason_why else "")
-        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "TRADE QUALITY\n"
-        + quality + "\n"
-        "Regime : " + (regime or "—") + "  Score: " + str(score)
-        + "  Bias: " + (_bias or "—") + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📊 <b>TODAY</b>  " + dpnl_sign + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "\n"
-        + str(daily_trades) + "T  W" + str(daily_wins) + " L" + str(daily_losses)
-    )
-
-def option_type_from_symbol(symbol: str) -> str:
-    if symbol.endswith("CE"): return "CE"
-    if symbol.endswith("PE"): return "PE"
-    return "?"
-
-def _alert_trail_tightened(symbol: str, rsi_val: float):
-    _tg_send(
-        "⚡ <b>TRAIL TIGHTENED — " + symbol + "</b>\n"
-        "RSI " + str(round(rsi_val,1)) + " — momentum peaked\n"
-        "5-min EMA → 3-min EMA now active\n"
-        "Riding with tighter net. No forced exit."
-    )
-
 def _alert_profit_lock(daily_pnl: float):
     _tg_send(
         "🔒 <b>PROFIT LOCK — +" + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "</b>\n"
-        "All trails tightened to 3-min EMA.\n"
         "New entries still open but protected mode on."
-    )
-
-def _alert_loss_streak_gate(streak: int, score: int, required: int):
-    _tg_send(
-        "⏸ <b>STREAK GATE — " + str(streak) + " losses</b>\n"
-        "Score " + str(score) + " below required " + str(required) + "\n"
-        "Waiting for stronger setup. Capital protected."
     )
 
 def _alert_exit_critical(symbol: str, qty: int):
@@ -785,18 +601,22 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     symbol      = option_info["symbol"]
     entry_price = entry_result["entry_price"]
 
+    import VRL_CONFIG as CFG
+    lot_count = CFG.get().get("lots", {}).get("count", 2)
+    total_qty = D.LOT_SIZE * lot_count
+
     fill = place_entry(kite, symbol, token, option_type,
-                       D.LOT_SIZE, entry_price)
+                       total_qty, entry_price)
 
     if not fill["ok"]:
         logger.error("[MAIN] Entry failed: " + fill["error"])
         _alert_error("Entry failed: " + fill["error"])
-        D.unsubscribe_tokens([token])
         return
 
     actual_price = fill["fill_price"]
     actual_qty   = fill["fill_qty"]
-    phase1_sl    = compute_entry_sl(actual_price, profile, entry_result["mode"], token, dte)
+    hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
+    phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
     with _state_lock:
         state["in_trade"]           = True
@@ -808,12 +628,17 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["exit_phase"]         = 1
         state["phase1_sl"]          = phase1_sl
         state["qty"]                = actual_qty
+        state["lot_count"]          = lot_count
+        state["lot1_active"]        = True
+        state["lot2_active"]        = True
+        state["lots_split"]         = False
+        state["lot2_trail_sl"]      = 0.0
         state["trail_tightened"]    = False
         state["peak_pnl"]           = 0.0
-        state["mode"]               = entry_result["mode"]
-        state["score_at_entry"]     = entry_result["score"]
-        state["iv_at_entry"]        = entry_result["greeks"].get("iv_pct", 0)
-        state["regime_at_entry"]    = entry_result.get("regime", "UNKNOWN")
+        state["mode"]               = "MINIMAL"
+        state["score_at_entry"]     = 0
+        state["iv_at_entry"]        = 0
+        state["regime_at_entry"]    = ""
         state["dte_at_entry"]       = dte
         state["strike"]             = D.resolve_atm_strike(
             D.get_ltp(D.NIFTY_SPOT_TOKEN), D.get_active_strike_step(dte))
@@ -824,122 +649,154 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["daily_trades"]      += 1
         state["trough_pnl"]         = 0.0
         state["session_at_entry"]   = session
-        state["spread_1m_at_entry"] = round(entry_result.get("spread_1m", 0.0), 2)
-        state["spread_3m_at_entry"] = round(entry_result.get("ema_spread", 0.0), 2)
-        state["delta_at_entry"]     = round(entry_result.get("greeks", {}).get("delta", 0), 3)
-        state["sl_pts_at_entry"]    = round(actual_price - phase1_sl, 2)
+        state["spread_1m_at_entry"] = round(entry_result.get("ema_gap", 0), 2)
+        state["spread_3m_at_entry"] = 0.0
+        state["delta_at_entry"]     = 0.0
+        state["sl_pts_at_entry"]    = hard_sl
+        state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
+        state["current_floor"]      = phase1_sl
 
-    D.subscribe_tokens([token])
     _save_state()
 
-    _alert_entry(
-        symbol, option_type, actual_price,
-        entry_result["mode"], entry_result["score"], profile,
-        entry_result["details_1m"],
-        entry_result.get("details_3m", {}),
-        entry_result["greeks"], dte,
-        entry_result.get("regime", "UNKNOWN"),
-        score_breakdown = entry_result.get("score_breakdown", {}),
-        prediction      = entry_result.get("prediction", {}),
-        spread_1m       = entry_result.get("spread_1m", 0.0),
-        session         = session,
+    # v13.0 entry alert
+    _tg_send(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎯 <b>ENTRY — " + option_type + " × " + str(lot_count) + " LOTS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _now_str() + "  " + symbol + "\n"
+        "Entry   : ₹" + str(round(actual_price, 2)) + "\n"
+        "EMA Gap : " + str(entry_result.get("ema_gap", 0)) + "pts\n"
+        "RSI     : " + str(entry_result.get("rsi", 0)) + " ↑\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "EXIT PLAN\n"
+        "Hard SL : ₹" + str(round(phase1_sl, 2)) + " (-" + str(hard_sl) + "pts)\n"
+        "Floor 1 : +10pts → SL ₹" + str(round(actual_price + 2, 2)) + "\n"
+        "Floor 2 : +20pts → SL ₹" + str(round(actual_price + 12, 2)) + "\n"
+        "RSI 70  : Lots split | RSI 75+ : Lot 1 sells\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     logger.info(
         "[MAIN] ENTRY " + option_type + " " + symbol
         + " price=" + str(actual_price)
-        + " score=" + str(entry_result["score"])
+        + " ema_gap=" + str(entry_result.get("ema_gap", 0))
+        + " rsi=" + str(entry_result.get("rsi", 0))
         + " SL=" + str(phase1_sl)
     )
 
-def _execute_exit(kite, option_ltp: float, reason: str):
+def _execute_exit_v13(kite, exit_info: dict):
+    """v13.0: Execute a single exit (partial or full)."""
     if state.get("_exit_failed"):
         logger.warning("[MAIN] Exit suppressed — previous CRITICAL failure unresolved")
         return
 
+    lot_id = exit_info.get("lot_id", "ALL")
+    reason = exit_info.get("reason", "UNKNOWN")
+    exit_price = exit_info.get("price", 0)
+
     with _state_lock:
         symbol    = state["symbol"]
         token     = state["token"]
-        qty       = state["qty"]
         direction = state["direction"]
         entry     = state["entry_price"]
-        peak      = state["peak_pnl"]
-        mode      = state["mode"]
+        peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
-        regime    = state.get("regime_at_entry", "")
-        score     = state.get("score_at_entry", 0)
-        trough    = state.get("trough_pnl", 0)
-        exit_phase= state.get("exit_phase", 1)
+
+    # Determine qty
+    if lot_id == "ALL":
+        active_lots = (1 if state.get("lot1_active") else 0) + (1 if state.get("lot2_active") else 0)
+        exit_qty = D.LOT_SIZE * active_lots
+    else:
+        exit_qty = D.LOT_SIZE
 
     fill = place_exit(kite, symbol, token, direction,
-                      qty, option_ltp, reason)
+                      exit_qty, exit_price, reason)
 
-    if not fill["ok"] and fill["error"] == "EXIT_FAILED_MANUAL_REQUIRED":
+    if not fill["ok"] and fill.get("error") == "EXIT_FAILED_MANUAL_REQUIRED":
         with _state_lock:
             state["_exit_failed"] = True
-        _alert_exit_critical(symbol, qty)
+        _alert_exit_critical(symbol, exit_qty)
         return
 
-    actual_exit = fill["fill_price"] if fill["ok"] else option_ltp
-    pnl         = round(actual_exit - entry, 2)
+    actual_exit = fill["fill_price"] if fill["ok"] else exit_price
+    pnl = round(actual_exit - entry, 2)
 
-    _log_trade(state, actual_exit, reason, candles)
-
+    # Update lot state
     with _state_lock:
-        state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
-        if pnl < 0:
-            state["daily_losses"]       = state.get("daily_losses", 0) + 1
-            state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
-        else:
-            state["consecutive_losses"] = 0
+        if lot_id == "ALL":
+            state["lot1_active"] = False
+            state["lot2_active"] = False
+        elif lot_id == "LOT1":
+            state["lot1_active"] = False
+        elif lot_id == "LOT2":
+            state["lot2_active"] = False
 
-        daily_pnl    = state["daily_pnl"]
-        daily_trades = state.get("daily_trades", 0)
-        daily_losses = state.get("daily_losses", 0)
-        daily_wins   = daily_trades - daily_losses
-        state["last_exit_time"] = datetime.now().isoformat()
-        old_token = state["token"]
+    # Check if trade is fully closed
+    trade_done = not state.get("lot1_active") and not state.get("lot2_active")
 
-        state.update({
-            "in_trade"            : False,
-            "symbol"              : "",
-            "token"               : None,
-            "direction"           : "",
-            "entry_price"         : 0.0,
-            "entry_time"          : "",
-            "exit_phase"          : 1,
-            "phase1_sl"           : 0.0,
-            "phase2_sl"           : 0.0,
-            "trail_tightened"     : False,
-            "peak_pnl"            : 0.0,
-            "trough_pnl"          : 0.0,
-            "mode"                : "",
-            "iv_at_entry"         : 0.0,
-            "score_at_entry"      : 0,
-            "regime_at_entry"     : "",
-            "candles_held"        : 0,
-            "_last_trail_candle"  : "",
-            "_rsi_was_overbought" : False,
-            "force_exit"          : False,
-            "_exit_failed"        : False,
-        })
+    pnl_lots = pnl * (exit_qty / D.LOT_SIZE)
 
-    if old_token:
-        D.unsubscribe_tokens([old_token])
-
-    # Reset strike lock after trade exit — re-evaluate for next entry
-    _reset_strike_lock()
+    # Telegram alert
+    if trade_done:
+        _log_trade(state, actual_exit, reason, candles)
+        with _state_lock:
+            state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl_lots, 2)
+            if pnl < 0:
+                state["daily_losses"]       = state.get("daily_losses", 0) + 1
+                state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
+            else:
+                state["consecutive_losses"] = 0
+            state["last_exit_time"] = datetime.now().isoformat()
+            old_token = state["token"]
+            state.update({
+                "in_trade": False, "symbol": "", "token": None,
+                "direction": "", "entry_price": 0.0, "entry_time": "",
+                "exit_phase": 1, "phase1_sl": 0.0, "phase2_sl": 0.0,
+                "peak_pnl": 0.0, "trough_pnl": 0.0, "mode": "",
+                "candles_held": 0, "force_exit": False, "_exit_failed": False,
+                "lot1_active": True, "lot2_active": True, "lots_split": False,
+                "lot2_trail_sl": 0.0,
+            })
+        if old_token:
+            D.unsubscribe_tokens([old_token])
+        _reset_strike_lock()
+        _tg_send(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💰 <b>TRADE COMPLETE — " + reason + "</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + symbol + "\n"
+            "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + "\n"
+            "PNL: " + ("+" if pnl >= 0 else "") + str(pnl) + "pts × "
+            + str(int(exit_qty / D.LOT_SIZE)) + " lots\n"
+            "Peak: +" + str(round(peak, 1)) + "pts  Held: " + str(candles) + "min\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+    else:
+        # Partial exit — update daily PNL for the exited lot
+        with _state_lock:
+            state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
+        remaining = "LOT2" if state.get("lot2_active") else "LOT1"
+        _tg_send(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💰 <b>" + lot_id + " EXIT — " + reason + "</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + "\n"
+            "PNL: " + ("+" if pnl >= 0 else "") + str(pnl) + "pts (₹"
+            + str(int(pnl * D.LOT_SIZE)) + ")\n"
+            + remaining + " still riding\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
 
     _save_state()
-    _alert_exit(symbol, entry, actual_exit, pnl, reason, mode, peak,
-                candles_held=candles, regime=regime, score=score,
-                daily_pnl=daily_pnl, daily_trades=daily_trades,
-                daily_wins=daily_wins, daily_losses=daily_losses)
+    logger.info("[MAIN] EXIT " + lot_id + " " + symbol
+                + " price=" + str(actual_exit) + " pnl=" + str(pnl)
+                + "pts reason=" + reason)
 
-    logger.info("[MAIN] EXIT " + symbol
-                + " price=" + str(actual_exit)
-                + " pnl=" + str(pnl) + "pts"
-                + " reason=" + reason)
+
+def _execute_exit(kite, option_ltp: float, reason: str):
+    """Legacy wrapper — exits all lots."""
+    _execute_exit_v13(kite, {"lots": "ALL", "lot_id": "ALL",
+                             "reason": reason, "price": option_ltp})
 
 # ═══════════════════════════════════════════════════════════════
 #  CANDLE BOUNDARY
@@ -1011,89 +868,39 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
-            d3 = result.get("details_3m", {})
-            d1 = result.get("details_1m", {})
-            g  = result.get("greeks", {})
-            spread_1m = result.get("spread_1m", 0)
-            min_spread = D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE
-            score = result.get("score", 0)
-            session_min = D.SESSION_SCORE_MIN.get(session, 5)
+            # v13.0: Simple verdict from EMA gap + RSI
+            ema_gap = result.get("ema_gap", 0)
+            rsi_val = result.get("rsi", 0)
+            ema_ok = result.get("ema_ok", False)
+            rsi_ok = result.get("rsi_ok", False)
 
-            # Verdict logic
-            conds = d3.get("conditions_met", 0)
-            regime = result.get("regime", "")
             if result.get("fired"):
                 verdict = "FIRED"
-            elif conds < 2:
-                verdict = "3M BLOCKED " + str(conds) + "/4"
-            elif regime in ("NEUTRAL", "CHOPPY"):
-                verdict = "REGIME " + regime
-            elif spread_1m < min_spread:
-                verdict = "SPREAD " + str(round(spread_1m, 1)) + " need +" + str(min_spread)
-            elif d1.get("rsi_reject"):
-                rsi_v = d1.get("rsi_val", 0)
-                _rsi_reason = d1.get("rsi_reject_reason", "")
-                if _rsi_reason == "RSI_TOO_HIGH":
-                    verdict = "RSI " + str(rsi_v) + " TOO HIGH"
-                elif _rsi_reason == "RSI_TOO_LOW":
-                    verdict = "RSI " + str(rsi_v) + " TOO LOW"
-                elif _rsi_reason == "1M_ABOVE_3M":
-                    verdict = "RSI " + str(rsi_v) + " > 3m (CHASING)"
-                elif _rsi_reason == "RSI_NOT_RISING":
-                    verdict = "RSI " + str(rsi_v) + " NOT RISING"
+            elif not ema_ok and not rsi_ok:
+                verdict = "EMA " + str(ema_gap) + " RSI " + str(rsi_val)
+            elif not ema_ok:
+                verdict = "EMA " + str(ema_gap) + " (need 3+)"
+            elif not rsi_ok:
+                if rsi_val < 50:
+                    verdict = "RSI " + str(rsi_val) + " (need 50+)"
                 else:
-                    verdict = "RSI " + str(rsi_v) + " REJECT"
-            elif not d1.get("vol_ok", False) and d1.get("vol_ratio", 0) > 0:
-                verdict = "VOL " + str(d1.get("vol_ratio", 0)) + "x < 1.5x"
-            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
-                verdict = "BODY " + str(d1.get("body_pct", 0)) + "% WEAK"
-            elif score < session_min:
-                verdict = "SCORE " + str(score) + "/" + str(session_min)
-            elif score >= session_min:
-                verdict = "READY"
+                    verdict = "RSI " + str(rsi_val) + " not rising"
             else:
-                verdict = "BLOCKED"
+                verdict = "READY"
 
             return {
-                "gate_3m": {
-                    "ema": d3.get("ema_aligned", False),
-                    "body": d3.get("body_ok", False),
-                    "rsi": d3.get("rsi_ok", False),
-                    "price": d3.get("price_ok", False),
-                    "met": d3.get("conditions_met", 0),
-                    "spread": round(d3.get("ema_spread_3m", 0), 1),
-                    "rsi_val": round(d3.get("rsi_val_3m", 0), 1),
-                    "body_pct": round(d3.get("body_pct_3m", 0), 1),
-                    "mode": d3.get("mode", ""),
-                    "adx": round(d3.get("adx_3m", 0), 1),
-                    "candles": d3.get("candle_count_3m", 0),
-                    "warm": d3.get("candle_count_3m", 0) >= 25,
-                },
-                "spread_1m": round(spread_1m, 1),
-                "spread_1m_min": min_spread,
-                "entry_1m": {
-                    "body_pct": round(d1.get("body_pct", 0), 1),
-                    "body_ok": d1.get("body_ok", False),
-                    "rsi": round(d1.get("rsi_val", 0), 1),
-                    "rsi_rising": d1.get("rsi_rising", False),
-                    "rsi_ok": d1.get("rsi_ok", False),
-                    "rsi_below_3m": d1.get("rsi_1m_below_3m", False),
-                    "vol": round(d1.get("vol_ratio", 0), 2),
-                    "vol_ok": d1.get("vol_ok", False),
-                    "spread_accel": True,  # v12.15.1: decel check removed
-                },
-                "score": score,
-                "score_min": session_min,
+                "ema9": result.get("ema9", 0),
+                "ema21": result.get("ema21", 0),
+                "ema_gap": round(ema_gap, 1),
+                "ema_ok": ema_ok,
+                "candle_green": result.get("candle_green", False),
+                "gap_widening": result.get("gap_widening", False),
+                "rsi": round(rsi_val, 1),
+                "rsi_prev": result.get("rsi_prev", 0),
+                "rsi_ok": rsi_ok,
                 "fired": result.get("fired", False),
                 "verdict": verdict,
-                "greeks": {
-                    "delta": round(g.get("delta", 0), 3),
-                    "iv": round(g.get("iv_pct", 0), 1),
-                    "theta": round(g.get("theta", 0), 2),
-                    "gamma": round(g.get("gamma", 0), 4),
-                },
                 "ltp": round(result.get("entry_price", 0), 2),
-                "regime": result.get("regime", ""),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
             }
 
@@ -1134,16 +941,13 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
                 "pnl": pnl,
                 "peak": round(st.get("peak_pnl", 0), 1),
-                "trough": round(st.get("trough_pnl", 0), 1),
-                "phase": st.get("exit_phase", 1),
                 "sl": round(sl, 2),
-                "sl_dist": round(opt_ltp - sl, 1) if opt_ltp > 0 and sl > 0 else 0,
-                "score": st.get("score_at_entry", 0),
                 "candles": st.get("candles_held", 0),
-                "trail_tightened": st.get("trail_tightened", False),
-                "rsi_overbought": st.get("_rsi_was_overbought", False),
-                "mode": st.get("mode", ""),
-                "regime": st.get("regime_at_entry", ""),
+                "lot1_active": st.get("lot1_active", True),
+                "lot2_active": st.get("lot2_active", True),
+                "lots_split": st.get("lots_split", False),
+                "current_floor": round(st.get("current_floor", 0), 2),
+                "current_rsi": round(st.get("current_rsi", 0), 1),
                 "strike": st.get("strike", 0),
             }
         else:
@@ -1351,15 +1155,17 @@ def _strategy_loop(kite):
                             state["_last_candle_held_min"] = cur_1m
                             state["candles_held"] = state.get("candles_held", 0) + 1
 
-                    should_exit, reason, _ = manage_exit(state, option_ltp, profile)
+                    # v13.0: manage_exit returns list of exit dicts
+                    exit_list = manage_exit(state, option_ltp, profile)
 
                     if now.hour == 15 and now.minute >= 28:
-                        should_exit = True
-                        reason      = "MARKET_CLOSE"
+                        exit_list = [{"lots": "ALL", "lot_id": "ALL",
+                                      "reason": "MARKET_CLOSE", "price": option_ltp}]
 
-                    if should_exit:
-                        _execute_exit(kite, option_ltp, reason)
-                    else:
+                    for _exit in exit_list:
+                        _execute_exit_v13(kite, _exit)
+
+                    if not exit_list and state.get("in_trade"):
                         entry    = state.get("entry_price", 0)
                         pnl      = round(option_ltp - entry, 1)
                         last_ms  = state.get("_last_milestone", 0)
@@ -1505,11 +1311,11 @@ def _strategy_loop(kite):
                     except Exception as e:
                         logger.warning("[MAIN] Expiry breakout error: " + str(e))
 
-                # ── NORMAL CONVICTION SCAN (all DTE) ─────────────
-                best_result   = None
-                best_type     = None
+                # ── v13.0 MINIMAL SCAN — EMA gap + RSI only ─────
+                all_results = {}
+                best_result = None
+                best_type = None
                 best_opt_info = None
-                all_results   = {}
 
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
@@ -1519,97 +1325,62 @@ def _strategy_loop(kite):
                     if not opt_info:
                         continue
 
-                    _opt_strike = dir_strikes.get(opt_type, atm_strike)
-
-                    # Tokens already subscribed at lock time — no per-cycle sub needed
                     result = check_entry(
-                        token       = opt_info["token"],
-                        option_type = opt_type,
-                        profile     = profile,
-                        spot_ltp    = spot_ltp,
-                        strike      = _opt_strike,
-                        expiry_date = expiry,
-                        session     = session,
+                        token=opt_info["token"],
+                        option_type=opt_type,
+                        spot_ltp=spot_ltp,
+                        dte=dte,
+                        expiry_date=expiry,
+                        kite=kite,
                     )
-
-                    result["_strike"] = _opt_strike  # carry per-direction strike
+                    result["_strike"] = dir_strikes.get(opt_type, atm_strike)
                     all_results[opt_type] = result
 
                     if not result["fired"]:
                         continue
 
-                    logger.info("[MAIN] Signal passed gate — type=" + opt_type + " score=" + str(result["score"]))
-                    if not loss_streak_gate(state, result["score"]):
-                        _alert_loss_streak_gate(
-                            state.get("consecutive_losses", 0),
-                            result["score"],
-                            D.LOSS_STREAK_GATE_SCORE
-                        )
-                        continue
-
+                    # Pre-entry checks (cooldown, margin, etc)
                     option_ltp_now = D.get_ltp(opt_info["token"])
                     if option_ltp_now <= 0:
                         try:
                             q = kite.ltp(["NFO:" + opt_info["symbol"]])
                             option_ltp_now = float(list(q.values())[0]["last_price"])
-                            logger.info("[MAIN] LTP via REST: " + str(option_ltp_now))
-                        except Exception as _e:
-                            logger.warning("[MAIN] REST LTP failed: " + str(_e))
+                        except Exception:
+                            pass
                     ok, reason = pre_entry_checks(
                         kite, opt_info["token"], state,
-                        option_ltp_now, profile, session
-                    )
+                        option_ltp_now, profile, session)
                     if not ok:
                         logger.info("[MAIN] Entry blocked (" + opt_type + "): " + reason)
-                        D.unsubscribe_tokens([opt_info["token"]])
                         continue
 
-                    if best_result is None or result["score"] > best_result["score"]:
-                        if best_opt_info:
-                            D.unsubscribe_tokens([best_opt_info["token"]])
-                        best_result   = result
-                        best_type     = opt_type
-                        best_opt_info = opt_info
+                    best_result = result
+                    best_type = opt_type
+                    best_opt_info = opt_info
+                    break  # First to pass → enters (no scoring comparison)
 
                 try:
                     vix_ltp = D.get_vix()
                 except Exception:
                     vix_ltp = 0.0
 
-                def _scan_summary(res):
-                    if not res:
-                        return {"score":0,"fired":False,"mode":"","regime":"—",
-                                "d1":{},"entry":0.0,"spread_1m":0.0}
-                    return {
-                        "score" : res.get("score", 0),
-                        "fired" : res.get("fired", False),
-                        "mode"  : res.get("mode", ""),
-                        "regime": res.get("regime", "—"),
-                        "d1"    : res.get("details_1m", {}),
-                        "entry" : res.get("entry_price", 0.0),
-                        "spread_1m": res.get("spread_1m", 0.0),
-                    }
-
-                # Always save scan regardless of gate result
+                # Save scan state
                 ce_res = all_results.get("CE", {})
                 pe_res = all_results.get("PE", {})
                 with _state_lock:
                     state["_last_scan"] = {
-                        "time"      : now.strftime("%H:%M:%S"),
-                        "session"   : session,
-                        "regime"    : (best_result.get("regime", "—") if best_result
-                                       else ce_res.get("regime",
-                                            pe_res.get("regime", "—"))),
-                        "vix"       : round(vix_ltp, 2),
-                        "dte"       : dte,
-                        "atm"       : atm_strike,
-                        "fired"     : best_result["mode"] if best_result else "No",
+                        "time": now.strftime("%H:%M:%S"),
+                        "session": session,
+                        "vix": round(vix_ltp, 2),
+                        "dte": dte,
+                        "atm": atm_strike,
+                        "fired": best_type or "No",
                         "fired_type": best_type or "—",
-                        "ce"        : _scan_summary(ce_res),
-                        "pe"        : _scan_summary(pe_res),
+                        "ce": ce_res,
+                        "pe": pe_res,
                     }
 
-                # v12.15: Write dashboard snapshot for web
+                # Write dashboard
                 try:
                     _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                                      profile, all_results, expiry, now,
