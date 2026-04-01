@@ -240,9 +240,11 @@ def _check_1min(token: int, option_type: str, profile: dict,
             except Exception:
                 _spot_adx_rsi = 0
             if _spot_adx_rsi >= 30:
-                rsi_1m_hi = CFG.rsi("1m_high_strong", 65)   # strong trend — from config
+                rsi_1m_hi = CFG.rsi("1m_high_strong", 65)
             else:
-                rsi_1m_hi = CFG.rsi("1m_high_normal", 50)   # normal — from config
+                rsi_1m_hi = CFG.rsi("1m_high_normal", 50)
+            logger.info("[ENGINE] RSI cap=" + str(rsi_1m_hi) + " spot_adx=" + str(round(_spot_adx_rsi, 1))
+                        + (" STRONG" if _spot_adx_rsi >= 30 else " NORMAL"))
         rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
         details["rsi_ok"] = rsi_ok
 
