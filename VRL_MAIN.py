@@ -791,7 +791,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     if not fill["ok"]:
         logger.error("[MAIN] Entry failed: " + fill["error"])
         _alert_error("Entry failed: " + fill["error"])
-        D.unsubscribe_tokens([token])
         return
 
     actual_price = fill["fill_price"]
@@ -1561,12 +1560,9 @@ def _strategy_loop(kite):
                     )
                     if not ok:
                         logger.info("[MAIN] Entry blocked (" + opt_type + "): " + reason)
-                        D.unsubscribe_tokens([opt_info["token"]])
                         continue
 
                     if best_result is None or result["score"] > best_result["score"]:
-                        if best_opt_info:
-                            D.unsubscribe_tokens([best_opt_info["token"]])
                         best_result   = result
                         best_type     = opt_type
                         best_opt_info = opt_info
