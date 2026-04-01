@@ -229,35 +229,15 @@ def _check_1min(token: int, option_type: str, profile: dict,
         details["vol_ratio"]   = vol_ratio
         details["entry_price"] = round(c, 2)
 
-        # RSI zone — regime-based cap, widened
+        # RSI entry: only lower bound matters. Upper cap REMOVED.
+        # RSI exhaustion is handled by EXIT logic (RSI_EXHAUSTION exit), not entry block.
         rsi_1m_lo = profile.get("rsi_1m_low", D.RSI_1M_LOW)   # 30
-        if dte == 0:
-            rsi_1m_hi = CFG.rsi("1m_high_dte0", 70)
-        else:
-            _regime_for_rsi = D.compute_spot_regime()
-            if _regime_for_rsi == "TRENDING_STRONG":
-                rsi_1m_hi = CFG.rsi("1m_high_strong", 70)
-            elif _regime_for_rsi == "TRENDING":
-                rsi_1m_hi = CFG.rsi("1m_high_normal", 60)
-            elif _regime_for_rsi == "NEUTRAL":
-                rsi_1m_hi = 55
-            else:
-                rsi_1m_hi = 55
-            logger.info("[ENGINE] RSI cap=" + str(rsi_1m_hi) + " regime=" + _regime_for_rsi)
-        rsi_ok = (rsi_1m_lo <= rsi <= rsi_1m_hi)
+        rsi_ok = rsi >= rsi_1m_lo
         details["rsi_ok"] = rsi_ok
 
-        # Only block on RSI out of zone — no rising check, no 1m<3m check
         if not rsi_ok:
             details["rsi_reject"] = True
-            if rsi < rsi_1m_lo:
-                details["rsi_reject_reason"] = "RSI_TOO_LOW"
-            elif rsi > rsi_1m_hi:
-                details["rsi_reject_reason"] = "RSI_TOO_HIGH"
-                logger.info("[ENGINE] 1m RSI " + str(round(rsi, 1))
-                            + " > " + str(rsi_1m_hi) + " — move already done, wait for pullback")
-            else:
-                details["rsi_reject_reason"] = "RSI_CHECK_FAIL"
+            details["rsi_reject_reason"] = "RSI_TOO_LOW"
             return False, details
 
         details["rsi_1m_below_3m"] = True  # removed as blocking check
