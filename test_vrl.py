@@ -92,7 +92,7 @@ section("RSI CONSTANTS")
 
 test("RSI_1M_LOW = 30", D.RSI_1M_LOW == 30, "got " + str(D.RSI_1M_LOW))
 test("RSI_1M_HIGH_NORMAL = 50", D.RSI_1M_HIGH_NORMAL == 50, "got " + str(D.RSI_1M_HIGH_NORMAL))
-test("RSI_1M_HIGH_STRONG = 58", D.RSI_1M_HIGH_STRONG == 58, "got " + str(D.RSI_1M_HIGH_STRONG))
+test("RSI_1M_HIGH_STRONG = 65", D.RSI_1M_HIGH_STRONG == 65, "got " + str(D.RSI_1M_HIGH_STRONG))
 test("RSI_3M_LOW = 42", D.RSI_3M_LOW == 42, "got " + str(D.RSI_3M_LOW))
 test("RSI_3M_HIGH = 72", D.RSI_3M_HIGH == 72, "got " + str(D.RSI_3M_HIGH))
 

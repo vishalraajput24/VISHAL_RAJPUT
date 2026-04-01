@@ -918,18 +918,39 @@ def fill_forward_scan(kite, target_date: date = None):
     if not rows:
         return
 
+    # Resolve tokens for all strikes in the scan
+    # Get expiry for token lookup
+    try:
+        _expiry = D.get_nearest_expiry(kite)
+    except Exception:
+        _expiry = None
+    if not _expiry:
+        logger.warning("[LAB] Scan fwd fill: no expiry found")
+        return
+
+    _token_cache_fwd = {}
+
     changed = 0
     for row in rows:
         # Skip already filled
         if row.get("fwd_3c"):
             continue
-        # Only fill blocked entries (the what-if analysis)
-        # Also fill fired entries for comparison
-        token = None
         opt_type = row.get("direction", "")
-        with _lab_lock:
-            if _current_atm_tokens and opt_type in _current_atm_tokens:
-                token = _current_atm_tokens[opt_type]["token"]
+        strike = int(float(row.get("atm_strike", 0)))
+        if strike <= 0 or not opt_type:
+            continue
+
+        # Resolve token from strike + expiry (cached per strike)
+        cache_key = str(strike) + "_" + opt_type
+        if cache_key in _token_cache_fwd:
+            token = _token_cache_fwd[cache_key]
+        else:
+            try:
+                tokens = D.get_option_tokens(kite, strike, _expiry)
+                token = tokens.get(opt_type, {}).get("token")
+                _token_cache_fwd[cache_key] = token
+            except Exception:
+                token = None
 
         if not token:
             continue
