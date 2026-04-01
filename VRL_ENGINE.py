@@ -544,9 +544,13 @@ def check_entry(token: int, option_type: str, profile: dict,
                 logger.info("[ENGINE] " + option_type + " DTE0 CHOPPY pass: ADX="
                             + str(round(_adx_dte0, 1)) + " >= " + str(_choppy_min))
 
-        if result["regime"] in ("NEUTRAL", "CHOPPY") and not _dte0_choppy_pass:
+        # Regime filter:
+        #   CHOPPY/UNKNOWN → hard block (unless DTE0 with ADX bypass)
+        #   NEUTRAL → allow but raise score minimum to 6
+        #   TRENDING/TRENDING_STRONG → pass through
+        if result["regime"] in ("CHOPPY", "UNKNOWN") and not _dte0_choppy_pass:
             logger.info("[ENGINE] " + option_type + " blocked — regime=" + result["regime"]
-                        + " — only TRENDING/TRENDING_STRONG allowed")
+                        + " — CHOPPY/UNKNOWN hard blocked")
             # Fetch 1-min data + greeks for dashboard display
             try:
                 _ok1, _det1 = _check_1min(token, option_type, profile, dte=dte)
@@ -559,6 +563,10 @@ def check_entry(token: int, option_type: str, profile: dict,
             except Exception:
                 pass
             return result
+
+        if result["regime"] == "NEUTRAL":
+            session_min = max(session_min, 6)
+            logger.info("[ENGINE] " + option_type + " NEUTRAL regime — score min raised to 6")
 
         # ── LAYER 3: SESSION ADJUSTMENT ──────────────────────
         if spread_3m > 5 and option_type == "PE":
