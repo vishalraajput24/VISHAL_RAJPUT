@@ -32,7 +32,11 @@ _FOLDERS = {
     "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
     "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
     "state":        ("⚙️ State + Config",         os.path.join(BASE, "state")),
-    "logs":         ("📋 Logs",                   os.path.join(BASE, "logs", "live")),
+    "logs_live":    ("📋 Live Logs",              os.path.join(BASE, "logs", "live")),
+    "logs_lab":     ("📋 Lab Logs",               os.path.join(BASE, "logs", "lab")),
+    "logs_auth":    ("📋 Auth Logs",              os.path.join(BASE, "logs", "auth")),
+    "logs_errors":  ("📋 Error Logs",             os.path.join(BASE, "logs", "errors")),
+    "logs_health":  ("📋 Health Logs",            os.path.join(BASE, "logs", "health")),
 }
 
 def _list_files(folder=""):
@@ -481,6 +485,39 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_error(500)
 
+    def _download_daily_logs(self):
+        """
+        /api/logs/download           → today's logs zip
+        /api/logs/download?date=2026-04-01 → specific date
+        """
+        from urllib.parse import parse_qs
+        import VRL_DATA as _D
+        q = parse_qs(urlparse(self.path).query)
+        target_date = q.get("date", [None])[0]
+        if target_date is None:
+            from datetime import date as _date
+            target_date = _date.today().strftime("%Y-%m-%d")
+        zip_path = _D.create_daily_zip(target_date)
+        if not zip_path or not os.path.isfile(zip_path):
+            self.send_error(404, "No logs found for " + target_date)
+            return
+        try:
+            fname = os.path.basename(zip_path)
+            fsize = os.path.getsize(zip_path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", "attachment; filename=" + fname)
+            self.send_header("Content-Length", str(fsize))
+            self.end_headers()
+            with open(zip_path, "rb") as f:
+                self.wfile.write(f.read())
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+        except Exception:
+            self.send_error(500)
+
     def _files_page(self):
         import urllib.parse
         import time as _t
@@ -644,6 +681,8 @@ class H(BaseHTTPRequestHandler):
             self._j(_list_files(folder))
         elif p.startswith("/api/download/"):
             self._send_file(p[14:])  # strip /api/download/
+        elif p == "/api/logs/download" or p.startswith("/api/logs/download?"):
+            self._download_daily_logs()
         else:self.send_error(404)
 
 if __name__=="__main__":
