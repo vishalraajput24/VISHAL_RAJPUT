@@ -80,6 +80,8 @@ DEFAULT_STATE = {
     "regime_at_entry"    : "",
     "dte_at_entry"       : 0,
     "last_exit_time"     : "",
+    "last_exit_direction": "",
+    "last_exit_peak"     : 0.0,
     "_last_trail_candle" : "",
     "strike"             : 0,
     "expiry"             : "",
@@ -93,6 +95,10 @@ DEFAULT_STATE = {
     "lot2_trail_sl"      : 0.0,
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
+    "floor_10_alerted"   : False,
+    "floor_20_alerted"   : False,
+    "floor_30_alerted"   : False,
+    "split_alerted"      : False,
     "_last_1min_candle"  : "",
     "_eod_reported"      : False,
     "_last_candle_held_min": "",
@@ -389,6 +395,13 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     except Exception as e:
         logger.error("[MAIN] Trade log error: " + str(e))
 
+    # Dual write: SQLite
+    try:
+        import VRL_DB as _DB
+        _DB.insert_trade(row)
+    except Exception:
+        pass
+
 def _read_today_trades() -> list:
     today_str = date.today().isoformat()
     trades    = []
@@ -417,6 +430,23 @@ def _rs(pts: float) -> str:
     rupees = round(pts * D.LOT_SIZE, 0)
     sign   = "+" if rupees >= 0 else ""
     return sign + "₹" + str(int(rupees))
+
+def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
+    """NIFTY2640722500CE → CE 22500"""
+    if direction and strike:
+        return direction + " " + str(strike)
+    if not symbol:
+        return ""
+    import re
+    m = re.match(r"NIFTY\d+(CE|PE)$", symbol)
+    if m:
+        s = re.sub(r"^NIFTY\d+", "", symbol).replace("CE", "").replace("PE", "")
+        return m.group(1) + " " + s
+    # Fallback: extract strike from symbol like NIFTY2640722500CE
+    m2 = re.match(r"NIFTY\d{5}(\d+)(CE|PE)$", symbol)
+    if m2:
+        return m2.group(2) + " " + m2.group(1)
+    return symbol
 
 def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
     """Blocking send — used internally only."""
@@ -655,24 +685,21 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["sl_pts_at_entry"]    = hard_sl
         state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
         state["current_floor"]      = phase1_sl
+        state["floor_10_alerted"]   = False
+        state["floor_20_alerted"]   = False
+        state["floor_30_alerted"]   = False
+        state["split_alerted"]      = False
 
     _save_state()
 
     # v13.0 entry alert
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>ENTRY — " + option_type + " × " + str(lot_count) + " LOTS</b>\n"
+        "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0)) + " × " + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _now_str() + "  " + symbol + "\n"
-        "Entry   : ₹" + str(round(actual_price, 2)) + "\n"
-        "EMA Gap : " + str(entry_result.get("ema_gap", 0)) + "pts\n"
-        "RSI     : " + str(entry_result.get("rsi", 0)) + " ↑\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "EXIT PLAN\n"
-        "Hard SL : ₹" + str(round(phase1_sl, 2)) + " (-" + str(hard_sl) + "pts)\n"
-        "Floor 1 : +10pts → SL ₹" + str(round(actual_price + 2, 2)) + "\n"
-        "Floor 2 : +20pts → SL ₹" + str(round(actual_price + 12, 2)) + "\n"
-        "RSI 70  : Lots split | RSI 75+ : Lot 1 sells\n"
+        + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
+        "EMA +" + str(round(entry_result.get("ema_gap", 0), 1)) + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
+        "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -684,8 +711,10 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         + " SL=" + str(phase1_sl)
     )
 
-def _execute_exit_v13(kite, exit_info: dict):
-    """v13.0: Execute a single exit (partial or full)."""
+def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
+    """v13.0: Execute a single exit (partial or full).
+    saved_entry_price: pre-captured entry price to avoid stale state after partial exit resets.
+    """
     if state.get("_exit_failed"):
         logger.warning("[MAIN] Exit suppressed — previous CRITICAL failure unresolved")
         return
@@ -698,7 +727,7 @@ def _execute_exit_v13(kite, exit_info: dict):
         symbol    = state["symbol"]
         token     = state["token"]
         direction = state["direction"]
-        entry     = state["entry_price"]
+        entry     = saved_entry_price if saved_entry_price is not None else state["entry_price"]
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
 
@@ -747,6 +776,8 @@ def _execute_exit_v13(kite, exit_info: dict):
             else:
                 state["consecutive_losses"] = 0
             state["last_exit_time"] = datetime.now().isoformat()
+            state["last_exit_direction"] = direction
+            state["last_exit_peak"] = peak
             old_token = state["token"]
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
@@ -756,35 +787,62 @@ def _execute_exit_v13(kite, exit_info: dict):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot2_trail_sl": 0.0,
+                "floor_10_alerted": False, "floor_20_alerted": False,
+                "floor_30_alerted": False, "split_alerted": False,
             })
         if old_token:
             D.unsubscribe_tokens([old_token])
         _reset_strike_lock()
-        _tg_send(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💰 <b>TRADE COMPLETE — " + reason + "</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            + symbol + "\n"
-            "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + "\n"
-            "PNL: " + ("+" if pnl >= 0 else "") + str(pnl) + "pts × "
-            + str(int(exit_qty / D.LOT_SIZE)) + " lots\n"
-            "Peak: +" + str(round(peak, 1)) + "pts  Held: " + str(candles) + "min\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
+        _day_pnl    = state.get("daily_pnl", 0)
+        _day_trades = state.get("daily_trades", 0)
+        _day_losses = state.get("daily_losses", 0)
+        _day_wins   = _day_trades - _day_losses
+        _sym_short  = _short_sym(symbol, direction, 0)
+        _pnl_sign   = "+" if pnl >= 0 else ""
+        _pnl_rs     = int(pnl_lots * D.LOT_SIZE)
+        _day_rs     = int(_day_pnl * D.LOT_SIZE)
+        import VRL_CONFIG as _CFG_exit
+        _cd_cfg     = _CFG_exit.get().get("cooldown", {})
+        if pnl >= 0:
+            _tg_send(
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "✅ <b>" + _sym_short + "  " + _pnl_sign + str(round(pnl, 1)) + "pts  ₹"
+                + "{:,}".format(abs(_pnl_rs)) + "</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + " | " + reason + "\n"
+                "Peak: +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts ₹"
+                + "{:,}".format(abs(_day_rs)) + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+        else:
+            _cd_min = _cd_cfg.get("after_loss", 5)
+            _tg_send(
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts  ₹-"
+                + "{:,}".format(abs(_pnl_rs)) + "</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                + reason + " | Peak: " + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                "⏳ " + direction + " blocked " + str(_cd_min) + "min\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts ₹"
+                + "{:,}".format(abs(_day_rs)) + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
     else:
         # Partial exit — update daily PNL for the exited lot
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
         remaining = "LOT2" if state.get("lot2_active") else "LOT1"
+        _sym_short_p = _short_sym(symbol, direction, 0)
+        _pnl_rs_p    = int(pnl * D.LOT_SIZE)
         _tg_send(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💰 <b>" + lot_id + " EXIT — " + reason + "</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + "\n"
-            "PNL: " + ("+" if pnl >= 0 else "") + str(pnl) + "pts (₹"
-            + str(int(pnl * D.LOT_SIZE)) + ")\n"
-            + remaining + " still riding\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            "💰 <b>" + lot_id + " " + _sym_short_p + "</b> "
+            + ("+" if pnl >= 0 else "") + str(round(pnl, 1)) + "pts ₹"
+            + "{:,}".format(abs(_pnl_rs_p)) + "\n"
+            "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + " | " + reason + "\n"
+            + remaining + " riding..."
         )
 
     _save_state()
@@ -856,15 +914,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         def _build_signal(opt_type, result):
             if not result:
                 return {
-                    "gate_3m": {"ema": False, "body": False, "rsi": False, "price": False,
-                                "met": 0, "spread": 0, "rsi_val": 0, "body_pct": 0, "mode": ""},
-                    "spread_1m": 0, "spread_1m_min": D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE,
-                    "entry_1m": {"body_pct": 0, "body_ok": False, "rsi": 0, "rsi_rising": False,
-                                 "rsi_ok": False, "rsi_below_3m": False, "vol": 0, "vol_ok": False},
-                    "score": 0, "score_min": D.SESSION_SCORE_MIN.get(session, 5),
+                    "ema9": 0, "ema21": 0, "ema_gap": 0, "ema_ok": False,
+                    "rsi": 0, "rsi_prev": 0, "rsi_ok": False,
+                    "candle_green": False, "gap_widening": False,
                     "fired": False, "verdict": "NO DATA",
-                    "greeks": {"delta": 0, "iv": 0, "theta": 0, "gamma": 0},
-                    "ltp": 0, "regime": "",
+                    "ltp": 0,
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
@@ -1158,63 +1212,62 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     exit_list = manage_exit(state, option_ltp, profile)
 
+                    # ── PROFIT FLOOR + SPLIT ALERTS (fire once per trade) ──
+                    if state.get("in_trade"):
+                        _peak = state.get("peak_pnl", 0)
+                        _entry_px_alert = state.get("entry_price", 0)
+                        if _peak >= 10 and not state.get("floor_10_alerted"):
+                            state["floor_10_alerted"] = True
+                            _tg_send("🟢 +10pts — SL → ₹" + str(round(_entry_px_alert + 2, 1)) + " 🔒")
+                        if _peak >= 20 and not state.get("floor_20_alerted"):
+                            state["floor_20_alerted"] = True
+                            _tg_send("🟢 +20pts — SL → ₹" + str(round(_entry_px_alert + 12, 1)) + " 🔒")
+                        if _peak >= 30 and not state.get("floor_30_alerted"):
+                            state["floor_30_alerted"] = True
+                            _tg_send("🟢 +30pts — SL → ₹" + str(round(_entry_px_alert + 22, 1)) + " 🔒")
+                        if state.get("lots_split") and not state.get("split_alerted"):
+                            state["split_alerted"] = True
+                            _tg_send("⚡ RSI 70 — Lot1: floor SL | Lot2: ATR trail")
+
                     if now.hour == 15 and now.minute >= 28:
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
                                       "reason": "MARKET_CLOSE", "price": option_ltp}]
 
+                    # Dashboard update EVERY cycle during trade (before exits)
+                    try:
+                        _trade_scan = {}
+                        for _dt in ("CE", "PE"):
+                            _oi = _locked_tokens.get(_dt) if _locked_tokens else None
+                            if _oi:
+                                _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
+                                _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                                _trade_scan[_dt] = _sr
+                        _write_dashboard(spot_ltp, state.get("strike", 0),
+                                         dte, D.get_vix(), session,
+                                         profile, _trade_scan, expiry, now,
+                                         dir_strikes={"CE": _locked_ce_strike, "PE": _locked_pe_strike})
+                    except Exception:
+                        pass
+
+                    # Capture entry_price BEFORE any exit resets it
+                    _saved_entry = state.get("entry_price", 0)
                     for _exit in exit_list:
-                        _execute_exit_v13(kite, _exit)
+                        _execute_exit_v13(kite, _exit, saved_entry_price=_saved_entry)
 
                     if not exit_list and state.get("in_trade"):
                         entry    = state.get("entry_price", 0)
                         pnl      = round(option_ltp - entry, 1)
                         last_ms  = state.get("_last_milestone", 0)
                         milestone= (int(pnl) // 10) * 10
-                        if milestone > last_ms and milestone > 0:
+                        if milestone > last_ms and milestone > 0 and state.get("lots_split"):
                             with _state_lock:
                                 state["_last_milestone"] = milestone
-                                _ms_phase = state.get("exit_phase", 1)
-                                _ms_entry = state.get("entry_price", 0)
-                                _ms_peak = state.get("peak_pnl", 0)
-                                _ms_symbol = state.get("symbol", "")
-                                _ms_held = state.get("candles_held", 0)
-                                _ms_p1sl = state.get("phase1_sl", 0)
-                                _ms_p2sl = state.get("phase2_sl", 0)
-                            rs = "₹" + str(round(milestone * D.LOT_SIZE))
-                            # Current SL level
-                            if _ms_phase == 1:
-                                _sl_price = round(_ms_p1sl, 1)
-                                _sl_dist = round(option_ltp - _ms_p1sl, 1) if _ms_p1sl > 0 else 0
-                                _sl_label = "Phase 1 SL"
-                            elif _ms_phase == 2:
-                                _sl_price = round(_ms_p2sl, 1) if _ms_p2sl > 0 else round(_ms_entry + 2, 1)
-                                _sl_dist = round(option_ltp - _sl_price, 1)
-                                _sl_label = "Breakeven SL"
-                            else:
-                                _sl_price = round(_ms_p2sl, 1) if _ms_p2sl > 0 else round(_ms_entry + 2, 1)
-                                _sl_dist = round(option_ltp - _sl_price, 1)
-                                _sl_label = "Trail SL"
+                                _ms_trail_sl = state.get("lot2_trail_sl", 0)
+                            _ms_sl_str = str(round(_ms_trail_sl, 1)) if _ms_trail_sl > 0 else "—"
                             _tg_send(
-                                "🟢 <b>MILESTONE +" + str(milestone) + "pts</b>  " + rs + "\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                + _ms_symbol + "  ₹" + str(round(_ms_entry, 1))
-                                + " → ₹" + str(round(option_ltp, 1)) + "\n"
-                                "P&L: +" + str(round(pnl, 1)) + "pts  " + _rs(pnl)  + "\n"
-                                "Peak: +" + str(round(_ms_peak, 1))
-                                + "  |  Held: " + str(_ms_held) + "min\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                "🎯 " + _sl_label + ": ₹" + str(_sl_price)
-                                + "  (" + str(_sl_dist) + "pts away)\n"
-                                "Phase " + str(_ms_phase) + "/3"
+                                "📈 +" + str(milestone) + "pts | SL ₹" + _ms_sl_str + " (ATR)"
                             )
                         _save_state()
-                        # Dashboard update during trade
-                        try:
-                            _write_dashboard(spot_ltp, state.get("strike", 0),
-                                             dte, D.get_vix(), session,
-                                             profile, {}, expiry, now)
-                        except Exception:
-                            pass
 
                 time.sleep(0.5)
                 continue
@@ -1260,11 +1313,23 @@ def _strategy_loop(kite):
                     _relock = True
                 elif abs(spot_ltp - _locked_at_spot) > _LOCK_SHIFT_THRESHOLD:
                     _relock = True
-                    logger.info("[MAIN] Spot moved " + str(round(abs(spot_ltp - _locked_at_spot), 1))
+                    _spot_move = round(spot_ltp - _locked_at_spot, 1)
+                    _old_ce = _locked_ce_strike
+                    _old_pe = _locked_pe_strike
+                    logger.info("[MAIN] Spot moved " + str(round(abs(_spot_move), 1))
                                 + "pts from lock — RELOCKING")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
+                    # Telegram alert on relock (not initial lock)
+                    if '_spot_move' in dir():
+                        _tg_send(
+                            "\U0001f512 <b>RELOCK</b>: CE "
+                            + str(_old_ce) + " → " + str(_locked_ce_strike)
+                            + " | PE " + str(_old_pe) + " → " + str(_locked_pe_strike)
+                            + "\n(spot moved " + ("+" if _spot_move > 0 else "")
+                            + str(_spot_move) + "pts)"
+                        )
 
                 # Use locked strikes — no recalculation per cycle
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
@@ -1301,7 +1366,8 @@ def _strategy_loop(kite):
                                 option_ltp_now = D.get_ltp(eb_opt_info["token"])
                                 ok, reason = pre_entry_checks(
                                     kite, eb_opt_info["token"], state,
-                                    option_ltp_now, profile, session)
+                                    option_ltp_now, profile, session,
+                                    direction=eb_type)
                                 if ok:
                                     _execute_entry(kite, eb_opt_info, eb_type,
                                                    eb_result, profile, expiry, dte, session)
@@ -1349,7 +1415,8 @@ def _strategy_loop(kite):
                             pass
                     ok, reason = pre_entry_checks(
                         kite, opt_info["token"], state,
-                        option_ltp_now, profile, session)
+                        option_ltp_now, profile, session,
+                        direction=opt_type)
                     if not ok:
                         logger.info("[MAIN] Entry blocked (" + opt_type + "): " + reason)
                         continue

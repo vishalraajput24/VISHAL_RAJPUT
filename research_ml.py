@@ -5,7 +5,7 @@
 #  Run daily after market close to retrain on latest data.
 #
 #  Phase 1: Research only — DO NOT integrate with bot yet.
-#  Crontab: 40 15 * * 1-5 cd ~/VISHAL_RAJPUT && python3 research_ml.py >> ~/logs/ml.log 2>&1
+#  Crontab: 40 15 * * 1-5 cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 research_ml.py >> ~/logs/ml.log 2>&1
 # ═══════════════════════════════════════════════════════════════
 
 import pandas as pd
@@ -25,21 +25,34 @@ print("=" * 60)
 print("  LOADING SCAN DATA")
 print("=" * 60)
 
-scan_files = sorted(glob.glob(os.path.expanduser(
-    "~/lab_data/options_1min/nifty_signal_scan_*.csv")))
-dfs = []
-for f in scan_files:
-    try:
-        df = pd.read_csv(f, on_bad_lines="skip")
-        dfs.append(df)
-    except Exception as e:
-        print(f"  Skip {f}: {e}")
-
-if not dfs:
-    print("  No scan data found. Exiting.")
-    exit(0)
-
-all_scans = pd.concat(dfs, ignore_index=True)
+# Try SQLite first (fast), fallback to CSV glob
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import sqlite3
+    DB_PATH = os.path.expanduser("~/lab_data/vrl_data.db")
+    if os.path.isfile(DB_PATH):
+        conn = sqlite3.connect(DB_PATH)
+        all_scans = pd.read_sql("SELECT * FROM signal_scans WHERE fwd_5c IS NOT NULL", conn)
+        conn.close()
+        print(f"  Loaded {len(all_scans)} rows from SQLite")
+    else:
+        raise FileNotFoundError("No SQLite DB")
+except Exception as e:
+    print(f"  SQLite fallback: {e} — loading CSVs")
+    scan_files = sorted(glob.glob(os.path.expanduser(
+        "~/lab_data/options_1min/nifty_signal_scan_*.csv")))
+    dfs = []
+    for f in scan_files:
+        try:
+            df = pd.read_csv(f, on_bad_lines="skip")
+            dfs.append(df)
+        except Exception as ex:
+            print(f"  Skip {f}: {ex}")
+    if not dfs:
+        print("  No scan data found. Exiting.")
+        exit(0)
+    all_scans = pd.concat(dfs, ignore_index=True)
 
 # Only rows with forward fill data
 all_scans = all_scans[all_scans["fwd_5c"].notna() &

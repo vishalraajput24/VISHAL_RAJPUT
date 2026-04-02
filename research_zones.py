@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/user/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
  research_zones.py — VISHAL RAJPUT TRADE
