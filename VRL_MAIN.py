@@ -1242,11 +1242,19 @@ def _strategy_loop(kite):
                                 "Phase " + str(_ms_phase) + "/3"
                             )
                         _save_state()
-                        # Dashboard update during trade
+                        # Dashboard update during trade — scan both strikes for live display
                         try:
+                            _trade_scan = {}
+                            for _dt in ("CE", "PE"):
+                                _oi = _locked_tokens.get(_dt) if _locked_tokens else None
+                                if _oi:
+                                    _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
+                                    _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                                    _trade_scan[_dt] = _sr
                             _write_dashboard(spot_ltp, state.get("strike", 0),
                                              dte, D.get_vix(), session,
-                                             profile, {}, expiry, now)
+                                             profile, _trade_scan, expiry, now,
+                                             dir_strikes={"CE": _locked_ce_strike, "PE": _locked_pe_strike})
                         except Exception:
                             pass
 
