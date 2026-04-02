@@ -872,15 +872,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         def _build_signal(opt_type, result):
             if not result:
                 return {
-                    "gate_3m": {"ema": False, "body": False, "rsi": False, "price": False,
-                                "met": 0, "spread": 0, "rsi_val": 0, "body_pct": 0, "mode": ""},
-                    "spread_1m": 0, "spread_1m_min": D.SPREAD_1M_MIN_CE if opt_type == "CE" else D.SPREAD_1M_MIN_PE,
-                    "entry_1m": {"body_pct": 0, "body_ok": False, "rsi": 0, "rsi_rising": False,
-                                 "rsi_ok": False, "rsi_below_3m": False, "vol": 0, "vol_ok": False},
-                    "score": 0, "score_min": D.SESSION_SCORE_MIN.get(session, 5),
+                    "ema9": 0, "ema21": 0, "ema_gap": 0, "ema_ok": False,
+                    "rsi": 0, "rsi_prev": 0, "rsi_ok": False,
+                    "candle_green": False, "gap_widening": False,
                     "fired": False, "verdict": "NO DATA",
-                    "greeks": {"delta": 0, "iv": 0, "theta": 0, "gamma": 0},
-                    "ltp": 0, "regime": "",
+                    "ltp": 0,
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
