@@ -767,10 +767,19 @@ class H(BaseHTTPRequestHandler):
         p=urlparse(self.path).path
         if p=="/files" or p.startswith("/files?"):self._files_page();return
         if p in("/","/dashboard"):
-            self.send_response(200)
-            self.send_header("Content-Type","text/html")
-            self.end_headers()
-            self.wfile.write(HTML.encode())
+            # Serve static/index.html if it exists, otherwise fallback to inline HTML
+            static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html")
+            if os.path.isfile(static_path):
+                self.send_response(200)
+                self.send_header("Content-Type","text/html")
+                self.end_headers()
+                with open(static_path, "rb") as sf:
+                    self.wfile.write(sf.read())
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type","text/html")
+                self.end_headers()
+                self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
