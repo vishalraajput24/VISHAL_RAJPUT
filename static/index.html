@@ -72,7 +72,7 @@ function shortSym(sym,dir,strike){if(dir&&strike)return dir+' '+strike;if(!sym)r
 function tagC(v){if(v==='BULL')return'tg';if(v==='BEAR')return'tr';if(v==='SIDEWAYS'||v==='NEUTRAL')return'ta';return'tb'}
 
 function render(d,trades,zones,mtf){
-if(!d||!d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:30px">Waiting for bot data...</div>';document.getElementById('pos-area').innerHTML='';return}
+if(!d||!d.market){var wm='<div style="text-align:center;color:var(--dm);padding:40px;font-size:13px">&#9889; Waiting for bot data...<br><span style="font-size:10px;color:#444">Bot writes dashboard JSON during market hours (9:15-15:30 IST)<br>FILES tab works independently</span></div>';document.getElementById('p-sig').innerHTML=wm;document.getElementById('p-mkt').innerHTML=wm;document.getElementById('p-trd').innerHTML=wm;document.getElementById('pos-area').innerHTML='';return}
 var mk=d.market||{},ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{},cd=d.cooldown||{};
 
 // Tags
