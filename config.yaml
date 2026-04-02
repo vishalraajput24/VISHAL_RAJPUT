@@ -114,7 +114,7 @@ market_hours:
   close_hour: 15
   close_min: 30
   trade_start_hour: 9
-  trade_start_min: 20
+  trade_start_min: 15
   entry_cutoff_hour: 15
   entry_cutoff_min: 10
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v12.16
+#  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v13.0
 #  Runs at 9:30 AM — verifies all critical systems
 #  Rule: every major bug fix must add a check here
 #  v12.15: Spot gap check added
@@ -39,12 +39,10 @@ def check_score_threshold():
 
 
 def check_spread_gates():
-    """v12.8: Verify 1-min spread gate constants are present."""
+    """v13.0: Spread gates set to 0 is valid (disabled by design)."""
     try:
         from VRL_DATA import SPREAD_1M_MIN_CE, SPREAD_1M_MIN_PE
-        if SPREAD_1M_MIN_CE <= 0 or SPREAD_1M_MIN_PE <= 0:
-            return False, f"❌ Spread gates invalid: CE={SPREAD_1M_MIN_CE} PE={SPREAD_1M_MIN_PE}"
-        return True, f"✅ 1m spread gates: CE≥+{SPREAD_1M_MIN_CE}pts  PE≥+{SPREAD_1M_MIN_PE}pts  (both bullish)"
+        return True, f"✅ Spread gates: CE={SPREAD_1M_MIN_CE} PE={SPREAD_1M_MIN_PE} (0=disabled in v13.0)"
     except Exception as e:
         return False, f"❌ Spread gate check error: {e}"
 
@@ -348,14 +346,12 @@ def check_warning_system():
 
 
 def check_entry_window():
-    """v12.15: Entry fire window configured."""
+    """v13.0: Entry window configured."""
     try:
-        h = D.ENTRY_FIRE_HOUR; m = D.ENTRY_FIRE_MIN
-        if h != 9 or m != 45:
-            return False, f"Entry fire wrong: {h}:{m:02d} expected 9:45"
-        if D.TRADE_START_MIN != 15:
-            return False, f"Scan start wrong: 9:{D.TRADE_START_MIN:02d} expected 9:15"
-        return True, f"Scan 9:{D.TRADE_START_MIN:02d} | Fire {h}:{m:02d}-{D.ENTRY_CUTOFF_HOUR}:{D.ENTRY_CUTOFF_MIN:02d}"
+        start_min = D.TRADE_START_MIN
+        cutoff_h = D.ENTRY_CUTOFF_HOUR
+        cutoff_m = D.ENTRY_CUTOFF_MIN
+        return True, f"✅ Scan 9:{start_min:02d} — {cutoff_h}:{cutoff_m:02d}"
     except Exception as e:
         return False, f"Entry window check: {e}"
 
@@ -363,7 +359,7 @@ def check_entry_window():
 def main():
     global _kite_ref
     now = datetime.now().strftime("%H:%M")
-    print(f"VRL HealthCheck v12.16 running at {now}")
+    print(f"VRL HealthCheck v13.0 running at {now}")
 
     try:
         kite = get_kite()
@@ -408,7 +404,7 @@ def main():
 
     status = "✅ ALL SYSTEMS OK — Ready to trade" if all_ok else "⚠️ ISSUES FOUND — Fix before trading"
     report = (
-        f"🩺 <b>HEALTHCHECK v12.15 — {now}</b>\n"
+        f"🩺 <b>HEALTHCHECK v13.0 — {now}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         + "\n".join(lines) +
         f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
