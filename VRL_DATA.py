@@ -159,6 +159,7 @@ STATE_PERSIST_FIELDS = [
     "daily_losses", "daily_pnl", "peak_pnl",
     "mode", "iv_at_entry", "score_at_entry",
     "regime_at_entry", "last_exit_time",
+    "last_exit_direction", "last_exit_peak",
     "candles_held",
     "_last_trail_candle",
 ]

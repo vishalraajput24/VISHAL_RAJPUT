@@ -19,9 +19,14 @@ lots:
   count: 2
   size: 65
 
+cooldown:
+  after_win: 10          # minutes: same-dir cooldown after peak >= 10pts
+  after_loss: 5          # minutes: same-dir cooldown after peak < 10pts
+
 entry:
   ema_gap_min: 3        # EMA9 - EMA21 minimum pts
   rsi_min: 50           # RSI floor
+  rsi_max: 72           # RSI hard cap — blowoff territory, never enter
   rsi_must_rise: true   # RSI > previous candle
 
 exit:

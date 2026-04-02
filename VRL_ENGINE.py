@@ -39,7 +39,7 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
 
 def pre_entry_checks(kite, token: int, state: dict,
                      option_ltp: float, profile: dict,
-                     session: str = "") -> tuple:
+                     session: str = "", direction: str = "") -> tuple:
     if state.get("daily_trades", 0) >= D.MAX_DAILY_TRADES:
         return False, "MAX_DAILY_TRADES reached"
     if state.get("daily_losses", 0) >= D.MAX_DAILY_LOSSES:
@@ -48,8 +48,29 @@ def pre_entry_checks(kite, token: int, state: dict,
     if last_exit:
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
-            if elapsed < D.REENTRY_COOLDOWN_MIN:
-                return False, "Cooldown: " + str(round(D.REENTRY_COOLDOWN_MIN - elapsed, 1)) + "min"
+            last_dir = state.get("last_exit_direction", "")
+            last_peak = state.get("last_exit_peak", 0)
+
+            # Direction-aware cooldown
+            import VRL_CONFIG as CFG
+            cooldown_after_win = CFG.get().get("cooldown", {}).get("after_win", 10)
+            cooldown_after_loss = CFG.get().get("cooldown", {}).get("after_loss", 5)
+
+            if direction and direction == last_dir:
+                # Same direction re-entry: longer cooldown after big win
+                cooldown = cooldown_after_win if last_peak >= 10 else cooldown_after_loss
+                if elapsed < cooldown:
+                    remaining = round(cooldown - elapsed, 1)
+                    logger.info("[ENGINE] COOLDOWN " + str(remaining) + "min remaining"
+                                + " (same dir=" + direction + " peak=" + str(round(last_peak, 1)) + ")")
+                    return False, "Cooldown: " + str(remaining) + "min (same dir)"
+            elif direction and direction != last_dir and last_dir:
+                # Opposite direction: enter immediately — no cooldown
+                pass
+            else:
+                # Fallback: use default cooldown
+                if elapsed < D.REENTRY_COOLDOWN_MIN:
+                    return False, "Cooldown: " + str(round(D.REENTRY_COOLDOWN_MIN - elapsed, 1)) + "min"
         except Exception:
             pass
     if state.get("in_trade"):                return False, "Already in trade"
@@ -111,6 +132,15 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         import VRL_CONFIG as CFG
         ema_min = CFG.get().get("entry", {}).get("ema_gap_min", 3)
         rsi_min = CFG.get().get("entry", {}).get("rsi_min", 50)
+        rsi_max = CFG.get().get("entry", {}).get("rsi_max", 72)
+
+        # RSI HARD CAP — blowoff territory, never enter
+        if rsi > rsi_max:
+            result["ema_ok"] = ema_gap >= ema_min
+            result["rsi_ok"] = False
+            logger.info("[ENGINE] RSI_BLOWOFF_ENTRY: rsi=" + str(round(rsi, 1))
+                        + " > " + str(rsi_max) + " — BLOCKED")
+            return result
 
         # CHECK 1: EMA gap trending
         ema_ok = ema_gap >= ema_min
