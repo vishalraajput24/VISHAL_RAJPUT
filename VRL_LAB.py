@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 import VRL_DATA as D
+import VRL_DB as DB
 
 logger = logging.getLogger("vrl_lab")
 
@@ -240,7 +241,7 @@ def collect_spot_1min(kite):
                     _spot_adx = round(float(_adx_s.iloc[-2]), 1)
             except Exception:
                 pass
-            w.writerow({
+            _spot_row = {
                 "timestamp": ts_str,
                 "open" : round(last["open"],  2),
                 "high" : round(last["high"],  2),
@@ -252,8 +253,14 @@ def collect_spot_1min(kite):
                 "ema_spread": round(_spot_ema9 - _spot_ema21, 2) if _spot_ema9 and _spot_ema21 else 0,
                 "rsi": _spot_rsi,
                 "adx": _spot_adx,
-            })
+            }
+            w.writerow(_spot_row)
             f.flush()
+        # Dual write: SQLite
+        try:
+            DB.insert_spot_1min(_spot_row)
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("[LAB] Spot 1m error: " + str(e))
 
@@ -378,6 +385,11 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 f.flush()
         except Exception as e:
             logger.warning("[LAB] scan write error: " + str(e))
+        # Dual write: SQLite
+        try:
+            DB.insert_scan_many(rows)
+        except Exception:
+            pass
 
 
 # ─── IO HELPERS ───────────────────────────────────────────────
@@ -636,6 +648,10 @@ def collect_option_3min(kite, spot_ltp: float):
     if all_rows:
         all_rows.sort(key=lambda r: (r["timestamp"], r["type"]))
         n = _append_rows(_csv_path_3m(today), FIELDNAMES_3M, all_rows)
+        try:
+            DB.insert_option_3min_many(all_rows)
+        except Exception:
+            pass
         logger.debug("[LAB] 3m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
 
 
@@ -743,6 +759,10 @@ def collect_option_1min(kite, spot_ltp: float):
     if all_rows:
         all_rows.sort(key=lambda r: (r["timestamp"], r["type"]))
         n = _append_rows(_csv_path_1m(today), FIELDNAMES_1M, all_rows)
+        try:
+            DB.insert_option_1min_many(all_rows)
+        except Exception:
+            pass
         logger.debug("[LAB] 1m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
 
 
@@ -1275,6 +1295,10 @@ def collect_option_5min(kite, spot_ltp: float):
         time.sleep(0.35)
     if all_rows:
         _append_rows(_csv_path_5m(today), FIELDNAMES_5M, all_rows)
+        try:
+            DB.insert_option_5min_many(all_rows)
+        except Exception:
+            pass
         logger.debug("[LAB] 5m wrote=" + str(len(all_rows)))
 
 
@@ -1362,6 +1386,10 @@ def collect_option_15min(kite, spot_ltp: float):
         time.sleep(0.35)
     if all_rows:
         _append_rows(_csv_path_15m(today), FIELDNAMES_15M, all_rows)
+        try:
+            DB.insert_option_15min_many(all_rows)
+        except Exception:
+            pass
         logger.debug("[LAB] 15m wrote=" + str(len(all_rows)))
 
 
@@ -1412,7 +1440,7 @@ def collect_spot_5min(kite):
             w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_5M, extrasaction="ignore")
             if is_new:
                 w.writeheader()
-            w.writerow({
+            _s5_row = {
                 "timestamp": ts_str,
                 "open": round(float(last["open"]), 2),
                 "high": round(float(last["high"]), 2),
@@ -1423,8 +1451,13 @@ def collect_spot_5min(kite):
                 "ema_spread": round(e9 - e21, 2),
                 "rsi": round(float(last.get("RSI", 50)), 1),
                 "adx": adx_val,
-            })
+            }
+            w.writerow(_s5_row)
             f.flush()
+        try:
+            DB.insert_spot_5min(_s5_row)
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("[LAB] Spot 5m: " + str(e))
 
@@ -1476,7 +1509,7 @@ def collect_spot_15min(kite):
             w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_15M, extrasaction="ignore")
             if is_new:
                 w.writeheader()
-            w.writerow({
+            _s15_row = {
                 "timestamp": ts_str,
                 "open": round(float(last["open"]), 2),
                 "high": round(float(last["high"]), 2),
@@ -1487,8 +1520,13 @@ def collect_spot_15min(kite):
                 "ema_spread": round(e9 - e21, 2),
                 "rsi": round(float(last.get("RSI", 50)), 1),
                 "adx": adx_val,
-            })
+            }
+            w.writerow(_s15_row)
             f.flush()
+        try:
+            DB.insert_spot_15min(_s15_row)
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("[LAB] Spot 15m: " + str(e))
 
@@ -1543,7 +1581,7 @@ def collect_spot_60min(kite):
             w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_60M, extrasaction="ignore")
             if is_new:
                 w.writeheader()
-            w.writerow({
+            _s60_row = {
                 "timestamp": ts_str,
                 "open": round(float(last["open"]), 2),
                 "high": round(float(last["high"]), 2),
@@ -1554,8 +1592,13 @@ def collect_spot_60min(kite):
                 "ema_spread": round(e9 - e21, 2),
                 "rsi": round(float(last.get("RSI", 50)), 1),
                 "adx": adx_val,
-            })
+            }
+            w.writerow(_s60_row)
             f.flush()
+        try:
+            DB.insert_spot_60min(_s60_row)
+        except Exception:
+            pass
         logger.debug("[LAB] Spot 60m wrote @" + ts_str[-5:])
     except Exception as e:
         logger.debug("[LAB] Spot 60m: " + str(e))
@@ -1622,7 +1665,7 @@ def collect_spot_daily(kite):
             w = _csv.DictWriter(f, fieldnames=FIELDNAMES_SPOT_DAILY, extrasaction="ignore")
             if is_new:
                 w.writeheader()
-            w.writerow({
+            _sd_row = {
                 "date": dt_str,
                 "open": round(float(last["open"]), 2),
                 "high": round(float(last["high"]), 2),
@@ -1632,8 +1675,13 @@ def collect_spot_daily(kite):
                 "ema21": round(float(last["ema21"]), 2),
                 "rsi": round(float(last["rsi"]), 1),
                 "adx": round(float(last["adx"]), 1),
-            })
+            }
+            w.writerow(_sd_row)
             f.flush()
+        try:
+            DB.insert_spot_daily(_sd_row)
+        except Exception:
+            pass
         logger.info("[LAB] Daily spot wrote " + dt_str)
     except Exception as e:
         logger.debug("[LAB] Spot daily: " + str(e))
@@ -1648,6 +1696,13 @@ def start_lab(kite):
     global _kite_ref, _lab_running
     _kite_ref    = kite
     _lab_running = True
+
+    # Initialize SQLite database
+    try:
+        DB.init_db()
+        logger.info("[LAB] SQLite database initialized")
+    except Exception as e:
+        logger.warning("[LAB] SQLite init error: " + str(e))
 
     def _start():
         logger.info("[LAB] Starting — skipping backfill, direct to collection")

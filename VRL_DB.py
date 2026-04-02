@@ -1,0 +1,440 @@
+#!/home/user/kite_env/bin/python3
+# ═══════════════════════════════════════════════════════════════
+#  VRL_DB.py — VISHAL RAJPUT TRADE v13.0
+#  SQLite database helper. WAL mode for concurrent reads.
+#  All lab data + trades in ~/lab_data/vrl_data.db
+# ═══════════════════════════════════════════════════════════════
+
+import sqlite3
+import os
+import logging
+import threading
+
+logger = logging.getLogger("vrl_live")
+
+DB_PATH = os.path.expanduser("~/lab_data/vrl_data.db")
+_local = threading.local()
+
+
+def get_conn():
+    """Get thread-local connection with WAL mode."""
+    if not hasattr(_local, "conn") or _local.conn is None:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        _local.conn = sqlite3.connect(DB_PATH, timeout=10)
+        _local.conn.execute("PRAGMA journal_mode=WAL")
+        _local.conn.execute("PRAGMA synchronous=NORMAL")
+        _local.conn.execute("PRAGMA cache_size=-8000")  # 8MB cache
+    return _local.conn
+
+
+def init_db():
+    """Create all tables and indexes if not exist. Call at startup."""
+    conn = get_conn()
+    c = conn.cursor()
+
+    # ── SPOT TABLES ──
+    for table in ("spot_1min", "spot_5min", "spot_15min", "spot_60min"):
+        c.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
+            timestamp TEXT NOT NULL,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            ema9 REAL, ema21 REAL, ema_spread REAL, rsi REAL, adx REAL,
+            UNIQUE(timestamp)
+        )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS spot_daily (
+        date TEXT NOT NULL,
+        open REAL, high REAL, low REAL, close REAL, volume REAL,
+        ema21 REAL, rsi REAL, adx REAL,
+        UNIQUE(date)
+    )""")
+
+    # ── OPTION 1-MIN ──
+    c.execute("""CREATE TABLE IF NOT EXISTS option_1min (
+        timestamp TEXT NOT NULL,
+        strike INTEGER, type TEXT,
+        open REAL, high REAL, low REAL, close REAL, volume REAL,
+        spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
+        body_pct REAL, rsi REAL, ema9 REAL, ema9_gap REAL, adx REAL,
+        volume_ratio REAL, iv_pct REAL, delta REAL,
+        fwd_1c REAL, fwd_3c REAL, fwd_5c REAL, fwd_outcome TEXT
+    )""")
+
+    # ── OPTION 3-MIN ──
+    c.execute("""CREATE TABLE IF NOT EXISTS option_3min (
+        timestamp TEXT NOT NULL,
+        strike INTEGER, type TEXT,
+        open REAL, high REAL, low REAL, close REAL, volume REAL,
+        spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
+        iv_vs_open REAL,
+        body_pct REAL, adx REAL, rsi REAL, ema9 REAL, ema21 REAL,
+        ema_spread REAL, ema9_gap REAL, volume_ratio REAL,
+        iv_pct REAL, delta REAL, gamma REAL, theta REAL, vega REAL,
+        fwd_3c REAL, fwd_6c REAL, fwd_9c REAL, fwd_outcome TEXT
+    )""")
+
+    # ── OPTION 5-MIN ──
+    c.execute("""CREATE TABLE IF NOT EXISTS option_5min (
+        timestamp TEXT NOT NULL,
+        strike INTEGER, type TEXT,
+        open REAL, high REAL, low REAL, close REAL, volume REAL,
+        spot_ref REAL, dte INTEGER, session_block TEXT,
+        body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
+        adx REAL, volume_ratio REAL, iv_pct REAL, delta REAL
+    )""")
+
+    # ── OPTION 15-MIN ──
+    c.execute("""CREATE TABLE IF NOT EXISTS option_15min (
+        timestamp TEXT NOT NULL,
+        strike INTEGER, type TEXT,
+        open REAL, high REAL, low REAL, close REAL, volume REAL,
+        spot_ref REAL, dte INTEGER, session_block TEXT,
+        body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
+        macd_hist REAL, adx REAL,
+        volume_ratio REAL, iv_pct REAL, delta REAL
+    )""")
+
+    # ── SIGNAL SCANS ──
+    c.execute("""CREATE TABLE IF NOT EXISTS signal_scans (
+        timestamp TEXT NOT NULL,
+        session TEXT, dte INTEGER, atm_strike INTEGER, spot REAL,
+        direction TEXT, entry_price REAL,
+        rsi_1m REAL, body_pct_1m REAL, vol_ratio_1m REAL,
+        rsi_rising_1m TEXT, spread_1m REAL,
+        rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL,
+        conditions_3m TEXT, mode_3m TEXT,
+        score REAL, fired TEXT, reject_reason TEXT,
+        iv_pct REAL, delta REAL, vix REAL,
+        spot_rsi_3m REAL, spot_ema_spread_3m REAL,
+        spot_regime TEXT, spot_gap REAL,
+        bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
+        near_fib_level TEXT, fib_distance REAL,
+        fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT
+    )""")
+
+    # ── TRADES ──
+    c.execute("""CREATE TABLE IF NOT EXISTS trades (
+        date TEXT NOT NULL,
+        entry_time TEXT, exit_time TEXT,
+        symbol TEXT, direction TEXT, mode TEXT,
+        entry_price REAL, exit_price REAL,
+        pnl_pts REAL, pnl_rs REAL,
+        peak_pnl REAL, trough_pnl REAL,
+        exit_reason TEXT, exit_phase INTEGER,
+        score REAL, iv_at_entry REAL, regime TEXT,
+        dte INTEGER, candles_held INTEGER,
+        session TEXT, strike INTEGER, sl_pts REAL,
+        spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
+        bias TEXT, vix_at_entry REAL, hourly_rsi REAL,
+        straddle_decay REAL
+    )""")
+
+    # ── INDEXES ──
+    _indexes = [
+        ("idx_spot1m_ts", "spot_1min", "timestamp"),
+        ("idx_spot5m_ts", "spot_5min", "timestamp"),
+        ("idx_spot15m_ts", "spot_15min", "timestamp"),
+        ("idx_spot60m_ts", "spot_60min", "timestamp"),
+        ("idx_spotd_date", "spot_daily", "date"),
+        ("idx_opt1m_ts", "option_1min", "timestamp, type"),
+        ("idx_opt3m_ts", "option_3min", "timestamp, type"),
+        ("idx_opt5m_ts", "option_5min", "timestamp, type"),
+        ("idx_opt15m_ts", "option_15min", "timestamp, type"),
+        ("idx_scans_ts", "signal_scans", "timestamp"),
+        ("idx_scans_dir", "signal_scans", "direction, fired"),
+        ("idx_trades_date", "trades", "date"),
+    ]
+    for name, table, cols in _indexes:
+        c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
+
+    conn.commit()
+    logger.info("[DB] Database initialized: " + DB_PATH)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  INSERT HELPERS — one per table type
+# ═══════════════════════════════════════════════════════════════
+
+def _insert(table, row, fields):
+    """Generic insert. row is a dict, fields is ordered list of column names."""
+    conn = get_conn()
+    vals = [row.get(f) for f in fields]
+    placeholders = ",".join(["?"] * len(fields))
+    cols = ",".join(fields)
+    try:
+        conn.execute(f"INSERT OR IGNORE INTO {table}({cols}) VALUES ({placeholders})", vals)
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] Insert " + table + ": " + str(e))
+
+
+def _insert_many(table, rows, fields):
+    """Bulk insert. rows is list of dicts."""
+    if not rows:
+        return
+    conn = get_conn()
+    placeholders = ",".join(["?"] * len(fields))
+    cols = ",".join(fields)
+    data = [[r.get(f) for f in fields] for r in rows]
+    try:
+        conn.executemany(f"INSERT OR IGNORE INTO {table}({cols}) VALUES ({placeholders})", data)
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] Insert many " + table + ": " + str(e))
+
+
+def _insert_many_fn(table, fields):
+    """Return a function that bulk-inserts rows into a table. Used by import script."""
+    def fn(rows):
+        _insert_many(table, rows, fields)
+    return fn
+
+
+# ── Spot ──
+
+_SPOT_FIELDS = ["timestamp", "open", "high", "low", "close", "volume",
+                "ema9", "ema21", "ema_spread", "rsi", "adx"]
+
+_SPOT_DAILY_FIELDS = ["date", "open", "high", "low", "close", "volume",
+                      "ema21", "rsi", "adx"]
+
+def insert_spot_1min(row):
+    _insert("spot_1min", row, _SPOT_FIELDS)
+
+def insert_spot_5min(row):
+    _insert("spot_5min", row, _SPOT_FIELDS)
+
+def insert_spot_15min(row):
+    _insert("spot_15min", row, _SPOT_FIELDS)
+
+def insert_spot_60min(row):
+    _insert("spot_60min", row, _SPOT_FIELDS)
+
+def insert_spot_daily(row):
+    _insert("spot_daily", row, _SPOT_DAILY_FIELDS)
+
+
+# ── Options ──
+
+_OPT_1M_FIELDS = [
+    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
+    "spot_ref", "atm_distance", "dte", "session_block",
+    "body_pct", "rsi", "ema9", "ema9_gap", "adx",
+    "volume_ratio", "iv_pct", "delta",
+    "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
+]
+
+_OPT_3M_FIELDS = [
+    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
+    "spot_ref", "atm_distance", "dte", "session_block", "iv_vs_open",
+    "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap",
+    "volume_ratio", "iv_pct", "delta", "gamma", "theta", "vega",
+    "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
+]
+
+_OPT_5M_FIELDS = [
+    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
+    "spot_ref", "dte", "session_block",
+    "body_pct", "rsi", "ema9", "ema21", "ema_spread", "adx",
+    "volume_ratio", "iv_pct", "delta",
+]
+
+_OPT_15M_FIELDS = [
+    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
+    "spot_ref", "dte", "session_block",
+    "body_pct", "rsi", "ema9", "ema21", "ema_spread", "macd_hist", "adx",
+    "volume_ratio", "iv_pct", "delta",
+]
+
+def insert_option_1min(row):
+    _insert("option_1min", row, _OPT_1M_FIELDS)
+
+def insert_option_1min_many(rows):
+    _insert_many("option_1min", rows, _OPT_1M_FIELDS)
+
+def insert_option_3min(row):
+    _insert("option_3min", row, _OPT_3M_FIELDS)
+
+def insert_option_3min_many(rows):
+    _insert_many("option_3min", rows, _OPT_3M_FIELDS)
+
+def insert_option_5min(row):
+    _insert("option_5min", row, _OPT_5M_FIELDS)
+
+def insert_option_5min_many(rows):
+    _insert_many("option_5min", rows, _OPT_5M_FIELDS)
+
+def insert_option_15min(row):
+    _insert("option_15min", row, _OPT_15M_FIELDS)
+
+def insert_option_15min_many(rows):
+    _insert_many("option_15min", rows, _OPT_15M_FIELDS)
+
+
+# ── Scans ──
+
+_SCAN_FIELDS = [
+    "timestamp", "session", "dte", "atm_strike", "spot",
+    "direction", "entry_price",
+    "rsi_1m", "body_pct_1m", "vol_ratio_1m", "rsi_rising_1m", "spread_1m",
+    "rsi_3m", "body_pct_3m", "ema_spread_3m", "conditions_3m", "mode_3m",
+    "score", "fired", "reject_reason",
+    "iv_pct", "delta", "vix",
+    "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime", "spot_gap",
+    "bias", "hourly_rsi", "straddle_decay_pct",
+    "near_fib_level", "fib_distance",
+    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
+]
+
+def insert_scan(row):
+    _insert("signal_scans", row, _SCAN_FIELDS)
+
+def insert_scan_many(rows):
+    _insert_many("signal_scans", rows, _SCAN_FIELDS)
+
+
+# ── Trades ──
+
+_TRADE_FIELDS = [
+    "date", "entry_time", "exit_time", "symbol", "direction", "mode",
+    "entry_price", "exit_price", "pnl_pts", "pnl_rs",
+    "peak_pnl", "trough_pnl", "exit_reason", "exit_phase",
+    "score", "iv_at_entry", "regime", "dte", "candles_held",
+    "session", "strike", "sl_pts",
+    "spread_1m", "spread_3m", "delta_at_entry",
+    "bias", "vix_at_entry", "hourly_rsi", "straddle_decay",
+]
+
+def insert_trade(row):
+    _insert("trades", row, _TRADE_FIELDS)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FORWARD FILL — update existing rows at EOD
+# ═══════════════════════════════════════════════════════════════
+
+def update_scan_fwd(timestamp, direction, fwd_3c, fwd_5c, fwd_10c, outcome):
+    """Update forward-fill columns for a scan row."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE signal_scans SET fwd_3c=?, fwd_5c=?, fwd_10c=?, fwd_outcome=? "
+            "WHERE timestamp=? AND direction=?",
+            (fwd_3c, fwd_5c, fwd_10c, outcome, timestamp, direction)
+        )
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] Update scan fwd: " + str(e))
+
+
+def update_option_1min_fwd(timestamp, opt_type, fwd_1c, fwd_3c, fwd_5c, outcome):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE option_1min SET fwd_1c=?, fwd_3c=?, fwd_5c=?, fwd_outcome=? "
+            "WHERE timestamp=? AND type=?",
+            (fwd_1c, fwd_3c, fwd_5c, outcome, timestamp, opt_type)
+        )
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] Update opt1m fwd: " + str(e))
+
+
+def update_option_3min_fwd(timestamp, opt_type, fwd_3c, fwd_6c, fwd_9c, outcome):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE option_3min SET fwd_3c=?, fwd_6c=?, fwd_9c=?, fwd_outcome=? "
+            "WHERE timestamp=? AND type=?",
+            (fwd_3c, fwd_6c, fwd_9c, outcome, timestamp, opt_type)
+        )
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] Update opt3m fwd: " + str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  QUERY HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+def query(sql, params=None):
+    """Generic query — returns list of dicts."""
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.execute(sql, params or ())
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.row_factory = None
+        return rows
+    except Exception as e:
+        conn.row_factory = None
+        logger.debug("[DB] Query error: " + str(e))
+        return []
+
+
+def get_trades(date_str=None):
+    """Get trades for a date (default today)."""
+    if not date_str:
+        from datetime import date
+        date_str = date.today().isoformat()
+    return query("SELECT * FROM trades WHERE date=? ORDER BY entry_time", (date_str,))
+
+
+def get_scans(date_str=None, direction=None):
+    """Get signal scans for a date, optionally filtered by direction."""
+    if not date_str:
+        from datetime import date
+        date_str = date.today().isoformat()
+    if direction:
+        return query(
+            "SELECT * FROM signal_scans WHERE date(timestamp)=? AND direction=? ORDER BY timestamp",
+            (date_str, direction))
+    return query(
+        "SELECT * FROM signal_scans WHERE date(timestamp)=? ORDER BY timestamp",
+        (date_str,))
+
+
+def get_spot(table="spot_1min", from_ts=None, to_ts=None):
+    """Get spot data between timestamps."""
+    if from_ts and to_ts:
+        return query(f"SELECT * FROM {table} WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp",
+                     (from_ts, to_ts))
+    return query(f"SELECT * FROM {table} ORDER BY timestamp DESC LIMIT 500")
+
+
+def get_stats(date_str=None):
+    """Get trade stats for a date."""
+    if not date_str:
+        from datetime import date
+        date_str = date.today().isoformat()
+    rows = query(
+        "SELECT count(*) as cnt, sum(pnl_pts) as total_pts, avg(pnl_pts) as avg_pts, "
+        "sum(CASE WHEN pnl_pts > 0 THEN 1 ELSE 0 END) as wins, "
+        "sum(CASE WHEN pnl_pts <= 0 THEN 1 ELSE 0 END) as losses "
+        "FROM trades WHERE date=?",
+        (date_str,))
+    return rows[0] if rows else {}
+
+
+def close():
+    """Close thread-local connection."""
+    if hasattr(_local, "conn") and _local.conn:
+        try:
+            _local.conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  INIT ON IMPORT
+# ═══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    init_db()
+    print("Database initialized at " + DB_PATH)
+    conn = get_conn()
+    tables = query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    for t in tables:
+        cnt = query(f"SELECT count(*) as n FROM {t['name']}")
+        print(f"  {t['name']}: {cnt[0]['n']} rows")
+    close()
