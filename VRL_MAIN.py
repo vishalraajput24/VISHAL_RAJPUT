@@ -80,6 +80,8 @@ DEFAULT_STATE = {
     "regime_at_entry"    : "",
     "dte_at_entry"       : 0,
     "last_exit_time"     : "",
+    "last_exit_direction": "",
+    "last_exit_peak"     : 0.0,
     "_last_trail_candle" : "",
     "strike"             : 0,
     "expiry"             : "",
@@ -93,6 +95,10 @@ DEFAULT_STATE = {
     "lot2_trail_sl"      : 0.0,
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
+    "floor_10_alerted"   : False,
+    "floor_20_alerted"   : False,
+    "floor_30_alerted"   : False,
+    "split_alerted"      : False,
     "_last_1min_candle"  : "",
     "_eod_reported"      : False,
     "_last_candle_held_min": "",
@@ -655,6 +661,10 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["sl_pts_at_entry"]    = hard_sl
         state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
         state["current_floor"]      = phase1_sl
+        state["floor_10_alerted"]   = False
+        state["floor_20_alerted"]   = False
+        state["floor_30_alerted"]   = False
+        state["split_alerted"]      = False
 
     _save_state()
 
@@ -684,8 +694,10 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         + " SL=" + str(phase1_sl)
     )
 
-def _execute_exit_v13(kite, exit_info: dict):
-    """v13.0: Execute a single exit (partial or full)."""
+def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
+    """v13.0: Execute a single exit (partial or full).
+    saved_entry_price: pre-captured entry price to avoid stale state after partial exit resets.
+    """
     if state.get("_exit_failed"):
         logger.warning("[MAIN] Exit suppressed — previous CRITICAL failure unresolved")
         return
@@ -698,7 +710,7 @@ def _execute_exit_v13(kite, exit_info: dict):
         symbol    = state["symbol"]
         token     = state["token"]
         direction = state["direction"]
-        entry     = state["entry_price"]
+        entry     = saved_entry_price if saved_entry_price is not None else state["entry_price"]
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
 
@@ -747,6 +759,8 @@ def _execute_exit_v13(kite, exit_info: dict):
             else:
                 state["consecutive_losses"] = 0
             state["last_exit_time"] = datetime.now().isoformat()
+            state["last_exit_direction"] = direction
+            state["last_exit_peak"] = peak
             old_token = state["token"]
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
@@ -756,6 +770,8 @@ def _execute_exit_v13(kite, exit_info: dict):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot2_trail_sl": 0.0,
+                "floor_10_alerted": False, "floor_20_alerted": False,
+                "floor_30_alerted": False, "split_alerted": False,
             })
         if old_token:
             D.unsubscribe_tokens([old_token])
@@ -1158,12 +1174,34 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     exit_list = manage_exit(state, option_ltp, profile)
 
+                    # ── PROFIT FLOOR + SPLIT ALERTS (fire once per trade) ──
+                    if state.get("in_trade"):
+                        _peak = state.get("peak_pnl", 0)
+                        _entry_px_alert = state.get("entry_price", 0)
+                        if _peak >= 10 and not state.get("floor_10_alerted"):
+                            state["floor_10_alerted"] = True
+                            _tg_send("\U0001f7e2 <b>FLOOR +10</b> — SL moved to entry+"
+                                     + str(2) + " (₹" + str(round(_entry_px_alert + 2, 1)) + ") both lots")
+                        if _peak >= 20 and not state.get("floor_20_alerted"):
+                            state["floor_20_alerted"] = True
+                            _tg_send("\U0001f7e2 <b>FLOOR +20</b> — SL moved to entry+"
+                                     + str(12) + " (₹" + str(round(_entry_px_alert + 12, 1)) + ") both lots")
+                        if _peak >= 30 and not state.get("floor_30_alerted"):
+                            state["floor_30_alerted"] = True
+                            _tg_send("\U0001f7e2 <b>FLOOR +30</b> — SL moved to entry+"
+                                     + str(22) + " (₹" + str(round(_entry_px_alert + 22, 1)) + ") both lots")
+                        if state.get("lots_split") and not state.get("split_alerted"):
+                            state["split_alerted"] = True
+                            _tg_send("\u26a1 <b>RSI 70 — LOTS SPLIT</b>: Lot1=floor SL, Lot2=ATR trail")
+
                     if now.hour == 15 and now.minute >= 28:
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
                                       "reason": "MARKET_CLOSE", "price": option_ltp}]
 
+                    # Capture entry_price BEFORE any exit resets it
+                    _saved_entry = state.get("entry_price", 0)
                     for _exit in exit_list:
-                        _execute_exit_v13(kite, _exit)
+                        _execute_exit_v13(kite, _exit, saved_entry_price=_saved_entry)
 
                     if not exit_list and state.get("in_trade"):
                         entry    = state.get("entry_price", 0)
@@ -1260,11 +1298,23 @@ def _strategy_loop(kite):
                     _relock = True
                 elif abs(spot_ltp - _locked_at_spot) > _LOCK_SHIFT_THRESHOLD:
                     _relock = True
-                    logger.info("[MAIN] Spot moved " + str(round(abs(spot_ltp - _locked_at_spot), 1))
+                    _spot_move = round(spot_ltp - _locked_at_spot, 1)
+                    _old_ce = _locked_ce_strike
+                    _old_pe = _locked_pe_strike
+                    logger.info("[MAIN] Spot moved " + str(round(abs(_spot_move), 1))
                                 + "pts from lock — RELOCKING")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
+                    # Telegram alert on relock (not initial lock)
+                    if '_spot_move' in dir():
+                        _tg_send(
+                            "\U0001f512 <b>RELOCK</b>: CE "
+                            + str(_old_ce) + " → " + str(_locked_ce_strike)
+                            + " | PE " + str(_old_pe) + " → " + str(_locked_pe_strike)
+                            + "\n(spot moved " + ("+" if _spot_move > 0 else "")
+                            + str(_spot_move) + "pts)"
+                        )
 
                 # Use locked strikes — no recalculation per cycle
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
@@ -1301,7 +1351,8 @@ def _strategy_loop(kite):
                                 option_ltp_now = D.get_ltp(eb_opt_info["token"])
                                 ok, reason = pre_entry_checks(
                                     kite, eb_opt_info["token"], state,
-                                    option_ltp_now, profile, session)
+                                    option_ltp_now, profile, session,
+                                    direction=eb_type)
                                 if ok:
                                     _execute_entry(kite, eb_opt_info, eb_type,
                                                    eb_result, profile, expiry, dte, session)
@@ -1349,7 +1400,8 @@ def _strategy_loop(kite):
                             pass
                     ok, reason = pre_entry_checks(
                         kite, opt_info["token"], state,
-                        option_ltp_now, profile, session)
+                        option_ltp_now, profile, session,
+                        direction=opt_type)
                     if not ok:
                         logger.info("[MAIN] Entry blocked (" + opt_type + "): " + reason)
                         continue

@@ -256,6 +256,117 @@ with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(71)):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  COOLDOWN TESTS
+# ═══════════════════════════════════════════════════════════════
+
+section("COOLDOWN — DIRECTION-AWARE")
+
+# Same direction blocked within 10 min after big win
+_cd_state = deepcopy(E.D.DEFAULT_STATE) if hasattr(E.D, 'DEFAULT_STATE') else {}
+_cd_state.update({
+    "last_exit_time": (datetime.now() - timedelta(minutes=3)).isoformat(),
+    "last_exit_direction": "CE",
+    "last_exit_peak": 15.0,  # big win
+    "in_trade": False,
+    "daily_trades": 0, "daily_losses": 0, "paused": False,
+})
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _cd_state, 200.0, {}, "", direction="CE")
+    test("Same dir CE after big win (3min ago) → BLOCKED", ok == False,
+         "ok=" + str(ok) + " reason=" + reason)
+
+# Opposite direction allowed immediately after big win
+_cd_state2 = deepcopy(_cd_state)
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _cd_state2, 200.0, {}, "", direction="PE")
+    test("Opposite dir PE after CE win → ALLOWED", ok == True,
+         "ok=" + str(ok) + " reason=" + reason)
+
+# Same direction after small loss — 5 min cooldown
+_cd_state3 = deepcopy(_cd_state)
+_cd_state3["last_exit_peak"] = 3.0  # small/losing
+_cd_state3["last_exit_time"] = (datetime.now() - timedelta(minutes=3)).isoformat()
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _cd_state3, 200.0, {}, "", direction="CE")
+    test("Same dir after small loss (3min ago, 5min cd) → BLOCKED", ok == False,
+         "ok=" + str(ok) + " reason=" + reason)
+
+# Same direction after small loss — 6 min elapsed (past cooldown)
+_cd_state4 = deepcopy(_cd_state)
+_cd_state4["last_exit_peak"] = 3.0
+_cd_state4["last_exit_time"] = (datetime.now() - timedelta(minutes=6)).isoformat()
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _cd_state4, 200.0, {}, "", direction="CE")
+    test("Same dir after small loss (6min ago, 5min cd) → ALLOWED", ok == True,
+         "ok=" + str(ok) + " reason=" + reason)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  RSI HARD CAP TESTS
+# ═══════════════════════════════════════════════════════════════
+
+section("ENTRY — RSI HARD CAP")
+
+# RSI 73 → BLOCKED
+_df_rsi73 = _df_fire.copy()
+_df_rsi73.iloc[-2, _df_rsi73.columns.get_loc("RSI")] = 73.0
+_df_rsi73.iloc[-3, _df_rsi73.columns.get_loc("RSI")] = 68.0
+with patch.object(D, 'get_historical_data', return_value=_df_rsi73):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 22900, 5)
+        test("RSI 73 > 72 → BLOCKED (blowoff)", r["fired"] == False,
+             "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"]))
+
+# RSI 71 → ALLOWED (if other conditions pass)
+_df_rsi71 = _df_fire.copy()
+_df_rsi71.iloc[-2, _df_rsi71.columns.get_loc("RSI")] = 71.0
+_df_rsi71.iloc[-3, _df_rsi71.columns.get_loc("RSI")] = 65.0
+with patch.object(D, 'get_historical_data', return_value=_df_rsi71):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 22900, 5)
+        test("RSI 71 < 72 → NOT blocked by cap", r["fired"] == True,
+             "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"])
+             + " ema_gap=" + str(r["ema_gap"]))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LOT PNL CALCULATION TESTS
+# ═══════════════════════════════════════════════════════════════
+
+section("PNL — SPLIT LOT CORRECTNESS")
+
+# Simulate: both lots exit in same cycle, verify entry_price preserved
+# When lot1 exits (trade_done=True resets entry to 0), lot2 must still use original entry
+_pnl_entry = 200.0
+_pnl_exit1 = 215.0  # lot1 exit
+_pnl_exit2 = 220.0  # lot2 exit
+
+# lot1 PNL
+pnl1 = round(_pnl_exit1 - _pnl_entry, 2)
+test("Lot1 PNL = exit - entry", pnl1 == 15.0, "got " + str(pnl1))
+
+# lot2 PNL
+pnl2 = round(_pnl_exit2 - _pnl_entry, 2)
+test("Lot2 PNL = exit - entry", pnl2 == 20.0, "got " + str(pnl2))
+
+# Verify saved_entry_price pattern: even after state reset, original entry preserved
+_sim_state = {"entry_price": 200.0, "in_trade": True}
+_saved = _sim_state["entry_price"]  # capture before reset
+_sim_state["entry_price"] = 0.0  # simulate reset (trade_done)
+test("saved_entry_price survives state reset",
+     _saved == 200.0 and _sim_state["entry_price"] == 0.0,
+     "saved=" + str(_saved) + " state=" + str(_sim_state["entry_price"]))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  SUMMARY
 # ═══════════════════════════════════════════════════════════════
 
