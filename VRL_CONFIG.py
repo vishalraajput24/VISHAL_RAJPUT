@@ -14,7 +14,7 @@ _CONFIG_PATH = os.environ.get(
 )
 
 _cfg = None
-_CONFIG_VERSION = "12.15.1"
+_CONFIG_VERSION = "13.0"
 
 
 class ConfigError(Exception):
@@ -179,16 +179,58 @@ def trail(key: str, default=None):
     return _deep_get(get(), "trail", key, default=default)
 
 
-def profit_floors() -> dict:
-    """Returns {peak_level: floor_value} e.g. {10: 5, 20: 12, ...}"""
-    raw = _deep_get(get(), "trail", "profit_floors", default={})
-    return {int(k): v for k, v in raw.items()}
+def profit_floors() -> list:
+    """Returns list of {peak: X, lock: Y} from config.yaml profit_floors section."""
+    try:
+        raw = get().get("profit_floors", [])
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            return [{"peak": int(k), "lock": v} for k, v in raw.items()]
+        return []
+    except Exception:
+        return []
 
 
 def adaptive_ema(level: str) -> dict:
     """level = 'low', 'mid', or 'high'"""
-    return _deep_get(get(), "trail", "adaptive_ema", level,
-                     default={"timeframe": "5minute", "candles": 2})
+    try:
+        return _deep_get(get(), "trail", "adaptive_ema", level,
+                         default={"timeframe": "5minute", "candles": 2})
+    except Exception:
+        return {"timeframe": "5minute", "candles": 2}
+
+
+def cooldown(key: str, default=None):
+    """Safe accessor for cooldown config."""
+    try:
+        return _deep_get(get(), "cooldown", key, default=default)
+    except Exception:
+        return default
+
+
+def entry_cfg(key: str, default=None):
+    """Safe accessor for entry config."""
+    try:
+        return _deep_get(get(), "entry", key, default=default)
+    except Exception:
+        return default
+
+
+def exit_cfg(key: str, default=None):
+    """Safe accessor for exit config."""
+    try:
+        return _deep_get(get(), "exit", key, default=default)
+    except Exception:
+        return default
+
+
+def rsi_exit_cfg(key: str, default=None):
+    """Safe accessor for rsi_exit config."""
+    try:
+        return _deep_get(get(), "rsi_exit", key, default=default)
+    except Exception:
+        return default
 
 
 # ── DTE Profiles ──

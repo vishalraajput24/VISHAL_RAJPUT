@@ -160,6 +160,7 @@ STATE_PERSIST_FIELDS = [
     "mode", "iv_at_entry", "score_at_entry",
     "regime_at_entry", "last_exit_time",
     "last_exit_direction", "last_exit_peak",
+    "prev_close",
     "candles_held",
     "_last_trail_candle",
 ]

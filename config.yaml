@@ -3,7 +3,7 @@
 #  Minimal strategy: EMA gap + RSI entry, 2-lot execution
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.0"
+version: "v13.1"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -52,6 +52,16 @@ rsi_exit:
 trail:
   method: atr
   atr_multiplier: 1.5
+  adaptive_ema:
+    low:
+      timeframe: 5minute
+      candles_below: 2
+    mid:
+      timeframe: 3minute
+      candles_below: 2
+    high:
+      timeframe: minute
+      candles_below: 1
 
 strategy:
   lookback:
@@ -97,6 +107,7 @@ strike:
   tolerance_normal: 40
   tolerance_dte0: 20
   lock_shift: 150
+  gap_relock_threshold: 200
 
 risk:
   sl_multiplier: 2.0

@@ -119,6 +119,7 @@ DEFAULT_STATE = {
     "_hourly_rsi_ts"     : 0,
     "_vix_warned"        : False,
     "_straddle_alerted"  : False,
+    "prev_close"         : 0.0,
 }
 
 state   = deepcopy(DEFAULT_STATE)
@@ -346,10 +347,10 @@ def _cleanup_trade_log():
         logger.warning("[MAIN] Trade log cleanup error: " + str(e))
 
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
-               candles_held: int = 0):
+               candles_held: int = 0, saved_entry: float = None):
     os.makedirs(os.path.dirname(D.TRADE_LOG_PATH), exist_ok=True)
     is_new  = not os.path.isfile(D.TRADE_LOG_PATH)
-    entry   = st.get("entry_price", 0)
+    entry   = saved_entry if saved_entry is not None else st.get("entry_price", 0)
     pnl_pts = round(exit_price - entry, 2)
     pnl_rs  = round(pnl_pts * D.LOT_SIZE, 2)
 
@@ -448,10 +449,26 @@ def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
         return m2.group(2) + " " + m2.group(1)
     return symbol
 
+from collections import deque as _deque
+_tg_timestamps = _deque(maxlen=20)
+_TG_FLOOD_LIMIT = 5
+_TG_FLOOD_WINDOW = 10  # seconds
+
 def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
-    """Blocking send — used internally only."""
+    """Blocking send with flood control — max 5 msgs per 10s."""
     if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
         return False
+
+    # Flood control — prevent Telegram 429 rate limit
+    now_ts = time.time()
+    while _tg_timestamps and now_ts - _tg_timestamps[0] > _TG_FLOOD_WINDOW:
+        _tg_timestamps.popleft()
+    if len(_tg_timestamps) >= _TG_FLOOD_LIMIT:
+        wait = _TG_FLOOD_WINDOW - (now_ts - _tg_timestamps[0])
+        if wait > 0:
+            time.sleep(min(wait, _TG_FLOOD_WINDOW))
+    _tg_timestamps.append(time.time())
+
     cid = chat_id or D.TELEGRAM_CHAT_ID
     url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
     try:
@@ -767,7 +784,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 
     # Telegram alert
     if trade_done:
-        _log_trade(state, actual_exit, reason, candles)
+        _log_trade(state, actual_exit, reason, candles, saved_entry=entry)
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl_lots, 2)
             if pnl < 0:
@@ -1095,6 +1112,20 @@ def _strategy_loop(kite):
     with _state_lock:
         state["_last_1min_candle"] = ""
 
+    # Gap open detection — force strike relock if spot gapped 200+ pts
+    try:
+        _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        _prev_close = state.get("prev_close", 0)
+        if _prev_close > 0 and _startup_spot > 0:
+            _gap = abs(_startup_spot - _prev_close)
+            _gap_threshold = CFG.get().get("strike", {}).get("gap_relock_threshold", 200)
+            if _gap > _gap_threshold:
+                logger.info("[MAIN] GAP " + str(round(_gap)) + "pts — forcing strike relock at open")
+                _tg_send("🔔 <b>GAP OPEN</b> " + str(round(_gap)) + "pts — strikes will relock")
+                _reset_strike_lock()
+    except Exception:
+        pass
+
     expiry = D.get_nearest_expiry(kite)
 
     # Capture straddle if after 9:30 (must be AFTER expiry is resolved)
@@ -1171,6 +1202,11 @@ def _strategy_loop(kite):
                     and now.second < 30):
                 with _state_lock:
                     state["_eod_reported"] = True
+                    # Save prev_close for gap detection next day
+                    _eod_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                    if _eod_spot > 0:
+                        state["prev_close"] = round(_eod_spot, 1)
+                _save_state()
                 try:
                     _generate_eod_report()
                 except Exception as e:

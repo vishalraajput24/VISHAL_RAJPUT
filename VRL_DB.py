@@ -14,6 +14,8 @@ logger = logging.getLogger("vrl_live")
 
 DB_PATH = os.path.expanduser("~/lab_data/vrl_data.db")
 _local = threading.local()
+_init_lock = threading.Lock()
+_initialized = False
 
 
 def get_conn():
@@ -28,126 +30,112 @@ def get_conn():
 
 
 def init_db():
-    """Create all tables and indexes if not exist. Call at startup."""
-    conn = get_conn()
-    c = conn.cursor()
+    """Create all tables and indexes if not exist. Call at startup. Thread-safe."""
+    global _initialized
+    with _init_lock:
+        if _initialized:
+            return
+        conn = get_conn()
+        c = conn.cursor()
 
-    # ── SPOT TABLES ──
-    for table in ("spot_1min", "spot_5min", "spot_15min", "spot_60min"):
-        c.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
-            timestamp TEXT NOT NULL,
+        # ── SPOT TABLES ──
+        for table in ("spot_1min", "spot_5min", "spot_15min", "spot_60min"):
+            c.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
+                timestamp TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                ema9 REAL, ema21 REAL, ema_spread REAL, rsi REAL, adx REAL,
+                UNIQUE(timestamp))""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS spot_daily (
+            date TEXT NOT NULL,
             open REAL, high REAL, low REAL, close REAL, volume REAL,
-            ema9 REAL, ema21 REAL, ema_spread REAL, rsi REAL, adx REAL,
-            UNIQUE(timestamp)
-        )""")
+            ema21 REAL, rsi REAL, adx REAL,
+            UNIQUE(date))""")
 
-    c.execute("""CREATE TABLE IF NOT EXISTS spot_daily (
-        date TEXT NOT NULL,
-        open REAL, high REAL, low REAL, close REAL, volume REAL,
-        ema21 REAL, rsi REAL, adx REAL,
-        UNIQUE(date)
-    )""")
+        # ── OPTION 1-MIN ──
+        c.execute("""CREATE TABLE IF NOT EXISTS option_1min (
+            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
+            body_pct REAL, rsi REAL, ema9 REAL, ema9_gap REAL, adx REAL,
+            volume_ratio REAL, iv_pct REAL, delta REAL,
+            fwd_1c REAL, fwd_3c REAL, fwd_5c REAL, fwd_outcome TEXT)""")
 
-    # ── OPTION 1-MIN ──
-    c.execute("""CREATE TABLE IF NOT EXISTS option_1min (
-        timestamp TEXT NOT NULL,
-        strike INTEGER, type TEXT,
-        open REAL, high REAL, low REAL, close REAL, volume REAL,
-        spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
-        body_pct REAL, rsi REAL, ema9 REAL, ema9_gap REAL, adx REAL,
-        volume_ratio REAL, iv_pct REAL, delta REAL,
-        fwd_1c REAL, fwd_3c REAL, fwd_5c REAL, fwd_outcome TEXT
-    )""")
+        # ── OPTION 3-MIN ──
+        c.execute("""CREATE TABLE IF NOT EXISTS option_3min (
+            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
+            iv_vs_open REAL,
+            body_pct REAL, adx REAL, rsi REAL, ema9 REAL, ema21 REAL,
+            ema_spread REAL, ema9_gap REAL, volume_ratio REAL,
+            iv_pct REAL, delta REAL, gamma REAL, theta REAL, vega REAL,
+            fwd_3c REAL, fwd_6c REAL, fwd_9c REAL, fwd_outcome TEXT)""")
 
-    # ── OPTION 3-MIN ──
-    c.execute("""CREATE TABLE IF NOT EXISTS option_3min (
-        timestamp TEXT NOT NULL,
-        strike INTEGER, type TEXT,
-        open REAL, high REAL, low REAL, close REAL, volume REAL,
-        spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
-        iv_vs_open REAL,
-        body_pct REAL, adx REAL, rsi REAL, ema9 REAL, ema21 REAL,
-        ema_spread REAL, ema9_gap REAL, volume_ratio REAL,
-        iv_pct REAL, delta REAL, gamma REAL, theta REAL, vega REAL,
-        fwd_3c REAL, fwd_6c REAL, fwd_9c REAL, fwd_outcome TEXT
-    )""")
+        # ── OPTION 5-MIN ──
+        c.execute("""CREATE TABLE IF NOT EXISTS option_5min (
+            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            spot_ref REAL, dte INTEGER, session_block TEXT,
+            body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
+            adx REAL, volume_ratio REAL, iv_pct REAL, delta REAL)""")
 
-    # ── OPTION 5-MIN ──
-    c.execute("""CREATE TABLE IF NOT EXISTS option_5min (
-        timestamp TEXT NOT NULL,
-        strike INTEGER, type TEXT,
-        open REAL, high REAL, low REAL, close REAL, volume REAL,
-        spot_ref REAL, dte INTEGER, session_block TEXT,
-        body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
-        adx REAL, volume_ratio REAL, iv_pct REAL, delta REAL
-    )""")
+        # ── OPTION 15-MIN ──
+        c.execute("""CREATE TABLE IF NOT EXISTS option_15min (
+            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
+            open REAL, high REAL, low REAL, close REAL, volume REAL,
+            spot_ref REAL, dte INTEGER, session_block TEXT,
+            body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
+            macd_hist REAL, adx REAL,
+            volume_ratio REAL, iv_pct REAL, delta REAL)""")
 
-    # ── OPTION 15-MIN ──
-    c.execute("""CREATE TABLE IF NOT EXISTS option_15min (
-        timestamp TEXT NOT NULL,
-        strike INTEGER, type TEXT,
-        open REAL, high REAL, low REAL, close REAL, volume REAL,
-        spot_ref REAL, dte INTEGER, session_block TEXT,
-        body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
-        macd_hist REAL, adx REAL,
-        volume_ratio REAL, iv_pct REAL, delta REAL
-    )""")
+        # ── SIGNAL SCANS ──
+        c.execute("""CREATE TABLE IF NOT EXISTS signal_scans (
+            timestamp TEXT NOT NULL, session TEXT, dte INTEGER, atm_strike INTEGER, spot REAL,
+            direction TEXT, entry_price REAL,
+            rsi_1m REAL, body_pct_1m REAL, vol_ratio_1m REAL, rsi_rising_1m TEXT, spread_1m REAL,
+            rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL, conditions_3m TEXT, mode_3m TEXT,
+            score REAL, fired TEXT, reject_reason TEXT,
+            iv_pct REAL, delta REAL, vix REAL,
+            spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT, spot_gap REAL,
+            bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
+            near_fib_level TEXT, fib_distance REAL,
+            fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT)""")
 
-    # ── SIGNAL SCANS ──
-    c.execute("""CREATE TABLE IF NOT EXISTS signal_scans (
-        timestamp TEXT NOT NULL,
-        session TEXT, dte INTEGER, atm_strike INTEGER, spot REAL,
-        direction TEXT, entry_price REAL,
-        rsi_1m REAL, body_pct_1m REAL, vol_ratio_1m REAL,
-        rsi_rising_1m TEXT, spread_1m REAL,
-        rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL,
-        conditions_3m TEXT, mode_3m TEXT,
-        score REAL, fired TEXT, reject_reason TEXT,
-        iv_pct REAL, delta REAL, vix REAL,
-        spot_rsi_3m REAL, spot_ema_spread_3m REAL,
-        spot_regime TEXT, spot_gap REAL,
-        bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
-        near_fib_level TEXT, fib_distance REAL,
-        fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT
-    )""")
+        # ── TRADES ──
+        c.execute("""CREATE TABLE IF NOT EXISTS trades (
+            date TEXT NOT NULL, entry_time TEXT, exit_time TEXT,
+            symbol TEXT, direction TEXT, mode TEXT,
+            entry_price REAL, exit_price REAL, pnl_pts REAL, pnl_rs REAL,
+            peak_pnl REAL, trough_pnl REAL,
+            exit_reason TEXT, exit_phase INTEGER,
+            score REAL, iv_at_entry REAL, regime TEXT,
+            dte INTEGER, candles_held INTEGER,
+            session TEXT, strike INTEGER, sl_pts REAL,
+            spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
+            bias TEXT, vix_at_entry REAL, hourly_rsi REAL, straddle_decay REAL)""")
 
-    # ── TRADES ──
-    c.execute("""CREATE TABLE IF NOT EXISTS trades (
-        date TEXT NOT NULL,
-        entry_time TEXT, exit_time TEXT,
-        symbol TEXT, direction TEXT, mode TEXT,
-        entry_price REAL, exit_price REAL,
-        pnl_pts REAL, pnl_rs REAL,
-        peak_pnl REAL, trough_pnl REAL,
-        exit_reason TEXT, exit_phase INTEGER,
-        score REAL, iv_at_entry REAL, regime TEXT,
-        dte INTEGER, candles_held INTEGER,
-        session TEXT, strike INTEGER, sl_pts REAL,
-        spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
-        bias TEXT, vix_at_entry REAL, hourly_rsi REAL,
-        straddle_decay REAL
-    )""")
+        # ── INDEXES ──
+        _indexes = [
+            ("idx_spot1m_ts", "spot_1min", "timestamp"),
+            ("idx_spot5m_ts", "spot_5min", "timestamp"),
+            ("idx_spot15m_ts", "spot_15min", "timestamp"),
+            ("idx_spot60m_ts", "spot_60min", "timestamp"),
+            ("idx_spotd_date", "spot_daily", "date"),
+            ("idx_opt1m_ts", "option_1min", "timestamp, type"),
+            ("idx_opt3m_ts", "option_3min", "timestamp, type"),
+            ("idx_opt5m_ts", "option_5min", "timestamp, type"),
+            ("idx_opt15m_ts", "option_15min", "timestamp, type"),
+            ("idx_scans_ts", "signal_scans", "timestamp"),
+            ("idx_scans_dir", "signal_scans", "direction, fired"),
+            ("idx_trades_date", "trades", "date"),
+        ]
+        for name, table, cols in _indexes:
+            c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
 
-    # ── INDEXES ──
-    _indexes = [
-        ("idx_spot1m_ts", "spot_1min", "timestamp"),
-        ("idx_spot5m_ts", "spot_5min", "timestamp"),
-        ("idx_spot15m_ts", "spot_15min", "timestamp"),
-        ("idx_spot60m_ts", "spot_60min", "timestamp"),
-        ("idx_spotd_date", "spot_daily", "date"),
-        ("idx_opt1m_ts", "option_1min", "timestamp, type"),
-        ("idx_opt3m_ts", "option_3min", "timestamp, type"),
-        ("idx_opt5m_ts", "option_5min", "timestamp, type"),
-        ("idx_opt15m_ts", "option_15min", "timestamp, type"),
-        ("idx_scans_ts", "signal_scans", "timestamp"),
-        ("idx_scans_dir", "signal_scans", "direction, fired"),
-        ("idx_trades_date", "trades", "date"),
-    ]
-    for name, table, cols in _indexes:
-        c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
-
-    conn.commit()
-    logger.info("[DB] Database initialized: " + DB_PATH)
+        conn.commit()
+        _initialized = True
+        logger.info("[DB] Database initialized: " + DB_PATH)
 
 
 # ═══════════════════════════════════════════════════════════════
