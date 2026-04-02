@@ -715,6 +715,52 @@ class H(BaseHTTPRequestHandler):
         self.send_error(403, "Forbidden: invalid or missing token")
         return False
 
+    def _db_trades(self):
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        d = q.get("date", [None])[0]
+        try:
+            import VRL_DB as _DB
+            self._j(_DB.get_trades(d))
+        except Exception as e:
+            self._j({"error": str(e)})
+
+    def _db_scans(self):
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        d = q.get("date", [None])[0]
+        direction = q.get("direction", [None])[0]
+        try:
+            import VRL_DB as _DB
+            self._j(_DB.get_scans(d, direction))
+        except Exception as e:
+            self._j({"error": str(e)})
+
+    def _db_spot(self):
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        tf = q.get("tf", ["1min"])[0]
+        table_map = {"1min": "spot_1min", "5min": "spot_5min", "15min": "spot_15min",
+                     "60min": "spot_60min", "daily": "spot_daily"}
+        table = table_map.get(tf, "spot_1min")
+        from_ts = q.get("from", [None])[0]
+        to_ts = q.get("to", [None])[0]
+        try:
+            import VRL_DB as _DB
+            self._j(_DB.get_spot(table, from_ts, to_ts))
+        except Exception as e:
+            self._j({"error": str(e)})
+
+    def _db_stats(self):
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        d = q.get("date", [None])[0]
+        try:
+            import VRL_DB as _DB
+            self._j(_DB.get_stats(d))
+        except Exception as e:
+            self._j({"error": str(e)})
+
     def do_GET(self):
         if not self._check_auth():
             return
@@ -745,6 +791,14 @@ class H(BaseHTTPRequestHandler):
             self._send_file(p[14:])  # strip /api/download/
         elif p == "/api/logs/download" or p.startswith("/api/logs/download?"):
             self._download_daily_logs()
+        elif p == "/api/db/trades" or p.startswith("/api/db/trades?"):
+            self._db_trades()
+        elif p == "/api/db/scans" or p.startswith("/api/db/scans?"):
+            self._db_scans()
+        elif p == "/api/db/spot" or p.startswith("/api/db/spot?"):
+            self._db_spot()
+        elif p == "/api/db/stats" or p.startswith("/api/db/stats?"):
+            self._db_stats()
         else:self.send_error(404)
 
 if __name__=="__main__":

@@ -395,6 +395,13 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     except Exception as e:
         logger.error("[MAIN] Trade log error: " + str(e))
 
+    # Dual write: SQLite
+    try:
+        import VRL_DB as _DB
+        _DB.insert_trade(row)
+    except Exception:
+        pass
+
 def _read_today_trades() -> list:
     today_str = date.today().isoformat()
     trades    = []
