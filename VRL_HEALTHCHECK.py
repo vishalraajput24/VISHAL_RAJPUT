@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
 #  VRL_HEALTHCHECK.py — VISHAL RAJPUT TRADE v13.0
 #  Runs at 9:30 AM — verifies all critical systems

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/user/kite_env/bin/python3
 """
 VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.0
 DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.

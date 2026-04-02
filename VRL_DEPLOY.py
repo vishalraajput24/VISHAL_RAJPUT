@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
 #  VRL_DEPLOY.py — VISHAL RAJPUT TRADE v12.16
 #  Independent watchdog daemon. Runs separately from VRL_MAIN.
@@ -106,7 +106,7 @@ def _cmd_deploy():
         time.sleep(3)
 
         # Step 4: Start new bot
-        py = VENV_PY if os.path.isfile(VENV_PY) else "python3"
+        py = VENV_PY  # always use ~/kite_env/bin/python3
         main_py = os.path.join(REPO_DIR, "VRL_MAIN.py")
         with open(OUT_LOG, "a") as out:
             subprocess.Popen(
