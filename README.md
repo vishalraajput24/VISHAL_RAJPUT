@@ -47,19 +47,22 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 | `config.yaml` | **Central config** — all tunable values. Change here, restart, done. |
 | `VRL_CONFIG.py` | Config loader + validator. Typed accessors, fails fast. |
 | `VRL_MAIN.py` | Master orchestrator. Strategy loop, 2-lot execution, state, alerts, dashboard. |
-| `VRL_ENGINE.py` | **Minimal signal logic.** EMA gap + RSI entry. Profit floors + RSI split exit. |
+| `VRL_ENGINE.py` | **Minimal signal logic.** EMA gap + RSI entry. Profit floors + RSI split exit. Direction-aware cooldown. RSI hard cap. |
 | `VRL_DATA.py` | Foundation. WebSocket, indicators, Greeks, spot analysis, data cache, IST timezone. |
-| `VRL_LAB.py` | Data collector. All timeframes, forward fill at EOD, daily summary. |
+| `VRL_DB.py` | **SQLite database layer.** 11 tables, WAL mode, dual-write with CSV. Query helpers. |
+| `VRL_LAB.py` | Data collector. All timeframes, forward fill at EOD, daily summary. Writes CSV + SQLite. |
 | `VRL_AUTH.py` | Kite authentication. Auto-login via TOTP. |
 | `VRL_TRADE.py` | Order execution. Paper fills. Only file that touches orders. |
 | `VRL_TRADE_LIVE.py` | Production orders. Auto-loaded when `mode: live` in config. |
-| `VRL_WEB.py` | War Room dashboard. Reads JSON, zero calculations. |
+| `VRL_WEB.py` | War Room API server. Serves `static/index.html` + JSON APIs. SQLite-powered endpoints. |
+| `static/index.html` | **Production dashboard.** Glassmorphism dark theme, gradient backgrounds, RSI progress bars. |
 | `VRL_COMMANDS.py` | Telegram command handlers. |
 | `VRL_HEALTHCHECK.py` | Pre-market system verification. |
 | `VRL_DEPLOY.py` | Telegram-triggered deployment. |
 | `research_zones.py` | Demand/supply zone detector. |
-| `research_ml.py` | ML training on scan logs. |
-| `test_vrl.py` | 26 automated tests for v13.0. |
+| `research_ml.py` | ML training on scan logs. Reads SQLite first, CSV fallback. |
+| `import_csv_to_db.py` | One-time CSV → SQLite import script. |
+| `test_vrl.py` | **35 automated tests** for v13.0 (cooldown, RSI cap, PNL correctness). |
 
 ---
 
@@ -70,13 +73,21 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 | # | Check | Condition | Why |
 |---|-------|-----------|-----|
 | 1 | **EMA Gap** | EMA9 - EMA21 >= 3pts | Trend exists |
-| 2 | **RSI** | RSI >= 50 AND rising | Momentum confirmed |
+| 2 | **RSI** | RSI >= 50 AND rising AND <= 72 | Momentum confirmed, not blowoff |
 | 3 | **Green Candle** | Close > Open | Not entering on reversal |
 | 4 | **Gap Widening** | Current gap > Previous gap | Trend accelerating, not fading |
 
 All 4 pass → **ENTER 2 LOTS**
 
-No regime gate. No ADX. No 3-min gate. No scoring system. No volume check. No body check. No spread gate.
+### Pre-Entry Guards
+| Guard | Rule |
+|-------|------|
+| **RSI Hard Cap** | RSI > 72 = BLOCKED (blowoff territory) |
+| **Direction Cooldown** | Same direction after big win (peak >= 10pts): blocked 10min |
+| | Same direction after small/loss (peak < 10pts): blocked 5min |
+| | Opposite direction: enter immediately |
+| **Daily Limits** | Max trades, max losses per config |
+| **Market Hours** | 9:15-15:10 IST |
 
 ---
 
@@ -126,9 +137,14 @@ No regime gate. No ADX. No 3-min gate. No scoring system. No volume check. No bo
 ```yaml
 mode: paper          # paper | live
 
+cooldown:
+  after_win: 10      # minutes: same-dir cooldown after peak >= 10pts
+  after_loss: 5      # minutes: same-dir cooldown after peak < 10pts
+
 entry:
   ema_gap_min: 3     # EMA9 - EMA21 minimum
   rsi_min: 50        # RSI floor
+  rsi_max: 72        # RSI hard cap — blowoff territory
 
 exit:
   hard_sl: 12        # initial SL points
@@ -168,32 +184,52 @@ Change any value, restart bot. No code changes needed.
 
 ## Dashboard
 
-`http://SERVER_IP:8080`
+`http://SERVER_IP:8080` — Production glassmorphism dashboard (`static/index.html`)
 
-Shows for each CE/PE:
-- EMA9, EMA21, EMA Gap (with ✅/❌)
-- RSI + RSI prev (with ✅/❌)
-- Green candle status
-- Gap trend (widening/shrinking)
+**Signals Tab** — CE/PE side by side:
+- EMA9, EMA21, EMA Gap (with color + icons)
+- RSI (with rising indicator)
+- Green candle, gap trend
 - Verdict: FIRED / READY / waiting reason
+- Cooldown timer when active
 
-Position tab shows: lot 1/lot 2 status, floor SL, ATR trail, peak, RSI.
+**Position Card** (when in trade):
+- Gradient border (green = profit, red = loss)
+- Big PNL with rupee value
+- Lot 1/Lot 2 status with SL values
+- RSI progress bar to split (animated, glows near 70)
+- Floor step indicators: [+10 ✅] → [+20 ✅] → [+30 ⏳]
+- Clean symbols: "CE 22500" not "NIFTY2640722500CE"
+
+**Market Tab** — Spot data, multi-TF tables, fib pivots, zones, straddle
+**Trades Tab** — Day summary + scrollable trade cards with win/loss colors
 
 ---
 
 ## Data Collection
 
-All timeframes collected for future ML:
+All timeframes collected for future ML. **Dual write: CSV + SQLite.**
 
-| Data | Frequency |
-|------|-----------|
-| Signal scan | Every minute (CE + PE) |
-| Option 1min/3min/5min/15min | Per candle close |
-| Spot 1min/5min/15min/60min/daily | Per candle close |
-| Forward fill | EOD at 15:35 |
-| Daily summary | EOD |
+| Data | Frequency | SQLite Table |
+|------|-----------|-------------|
+| Signal scan | Every minute (CE + PE) | `signal_scans` |
+| Option 1min/3min/5min/15min | Per candle close | `option_1min` / `option_3min` / etc. |
+| Spot 1min/5min/15min/60min/daily | Per candle close | `spot_1min` / `spot_5min` / etc. |
+| Trades | Per trade exit | `trades` |
+| Forward fill | EOD at 15:35 | Updated in-place via SQL |
+| Daily summary | EOD | CSV only |
 
-**Lab data retention**: Auto-deletes CSVs older than 30 days.
+**Database**: `~/lab_data/vrl_data.db` (SQLite, WAL mode, ~3MB)
+
+**API Endpoints** (SQLite-powered):
+| Endpoint | Example |
+|----------|---------|
+| `/api/db/trades?date=2026-04-02` | Today's trades |
+| `/api/db/scans?date=2026-04-02&direction=CE` | CE scans for a date |
+| `/api/db/spot?tf=5min&from=09:15&to=15:30` | Spot data range |
+| `/api/db/stats?date=2026-04-02` | Trade stats (count, avg, wins) |
+
+**Lab data retention**: Auto-deletes CSVs older than 30 days. SQLite persists forever.
 
 ---
 
@@ -227,8 +263,9 @@ TG_GROUP_ID=xxx
 
 # Run
 cd ~/VISHAL_RAJPUT
-python test_vrl.py     # verify 26/26
-python VRL_MAIN.py     # start bot
+~/kite_env/bin/python3 test_vrl.py          # verify 35/35
+~/kite_env/bin/python3 import_csv_to_db.py  # one-time CSV → SQLite import
+~/kite_env/bin/python3 VRL_MAIN.py          # start bot
 ```
 
 ### Crontab
@@ -244,7 +281,7 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 
 ## Test Suite
 
-`test_vrl.py` — **26 tests**:
+`test_vrl.py` — **35 tests**:
 - Strike selection (DTE 0/1+, tolerance zones)
 - Version check
 - EMA gap + RSI entry (fire, block on gap, block on RSI)
@@ -254,3 +291,9 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 - Profit floors
 - RSI blowoff exit
 - RSI lot split
+- **Cooldown: same direction blocked after big win (10min)**
+- **Cooldown: opposite direction allowed immediately**
+- **Cooldown: same direction blocked after loss (5min)**
+- **Cooldown: same direction allowed after cooldown expires**
+- **RSI hard cap: RSI 73 blocked, RSI 71 allowed**
+- **PNL: split lot correctness (saved_entry_price survives reset)**
