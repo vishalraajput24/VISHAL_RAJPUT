@@ -364,7 +364,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     '<div class="row"><div class="k">EMA 21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
     '<div class="row"><div class="k">EMA SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'pts</div></div>'+
     '<div class="row"><div class="k">RSI (3m)</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
-    '<div class="row"><div class="k">REGIME</div><div class="v" style="color:'+(mk.regime.includes('TREND')?'var(--gn)':'var(--am)')+'">'+esc(mk.regime)+'</div></div>'+
+    '<div class="row"><div class="k">REGIME</div><div class="v" style="color:'+((mk.regime||'').includes('TREND')?'var(--gn)':'var(--am)')+'">'+esc(mk.regime||'')+'</div></div>'+
     '<div class="row"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'pts</div></div>'+
     '<div style="padding:6px 10px;font-size:10px;color:'+(mk.spot_spread>5?'var(--gn)':mk.spot_spread<-5?'var(--rd)':'var(--am)')+'">'+
     (mk.spot_spread>10?'🚀 Strong uptrend — EMA9 pulling away from EMA21':
