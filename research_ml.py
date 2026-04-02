@@ -5,7 +5,7 @@
 #  Run daily after market close to retrain on latest data.
 #
 #  Phase 1: Research only — DO NOT integrate with bot yet.
-#  Crontab: 40 15 * * 1-5 cd ~/VISHAL_RAJPUT && python3 research_ml.py >> ~/logs/ml.log 2>&1
+#  Crontab: 40 15 * * 1-5 cd ~/VISHAL_RAJPUT && ~/kite_env/bin/python3 research_ml.py >> ~/logs/ml.log 2>&1
 # ═══════════════════════════════════════════════════════════════
 
 import pandas as pd

@@ -864,7 +864,7 @@ def _cmd_researchdata(args):
                 all_files.append((fpath, prefix + f))
 
     if not all_files:
-        _tg_send("📂 No research data yet.\nRun: python3 research_strikes.py\nor: python3 research_enhanced.py")
+        _tg_send("📂 No research data yet.\nRun: ~/kite_env/bin/python3 research_strikes.py\nor: ~/kite_env/bin/python3 research_enhanced.py")
         return
 
     total_size = sum(os.path.getsize(f[0]) for f in all_files)
