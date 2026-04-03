@@ -1354,11 +1354,23 @@ def _strategy_loop(kite):
                     # Dashboard update EVERY cycle during trade (before exits)
                     try:
                         _trade_scan = {}
+                        _trade_dir = state.get("direction", "")
+                        _trade_token = state.get("token")
+                        _trade_strike = state.get("strike", 0)
                         for _dt in ("CE", "PE"):
-                            _oi = _locked_tokens.get(_dt) if _locked_tokens else None
-                            if _oi:
-                                _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
-                                _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                            if _dt == _trade_dir and _trade_token:
+                                # Use ACTIVE trade token for the traded direction
+                                _sr = check_entry(_trade_token, _dt, spot_ltp, dte, expiry, kite)
+                                _sr["_strike"] = _trade_strike
+                            else:
+                                # Use locked token for opposite direction
+                                _oi = _locked_tokens.get(_dt) if _locked_tokens else None
+                                if _oi:
+                                    _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
+                                    _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                                else:
+                                    _sr = None
+                            if _sr:
                                 _trade_scan[_dt] = _sr
                         _write_dashboard(spot_ltp, state.get("strike", 0),
                                          dte, D.get_vix(), session,
