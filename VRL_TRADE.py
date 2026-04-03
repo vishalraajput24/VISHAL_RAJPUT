@@ -108,6 +108,7 @@ def place_entry(kite, symbol: str, token: int,
             quantity         = qty,
             order_type       = kite.ORDER_TYPE_MARKET,
             product          = kite.PRODUCT_MIS,
+            market_protection = -1,
         )
         logger.info("[TRADE] LIVE ENTRY placed: " + str(order_id))
 
@@ -185,6 +186,7 @@ def place_exit(kite, symbol: str, token: int,
                 quantity         = qty,
                 order_type       = kite.ORDER_TYPE_MARKET,
                 product          = kite.PRODUCT_MIS,
+                market_protection = -1,
             )
             logger.info("[TRADE] LIVE EXIT placed attempt=" + str(attempt + 1)
                         + " order=" + str(order_id))
