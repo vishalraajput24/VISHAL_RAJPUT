@@ -143,6 +143,24 @@ def init_db():
         for name, table, expr in _func_indexes:
             c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({expr})")
 
+        # v13.1: Add charge columns to existing trades table
+        _new_cols = [
+            ("brokerage", "REAL DEFAULT 0"),
+            ("stt", "REAL DEFAULT 0"),
+            ("exchange_charges", "REAL DEFAULT 0"),
+            ("gst", "REAL DEFAULT 0"),
+            ("stamp_duty", "REAL DEFAULT 0"),
+            ("total_charges", "REAL DEFAULT 0"),
+            ("net_pnl_rs", "REAL DEFAULT 0"),
+            ("gross_pnl_rs", "REAL DEFAULT 0"),
+            ("num_exit_orders", "INTEGER DEFAULT 1"),
+        ]
+        for col_name, col_type in _new_cols:
+            try:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass  # column already exists
+
         conn.commit()
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
@@ -300,6 +318,8 @@ _TRADE_FIELDS = [
     "session", "strike", "sl_pts",
     "spread_1m", "spread_3m", "delta_at_entry",
     "bias", "vix_at_entry", "hourly_rsi", "straddle_decay",
+    "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
+    "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
 ]
 
 def insert_trade(row):

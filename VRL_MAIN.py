@@ -34,6 +34,7 @@ import VRL_CONFIG as CFG
 from VRL_TRADE import place_entry, place_exit
 
 from VRL_LAB    import start_lab
+import VRL_CHARGES as CHARGES
 
 # ── Loggers ─────────────────────────────────────────────────────
 logger     = setup_logger("vrl_live", D.LIVE_LOG_FILE)
@@ -326,6 +327,8 @@ TRADE_FIELDNAMES = [
     "spread_1m", "spread_3m", "delta_at_entry",
     "bias", "vix_at_entry", "hourly_rsi",
     "straddle_decay",
+    "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
+    "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
 ]
 
 def _cleanup_trade_log():
@@ -389,6 +392,23 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "hourly_rsi": D.get_hourly_rsi(),
         "straddle_decay": 0.0,
     }
+
+    # Calculate charges
+    _num_exit_orders = 2 if st.get("lots_split", False) else 1
+    _qty = st.get("qty", D.LOT_SIZE * 2)
+    try:
+        _ch = CHARGES.calculate_charges(entry, exit_price, _qty, _num_exit_orders)
+        row["brokerage"] = _ch["brokerage"]
+        row["stt"] = _ch["stt"]
+        row["exchange_charges"] = _ch["exchange"]
+        row["gst"] = _ch["gst"]
+        row["stamp_duty"] = _ch["stamp"]
+        row["total_charges"] = _ch["total_charges"]
+        row["gross_pnl_rs"] = pnl_rs
+        row["net_pnl_rs"] = _ch["net_pnl"]
+        row["num_exit_orders"] = _num_exit_orders
+    except Exception:
+        pass
 
     try:
         with open(D.TRADE_LOG_PATH, "a", newline="") as f:
@@ -561,21 +581,24 @@ def _tg_answer_callback(callback_query_id: str, text: str = ""):
 
 def _alert_bot_started():
     _web_url = "http://" + _WEB_IP + ":8080" if _WEB_IP and _WEB_IP != "unknown" else "http://localhost:8080"
+    _acct = D.get_account_info()
+    _acct_line = ""
+    if _acct.get("name"):
+        _acct_line = ("Account: " + _acct["name"]
+                      + " (" + _acct.get("user_id", "") + ")\n"
+                      "Balance: ₹" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🚀 <b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
+        + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "STRATEGY (v13.1 MINIMAL)\n"
         "Entry  : EMA gap ≥3 + RSI 50-72 rising\n"
         "Cooldown: 10min same-dir after win, 5min after loss\n"
-        "Lots   : 2 lots per entry\n"
-        "SL     : -12pts hard | Floors +10→2, +20→12, +30→22\n"
-        "Split  : RSI 70 splits lots | RSI 75 sells lot 1\n"
-        "Trail  : Lot 2 on ATR×1.5 after split\n"
+        "SL     : -12pts | Floors +10/+20/+30 | RSI split 70/75\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -632,17 +655,30 @@ def _generate_eod_report():
             + "  [" + t.get("exit_reason", "")[:14] + "]\n"
         )
 
+    # Calculate charges summary
+    _total_charges = sum(float(t.get("total_charges", 0)) for t in trades)
+    _total_gross   = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in trades)
+    _total_net     = round(_total_gross - _total_charges, 2)
+    _total_brok    = sum(float(t.get("brokerage", 0)) for t in trades)
+
     _tg_send(
         icon + " <b>EOD REPORT — " + today + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Net PNL    : " + sign + str(round(total_pts, 1)) + "pts  "
-        + sign + "₹" + str(int(total_rs)) + "\n"
+        "Gross PNL  : " + sign + str(round(total_pts, 1)) + "pts  "
+        + sign + "₹" + "{:,}".format(int(_total_gross)) + "\n"
         "Trades     : " + str(n_trades) + "  "
         + "W=" + str(len(wins)) + " L=" + str(len(losses)) + "\n"
         "Win Rate   : " + str(win_rate) + "%\n"
         "Best       : +" + str(round(best, 1)) + "pts\n"
         "Worst      : " + str(round(worst, 1)) + "pts\n"
-        "Conviction : " + str(len(convictions)) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💰 <b>P&L BREAKDOWN</b>\n"
+        "Gross    : " + sign + "₹" + "{:,}".format(int(_total_gross)) + "\n"
+        "Charges  : -₹" + "{:,}".format(int(_total_charges)) + "\n"
+        "  Brokerage: ₹" + "{:,}".format(int(_total_brok)) + "\n"
+        "  STT+Other: ₹" + "{:,}".format(int(_total_charges - _total_brok)) + "\n"
+        "Net      : " + ("+" if _total_net >= 0 else "-") + "₹"
+        + "{:,}".format(abs(int(_total_net))) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADES</b>\n"
         + trade_lines
@@ -829,35 +865,51 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _day_wins   = _day_trades - _day_losses
         _sym_short  = _short_sym(symbol, direction, 0)
         _pnl_sign   = "+" if pnl >= 0 else ""
-        _pnl_rs     = int(pnl_lots * D.LOT_SIZE)
         _day_rs     = int(_day_pnl * D.LOT_SIZE)
         import VRL_CONFIG as _CFG_exit
         _cd_cfg     = _CFG_exit.get().get("cooldown", {})
+        # Calculate charges for Telegram
+        _num_eo = 2 if state.get("lots_split") else 1
+        try:
+            _ch = CHARGES.calculate_charges(entry, actual_exit,
+                      exit_qty, _num_eo)
+        except Exception:
+            _ch = {"gross_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
+                   "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
+                   "charges_pts": 0}
         if pnl >= 0:
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "✅ <b>" + _sym_short + "  " + _pnl_sign + str(round(pnl, 1)) + "pts  ₹"
-                + "{:,}".format(abs(_pnl_rs)) + "</b>\n"
+                "✅ <b>" + _sym_short + "  +" + str(round(pnl, 1)) + "pts</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + " | " + reason + "\n"
-                "Peak: +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1))
+                + " | " + reason + "\n"
+                "Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts ₹"
-                + "{:,}".format(abs(_day_rs)) + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
+                "Gross  : +₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
+                "Charges: -₹" + "{:,}".format(int(_ch["total_charges"]))
+                + " (" + str(_ch["charges_pts"]) + "pts)\n"
+                "Net    : " + ("+" if _ch["net_pnl"] >= 0 else "-") + "₹"
+                + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts"
+                + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
         else:
             _cd_min = _cd_cfg.get("after_loss", 5)
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts  ₹-"
-                + "{:,}".format(abs(_pnl_rs)) + "</b>\n"
+                "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                + reason + " | Peak: " + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                + reason + " | Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                "Gross  : -₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
+                "Charges: -₹" + "{:,}".format(int(_ch["total_charges"])) + "\n"
+                "Net    : -₹" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
                 "⏳ " + direction + " blocked " + str(_cd_min) + "min\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts ₹"
-                + "{:,}".format(abs(_day_rs)) + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
+                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts"
+                + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
     else:
@@ -866,16 +918,26 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
         remaining = "LOT2" if state.get("lot2_active") else "LOT1"
         _sym_short_p = _short_sym(symbol, direction, 0)
-        _pnl_rs_p    = int(pnl * D.LOT_SIZE)
+        try:
+            _ch_p = CHARGES.calculate_lot_charges(entry, actual_exit, D.LOT_SIZE)
+        except Exception:
+            _ch_p = {"net_pnl": pnl * D.LOT_SIZE, "total_charges": 0}
         _tg_send(
             "💰 <b>" + lot_id + " " + _sym_short_p + "</b> "
-            + ("+" if pnl >= 0 else "") + str(round(pnl, 1)) + "pts ₹"
-            + "{:,}".format(abs(_pnl_rs_p)) + "\n"
+            + ("+" if pnl >= 0 else "") + str(round(pnl, 1)) + "pts\n"
             "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1)) + " | " + reason + "\n"
+            "Net ₹" + "{:,}".format(abs(int(_ch_p["net_pnl"])))
+            + " (charges ₹" + str(int(_ch_p["total_charges"])) + ")\n"
             + remaining + " riding..."
         )
 
     _save_state()
+    # Refresh margin after trade (skip in paper mode)
+    if not D.PAPER_MODE:
+        try:
+            D.refresh_margin(kite)
+        except Exception:
+            pass
     logger.info("[MAIN] EXIT " + lot_id + " " + symbol
                 + " price=" + str(actual_exit) + " pnl=" + str(pnl)
                 + "pts reason=" + reason)
@@ -1090,6 +1152,13 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "position": position,
             "today": today_block,
             "straddle": straddle_block,
+            "account": {
+                "name": D.get_account_info().get("name", ""),
+                "user_id": D.get_account_info().get("user_id", ""),
+                "balance": D.get_account_info().get("total_balance", 0),
+                "available": D.get_account_info().get("available_margin", 0),
+                "used": D.get_account_info().get("used_margin", 0),
+            },
         }
 
         # Atomic write
@@ -1639,6 +1708,12 @@ def main():
     kite = get_kite()
     _kite = kite
     D.init(kite)
+
+    # Fetch account info at startup
+    try:
+        D.fetch_account_info(kite)
+    except Exception:
+        pass
 
     live_lot_size = D.get_lot_size(kite)
     D.LOT_SIZE    = live_lot_size

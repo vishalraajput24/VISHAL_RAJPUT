@@ -400,6 +400,7 @@ def create_daily_zip(target_date: str = None) -> str:
 logger = logging.getLogger("vrl_live")
 
 _kite             = None
+_account_info     = {}
 _token_cache      = {}
 _token_cache_lock = threading.Lock()
 _nfo_instruments       = None
@@ -415,6 +416,54 @@ _ws_connected     = False
 def init(kite_instance):
     global _kite
     _kite = kite_instance
+
+
+def fetch_account_info(kite=None):
+    """Fetch profile + margins once at startup and cache."""
+    global _account_info
+    k = kite or _kite
+    if k is None:
+        return _account_info
+    try:
+        profile = k.profile()
+        margins = k.margins(segment="equity")
+        avail = margins.get("available", {})
+        used = margins.get("utilised", {})
+        _account_info = {
+            "name": profile.get("user_name", ""),
+            "user_id": profile.get("user_id", ""),
+            "email": profile.get("email", ""),
+            "broker": "Zerodha",
+            "available_margin": round(float(avail.get("live_balance", 0)), 2),
+            "used_margin": round(float(used.get("debits", 0)), 2),
+            "total_balance": round(float(margins.get("net", 0)), 2),
+        }
+        logger.info("[DATA] Account: " + _account_info["name"]
+                     + " bal=" + str(_account_info["total_balance"]))
+    except Exception as e:
+        logger.warning("[DATA] Account fetch: " + str(e))
+    return _account_info
+
+
+def get_account_info():
+    return _account_info
+
+
+def refresh_margin(kite=None):
+    """Refresh just margin numbers — call after each trade."""
+    global _account_info
+    k = kite or _kite
+    if k is None:
+        return
+    try:
+        margins = k.margins(segment="equity")
+        avail = margins.get("available", {})
+        used = margins.get("utilised", {})
+        _account_info["available_margin"] = round(float(avail.get("live_balance", 0)), 2)
+        _account_info["used_margin"] = round(float(used.get("debits", 0)), 2)
+        _account_info["total_balance"] = round(float(margins.get("net", 0)), 2)
+    except Exception:
+        pass
 
 def _on_ticks(ws, ticks):
     with _tick_lock:

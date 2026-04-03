@@ -249,8 +249,9 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
         "/status    — trade status + PNL\n"
-        "/pnl       — today's P&L summary\n"
+        "/pnl       — P&L with charges breakdown\n"
         "/trades    — today's trade list\n"
+        "/account   — balance + margin info\n"
         "/spot      — Spot trend + gap\n"
         "/pivot     — Fib pivot levels\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -683,15 +684,75 @@ def _cmd_pnl(args):
     pnl    = st.get("daily_pnl", 0)
     sign   = "+" if pnl >= 0 else ""
     streak = st.get("consecutive_losses", 0)
+
+    # Read today's trades for charges breakdown
+    _today_trades = []
+    try:
+        import csv as _csv_pnl
+        today_str = D.date.today().isoformat() if hasattr(D, 'date') else __import__('datetime').date.today().isoformat()
+        if os.path.isfile(D.TRADE_LOG_PATH):
+            with open(D.TRADE_LOG_PATH) as _f:
+                for _r in _csv_pnl.DictReader(_f):
+                    if _r.get("date") == today_str:
+                        _today_trades.append(_r)
+    except Exception:
+        pass
+
+    _total_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
+    _total_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
+    _total_net = round(_total_gross - _total_charges, 2)
+
+    # Trade-by-trade lines
+    _trd_lines = ""
+    for i, t in enumerate(_today_trades, 1):
+        _pts = float(t.get("pnl_pts", 0))
+        _ch = float(t.get("total_charges", 0))
+        _net = float(t.get("net_pnl_rs", t.get("pnl_rs", 0)))
+        _trd_lines += (str(i) + ". " + t.get("direction", "") + " "
+                       + ("+" if _pts >= 0 else "") + str(round(_pts, 1)) + "pts"
+                       + " ch₹" + str(int(_ch))
+                       + " net₹" + str(int(_net)) + "\n")
+
     _tg_send(
         "💰 <b>TODAY P&amp;L</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "PNL    : " + sign + str(round(pnl, 1)) + "pts  " + _rs(pnl) + "\n"
-        "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
-        "Losses : " + str(st.get("daily_losses", 0)) + "/" + str(D.MAX_DAILY_LOSSES) + "\n"
-        "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"
-        "Streak : " + str(streak) + (" 🔴 carries to tomorrow" if streak >= 2 else "") + "\n"
-        "P-Lock : " + ("YES 🔒" if st.get("profit_locked") else "No")
+        "Trades : " + str(st.get("daily_trades", 0)) + "\n"
+        "W/L    : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0))
+        + "W " + str(st.get("daily_losses", 0)) + "L\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + (_trd_lines if _trd_lines else "No trades\n")
+        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Gross    : " + ("+" if _total_gross >= 0 else "") + "₹" + "{:,}".format(int(_total_gross)) + "\n"
+        "Charges  : -₹" + "{:,}".format(int(_total_charges)) + "\n"
+        "Net      : " + ("+" if _total_net >= 0 else "") + "₹" + "{:,}".format(int(_total_net))
+    )
+
+
+def _cmd_account(args):
+    try:
+        _acct = D.get_account_info()
+        # Try to refresh margins
+        if _kite:
+            D.refresh_margin(_kite)
+            _acct = D.get_account_info()
+    except Exception:
+        _acct = D.get_account_info()
+
+    if not _acct.get("name"):
+        _tg_send("Account info not available. Bot may not have fetched it yet.")
+        return
+
+    _tg_send(
+        "👤 <b>ACCOUNT</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Name     : " + _acct.get("name", "") + "\n"
+        "User ID  : " + _acct.get("user_id", "") + "\n"
+        "Broker   : " + _acct.get("broker", "Zerodha") + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Balance  : ₹" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n"
+        "Available: ₹" + "{:,}".format(int(_acct.get("available_margin", 0))) + "\n"
+        "Used     : ₹" + "{:,}".format(int(_acct.get("used_margin", 0)))
     )
 
 def _cmd_score(args):
@@ -1229,6 +1290,7 @@ _DISPATCH = {
     "/align"       : _cmd_align,
     "/pivot"       : _cmd_pivot,
     "/pnl"         : _cmd_pnl,
+    "/account"     : _cmd_account,
     "/trades"      : _cmd_trades,
     "/files"       : _cmd_files,
     "/download"    : _cmd_download,

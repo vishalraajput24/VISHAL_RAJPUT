@@ -367,6 +367,39 @@ test("saved_entry_price survives state reset",
 
 
 # ═══════════════════════════════════════════════════════════════
+#  CHARGES TESTS — VRL_CHARGES.py
+# ═══════════════════════════════════════════════════════════════
+
+section("CHARGES CALCULATOR")
+
+import VRL_CHARGES as CH
+
+# Basic charge calculation
+_c1 = CH.calculate_charges(150, 160, 130, num_exit_orders=1)
+test("Gross PNL = 1300", _c1["gross_pnl"] == 1300, "got " + str(_c1["gross_pnl"]))
+test("Brokerage = 40 (2 orders)", _c1["brokerage"] == 40, "got " + str(_c1["brokerage"]))
+test("Total charges > 0", _c1["total_charges"] > 0, "got " + str(_c1["total_charges"]))
+test("Total charges < 200", _c1["total_charges"] < 200, "got " + str(_c1["total_charges"]))
+test("Net PNL = gross - charges", _c1["net_pnl"] == round(_c1["gross_pnl"] - _c1["total_charges"], 2))
+
+# Split charges: 3 orders total
+_c2 = CH.calculate_split_charges(150, 160, 175, lot_size=65)
+test("Split total brokerage = 60", _c2["total_brokerage"] == 60, "got " + str(_c2["total_brokerage"]))
+test("Split combined gross > lot1", _c2["gross_pnl"] > _c2["lot1"]["gross_pnl"])
+test("Split net > 0 for winning trade", _c2["net_pnl"] > 0, "got " + str(_c2["net_pnl"]))
+
+# Zero PNL: charges eat into it
+_c3 = CH.calculate_charges(150, 150, 130, 1)
+test("Zero trade: gross = 0", _c3["gross_pnl"] == 0)
+test("Zero trade: net < 0 (charges)", _c3["net_pnl"] < 0, "got " + str(_c3["net_pnl"]))
+
+# Loss trade: net more negative than gross
+_c4 = CH.calculate_charges(150, 140, 130, 1)
+test("Loss: net more negative than gross", _c4["net_pnl"] < _c4["gross_pnl"],
+     "net=" + str(_c4["net_pnl"]) + " gross=" + str(_c4["gross_pnl"]))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  DB TESTS (uses temp database)
 # ═══════════════════════════════════════════════════════════════
 
