@@ -421,6 +421,14 @@ def _read_today_trades() -> list:
 #  TELEGRAM — SEND HELPERS
 # ═══════════════════════════════════════════════════════════════
 
+# Dynamic public IP — resolved once at module load
+_WEB_IP = ""
+try:
+    import subprocess as _sp
+    _WEB_IP = _sp.check_output(["curl", "-s", "ifconfig.me"], timeout=5).decode().strip()
+except Exception:
+    _WEB_IP = "unknown"
+
 def _now_str() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
@@ -548,23 +556,24 @@ def _tg_answer_callback(callback_query_id: str, text: str = ""):
 # ═══════════════════════════════════════════════════════════════
 
 def _alert_bot_started():
+    _web_url = "http://" + _WEB_IP + ":8080" if _WEB_IP and _WEB_IP != "unknown" else "http://localhost:8080"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🚀 <b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Time   : " + _now_str() + "\n"
         "Mode   : " + _mode_tag() + "\n"
+        "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "STRATEGY (v13.0 MINIMAL)\n"
-        "Entry  : EMA gap ≥3 + RSI ≥50 rising (1-min only)\n"
+        "STRATEGY (v13.1 MINIMAL)\n"
+        "Entry  : EMA gap ≥3 + RSI 50-72 rising\n"
+        "Cooldown: 10min same-dir after win, 5min after loss\n"
         "Lots   : 2 lots per entry\n"
         "SL     : -12pts hard | Floors +10→2, +20→12, +30→22\n"
         "Split  : RSI 70 splits lots | RSI 75 sells lot 1\n"
         "Trail  : Lot 2 on ATR×1.5 after split\n"
-        "Strike : CE/PE locked until spot moves 150+pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "P-Lock : +" + str(D.PROFIT_LOCK_PTS) + "pts\n"
-        "/help for commands."
+        "/help for commands"
     )
 
 def _alert_profit_lock(daily_pnl: float):

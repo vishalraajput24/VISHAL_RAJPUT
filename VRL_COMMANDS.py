@@ -16,6 +16,14 @@ import VRL_DATA as D
 import logging
 logger = logging.getLogger("vrl_live")
 
+# Dynamic public IP — resolved once at module load
+_WEB_IP = ""
+try:
+    import subprocess as _sp
+    _WEB_IP = _sp.check_output(["curl", "-s", "ifconfig.me"], timeout=5).decode().strip()
+except Exception:
+    _WEB_IP = "unknown"
+
 # ── Module refs (set by setup()) ──────────────────────────────
 state       = None
 _state_lock = None
@@ -259,8 +267,10 @@ def _cmd_help(args):
         "/restart   — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | EMA gap≥3 + RSI≥50↑ + Green + Widening\n"
-        + "2 lots | SL -12 | Floors +10/+20/+30 | RSI split 70/75"
+        + " | EMA gap≥3 + RSI 50-72↑ + Green + Widening\n"
+        + "2 lots | SL -12 | Floors +10/+20/+30 | RSI split 70/75\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
 
 def _cmd_status(args):
