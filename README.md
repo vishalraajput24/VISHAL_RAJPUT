@@ -52,16 +52,11 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 | `VRL_DB.py` | **SQLite database layer.** 11 tables, WAL mode, dual-write with CSV. Query helpers. |
 | `VRL_LAB.py` | Data collector. All timeframes, forward fill at EOD, daily summary. Writes CSV + SQLite. |
 | `VRL_AUTH.py` | Kite authentication. Auto-login via TOTP. |
-| `VRL_TRADE.py` | Order execution. Paper fills. Only file that touches orders. |
-| `VRL_TRADE_LIVE.py` | Production orders. Auto-loaded when `mode: live` in config. |
-| `VRL_WEB.py` | War Room API server. Serves `static/index.html` + JSON APIs. SQLite-powered endpoints. |
-| `static/index.html` | **Production dashboard.** Glassmorphism dark theme, gradient backgrounds, RSI progress bars. |
+| `VRL_TRADE.py` | Order execution. Paper + Live mode in one file. Only file that touches orders. |
+| `VRL_WEB.py` | War Room API server. Serves `static/VRL_DASHBOARD.html` + JSON APIs. SQLite-powered endpoints. |
+| `static/VRL_DASHBOARD.html` | **Production dashboard.** Glassmorphism dark theme, gradient backgrounds, RSI progress bars. |
 | `VRL_COMMANDS.py` | Telegram command handlers. |
-| `VRL_HEALTHCHECK.py` | Pre-market system verification. |
 | `VRL_DEPLOY.py` | Telegram-triggered deployment. |
-| `research_zones.py` | Demand/supply zone detector. |
-| `research_ml.py` | ML training on scan logs. Reads SQLite first, CSV fallback. |
-| `import_csv_to_db.py` | One-time CSV → SQLite import script. |
 | `test_vrl.py` | **35 automated tests** for v13.0 (cooldown, RSI cap, PNL correctness). |
 
 ---
@@ -184,7 +179,7 @@ Change any value, restart bot. No code changes needed.
 
 ## Dashboard
 
-`http://SERVER_IP:8080` — Production glassmorphism dashboard (`static/index.html`)
+`http://SERVER_IP:8080` — Production glassmorphism dashboard (`static/VRL_DASHBOARD.html`)
 
 **Signals Tab** — CE/PE side by side:
 - EMA9, EMA21, EMA Gap (with color + icons)
@@ -264,7 +259,6 @@ TG_GROUP_ID=xxx
 # Run
 cd ~/VISHAL_RAJPUT
 ~/kite_env/bin/python3 test_vrl.py          # verify 35/35
-~/kite_env/bin/python3 import_csv_to_db.py  # one-time CSV → SQLite import
 ~/kite_env/bin/python3 VRL_MAIN.py          # start bot
 ```
 
@@ -274,7 +268,6 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 0  8 * * 1-5  /home/.../kite_env/bin/python3 VRL_AUTH.py
 0  9 * * 1-5  pkill -f VRL_WEB.py; .../python3 VRL_WEB.py &
 10 9 * * 1-5  pkill -f VRL_MAIN.py; .../python3 VRL_MAIN.py &
-18 9 * * 1-5  .../python3 VRL_HEALTHCHECK.py
 ```
 
 ---

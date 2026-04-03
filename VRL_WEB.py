@@ -768,7 +768,7 @@ class H(BaseHTTPRequestHandler):
         if p=="/files" or p.startswith("/files?"):self._files_page();return
         if p in("/","/dashboard"):
             # Serve static/index.html if it exists, otherwise fallback to inline HTML
-            static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "index.html")
+            static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "VRL_DASHBOARD.html")
             if os.path.isfile(static_path):
                 self.send_response(200)
                 self.send_header("Content-Type","text/html")

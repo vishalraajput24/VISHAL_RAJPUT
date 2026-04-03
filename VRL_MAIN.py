@@ -29,14 +29,9 @@ from VRL_ENGINE import (
     compute_entry_sl, check_expiry_breakout,
     get_option_ema_spread,
 )
-# Auto paper/live trade module switch — based on config.yaml mode
+# VRL_TRADE handles both paper and live mode
 import VRL_CONFIG as CFG
-if CFG.is_live():
-    from VRL_TRADE_LIVE import place_entry, place_exit
-    logger_boot = logging.getLogger("vrl_live")
-    logger_boot.info("[MAIN] LIVE mode — using VRL_TRADE_LIVE")
-else:
-    from VRL_TRADE import place_entry, place_exit
+from VRL_TRADE import place_entry, place_exit
 
 from VRL_LAB    import start_lab
 
