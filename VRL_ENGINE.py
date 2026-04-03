@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.0
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.1
 #  Minimal signal logic. EMA gap + RSI entry. 2-lot exit.
 # ═══════════════════════════════════════════════════════════════
 

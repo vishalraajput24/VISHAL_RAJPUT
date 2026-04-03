@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DEPLOY.py — VISHAL RAJPUT TRADE v12.16
+#  VRL_DEPLOY.py — VISHAL RAJPUT TRADE v13.1
 #  Independent watchdog daemon. Runs separately from VRL_MAIN.
 #  Polls Telegram for /deploy, /serverstatus, /serverlog.
 #  Can restart the bot even when bot is dead.

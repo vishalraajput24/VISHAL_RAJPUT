@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.0
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.1
 #  Master orchestration. Minimal strategy: EMA gap + RSI.
 #  2-lot execution with profit floors + RSI split.
 # ═══════════════════════════════════════════════════════════════
@@ -283,6 +283,15 @@ def _reset_daily(today_str: str):
     D.clear_token_cache()
     D.reset_daily_warnings()
     _reset_strike_lock()
+    # DB maintenance
+    try:
+        import VRL_DB as _DB
+        _DB.cleanup_old_db_data()
+        from datetime import date as _d
+        if _d.today().weekday() == 6:  # Sunday
+            _DB.vacuum_db()
+    except Exception:
+        pass
     logger.info("[MAIN] Daily reset")
     _save_state()
 

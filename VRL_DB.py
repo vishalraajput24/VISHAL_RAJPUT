@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DB.py — VISHAL RAJPUT TRADE v13.0
+#  VRL_DB.py — VISHAL RAJPUT TRADE v13.1
 #  SQLite database helper. WAL mode for concurrent reads.
 #  All lab data + trades in ~/lab_data/vrl_data.db
 # ═══════════════════════════════════════════════════════════════
@@ -129,9 +129,19 @@ def init_db():
             ("idx_scans_ts", "signal_scans", "timestamp"),
             ("idx_scans_dir", "signal_scans", "direction, fired"),
             ("idx_trades_date", "trades", "date"),
+            ("idx_trades_dir", "trades", "direction, date"),
+        ]
+        # Functional indexes (date-based queries)
+        _func_indexes = [
+            ("idx_scans_date", "signal_scans", "date(timestamp)"),
+            ("idx_opt1m_date", "option_1min", "date(timestamp)"),
+            ("idx_opt3m_date", "option_3min", "date(timestamp)"),
+            ("idx_spot1m_date", "spot_1min", "date(timestamp)"),
         ]
         for name, table, cols in _indexes:
             c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
+        for name, table, expr in _func_indexes:
+            c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({expr})")
 
         conn.commit()
         _initialized = True
@@ -411,6 +421,67 @@ def close():
         except Exception:
             pass
         _local.conn = None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  MAINTENANCE
+# ═══════════════════════════════════════════════════════════════
+
+def cleanup_old_db_data(retention_days=30):
+    """Delete rows older than N days from candle/scan tables. Never touches trades or spot_daily."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=retention_days)).isoformat()
+    conn = get_conn()
+    tables = ["spot_1min", "spot_5min", "spot_15min", "spot_60min",
+              "option_1min", "option_3min", "option_5min", "option_15min",
+              "signal_scans"]
+    total = 0
+    for t in tables:
+        try:
+            cur = conn.execute(f"DELETE FROM {t} WHERE timestamp < ?", (cutoff,))
+            n = cur.rowcount
+            if n > 0:
+                total += n
+                logger.info("[DB] Cleaned " + t + ": " + str(n) + " rows (before " + cutoff + ")")
+        except Exception as e:
+            logger.debug("[DB] Cleanup " + t + ": " + str(e))
+    if total > 0:
+        conn.commit()
+        logger.info("[DB] Total cleaned: " + str(total) + " rows")
+
+
+def vacuum_db():
+    """Optimize and vacuum the database. Run weekly."""
+    conn = get_conn()
+    try:
+        before = db_size_mb()
+        conn.execute("PRAGMA optimize")
+        conn.execute("VACUUM")
+        after = db_size_mb()
+        logger.info("[DB] Vacuum done: " + str(before) + "MB → " + str(after) + "MB")
+    except Exception as e:
+        logger.debug("[DB] Vacuum error: " + str(e))
+
+
+def db_size_mb() -> float:
+    """Return database file size in MB."""
+    try:
+        return round(os.path.getsize(DB_PATH) / (1024 * 1024), 2)
+    except Exception:
+        return 0.0
+
+
+def db_stats() -> dict:
+    """Return row counts for all tables + file size."""
+    result = {"size_mb": db_size_mb(), "tables": {}}
+    try:
+        tables = query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        for t in tables:
+            cnt = query(f"SELECT count(*) as n FROM {t['name']}")
+            result["tables"][t["name"]] = cnt[0]["n"] if cnt else 0
+    except Exception:
+        pass
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════

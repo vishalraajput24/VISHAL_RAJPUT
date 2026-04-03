@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_LAB.py — VISHAL RAJPUT TRADE v12.16
+#  VRL_LAB.py — VISHAL RAJPUT TRADE v13.1
 #  Independent lab data collector. Separate process.
 #  Collects 1-min + 3-min option candles. EOD forward fill.
 #  Zero connection to trade loop. Cannot affect money.
@@ -905,6 +905,20 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
     except Exception as e:
         logger.error("[LAB] Fwd fill write error: " + str(e))
 
+    # Dual write: update SQLite forward fill columns
+    try:
+        update_fn = DB.update_option_1min_fwd if timeframe == "1min" else DB.update_option_3min_fwd
+        for row in rows:
+            if row.get(fwd_keys[-1]):
+                ts = row.get("timestamp", "")
+                ot = row.get("type", "")
+                if timeframe == "1min":
+                    update_fn(ts, ot, row.get("fwd_1c"), row.get("fwd_3c"), row.get("fwd_5c"), row.get("fwd_outcome"))
+                else:
+                    update_fn(ts, ot, row.get("fwd_3c"), row.get("fwd_6c"), row.get("fwd_9c"), row.get("fwd_outcome"))
+    except Exception:
+        pass
+
 
 # ─── LAB SCHEDULER ────────────────────────────────────────────
 
@@ -1037,6 +1051,17 @@ def fill_forward_scan(kite, target_date: date = None):
         logger.info("[LAB] Scan fwd fill done: " + str(changed) + " rows")
     except Exception as e:
         logger.error("[LAB] Scan fwd write: " + str(e))
+
+    # Dual write: update SQLite scan forward fill
+    try:
+        for row in rows:
+            if row.get("fwd_3c"):
+                DB.update_scan_fwd(
+                    row.get("timestamp", ""), row.get("direction", ""),
+                    row.get("fwd_3c"), row.get("fwd_5c"), row.get("fwd_10c"),
+                    row.get("fwd_outcome"))
+    except Exception:
+        pass
 
 
 # ─── DAILY SUMMARY CSV (v12.15) ──────────────────────────────

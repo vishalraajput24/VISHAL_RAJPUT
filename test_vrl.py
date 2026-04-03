@@ -1,7 +1,7 @@
 #!/home/user/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.0 Test Suite
+ test_vrl.py — VISHAL RAJPUT TRADE v13.1 Test Suite
  Minimal strategy: EMA gap + RSI entry, 2-lot exit.
 ═══════════════════════════════════════════════════════════════
 """
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.0", D.VERSION == "v13.0", "got " + str(D.VERSION))
+test("VERSION = v13.1", D.VERSION == "v13.1", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -364,6 +364,126 @@ _sim_state["entry_price"] = 0.0  # simulate reset (trade_done)
 test("saved_entry_price survives state reset",
      _saved == 200.0 and _sim_state["entry_price"] == 0.0,
      "saved=" + str(_saved) + " state=" + str(_sim_state["entry_price"]))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DB TESTS (uses temp database)
+# ═══════════════════════════════════════════════════════════════
+
+section("DATABASE — VRL_DB")
+
+import VRL_DB as DB
+import tempfile, os as _os
+
+# Use temp DB for tests
+_orig_db = DB.DB_PATH
+_tmp_db = tempfile.mktemp(suffix=".db")
+DB.DB_PATH = _tmp_db
+DB._initialized = False
+if hasattr(DB._local, "conn"):
+    DB._local.conn = None
+
+DB.init_db()
+test("DB init creates tables", _os.path.isfile(_tmp_db), "file not created")
+
+# Insert spot and read back
+DB.insert_spot_1min({"timestamp": "2026-04-01 09:16:00", "open": 22800, "high": 22810,
+    "low": 22795, "close": 22805, "volume": 1000, "ema9": 22803, "ema21": 22800,
+    "ema_spread": 3, "rsi": 55, "adx": 20})
+_spot = DB.query("SELECT * FROM spot_1min WHERE timestamp='2026-04-01 09:16:00'")
+test("insert_spot_1min + query", len(_spot) == 1 and _spot[0]["close"] == 22805,
+     "got " + str(len(_spot)) + " rows")
+
+# Insert trade and read back
+DB.insert_trade({"date": "2026-04-01", "entry_time": "10:00", "exit_time": "10:05",
+    "symbol": "NIFTY22800CE", "direction": "CE", "mode": "MINIMAL",
+    "entry_price": 300, "exit_price": 312, "pnl_pts": 12, "pnl_rs": 780,
+    "peak_pnl": 15, "trough_pnl": -2, "exit_reason": "PROFIT_FLOOR",
+    "exit_phase": 2, "score": 0, "iv_at_entry": 18, "regime": "TRENDING",
+    "dte": 3, "candles_held": 5, "session": "MORNING", "strike": 22800,
+    "sl_pts": 12, "spread_1m": 3, "spread_3m": 0, "delta_at_entry": 0.45,
+    "bias": "BULL", "vix_at_entry": 15, "hourly_rsi": 55, "straddle_decay": 0})
+_trades = DB.get_trades("2026-04-01")
+test("insert_trade + get_trades", len(_trades) == 1 and _trades[0]["pnl_pts"] == 12,
+     "got " + str(len(_trades)) + " rows")
+
+# Bulk insert scans
+_scans = [
+    {"timestamp": "2026-04-01 10:00:00", "direction": "CE", "fired": "1",
+     "session": "MORNING", "dte": 3, "atm_strike": 22800, "spot": 22800,
+     "entry_price": 300, "score": 5},
+    {"timestamp": "2026-04-01 10:01:00", "direction": "PE", "fired": "0",
+     "session": "MORNING", "dte": 3, "atm_strike": 22800, "spot": 22800,
+     "entry_price": 280, "score": 2},
+]
+DB.insert_scan_many(_scans)
+_sc = DB.query("SELECT count(*) as n FROM signal_scans")
+test("insert_scan_many bulk", _sc[0]["n"] == 2, "got " + str(_sc[0]["n"]))
+
+# db_size_mb (temp db exists after inserts)
+sz = _os.path.getsize(_tmp_db) if _os.path.isfile(_tmp_db) else 0
+test("db file created with data", sz > 0, "got " + str(sz) + " bytes")
+
+# cleanup_old_db_data never deletes trades
+DB.cleanup_old_db_data(retention_days=0)
+_trades2 = DB.get_trades("2026-04-01")
+test("cleanup preserves trades", len(_trades2) == 1, "got " + str(len(_trades2)))
+
+# Cleanup temp
+try:
+    DB.close()
+    _os.unlink(_tmp_db)
+except Exception:
+    pass
+DB.DB_PATH = _orig_db
+DB._initialized = False
+if hasattr(DB._local, "conn"):
+    DB._local.conn = None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  EXIT PATH TESTS (comprehensive)
+# ═══════════════════════════════════════════════════════════════
+
+section("EXIT PATHS — COMPREHENSIVE")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    # HARD_SL at exactly -12
+    _st = _make_exit_state(200, peak=0, candles=1)
+    _ex = E.manage_exit(_st, 188, {})
+    test("HARD_SL at -12", len(_ex) == 1 and _ex[0]["reason"] == "HARD_SL")
+
+    # STALE at 3 candles + peak < 3
+    _st = _make_exit_state(200, peak=2, candles=3)
+    _ex = E.manage_exit(_st, 201, {})
+    test("STALE at 3 candles peak<3", len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
+
+    # PROFIT_FLOOR at peak 10 drop to floor
+    _st = _make_exit_state(200, peak=10, candles=5)
+    _ex = E.manage_exit(_st, 201, {})
+    test("PROFIT_FLOOR peak 10", len(_ex) == 1 and "FLOOR" in _ex[0]["reason"])
+
+# RSI_BLOWOFF at 82
+_st = _make_exit_state(200, peak=15, candles=5)
+with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        _ex = E.manage_exit(_st, 220, {})
+        test("RSI_BLOWOFF at 82", len(_ex) >= 1 and "BLOWOFF" in _ex[0]["reason"])
+
+# RSI split at 71
+_st = _make_exit_state(200, peak=15, candles=5)
+with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(71)):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        _ex = E.manage_exit(_st, 215, {})
+        test("RSI 71 sets lots_split", _st.get("lots_split") == True)
+
+# Partial exit: lot1 exits, lot2 stays
+_st = _make_exit_state(200, peak=15, candles=5, split=True)
+with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(77)):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        _ex = E.manage_exit(_st, 215, {})
+        has_lot1 = any(e.get("lot_id") == "LOT1" for e in _ex)
+        test("Partial: lot1 exits at RSI 77", has_lot1 and _st.get("lot2_active"))
 
 
 # ═══════════════════════════════════════════════════════════════
