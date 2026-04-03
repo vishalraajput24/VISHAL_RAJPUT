@@ -26,7 +26,7 @@ from VRL_AUTH   import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     loss_streak_gate, check_profit_lock,
-    compute_entry_sl, check_expiry_breakout,
+    compute_entry_sl,
     get_option_ema_spread,
 )
 # VRL_TRADE handles both paper and live mode
@@ -1394,39 +1394,8 @@ def _strategy_loop(kite):
                     dir_tokens = tokens
                     dir_strikes = {"CE": atm_strike, "PE": atm_strike}
 
-                # v12.15: EXPIRY BREAKOUT MODE (DTE=0)
-                if dte == 0:
-                    try:
-                        eb_result = check_expiry_breakout(
-                            kite, spot_ltp, atm_strike, expiry, session)
-                        if eb_result.get("fired"):
-                            # Use the token/strike/symbol from breakout result
-                            eb_token  = eb_result.get("token")
-                            eb_type   = eb_result.get("direction", "CE")
-                            eb_strike = eb_result.get("strike", atm_strike)
-                            eb_symbol = eb_result.get("symbol", "")
-
-                            # Get or create opt_info
-                            eb_tokens = D.get_option_tokens(kite, eb_strike, expiry)
-                            eb_opt_info = eb_tokens.get(eb_type) if eb_tokens else None
-
-                            if eb_opt_info:
-                                # Pre-entry checks (cooldown, margin, etc)
-                                option_ltp_now = D.get_ltp(eb_opt_info["token"])
-                                ok, reason = pre_entry_checks(
-                                    kite, eb_opt_info["token"], state,
-                                    option_ltp_now, profile, session,
-                                    direction=eb_type)
-                                if ok:
-                                    _execute_entry(kite, eb_opt_info, eb_type,
-                                                   eb_result, profile, expiry, dte, session)
-                                    continue
-                                else:
-                                    logger.info("[MAIN] Expiry breakout blocked: " + reason)
-                    except Exception as e:
-                        logger.warning("[MAIN] Expiry breakout error: " + str(e))
-
-                # ── v13.0 MINIMAL SCAN — EMA gap + RSI only ─────
+                # v13.1: Same entry logic for ALL DTEs (including DTE=0)
+                # ── MINIMAL SCAN — EMA gap + RSI only ─────
                 all_results = {}
                 best_result = None
                 best_type = None
