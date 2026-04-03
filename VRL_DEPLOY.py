@@ -99,46 +99,38 @@ def _cmd_deploy():
             ["find", REPO_DIR, "-name", "*.pyc", "-delete"],
             capture_output=True, timeout=10)
 
-        # Step 3: Kill old bot
-        subprocess.run(
-            ["pkill", "-f", "VRL_MAIN.py"],
-            capture_output=True, timeout=5)
-        time.sleep(3)
-
-        # Step 4: Start new bot
-        py = VENV_PY  # always use ~/kite_env/bin/python3
-        main_py = os.path.join(REPO_DIR, "VRL_MAIN.py")
-        with open(OUT_LOG, "a") as out:
-            subprocess.Popen(
-                [py, main_py],
-                stdout=out, stderr=out,
-                cwd=REPO_DIR,
-                start_new_session=True)
-
+        # Step 3: Restart bot via systemd
+        r_restart = subprocess.run(
+            ["sudo", "systemctl", "restart", "vrl-main"],
+            capture_output=True, text=True, timeout=15)
         time.sleep(5)
 
-        # Step 5: Verify bot started
-        r = subprocess.run(
-            ["pgrep", "-f", "VRL_MAIN.py"],
+        # Step 4: Verify bot started
+        r_status = subprocess.run(
+            ["systemctl", "is-active", "vrl-main"],
             capture_output=True, text=True, timeout=5)
-        pid = r.stdout.strip()
+        active = r_status.stdout.strip()
 
-        if pid:
+        if active == "active":
+            r_pid = subprocess.run(
+                ["pgrep", "-f", "VRL_MAIN.py"],
+                capture_output=True, text=True, timeout=5)
+            pid = r_pid.stdout.strip()
             _tg_send(
                 "✅ <b>DEPLOY COMPLETE</b>\n"
                 "Bot PID: " + pid + "\n"
                 "Time: " + datetime.now().strftime("%H:%M:%S"))
         else:
-            # Try to get last error
             try:
                 r2 = subprocess.run(
                     ["tail", "-5", OUT_LOG],
                     capture_output=True, text=True, timeout=5)
                 _tg_send(
                     "❌ <b>DEPLOY FAILED — Bot didn't start</b>\n"
+                    "Status: " + active + "\n"
                     "Last log:\n<pre>" + r2.stdout[-500:] + "</pre>")
             except Exception:
-                _tg_send("❌ <b>DEPLOY FAILED — Bot didn't start</b>")
+                _tg_send("❌ <b>DEPLOY FAILED — Status: " + active + "</b>")
 
     except Exception as e:
         _tg_send("❌ <b>DEPLOY ERROR</b>\n" + str(e)[:300])
@@ -147,7 +139,10 @@ def _cmd_deploy():
 def _cmd_serverstatus():
     """Check if bot is alive, show PID and last log."""
     try:
-        # Check bot process
+        # Check bot process via systemd
+        r_active = subprocess.run(
+            ["systemctl", "is-active", "vrl-main"],
+            capture_output=True, text=True, timeout=5)
         r = subprocess.run(
             ["pgrep", "-f", "VRL_MAIN.py"],
             capture_output=True, text=True, timeout=5)
@@ -174,7 +169,8 @@ def _cmd_serverstatus():
             capture_output=True, text=True, timeout=5)
         uptime = r4.stdout.strip()
 
-        bot_status = "🟢 RUNNING (PID " + pid + ")" if pid else "🔴 DEAD"
+        svc_active = r_active.stdout.strip() == "active"
+        bot_status = ("🟢 RUNNING (PID " + pid + ")") if (pid and svc_active) else ("🟡 PID " + pid + " (no systemd)") if pid else "🔴 DEAD"
 
         _tg_send(
             "🖥 <b>SERVER STATUS</b>\n"
