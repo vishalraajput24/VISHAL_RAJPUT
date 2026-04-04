@@ -1290,7 +1290,7 @@ def _cmd_token(args):
     else:
         parts = args.strip().split() if args else []
     if not parts:
-        _tg_send("Usage:\n/token create <name> <days>\n/token list\n/token revoke <name>\n/token extend <name> <days>")
+        _tg_send("Usage:\n/token create [name] [days]\n/token list\n/token revoke [name]\n/token extend [name] [days]")
         return
 
     action = parts[0].lower()
@@ -1302,7 +1302,7 @@ def _cmd_token(args):
 
     if action == "create":
         if len(parts) < 3:
-            _tg_send("Usage: /token create <name> <days>")
+            _tg_send("Usage: /token create [name] [days]")
             return
         name = parts[1]
         days = int(parts[2])
@@ -1365,7 +1365,7 @@ def _cmd_token(args):
 
     elif action == "revoke":
         if len(parts) < 2:
-            _tg_send("Usage: /token revoke <name>")
+            _tg_send("Usage: /token revoke [name]")
             return
         name = parts[1]
         ok = _DB.revoke_token(name)
@@ -1373,7 +1373,7 @@ def _cmd_token(args):
 
     elif action == "extend":
         if len(parts) < 3:
-            _tg_send("Usage: /token extend <name> <days>")
+            _tg_send("Usage: /token extend [name] [days]")
             return
         name = parts[1]
         days = int(parts[2])
