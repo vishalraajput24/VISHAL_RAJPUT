@@ -262,6 +262,9 @@ def _cmd_help(args):
         "/livecheck — last 50 log lines\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>CONTROL</b>\n"
+        "/token     — manage subscriber access tokens\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>CONTROL</b>\n"
         "/pause     — block new entries\n"
         "/resume    — re-enable entries\n"
         "/forceexit — emergency exit all lots\n"
@@ -1280,6 +1283,101 @@ _tg_offset         = 0
 _tg_running        = False
 _tg_last_update_id = -1
 
+def _cmd_token(args):
+    """Manage subscriber access tokens."""
+    parts = args.strip().split() if args else []
+    if not parts:
+        _tg_send("Usage:\n/token create <name> <days>\n/token list\n/token revoke <name>\n/token extend <name> <days>")
+        return
+
+    action = parts[0].lower()
+    try:
+        import VRL_DB as _DB
+    except Exception as e:
+        _tg_send("DB error: " + str(e))
+        return
+
+    if action == "create":
+        if len(parts) < 3:
+            _tg_send("Usage: /token create <name> <days>")
+            return
+        name = parts[1]
+        days = int(parts[2])
+        token = _DB.create_token(name, days)
+        from datetime import datetime, timedelta
+        exp = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        # Get server IP
+        ip = "34.14.175.26"
+        try:
+            import subprocess as _sp2
+            ip = _sp2.check_output(["curl", "-s", "ifconfig.me"], timeout=5).decode().strip()
+        except Exception:
+            pass
+        _tg_send(
+            "🔑 <b>Access token created</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Name    : " + name + "\n"
+            "Expires : " + exp + " (" + str(days) + " days)\n"
+            "Link    : http://" + ip + ":8080/s/" + token + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Send this link to the subscriber."
+        )
+
+    elif action == "list":
+        tokens = _DB.list_tokens()
+        if not tokens:
+            _tg_send("No tokens created yet.")
+            return
+        from datetime import datetime
+        active = [t for t in tokens if t.get("active")]
+        expired_cnt = len(tokens) - len(active)
+        lines = ""
+        for i, t in enumerate(active, 1):
+            last = t.get("last_used", "")
+            ago = ""
+            if last:
+                try:
+                    diff = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
+                    if diff < 3600:
+                        ago = str(int(diff / 60)) + "min ago"
+                    elif diff < 86400:
+                        ago = str(int(diff / 3600)) + "h ago"
+                    else:
+                        ago = str(int(diff / 86400)) + "d ago"
+                except Exception:
+                    ago = last[:10]
+            exp_date = t.get("expires_at", "")[:10]
+            lines += (str(i) + ". " + t["name"] + " — exp " + exp_date
+                      + " — used " + str(t.get("access_count", 0)) + "x"
+                      + (" — last: " + ago if ago else "") + "\n")
+        _tg_send(
+            "📋 <b>Access Tokens</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + lines
+            + "Active: " + str(len(active)) + " | Expired/Revoked: " + str(expired_cnt)
+        )
+
+    elif action == "revoke":
+        if len(parts) < 2:
+            _tg_send("Usage: /token revoke <name>")
+            return
+        name = parts[1]
+        ok = _DB.revoke_token(name)
+        _tg_send(("❌ Token revoked for " + name) if ok else ("No active token found for " + name))
+
+    elif action == "extend":
+        if len(parts) < 3:
+            _tg_send("Usage: /token extend <name> <days>")
+            return
+        name = parts[1]
+        days = int(parts[2])
+        ok = _DB.extend_token(name, days)
+        _tg_send(("✅ " + name + " extended by " + str(days) + " days") if ok
+                 else ("No active token found for " + name))
+    else:
+        _tg_send("Unknown: /token " + action + "\nUse: create, list, revoke, extend")
+
+
 _DISPATCH = {
     "/help"        : _cmd_help,
     "/status"      : _cmd_status,
@@ -1301,5 +1399,6 @@ _DISPATCH = {
     "/forceexit"   : _cmd_forceexit,
     "/restart"     : _cmd_restart,
     "/livecheck"   : _cmd_livecheck,
-    "/source"      : _cmd_source
+    "/source"      : _cmd_source,
+    "/token"       : _cmd_token
 }

@@ -1,20 +1,113 @@
 #!/home/user/kite_env/bin/python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.0
-DUMB RENDERER. Reads vrl_dashboard.json from bot. Zero calculations.
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.1
+Dashboard server with admin login + subscriber token access.
 """
-import csv, json, os
-from datetime import date
+import csv, json, os, hashlib, secrets, time, threading
+from datetime import date, datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
+from http.cookies import SimpleCookie
 
 PORT = 8080
 BASE = os.path.expanduser("~")
 DASH_FILE = os.path.join(BASE, "state", "vrl_dashboard.json")
 TRADE_LOG = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
 
-# Optional auth: set VRL_WEB_TOKEN env var to require ?token=<value> on all requests
-_WEB_TOKEN = os.environ.get("VRL_WEB_TOKEN", "")
+# ── AUTH CONFIG ──
+ADMIN_USER = "vishal"
+_env_pass = ""
+try:
+    with open(os.path.join(BASE, ".env")) as _ef:
+        for _line in _ef:
+            if _line.strip().startswith("VRL_DASHBOARD_PASS="):
+                _env_pass = _line.strip().split("=", 1)[1].strip()
+except Exception:
+    pass
+ADMIN_PASS_HASH = hashlib.sha256(_env_pass.encode()).hexdigest() if _env_pass else ""
+
+# Sessions: {token: {"user": str, "role": "admin"|"subscriber", "expires": datetime}}
+_sessions = {}
+_sessions_lock = threading.Lock()
+
+# Login rate limit: {ip: [timestamps]}
+_login_attempts = {}
+_LOGIN_LIMIT = 5
+_LOGIN_BLOCK_SECS = 900  # 15 min
+
+def _get_session(cookie_header):
+    """Extract session from cookie header. Returns session dict or None."""
+    if not cookie_header:
+        return None
+    try:
+        c = SimpleCookie()
+        c.load(cookie_header)
+        if "vrl_session" in c:
+            token = c["vrl_session"].value
+            with _sessions_lock:
+                sess = _sessions.get(token)
+                if sess and datetime.now() < sess["expires"]:
+                    return sess
+                if sess:
+                    del _sessions[token]
+    except Exception:
+        pass
+    return None
+
+def _create_session(user, role="admin", days=30):
+    """Create session, return token."""
+    token = secrets.token_hex(16)
+    with _sessions_lock:
+        _sessions[token] = {
+            "user": user, "role": role,
+            "expires": datetime.now() + timedelta(days=days),
+        }
+    return token
+
+def _cleanup_sessions():
+    """Remove expired sessions."""
+    with _sessions_lock:
+        expired = [k for k, v in _sessions.items() if datetime.now() > v["expires"]]
+        for k in expired:
+            del _sessions[k]
+
+# Clean sessions every hour
+def _session_cleaner():
+    while True:
+        time.sleep(3600)
+        _cleanup_sessions()
+threading.Thread(target=_session_cleaner, daemon=True).start()
+
+LOGIN_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VRL Login</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f5f0e8;font-family:'DM Sans',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.box{background:#fff;border-radius:16px;padding:40px;width:340px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}
+h1{font-size:18px;font-weight:700;margin-bottom:6px}h1 span{color:#e85d04}
+.sub{color:#888;font-size:12px;margin-bottom:24px}
+input{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:12px;font-family:inherit}
+input:focus{outline:none;border-color:#e85d04}
+button{width:100%;padding:12px;background:#e85d04;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}
+button:hover{background:#d45003}
+.err{color:#e33;font-size:12px;margin-bottom:12px;display:none}
+</style></head><body>
+<div class="box"><h1><span>VISHAL RAJPUT</span> TRADE</h1>
+<div class="sub">Dashboard Login</div>
+<div class="err" id="err">ERR_MSG</div>
+<form method="POST" action="/login">
+<input name="username" placeholder="Username" required autofocus>
+<input name="password" type="password" placeholder="Password" required>
+<button type="submit">Login</button></form></div></body></html>"""
+
+TOKEN_ERROR_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VRL Access</title><style>
+body{background:#f5f0e8;font-family:'DM Sans',sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.box{background:#fff;border-radius:16px;padding:40px;width:380px;box-shadow:0 4px 24px rgba(0,0,0,0.08);text-align:center}
+h2{font-size:16px;margin-bottom:8px}
+.msg{color:#888;font-size:13px}
+</style></head><body><div class="box"><h2>MSG_TITLE</h2><div class="msg">MSG_BODY</div></div></body></html>"""
 
 def _read_dash():
     if not os.path.isfile(DASH_FILE): return {}
@@ -705,15 +798,123 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
 
-    def _check_auth(self):
-        if not _WEB_TOKEN:
-            return True
-        from urllib.parse import parse_qs
-        q = parse_qs(urlparse(self.path).query)
-        if q.get("token", [""])[0] == _WEB_TOKEN:
-            return True
-        self.send_error(403, "Forbidden: invalid or missing token")
-        return False
+    def _get_session(self):
+        cookie = self.headers.get("Cookie", "")
+        return _get_session(cookie)
+
+    def _require_auth(self, admin_only=False):
+        """Returns session dict if authenticated, None + redirect if not."""
+        sess = self._get_session()
+        if not sess:
+            self._redirect("/login")
+            return None
+        if admin_only and sess.get("role") != "admin":
+            self.send_error(403, "Admin access required")
+            return None
+        return sess
+
+    def _redirect(self, url):
+        self.send_response(302)
+        self.send_header("Location", url)
+        self.end_headers()
+
+    def _html(self, html, code=200):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode())
+
+    def _handle_login_get(self):
+        if self._get_session():
+            self._redirect("/")
+            return
+        self._html(LOGIN_HTML.replace("ERR_MSG", "").replace('display:none', 'display:none'))
+
+    def _handle_login_post(self):
+        # Rate limit check
+        ip = self.client_address[0]
+        now = time.time()
+        attempts = _login_attempts.get(ip, [])
+        attempts = [t for t in attempts if now - t < 60]
+        if len(attempts) >= _LOGIN_LIMIT:
+            self._html(LOGIN_HTML.replace("ERR_MSG", "Too many attempts. Wait 15 minutes.").replace('display:none', ''), 429)
+            return
+
+        # Read POST body
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        params = dict(p.split("=", 1) for p in body.split("&") if "=" in p)
+        from urllib.parse import unquote_plus
+        username = unquote_plus(params.get("username", ""))
+        password = unquote_plus(params.get("password", ""))
+
+        # Verify
+        pass_hash = hashlib.sha256(password.encode()).hexdigest()
+        if username == ADMIN_USER and ADMIN_PASS_HASH and pass_hash == ADMIN_PASS_HASH:
+            token = _create_session(username, "admin", days=30)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", "vrl_session=" + token + "; Path=/; Max-Age=2592000; HttpOnly")
+            self.end_headers()
+            return
+
+        # Failed
+        _login_attempts.setdefault(ip, []).append(now)
+        self._html(LOGIN_HTML.replace("ERR_MSG", "Invalid username or password").replace('display:none', ''), 401)
+
+    def _handle_subscriber_token(self, token):
+        try:
+            import VRL_DB as _DB
+            result = _DB.validate_token(token)
+        except Exception:
+            result = None
+
+        if result is None:
+            self._html(TOKEN_ERROR_HTML.replace("MSG_TITLE", "Invalid Link").replace("MSG_BODY", "This access link is not valid."), 404)
+            return
+        if result.get("revoked"):
+            self._html(TOKEN_ERROR_HTML.replace("MSG_TITLE", "Access Revoked").replace("MSG_BODY", "Your access has been revoked. Contact Vishal Rajput."), 403)
+            return
+        if result.get("expired"):
+            self._html(TOKEN_ERROR_HTML.replace("MSG_TITLE", "Access Expired").replace("MSG_BODY", "Your access has expired. Contact Vishal Rajput to renew."), 403)
+            return
+        if result.get("valid"):
+            sess_token = _create_session(result["name"], "subscriber", days=30)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", "vrl_session=" + sess_token + "; Path=/; Max-Age=2592000; HttpOnly")
+            self.end_headers()
+
+    def _handle_logout(self):
+        cookie = self.headers.get("Cookie", "")
+        try:
+            c = SimpleCookie()
+            c.load(cookie)
+            if "vrl_session" in c:
+                token = c["vrl_session"].value
+                with _sessions_lock:
+                    _sessions.pop(token, None)
+        except Exception:
+            pass
+        self.send_response(302)
+        self.send_header("Location", "/login")
+        self.send_header("Set-Cookie", "vrl_session=; Path=/; Max-Age=0")
+        self.end_headers()
+
+    def _handle_viewers(self):
+        """Admin-only: show active tokens and sessions."""
+        sess = self._require_auth(admin_only=True)
+        if not sess:
+            return
+        try:
+            import VRL_DB as _DB
+            tokens = _DB.list_tokens()
+        except Exception:
+            tokens = []
+        active = [t for t in tokens if t.get("active")]
+        with _sessions_lock:
+            active_sessions = len(_sessions)
+        self._j({"tokens": tokens, "active_sessions": active_sessions})
 
     def _db_trades(self):
         from urllib.parse import parse_qs
@@ -761,10 +962,42 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             self._j({"error": str(e)})
 
+    def do_POST(self):
+        p = urlparse(self.path).path
+        if p == "/login":
+            self._handle_login_post()
+        else:
+            self.send_error(404)
+
     def do_GET(self):
-        if not self._check_auth():
-            return
         p=urlparse(self.path).path
+
+        # ── PUBLIC routes (no auth) ──
+        if p == "/login":
+            self._handle_login_get(); return
+        if p == "/logout":
+            self._handle_logout(); return
+        if p.startswith("/s/"):
+            token = p[3:]
+            self._handle_subscriber_token(token); return
+
+        # ── AUTH BYPASS: skip auth if no password set ──
+        if not ADMIN_PASS_HASH:
+            pass  # no auth configured, allow all
+        else:
+            # ── AUTHENTICATED routes ──
+            sess = self._get_session()
+            if not sess:
+                self._redirect("/login"); return
+
+            # Admin-only routes
+            if p in ("/files",) or p.startswith("/files?") or p.startswith("/api/download/") \
+               or p.startswith("/api/logs/") or p.startswith("/api/db/") or p.startswith("/api/files"):
+                if sess.get("role") != "admin":
+                    self.send_error(403, "Admin access required"); return
+
+        if p=="/api/viewers":
+            self._handle_viewers(); return
         if p=="/files" or p.startswith("/files?"):self._files_page();return
         if p in("/","/dashboard"):
             # Serve static/index.html if it exists, otherwise fallback to inline HTML

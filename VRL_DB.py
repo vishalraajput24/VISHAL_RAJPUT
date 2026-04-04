@@ -143,6 +143,17 @@ def init_db():
         for name, table, expr in _func_indexes:
             c.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({expr})")
 
+        # ── DASHBOARD TOKENS (subscriber access) ──
+        c.execute("""CREATE TABLE IF NOT EXISTS dashboard_tokens (
+            token TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_used TEXT,
+            access_count INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1
+        )""")
+
         # v13.1: Add charge columns to existing trades table
         _new_cols = [
             ("brokerage", "REAL DEFAULT 0"),
@@ -441,6 +452,84 @@ def close():
         except Exception:
             pass
         _local.conn = None
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DASHBOARD TOKENS
+# ═══════════════════════════════════════════════════════════════
+
+def create_token(name: str, days: int = 30) -> str:
+    """Create subscriber access token. Returns token string."""
+    import secrets
+    from datetime import datetime, timedelta
+    token = secrets.token_hex(8)
+    now = datetime.now().isoformat()
+    expires = (datetime.now() + timedelta(days=days)).isoformat()
+    conn = get_conn()
+    try:
+        conn.execute("INSERT INTO dashboard_tokens (token, name, created_at, expires_at) VALUES (?,?,?,?)",
+                     (token, name, now, expires))
+        conn.commit()
+    except Exception as e:
+        logger.debug("[DB] create_token: " + str(e))
+    return token
+
+
+def validate_token(token: str) -> dict:
+    """Check token validity. Returns {valid, name, expired} or None."""
+    from datetime import datetime
+    rows = query("SELECT * FROM dashboard_tokens WHERE token=?", (token,))
+    if not rows:
+        return None
+    r = rows[0]
+    if not r.get("active"):
+        return {"valid": False, "name": r["name"], "expired": False, "revoked": True}
+    try:
+        exp = datetime.fromisoformat(r["expires_at"])
+        if datetime.now() > exp:
+            return {"valid": False, "name": r["name"], "expired": True, "revoked": False}
+    except Exception:
+        pass
+    # Valid — update access stats
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE dashboard_tokens SET access_count=access_count+1, last_used=? WHERE token=?",
+                     (datetime.now().isoformat(), token))
+        conn.commit()
+    except Exception:
+        pass
+    return {"valid": True, "name": r["name"], "expired": False, "revoked": False}
+
+
+def list_tokens() -> list:
+    return query("SELECT * FROM dashboard_tokens ORDER BY created_at DESC")
+
+
+def revoke_token(name: str) -> bool:
+    conn = get_conn()
+    try:
+        cur = conn.execute("UPDATE dashboard_tokens SET active=0 WHERE name=? AND active=1", (name,))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        return False
+
+
+def extend_token(name: str, days: int) -> bool:
+    from datetime import datetime, timedelta
+    rows = query("SELECT * FROM dashboard_tokens WHERE name=? AND active=1", (name,))
+    if not rows:
+        return False
+    try:
+        old_exp = datetime.fromisoformat(rows[0]["expires_at"])
+        new_exp = max(old_exp, datetime.now()) + timedelta(days=days)
+        conn = get_conn()
+        conn.execute("UPDATE dashboard_tokens SET expires_at=? WHERE name=? AND active=1",
+                     (new_exp.isoformat(), name))
+        conn.commit()
+        return True
+    except Exception:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════
