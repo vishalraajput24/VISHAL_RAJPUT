@@ -151,7 +151,8 @@ def init_db():
             expires_at TEXT NOT NULL,
             last_used TEXT,
             access_count INTEGER DEFAULT 0,
-            active INTEGER DEFAULT 1
+            active INTEGER DEFAULT 1,
+            access_ips TEXT DEFAULT ''
         )""")
 
         # v13.1: Add charge columns to existing trades table
@@ -171,6 +172,12 @@ def init_db():
                 c.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass  # column already exists
+
+        # v13.1: Add access_ips to dashboard_tokens
+        try:
+            c.execute("ALTER TABLE dashboard_tokens ADD COLUMN access_ips TEXT DEFAULT ''")
+        except Exception:
+            pass
 
         conn.commit()
         _initialized = True
@@ -475,8 +482,8 @@ def create_token(name: str, days: int = 30) -> str:
     return token
 
 
-def validate_token(token: str) -> dict:
-    """Check token validity. Returns {valid, name, expired} or None."""
+def validate_token(token: str, ip: str = "") -> dict:
+    """Check token validity. Tracks IP. Returns {valid, name, expired, sharing_alert} or None."""
     from datetime import datetime
     rows = query("SELECT * FROM dashboard_tokens WHERE token=?", (token,))
     if not rows:
@@ -490,15 +497,27 @@ def validate_token(token: str) -> dict:
             return {"valid": False, "name": r["name"], "expired": True, "revoked": False}
     except Exception:
         pass
-    # Valid — update access stats
+    # Valid — update access stats + track IP
     conn = get_conn()
+    sharing_alert = False
+    unique_ips = []
     try:
-        conn.execute("UPDATE dashboard_tokens SET access_count=access_count+1, last_used=? WHERE token=?",
-                     (datetime.now().isoformat(), token))
+        existing_ips = r.get("access_ips", "") or ""
+        ip_list = [x.strip() for x in existing_ips.split(",") if x.strip()]
+        if ip and ip not in ip_list:
+            ip_list.append(ip)
+        unique_ips = ip_list
+        new_ips = ",".join(ip_list)
+        conn.execute("UPDATE dashboard_tokens SET access_count=access_count+1, last_used=?, access_ips=? WHERE token=?",
+                     (datetime.now().isoformat(), new_ips, token))
         conn.commit()
+        # Alert if 4+ unique IPs (mobile+laptop+tablet = 3 is normal)
+        if len(ip_list) >= 4:
+            sharing_alert = True
     except Exception:
         pass
-    return {"valid": True, "name": r["name"], "expired": False, "revoked": False}
+    return {"valid": True, "name": r["name"], "expired": False, "revoked": False,
+            "sharing_alert": sharing_alert, "unique_ips": len(unique_ips)}
 
 
 def list_tokens() -> list:

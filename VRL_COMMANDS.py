@@ -1350,9 +1350,12 @@ def _cmd_token(args):
                 except Exception:
                     ago = last[:10]
             exp_date = t.get("expires_at", "")[:10]
+            ips = [x for x in (t.get("access_ips", "") or "").split(",") if x.strip()]
+            ip_warn = " ⚠️" + str(len(ips)) + "IPs" if len(ips) >= 4 else ""
             lines += (str(i) + ". " + t["name"] + " — exp " + exp_date
                       + " — used " + str(t.get("access_count", 0)) + "x"
-                      + (" — last: " + ago if ago else "") + "\n")
+                      + (" — last: " + ago if ago else "")
+                      + ip_warn + "\n")
         _tg_send(
             "📋 <b>Access Tokens</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

@@ -863,9 +863,10 @@ class H(BaseHTTPRequestHandler):
         self._html(LOGIN_HTML.replace("ERR_MSG", "Invalid username or password").replace('display:none', ''), 401)
 
     def _handle_subscriber_token(self, token):
+        ip = self.client_address[0]
         try:
             import VRL_DB as _DB
-            result = _DB.validate_token(token)
+            result = _DB.validate_token(token, ip=ip)
         except Exception:
             result = None
 
@@ -879,6 +880,30 @@ class H(BaseHTTPRequestHandler):
             self._html(TOKEN_ERROR_HTML.replace("MSG_TITLE", "Access Expired").replace("MSG_BODY", "Your access has expired. Contact Vishal Rajput to renew."), 403)
             return
         if result.get("valid"):
+            # Alert admin if token is being shared (4+ unique IPs)
+            if result.get("sharing_alert"):
+                try:
+                    import requests as _req
+                    _tg_token = os.environ.get("TG_TOKEN", "")
+                    _tg_chat = os.environ.get("TG_GROUP_ID", "")
+                    if not _tg_token:
+                        with open(os.path.join(BASE, ".env")) as _ef2:
+                            for _ln in _ef2:
+                                if _ln.startswith("TG_TOKEN="):
+                                    _tg_token = _ln.strip().split("=", 1)[1]
+                                elif _ln.startswith("TG_GROUP_ID="):
+                                    _tg_chat = _ln.strip().split("=", 1)[1]
+                    if _tg_token and _tg_chat:
+                        _req.post("https://api.telegram.org/bot" + _tg_token + "/sendMessage",
+                                  json={"chat_id": _tg_chat,
+                                        "text": "⚠️ <b>SHARING ALERT</b>\n"
+                                                + result["name"] + "'s token used from "
+                                                + str(result.get("unique_ips", 0)) + " unique IPs\n"
+                                                + "Latest: " + ip + "\n"
+                                                + "Use /token revoke " + result["name"] + " to block",
+                                        "parse_mode": "HTML"}, timeout=5)
+                except Exception:
+                    pass
             sess_token = _create_session(result["name"], "subscriber", days=30)
             self.send_response(302)
             self.send_header("Location", "/")
