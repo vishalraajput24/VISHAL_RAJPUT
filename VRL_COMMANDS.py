@@ -252,6 +252,7 @@ def _cmd_help(args):
         "/pnl       — P&L with charges breakdown\n"
         "/trades    — today's trade list\n"
         "/account   — balance + margin info\n"
+        "/slippage  — fill quality stats\n"
         "/spot      — Spot trend + gap\n"
         "/pivot     — Fib pivot levels\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1384,6 +1385,41 @@ def _cmd_token(args):
         _tg_send("Unknown: /token " + action + "\nUse: create, list, revoke, extend")
 
 
+def _cmd_slippage(args):
+    """Show fill quality stats."""
+    try:
+        import VRL_DB as _DB
+        rows = _DB.query(
+            "SELECT entry_slippage, exit_slippage, signal_price, entry_price "
+            "FROM trades WHERE entry_slippage IS NOT NULL "
+            "ORDER BY date DESC, entry_time DESC LIMIT 50")
+    except Exception:
+        rows = []
+
+    if not rows:
+        _tg_send("No slippage data yet. Data starts tracking from v13.1.")
+        return
+
+    _e_slips = [float(r.get("entry_slippage", 0)) for r in rows if r.get("entry_slippage")]
+    _x_slips = [float(r.get("exit_slippage", 0)) for r in rows if r.get("exit_slippage")]
+    avg_e = round(sum(_e_slips) / len(_e_slips), 2) if _e_slips else 0
+    avg_x = round(sum(_x_slips) / len(_x_slips), 2) if _x_slips else 0
+    total = round(sum(_e_slips) + sum(_x_slips), 2)
+    cost = int(total * D.LOT_SIZE * 2)
+    n = len(rows)
+
+    _tg_send(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 <b>FILL QUALITY</b> (" + str(n) + " trades)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Avg entry slip : " + ("+" if avg_e >= 0 else "") + str(avg_e) + "pts\n"
+        "Avg exit slip  : " + ("+" if avg_x >= 0 else "") + str(avg_x) + "pts\n"
+        "Total slippage : " + str(total) + "pts\n"
+        "Cost           : ₹" + "{:,}".format(abs(cost)) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
 _DISPATCH = {
     "/help"        : _cmd_help,
     "/status"      : _cmd_status,
@@ -1406,5 +1442,6 @@ _DISPATCH = {
     "/restart"     : _cmd_restart,
     "/livecheck"   : _cmd_livecheck,
     "/source"      : _cmd_source,
-    "/token"       : _cmd_token
+    "/token"       : _cmd_token,
+    "/slippage"    : _cmd_slippage
 }

@@ -329,6 +329,7 @@ TRADE_FIELDNAMES = [
     "straddle_decay",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
+    "entry_slippage", "exit_slippage", "signal_price",
 ]
 
 def _cleanup_trade_log():
@@ -391,6 +392,9 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "vix_at_entry": round(D.get_vix(), 1),
         "hourly_rsi": D.get_hourly_rsi(),
         "straddle_decay": 0.0,
+        "entry_slippage": st.get("entry_slippage", 0),
+        "exit_slippage": 0,
+        "signal_price": st.get("signal_price", 0),
     }
 
     # Calculate charges
@@ -705,12 +709,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                        total_qty, entry_price)
 
     if not fill["ok"]:
-        logger.error("[MAIN] Entry failed: " + fill["error"])
-        _alert_error("Entry failed: " + fill["error"])
+        if fill.get("error") == "LIMIT_NOT_FILLED":
+            _sym_skip = _short_sym(symbol, option_type, 0)
+            _tg_send(
+                "⏭ <b>ENTRY SKIPPED</b>\n"
+                + _sym_skip + " ₹" + str(round(entry_price, 1)) + "\n"
+                "Price moved away — LIMIT not filled\n"
+                "Protected from bad fill ✓"
+            )
+            logger.info("[MAIN] Entry skipped: LIMIT not filled for " + symbol)
+        else:
+            logger.error("[MAIN] Entry failed: " + fill["error"])
+            _alert_error("Entry failed: " + fill["error"])
         return
 
     actual_price = fill["fill_price"]
     actual_qty   = fill["fill_qty"]
+    _entry_slippage = fill.get("slippage", 0)
     hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
@@ -751,6 +766,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["sl_pts_at_entry"]    = hard_sl
         state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
         state["current_floor"]      = phase1_sl
+        state["entry_slippage"]     = _entry_slippage
+        state["signal_price"]       = entry_price
         state["floor_10_alerted"]   = False
         state["floor_20_alerted"]   = False
         state["floor_30_alerted"]   = False
@@ -758,13 +775,17 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
-    # v13.0 entry alert
+    # Entry alert
+    _slip_line = ""
+    if _entry_slippage > 0:
+        _slip_line = "Slip: +" + str(_entry_slippage) + "pts\n"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0)) + " × " + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
         "EMA +" + str(round(entry_result.get("ema_gap", 0), 1)) + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
+        + _slip_line +
         "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )

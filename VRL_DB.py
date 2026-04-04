@@ -179,6 +179,15 @@ def init_db():
         except Exception:
             pass
 
+        # v13.1: Add slippage columns to trades
+        for _sc, _st in [("entry_slippage", "REAL DEFAULT 0"),
+                          ("exit_slippage", "REAL DEFAULT 0"),
+                          ("signal_price", "REAL DEFAULT 0")]:
+            try:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
+            except Exception:
+                pass
+
         conn.commit()
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
@@ -338,6 +347,7 @@ _TRADE_FIELDS = [
     "bias", "vix_at_entry", "hourly_rsi", "straddle_decay",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
+    "entry_slippage", "exit_slippage", "signal_price",
 ]
 
 def insert_trade(row):
