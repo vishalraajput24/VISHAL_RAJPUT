@@ -1285,7 +1285,10 @@ _tg_last_update_id = -1
 
 def _cmd_token(args):
     """Manage subscriber access tokens."""
-    parts = args.strip().split() if args else []
+    if isinstance(args, list):
+        parts = args
+    else:
+        parts = args.strip().split() if args else []
     if not parts:
         _tg_send("Usage:\n/token create <name> <days>\n/token list\n/token revoke <name>\n/token extend <name> <days>")
         return
