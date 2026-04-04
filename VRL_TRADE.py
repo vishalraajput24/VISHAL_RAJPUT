@@ -6,6 +6,9 @@
 #  Paper mode: simulated fills. Live mode: LIMIT entry + smart exit.
 # ═══════════════════════════════════════════════════════════════
 
+# v13.1: Live paths verified — LIMIT entry, MARKET exit, market_protection=-1
+
+import os
 import time
 import logging
 from datetime import datetime
@@ -83,6 +86,10 @@ def place_entry(kite, symbol: str, token: int,
         }
 
     # Live mode: LIMIT entry
+    _first_live_flag = os.path.expanduser("~/state/.first_live_done")
+    if not os.path.isfile(_first_live_flag):
+        logger.info("[TRADE] 🚀 FIRST LIVE ORDER EVER")
+
     buffer = max(2.0, round(entry_price_ref * 0.01, 1))
     limit_price = round(entry_price_ref + buffer, 1)
 
@@ -120,6 +127,13 @@ def place_entry(kite, symbol: str, token: int,
         slippage = round(fill_price - entry_price_ref, 2)
         logger.info("[TRADE] ENTRY FILLED: price=" + str(fill_price)
                     + " slippage=" + str(slippage) + "pts")
+
+        if not os.path.isfile(_first_live_flag):
+            try:
+                with open(_first_live_flag, "w") as _f:
+                    _f.write(datetime.now().isoformat())
+            except Exception:
+                pass
 
         if fill_qty < qty:
             logger.warning("[TRADE] Partial fill accepted: "

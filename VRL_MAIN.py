@@ -207,6 +207,7 @@ def _reconcile_positions(kite):
     Startup position reconciliation — compare saved state with broker.
     If bot crashed mid-trade and position is gone at broker, reset state.
     If broker has position but state says no trade, alert for manual resolution.
+    v13.1: Verified — runs on live startup, alerts on mismatch, never auto-closes.
     """
     if kite is None or D.PAPER_MODE:
         return
@@ -606,6 +607,19 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
+    if not D.PAPER_MODE:
+        _tg_send(
+            "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
+            "⚡ <b>LIVE MODE — REAL MONEY</b> ⚡\n"
+            "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
+            "Account: " + str(D.get_account_info().get("name", "")) + "\n"
+            "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
+            "Lots: 2 × " + str(D.LOT_SIZE) + " = " + str(D.LOT_SIZE * 2) + " qty\n"
+            "SL: 12pts = ₹" + "{:,}".format(12 * D.LOT_SIZE * 2) + " max loss per trade\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Every order uses REAL money.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
 
 def _alert_profit_lock(daily_pnl: float):
     _tg_send(
@@ -797,6 +811,25 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         + " rsi=" + str(entry_result.get("rsi", 0))
         + " SL=" + str(phase1_sl)
     )
+
+    # First live trade ever — one-time alert
+    if not D.PAPER_MODE:
+        _first_flag = os.path.expanduser("~/state/.first_live_done")
+        try:
+            if os.path.isfile(_first_flag):
+                with open(_first_flag) as _ff:
+                    _first_ts = _ff.read().strip()
+                if _first_ts and _first_ts.startswith(date.today().isoformat()):
+                    _tg_send(
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        "🚀 <b>FIRST LIVE TRADE EVER</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        "Real money is moving now.\n"
+                        "The journey begins.\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    )
+        except Exception:
+            pass
 
 def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     """v13.0: Execute a single exit (partial or full).
@@ -1368,9 +1401,16 @@ def _strategy_loop(kite):
                             state["split_alerted"] = True
                             _tg_send("⚡ RSI 70 — Lot1: floor SL | Lot2: ATR trail")
 
-                    if now.hour == 15 and now.minute >= 28:
+                    # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
+                    # Paper mode: exit at 15:28 as before
+                    _eod_cutoff = 25 if not D.PAPER_MODE else 28
+                    if now.hour == 15 and now.minute >= _eod_cutoff:
+                        if not D.PAPER_MODE and now.minute < 28:
+                            logger.warning("[MAIN] 15:25 SAFETY — forcing exit before broker square-off")
+                            _tg_send("⚠️ <b>15:25 SAFETY EXIT</b>\nClosing before broker auto square-off")
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
-                                      "reason": "MARKET_CLOSE", "price": option_ltp}]
+                                      "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
+                                      "price": option_ltp}]
 
                     # Dashboard update EVERY cycle during trade (before exits)
                     try:
@@ -1588,7 +1628,8 @@ def _strategy_loop(kite):
             logger.error("[MAIN] Loop error: " + str(e))
             with _state_lock:
                 state["_error_count"] = state.get("_error_count", 0) + 1
-                if state["_error_count"] >= 5 and not state.get("_circuit_breaker"):
+                _cb_threshold = 3 if not D.PAPER_MODE else 5
+                if state["_error_count"] >= _cb_threshold and not state.get("_circuit_breaker"):
                     if state.get('in_trade'):
                         try:
                             cb_ltp = D.get_ltp(state.get('token', 0))
