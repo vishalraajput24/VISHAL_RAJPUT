@@ -485,20 +485,16 @@ def _rs(pts: float) -> str:
     return sign + "₹" + str(int(rupees))
 
 def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
-    """NIFTY2640722500CE → CE 22500"""
+    """CE 22600 from direction+strike. Fallback to symbol suffix."""
     if direction and strike:
         return direction + " " + str(strike)
     if not symbol:
         return ""
-    import re
-    m = re.match(r"NIFTY\d+(CE|PE)$", symbol)
-    if m:
-        s = re.sub(r"^NIFTY\d+", "", symbol).replace("CE", "").replace("PE", "")
-        return m.group(1) + " " + s
-    # Fallback: extract strike from symbol like NIFTY2640722500CE
-    m2 = re.match(r"NIFTY\d{5}(\d+)(CE|PE)$", symbol)
-    if m2:
-        return m2.group(2) + " " + m2.group(1)
+    # Extract CE/PE from end of symbol
+    if symbol.endswith("CE"):
+        return "CE"
+    elif symbol.endswith("PE"):
+        return "PE"
     return symbol
 
 from collections import deque as _deque
@@ -739,7 +735,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     if not fill["ok"]:
         if fill.get("error") == "LIMIT_NOT_FILLED":
-            _sym_skip = _short_sym(symbol, option_type, 0)
+            _sym_skip = _short_sym(symbol, option_type, entry_result.get("_strike", 0))
             _tg_send(
                 "⏭ <b>ENTRY SKIPPED</b>\n"
                 + _sym_skip + " ₹" + str(round(entry_price, 1)) + "\n"
@@ -780,8 +776,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["iv_at_entry"]        = 0
         state["regime_at_entry"]    = ""
         state["dte_at_entry"]       = dte
-        state["strike"]             = D.resolve_atm_strike(
-            D.get_ltp(D.NIFTY_SPOT_TOKEN), D.get_active_strike_step(dte))
+        state["strike"]             = entry_result.get("_strike", D.resolve_atm_strike(
+            D.get_ltp(D.NIFTY_SPOT_TOKEN), D.get_active_strike_step(dte)))
         state["expiry"]             = expiry.isoformat() if expiry else ""
         state["candles_held"]       = 0
         state["_last_trail_candle"] = ""
@@ -865,6 +861,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         entry     = saved_entry_price if saved_entry_price is not None else state["entry_price"]
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
+        _exit_strike = state.get("strike", 0)
 
     # Determine qty
     if lot_id == "ALL":
@@ -935,7 +932,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _day_trades = state.get("daily_trades", 0)
         _day_losses = state.get("daily_losses", 0)
         _day_wins   = _day_trades - _day_losses
-        _sym_short  = _short_sym(symbol, direction, 0)
+        _sym_short  = _short_sym(symbol, direction, _exit_strike)
         _pnl_sign   = "+" if pnl >= 0 else ""
         _day_rs     = int(_day_pnl * D.LOT_SIZE)
         import VRL_CONFIG as _CFG_exit
@@ -989,7 +986,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
         remaining = "LOT2" if state.get("lot2_active") else "LOT1"
-        _sym_short_p = _short_sym(symbol, direction, 0)
+        _sym_short_p = _short_sym(symbol, direction, _exit_strike)
         try:
             _ch_p = CHARGES.calculate_lot_charges(entry, actual_exit, D.LOT_SIZE)
         except Exception:
