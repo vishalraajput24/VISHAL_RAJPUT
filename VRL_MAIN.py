@@ -801,12 +801,13 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_floor"]      = phase1_sl
         state["entry_slippage"]     = _entry_slippage
         state["signal_price"]       = entry_price
-        state["bonus_vwap"]         = _bonus.get("above_vwap", False)
-        state["bonus_fib_level"]    = _bonus.get("fib_nearest", "")
-        state["bonus_fib_dist"]     = _bonus.get("fib_distance", 0)
-        state["bonus_vol_spike"]    = _bonus.get("vol_spike", False)
-        state["bonus_vol_ratio"]    = _bonus.get("vol_ratio", 0)
-        state["bonus_pdh_break"]    = _bonus.get("pdh_break", False)
+        _bonus_data = entry_result.get("bonus", {})
+        state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
+        state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
+        state["bonus_fib_dist"]     = _bonus_data.get("fib_distance", 0)
+        state["bonus_vol_spike"]    = _bonus_data.get("vol_spike", False)
+        state["bonus_vol_ratio"]    = _bonus_data.get("vol_ratio", 0)
+        state["bonus_pdh_break"]    = _bonus_data.get("pdh_break", False)
         state["floor_10_alerted"]   = False
         state["floor_20_alerted"]   = False
         state["floor_30_alerted"]   = False
@@ -1187,6 +1188,18 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         ce_signal = _build_signal("CE", all_results.get("CE"))
         pe_signal = _build_signal("PE", all_results.get("PE"))
 
+        # Flatten bonus dict into signal for dashboard consumption
+        for _sig in (ce_signal, pe_signal):
+            _b = _sig.pop("bonus", {})
+            _sig["above_vwap"] = _b.get("above_vwap", False)
+            _sig["vwap"] = _b.get("vwap", 0)
+            _sig["fib_nearest"] = _b.get("fib_nearest", "")
+            _sig["fib_distance"] = _b.get("fib_distance", 0)
+            _sig["vol_spike"] = _b.get("vol_spike", False)
+            _sig["vol_ratio"] = _b.get("vol_ratio", 0)
+            _sig["pdh_break"] = _b.get("pdh_break", False)
+            _sig["pdl_break"] = _b.get("pdl_break", False)
+
         # ── Fix LTP=0 when gate blocks early ──
         try:
             _tokens = D.get_option_tokens(None, atm_strike, expiry)
@@ -1245,6 +1258,49 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "profit_locked": st.get("profit_locked", False),
         }
 
+        # ── Today charges from trade log ──
+        try:
+            _today_trades = _read_today_trades()
+            _t_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
+            _t_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
+            _t_net = sum(float(t.get("net_pnl_rs", 0)) for t in _today_trades)
+            today_block["total_charges"] = round(_t_charges, 2)
+            today_block["gross_pnl_rs"] = round(_t_gross, 2)
+            today_block["net_pnl_rs"] = round(_t_net, 2)
+        except Exception:
+            today_block["total_charges"] = 0
+            today_block["gross_pnl_rs"] = 0
+            today_block["net_pnl_rs"] = 0
+
+        # ── Rolling stats ──
+        rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
+        try:
+            import VRL_DB as _DB_dash
+            _l10 = _DB_dash.query("SELECT pnl_pts FROM trades ORDER BY date DESC, entry_time DESC LIMIT 10")
+            _l20 = _DB_dash.query("SELECT pnl_pts FROM trades ORDER BY date DESC, entry_time DESC LIMIT 20")
+            _w10 = len([t for t in _l10 if float(t.get("pnl_pts", 0)) > 0])
+            _w20 = len([t for t in _l20 if float(t.get("pnl_pts", 0)) > 0])
+            _pts10 = sum(float(t.get("pnl_pts", 0)) for t in _l10)
+            rolling_block["last10_wr"] = round(_w10 / len(_l10) * 100) if _l10 else 0
+            rolling_block["last20_wr"] = round(_w20 / len(_l20) * 100) if _l20 else 0
+            rolling_block["last10_pts"] = round(_pts10, 1)
+            # Streak
+            _streak = 0
+            for _t in _l10:
+                if float(_t.get("pnl_pts", 0)) > 0:
+                    _streak += 1
+                else:
+                    break
+            if _streak == 0:
+                for _t in _l10:
+                    if float(_t.get("pnl_pts", 0)) <= 0:
+                        _streak -= 1
+                    else:
+                        break
+            rolling_block["streak"] = _streak
+        except Exception:
+            pass
+
         # ── Straddle ──
         straddle_block = {
             "open": round(straddle_open, 1) if straddle_captured else 0,
@@ -1294,6 +1350,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "available": D.get_account_info().get("available_margin", 0),
                 "used": D.get_account_info().get("used_margin", 0),
             },
+            "rolling": rolling_block,
         }
 
         # Atomic write

@@ -253,6 +253,7 @@ def _cmd_help(args):
         "/trades    — today's trade list\n"
         "/account   — balance + margin info\n"
         "/slippage  — fill quality stats\n"
+        "/streak    — rolling win rate + streak\n"
         "/spot      — Spot trend + gap\n"
         "/pivot     — Fib pivot levels\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -856,41 +857,6 @@ def _cmd_download(args):
             return
     _send_today_download(target)
 
-def _cmd_slippage(args):
-    try:
-        import importlib, os
-        slippage_log = os.path.join(os.path.expanduser("~"),
-                                    "lab_data", "vrl_slippage_log.csv")
-        if not os.path.isfile(slippage_log):
-            _tg_send("📊 <b>SLIPPAGE</b>\nNo live fills recorded yet.\n"
-                     "Slippage is only tracked in live mode (VRL_TRADE_LIVE.py).")
-            return
-
-        import pandas as pd
-        df = pd.read_csv(slippage_log)
-        if df.empty:
-            _tg_send("📊 <b>SLIPPAGE</b>\nLog exists but no fills yet.")
-            return
-
-        avg_slip  = round(df["slippage_pts"].abs().mean(), 2)
-        max_slip  = round(df["slippage_pts"].abs().max(), 2)
-        entries   = df[df["order_type"] == "ENTRY"]
-        exits     = df[df["order_type"].str.startswith("EXIT", na=False)]
-
-        _tg_send(
-            "📊 <b>SLIPPAGE SUMMARY</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Total fills   : " + str(len(df)) + "\n"
-            "Avg slip      : " + str(avg_slip) + "pts\n"
-            "Max slip      : " + str(max_slip) + "pts\n"
-            "Entry avg     : " + str(round(entries["slippage_pts"].abs().mean(), 2) if not entries.empty else 0) + "pts\n"
-            "Exit avg      : " + str(round(exits["slippage_pts"].abs().mean(), 2) if not exits.empty else 0) + "pts\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "File: lab_data/vrl_slippage_log.csv"
-        )
-    except Exception as e:
-        _tg_send("Slippage: " + str(e))
-
 def _cmd_health(args):
     import os as _os
     now      = datetime.now()
@@ -1385,6 +1351,47 @@ def _cmd_token(args):
         _tg_send("Unknown: /token " + action + "\nUse: create, list, revoke, extend")
 
 
+def _cmd_streak(args):
+    """Show rolling win rate and streak."""
+    try:
+        import VRL_DB as _DB
+        l10 = _DB.query("SELECT pnl_pts, direction, date FROM trades ORDER BY date DESC, entry_time DESC LIMIT 10")
+        l20 = _DB.query("SELECT pnl_pts FROM trades ORDER BY date DESC, entry_time DESC LIMIT 20")
+    except Exception:
+        l10 = []; l20 = []
+    if not l10:
+        _tg_send("No trades in database yet.")
+        return
+    w10 = len([t for t in l10 if float(t.get("pnl_pts", 0)) > 0])
+    w20 = len([t for t in l20 if float(t.get("pnl_pts", 0)) > 0])
+    pts10 = sum(float(t.get("pnl_pts", 0)) for t in l10)
+    pts20 = sum(float(t.get("pnl_pts", 0)) for t in l20)
+    # Current streak
+    streak = 0
+    for t in l10:
+        if float(t.get("pnl_pts", 0)) > 0:
+            streak += 1
+        else:
+            break
+    if streak == 0:
+        for t in l10:
+            if float(t.get("pnl_pts", 0)) <= 0:
+                streak -= 1
+            else:
+                break
+    streak_icon = "🟢" if streak > 0 else "🔴" if streak < 0 else "⚪"
+    _tg_send(
+        "📊 <b>ROLLING STATS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Last 10 : " + str(w10) + "W " + str(10 - w10) + "L  WR " + str(round(w10 / len(l10) * 100)) + "%\n"
+        "L10 PNL : " + ("+" if pts10 >= 0 else "") + str(round(pts10, 1)) + "pts\n"
+        "Last 20 : " + str(w20) + "W " + str(len(l20) - w20) + "L  WR " + str(round(w20 / len(l20) * 100) if l20 else 0) + "%\n"
+        "L20 PNL : " + ("+" if pts20 >= 0 else "") + str(round(pts20, 1)) + "pts\n"
+        "Streak  : " + streak_icon + " " + str(abs(streak)) + (" wins" if streak > 0 else " losses" if streak < 0 else "") + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
 def _cmd_slippage(args):
     """Show fill quality stats."""
     try:
@@ -1443,5 +1450,6 @@ _DISPATCH = {
     "/livecheck"   : _cmd_livecheck,
     "/source"      : _cmd_source,
     "/token"       : _cmd_token,
-    "/slippage"    : _cmd_slippage
+    "/slippage"    : _cmd_slippage,
+    "/streak"      : _cmd_streak
 }
