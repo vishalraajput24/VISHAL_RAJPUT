@@ -1323,9 +1323,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         for _tt in _today_trades:
             try:
                 _p = float(_tt.get("pnl_pts", 0))
-                _q = float(_tt.get("qty_exited", D.LOT_SIZE * 2))
+                _r = float(_tt.get("pnl_rs", 0))
                 _today_pnl_pts += _p
-                _today_pnl_rs += _p * _q
+                _today_pnl_rs += _r
                 if _p > 0:
                     _today_wins += 1
                 else:
