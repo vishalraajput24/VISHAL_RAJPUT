@@ -740,6 +740,130 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ═══════════════════════════════════════════════════════════════
+#  BONUS INDICATORS — information only, never block trades
+# ═══════════════════════════════════════════════════════════════
+
+def calculate_option_vwap(token: int) -> dict:
+    """VWAP on option — today's intraday only."""
+    result = {"vwap": 0.0, "above_vwap": False, "distance": 0.0}
+    try:
+        df = get_historical_data(token, "minute", 200, today_only=True)
+        if df.empty or len(df) < 5:
+            return result
+        typical_price = (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3
+        vol = df["volume"].astype(float)
+        cum_vol = vol.cumsum()
+        cum_tp_vol = (typical_price * vol).cumsum()
+        vwap = cum_tp_vol / cum_vol.replace(0, float("nan"))
+        vwap_val = round(float(vwap.iloc[-1]), 2)
+        last_close = float(df["close"].iloc[-1])
+        result["vwap"] = vwap_val
+        result["above_vwap"] = last_close > vwap_val
+        result["distance"] = round(last_close - vwap_val, 2)
+    except Exception as e:
+        logger.debug("[VWAP] " + str(e))
+    return result
+
+
+def calculate_option_fib_pivots(token: int) -> dict:
+    """Fib pivot points from previous day's option H/L/C."""
+    result = {"pivot": 0, "R1": 0, "R2": 0, "R3": 0,
+              "S1": 0, "S2": 0, "S3": 0,
+              "nearest_level": "", "nearest_distance": 0, "ok": False}
+    try:
+        from datetime import date as _date
+        df = get_historical_data(token, "minute", 500)
+        if df.empty or len(df) < 50:
+            return result
+        df = df.copy()
+        df["_date"] = df.index.map(lambda x: str(x)[:10])
+        today_str = _date.today().strftime("%Y-%m-%d")
+        dates = sorted(df["_date"].unique())
+        if today_str not in dates or dates.index(today_str) == 0:
+            return result
+        prev_date = dates[dates.index(today_str) - 1]
+        prev = df[df["_date"] == prev_date]
+        if prev.empty:
+            return result
+        H = float(prev["high"].max())
+        L = float(prev["low"].min())
+        C = float(prev["close"].iloc[-1])
+        R = H - L
+        pivot = round((H + L + C) / 3, 2)
+        result.update({
+            "pivot": pivot,
+            "R1": round(pivot + 0.382 * R, 2), "R2": round(pivot + 0.618 * R, 2),
+            "R3": round(pivot + 1.000 * R, 2),
+            "S1": round(pivot - 0.382 * R, 2), "S2": round(pivot - 0.618 * R, 2),
+            "S3": round(pivot - 1.000 * R, 2),
+            "ok": True,
+        })
+        last_price = float(df["close"].iloc[-1])
+        levels = [(k, v) for k, v in result.items()
+                  if k in ("pivot", "R1", "R2", "R3", "S1", "S2", "S3")]
+        if levels:
+            nearest = min(levels, key=lambda x: abs(last_price - x[1]))
+            result["nearest_level"] = nearest[0]
+            result["nearest_distance"] = round(last_price - nearest[1], 2)
+    except Exception as e:
+        logger.debug("[OPT_FIB] " + str(e))
+    return result
+
+
+def detect_volume_spike(token: int, threshold: float = 3.0) -> dict:
+    """Check if current candle volume is Nx average."""
+    result = {"spike": False, "ratio": 0.0, "current_vol": 0, "avg_vol": 0}
+    try:
+        df = get_historical_data(token, "minute", 25)
+        if df.empty or len(df) < 10:
+            return result
+        last = df.iloc[-2]
+        avg_window = df.iloc[-22:-2]
+        avg_vol = float(avg_window["volume"].mean()) if len(avg_window) > 0 else 1
+        curr_vol = float(last["volume"])
+        ratio = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 0
+        result["current_vol"] = int(curr_vol)
+        result["avg_vol"] = int(avg_vol)
+        result["ratio"] = ratio
+        result["spike"] = ratio >= threshold
+    except Exception as e:
+        logger.debug("[VOLSPIKE] " + str(e))
+    return result
+
+
+def get_option_prev_day_hl(token: int) -> dict:
+    """Get previous day high/low for option."""
+    result = {"prev_high": 0, "prev_low": 0,
+              "above_prev_high": False, "below_prev_low": False, "ok": False}
+    try:
+        from datetime import date as _date
+        df = get_historical_data(token, "minute", 500)
+        if df.empty or len(df) < 50:
+            return result
+        df = df.copy()
+        df["_date"] = df.index.map(lambda x: str(x)[:10])
+        today_str = _date.today().strftime("%Y-%m-%d")
+        dates = sorted(df["_date"].unique())
+        if today_str not in dates or dates.index(today_str) == 0:
+            return result
+        prev_date = dates[dates.index(today_str) - 1]
+        prev = df[df["_date"] == prev_date]
+        if prev.empty:
+            return result
+        ph = float(prev["high"].max())
+        pl = float(prev["low"].min())
+        last_price = float(df["close"].iloc[-1])
+        result.update({
+            "prev_high": round(ph, 2), "prev_low": round(pl, 2),
+            "above_prev_high": last_price > ph,
+            "below_prev_low": last_price < pl, "ok": True,
+        })
+    except Exception as e:
+        logger.debug("[PDH] " + str(e))
+    return result
+
+
 def calculate_atr(token: int, interval: str = "minute",
                   n_candles: int = None) -> float:
     """v12.12: Calculate ATR (Average True Range) for SL sizing."""

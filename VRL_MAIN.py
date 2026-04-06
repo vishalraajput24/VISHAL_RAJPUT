@@ -332,6 +332,8 @@ TRADE_FIELDNAMES = [
     "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
     "entry_slippage", "exit_slippage", "signal_price",
     "lot_id",
+    "bonus_vwap", "bonus_fib_level", "bonus_fib_dist",
+    "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
 ]
 
 def _cleanup_trade_log():
@@ -400,6 +402,12 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "exit_slippage": 0,
         "signal_price": st.get("signal_price", 0),
         "lot_id": lot_id,
+        "bonus_vwap": 1 if st.get("bonus_vwap") else 0,
+        "bonus_fib_level": st.get("bonus_fib_level", ""),
+        "bonus_fib_dist": round(st.get("bonus_fib_dist", 0), 2),
+        "bonus_vol_spike": 1 if st.get("bonus_vol_spike") else 0,
+        "bonus_vol_ratio": round(st.get("bonus_vol_ratio", 0), 2),
+        "bonus_pdh_break": 1 if st.get("bonus_pdh_break") else 0,
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -793,6 +801,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_floor"]      = phase1_sl
         state["entry_slippage"]     = _entry_slippage
         state["signal_price"]       = entry_price
+        state["bonus_vwap"]         = _bonus.get("above_vwap", False)
+        state["bonus_fib_level"]    = _bonus.get("fib_nearest", "")
+        state["bonus_fib_dist"]     = _bonus.get("fib_distance", 0)
+        state["bonus_vol_spike"]    = _bonus.get("vol_spike", False)
+        state["bonus_vol_ratio"]    = _bonus.get("vol_ratio", 0)
+        state["bonus_pdh_break"]    = _bonus.get("pdh_break", False)
         state["floor_10_alerted"]   = False
         state["floor_20_alerted"]   = False
         state["floor_30_alerted"]   = False
@@ -804,6 +818,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _slip_line = ""
     if _entry_slippage > 0:
         _slip_line = "Slip: +" + str(_entry_slippage) + "pts\n"
+    # Bonus indicators line
+    _bonus = entry_result.get("bonus", {})
+    _btags = []
+    if _bonus.get("above_vwap"): _btags.append("VWAP ✓")
+    else: _btags.append("VWAP ✗")
+    if _bonus.get("fib_nearest"): _btags.append("Fib " + str(_bonus["fib_nearest"]) + " " + str(_bonus.get("fib_distance", 0)) + "pts")
+    if _bonus.get("vol_spike"): _btags.append("Vol " + str(_bonus.get("vol_ratio", 0)) + "x 🔥")
+    if _bonus.get("pdh_break"): _btags.append("PDH ↑")
+    if _bonus.get("pdl_break"): _btags.append("PDL ↓")
+    _bonus_line = "Bonus: " + " | ".join(_btags) + "\n" if _btags else ""
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0)) + " × " + str(lot_count) + " LOTS</b>\n"
@@ -812,6 +836,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "EMA +" + str(round(entry_result.get("ema_gap", 0), 1)) + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
         + _slip_line +
         "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
+        + _bonus_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -1029,6 +1054,38 @@ def _is_new_1min_candle(now: datetime) -> bool:
             return True
     return False
 
+
+def _compute_bonus(token: int) -> dict:
+    """Compute all bonus indicators for a token. Info only — never blocks trades."""
+    bonus = {}
+    try:
+        vwap = D.calculate_option_vwap(token)
+        bonus["vwap"] = vwap.get("vwap", 0)
+        bonus["above_vwap"] = vwap.get("above_vwap", False)
+        bonus["vwap_dist"] = vwap.get("distance", 0)
+    except Exception:
+        bonus["vwap"] = 0; bonus["above_vwap"] = False; bonus["vwap_dist"] = 0
+    try:
+        fib = D.calculate_option_fib_pivots(token)
+        bonus["fib_nearest"] = fib.get("nearest_level", "")
+        bonus["fib_distance"] = fib.get("nearest_distance", 0)
+    except Exception:
+        bonus["fib_nearest"] = ""; bonus["fib_distance"] = 0
+    try:
+        vol = D.detect_volume_spike(token)
+        bonus["vol_spike"] = vol.get("spike", False)
+        bonus["vol_ratio"] = vol.get("ratio", 0)
+    except Exception:
+        bonus["vol_spike"] = False; bonus["vol_ratio"] = 0
+    try:
+        pdh = D.get_option_prev_day_hl(token)
+        bonus["pdh_break"] = pdh.get("above_prev_high", False)
+        bonus["pdl_break"] = pdh.get("below_prev_low", False)
+    except Exception:
+        bonus["pdh_break"] = False; bonus["pdl_break"] = False
+    return bonus
+
+
 # ═══════════════════════════════════════════════════════════════
 #  STRATEGY LOOP
 # ═══════════════════════════════════════════════════════════════
@@ -1117,6 +1174,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "verdict": verdict,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
+                "bonus": result.get("bonus", {}),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
@@ -1589,6 +1647,11 @@ def _strategy_loop(kite):
                         kite=kite,
                     )
                     result["_strike"] = dir_strikes.get(opt_type, atm_strike)
+                    # Bonus indicators — info only, never block
+                    try:
+                        result["bonus"] = _compute_bonus(opt_info["token"])
+                    except Exception:
+                        result["bonus"] = {}
                     all_results[opt_type] = result
 
                     if not result["fired"]:

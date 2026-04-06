@@ -367,6 +367,26 @@ test("saved_entry_price survives state reset",
 
 
 # ═══════════════════════════════════════════════════════════════
+#  BONUS INDICATORS (info only)
+# ═══════════════════════════════════════════════════════════════
+
+section("BONUS INDICATORS")
+
+# All functions should return gracefully with no data
+_vwap = D.calculate_option_vwap(0)
+test("VWAP returns dict with vwap key", "vwap" in _vwap, str(_vwap))
+
+_vol = D.detect_volume_spike(0)
+test("VolSpike returns dict with spike+ratio", "spike" in _vol and "ratio" in _vol, str(_vol))
+
+_fib = D.calculate_option_fib_pivots(0)
+test("OptFib returns dict with pivot key", "pivot" in _fib, str(_fib))
+
+_pdh = D.get_option_prev_day_hl(0)
+test("PDH returns dict with prev_high key", "prev_high" in _pdh, str(_pdh))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  CHARGES TESTS — VRL_CHARGES.py
 # ═══════════════════════════════════════════════════════════════
 
