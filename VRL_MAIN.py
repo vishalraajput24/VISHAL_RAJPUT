@@ -342,6 +342,7 @@ TRADE_FIELDNAMES = [
     "lot_id",
     "bonus_vwap", "bonus_fib_level", "bonus_fib_dist",
     "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
+    "qty_exited",
 ]
 
 def _cleanup_trade_log():
@@ -416,6 +417,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "bonus_vol_spike": 1 if st.get("bonus_vol_spike") else 0,
         "bonus_vol_ratio": round(st.get("bonus_vol_ratio", 0), 2),
         "bonus_pdh_break": 1 if st.get("bonus_pdh_break") else 0,
+        "qty_exited": _lot_qty,
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -1312,13 +1314,16 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
         # ── Today summary from trade log (single source of truth) ──
         _today_trades = _read_today_trades()
-        _today_pnl_actual = 0.0
+        _today_pnl_pts = 0.0
+        _today_pnl_rs = 0.0
         _today_wins = 0
         _today_losses = 0
         for _tt in _today_trades:
             try:
                 _p = float(_tt.get("pnl_pts", 0))
-                _today_pnl_actual += _p
+                _q = float(_tt.get("qty_exited", D.LOT_SIZE * 2))
+                _today_pnl_pts += _p
+                _today_pnl_rs += _p * _q
                 if _p > 0:
                     _today_wins += 1
                 else:
@@ -1326,8 +1331,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             except Exception:
                 pass
         today_block = {
-            "pnl": round(_today_pnl_actual, 1),
-            "pnl_rs": round(_today_pnl_actual * D.LOT_SIZE, 0),
+            "pnl": round(_today_pnl_pts, 1),
+            "pnl_rs": round(_today_pnl_rs, 0),
             "trades": len(_today_trades),
             "wins": _today_wins,
             "losses": _today_losses,

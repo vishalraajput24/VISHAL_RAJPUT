@@ -703,8 +703,14 @@ def _cmd_pnl(args):
     except Exception:
         pass
 
-    _total_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
-    _total_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
+    _total_gross = 0.0
+    _total_charges = 0.0
+    for _t in _today_trades:
+        _g = float(_t.get("gross_pnl_rs", 0))
+        if _g == 0:
+            _g = float(_t.get("pnl_pts", 0)) * float(_t.get("qty_exited", D.LOT_SIZE * 2))
+        _total_gross += _g
+        _total_charges += float(_t.get("total_charges", 0))
     _total_net = round(_total_gross - _total_charges, 2)
 
     # Trade-by-trade lines
