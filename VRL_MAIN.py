@@ -1154,6 +1154,62 @@ def _compute_bonus(token: int) -> dict:
 #  VRL_WEB.py reads this file. Zero calculation in web server.
 # ═══════════════════════════════════════════════════════════════
 
+def _update_dashboard_ltp():
+    """Quick update — just LTP values in dashboard JSON. No API calls."""
+    try:
+        dash_path = os.path.join(D.STATE_DIR, 'vrl_dashboard.json')
+        if not os.path.isfile(dash_path):
+            return
+        with open(dash_path) as f:
+            dash = json.load(f)
+
+        # Update spot + VIX
+        spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        if spot > 0:
+            dash.setdefault("market", {})["spot"] = round(spot, 2)
+        vix = D.get_vix()
+        if vix > 0:
+            dash.setdefault("market", {})["vix"] = round(vix, 1)
+
+        # Update option LTPs
+        for side in ("CE", "PE"):
+            sig = dash.get(side.lower(), {})
+            oi = _locked_tokens.get(side) if _locked_tokens else None
+            if oi:
+                ltp = D.get_ltp(oi["token"])
+                if ltp > 0:
+                    sig["ltp"] = round(ltp, 2)
+
+        # Update position if in trade
+        with _state_lock:
+            _tk = state.get("token")
+            _ep = state.get("entry_price", 0)
+            _it = state.get("in_trade", False)
+        if _it and _tk:
+            opt_ltp = D.get_ltp(_tk)
+            if opt_ltp > 0:
+                pos = dash.get("position", {})
+                pos["ltp"] = round(opt_ltp, 2)
+                pos["pnl"] = round(opt_ltp - _ep, 1)
+                # Update lot PNLs
+                running = round(opt_ltp - _ep, 1)
+                l1 = pos.get("lot1", {})
+                l2 = pos.get("lot2", {})
+                if l1.get("status") == "active":
+                    l1["pnl"] = running
+                if l2.get("status") in ("active", "riding"):
+                    l2["pnl"] = running
+
+        dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        tmp = dash_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dash, f, default=str)
+        os.replace(tmp, dash_path)
+    except Exception:
+        pass
+
+
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
@@ -1706,6 +1762,10 @@ def _strategy_loop(kite):
                             )
                         _save_state()
 
+                # Quick LTP update every ~5 seconds (in-trade)
+                if now.second % 5 < 2:
+                    _update_dashboard_ltp()
+
                 time.sleep(0.5)
                 continue
 
@@ -1877,6 +1937,10 @@ def _strategy_loop(kite):
                 if best_result and best_opt_info:
                     _execute_entry(kite, best_opt_info, best_type,
                                    best_result, profile, expiry, dte, session)
+
+            # Quick LTP update between candle scans
+            if now.second % 10 < 2:
+                _update_dashboard_ltp()
 
             # v12.9: Reset error count only after a successful loop iteration
             if state.get("_error_count", 0) > 0:
