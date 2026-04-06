@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_TRADE.py — VISHAL RAJPUT TRADE v13.1
+#  VRL_TRADE.py — VISHAL RAJPUT TRADE v13.2
 #  Sealed order execution machine.
 #  ONLY file that touches Kite orders.
 #  Paper mode: simulated fills. Live mode: LIMIT entry + smart exit.

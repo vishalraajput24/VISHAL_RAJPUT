@@ -1,4 +1,4 @@
-# VISHAL RAJPUT TRADE — v13.0
+# VISHAL RAJPUT TRADE — v13.2
 
 **Algorithmic Options Trading Bot for Nifty 50**
 
@@ -56,8 +56,10 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 | `VRL_WEB.py` | War Room API server. Serves `static/VRL_DASHBOARD.html` + JSON APIs. SQLite-powered endpoints. |
 | `static/VRL_DASHBOARD.html` | **Production dashboard.** Glassmorphism dark theme, gradient backgrounds, RSI progress bars. |
 | `VRL_COMMANDS.py` | Telegram command handlers. |
-| `VRL_DEPLOY.py` | Telegram-triggered deployment. |
-| `test_vrl.py` | **35 automated tests** for v13.0 (cooldown, RSI cap, PNL correctness). |
+| `VRL_CHARGES.py` | Brokerage calculator (STT, exchange, GST, stamp duty). |
+| `VRL_DEPLOY.py` | Telegram-triggered deployment (uses systemd restart). |
+| `VRL_BUGS.md` | Bug sheet — all bugs found and fixed, prevention rules. |
+| `test_vrl.py` | **58 automated tests** for v13.2 (cooldown, RSI cap, PNL correctness). |
 
 ---
 
@@ -258,7 +260,7 @@ TG_GROUP_ID=xxx
 
 # Run
 cd ~/VISHAL_RAJPUT
-~/kite_env/bin/python3 test_vrl.py          # verify 35/35
+~/kite_env/bin/python3 test_vrl.py          # verify 58/58
 ~/kite_env/bin/python3 VRL_MAIN.py          # start bot
 ```
 
@@ -274,7 +276,7 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 
 ## Test Suite
 
-`test_vrl.py` — **35 tests**:
+`test_vrl.py` — **58 tests**:
 - Strike selection (DTE 0/1+, tolerance zones)
 - Version check
 - EMA gap + RSI entry (fire, block on gap, block on RSI)

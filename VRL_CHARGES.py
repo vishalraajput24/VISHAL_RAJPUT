@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_CHARGES.py — VISHAL RAJPUT TRADE v13.1
+#  VRL_CHARGES.py — VISHAL RAJPUT TRADE v13.2
 #  Brokerage & charges calculator. Pure math, no API calls.
 #  Zerodha F&O charges as of April 2026.
 # ═══════════════════════════════════════════════════════════════

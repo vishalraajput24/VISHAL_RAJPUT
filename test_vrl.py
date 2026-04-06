@@ -1,7 +1,7 @@
 #!/home/user/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.1 Test Suite
+ test_vrl.py — VISHAL RAJPUT TRADE v13.2 Test Suite
  Minimal strategy: EMA gap + RSI entry, 2-lot exit.
 ═══════════════════════════════════════════════════════════════
 """
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.1", D.VERSION == "v13.1", "got " + str(D.VERSION))
+test("VERSION = v13.2", D.VERSION == "v13.2", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")

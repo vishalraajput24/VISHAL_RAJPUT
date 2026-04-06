@@ -14,7 +14,7 @@ _CONFIG_PATH = os.environ.get(
 )
 
 _cfg = None
-_CONFIG_VERSION = "13.0"
+_CONFIG_VERSION = "13.2"
 
 
 class ConfigError(Exception):
