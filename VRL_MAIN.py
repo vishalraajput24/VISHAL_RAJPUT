@@ -819,16 +819,27 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _slip_line = ""
     if _entry_slippage > 0:
         _slip_line = "Slip: +" + str(_entry_slippage) + "pts\n"
-    # Bonus indicators line
-    _bonus = entry_result.get("bonus", {})
-    _btags = []
-    if _bonus.get("above_vwap"): _btags.append("VWAP ✓")
-    else: _btags.append("VWAP ✗")
-    if _bonus.get("fib_nearest"): _btags.append("Fib " + str(_bonus["fib_nearest"]) + " " + str(_bonus.get("fib_distance", 0)) + "pts")
-    if _bonus.get("vol_spike"): _btags.append("Vol " + str(_bonus.get("vol_ratio", 0)) + "x 🔥")
-    if _bonus.get("pdh_break"): _btags.append("PDH ↑")
-    if _bonus.get("pdl_break"): _btags.append("PDL ↓")
-    _bonus_line = "Bonus: " + " | ".join(_btags) + "\n" if _btags else ""
+    # Bonus indicators line (wrapped in try — never crash entry alert)
+    _bonus_line = ""
+    try:
+        _eb = entry_result.get("bonus", {})
+        _bt = []
+        if _eb.get("above_vwap"):
+            _bt.append("VWAP ✓")
+        else:
+            _bt.append("VWAP ✗")
+        if _eb.get("fib_nearest"):
+            _bt.append("Fib " + str(_eb["fib_nearest"]) + " " + str(_eb.get("fib_distance", 0)) + "pts")
+        if _eb.get("vol_spike"):
+            _bt.append("Vol " + str(_eb.get("vol_ratio", 0)) + "x 🔥")
+        if _eb.get("pdh_break"):
+            _bt.append("PDH ↑")
+        if _eb.get("pdl_break"):
+            _bt.append("PDL ↓")
+        if _bt:
+            _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
+    except Exception:
+        _bonus_line = ""
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0)) + " × " + str(lot_count) + " LOTS</b>\n"
