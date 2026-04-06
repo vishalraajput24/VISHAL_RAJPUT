@@ -176,18 +176,18 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
 section("EXIT — STALE ENTRY")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_exit_state(200, peak=2, candles=3)
+    st = _make_exit_state(200, peak=2, candles=5)
     exits = E.manage_exit(st, 201, {})
-    test("3 candles peak<3 → STALE", len(exits) == 1 and exits[0]["reason"] == "STALE_ENTRY",
+    test("5 candles peak<3 → STALE", len(exits) == 1 and exits[0]["reason"] == "STALE_ENTRY",
          "got " + str(exits))
 
-    st = _make_exit_state(200, peak=5, candles=3)
+    st = _make_exit_state(200, peak=5, candles=5)
     exits = E.manage_exit(st, 204, {})
-    test("3 candles peak=5 → no stale", len(exits) == 0, "got " + str(exits))
+    test("5 candles peak=5 → no stale", len(exits) == 0, "got " + str(exits))
 
-    st = _make_exit_state(200, peak=2, candles=2)
+    st = _make_exit_state(200, peak=2, candles=4)
     exits = E.manage_exit(st, 201, {})
-    test("2 candles peak<3 → no stale (wait)", len(exits) == 0, "got " + str(exits))
+    test("4 candles peak<3 → no stale (wait)", len(exits) == 0, "got " + str(exits))
 
 
 section("EXIT — PROFIT FLOORS")
@@ -486,10 +486,10 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     _ex = E.manage_exit(_st, 188, {})
     test("HARD_SL at -12", len(_ex) == 1 and _ex[0]["reason"] == "HARD_SL")
 
-    # STALE at 3 candles + peak < 3
-    _st = _make_exit_state(200, peak=2, candles=3)
+    # STALE at 5 candles + peak < 3
+    _st = _make_exit_state(200, peak=2, candles=5)
     _ex = E.manage_exit(_st, 201, {})
-    test("STALE at 3 candles peak<3", len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
+    test("STALE at 5 candles peak<3", len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
 
     # PROFIT_FLOOR at peak 10 drop to floor
     _st = _make_exit_state(200, peak=10, candles=5)

@@ -31,7 +31,7 @@ entry:
 
 exit:
   hard_sl: 12           # initial SL points
-  stale_candles: 3      # candles with peak < stale_peak_min
+  stale_candles: 5      # was 3, gives trade 2 more minutes to develop
   stale_peak_min: 3     # minimum peak to not be stale
 
 profit_floors:
