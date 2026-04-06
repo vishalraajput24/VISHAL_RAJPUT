@@ -130,6 +130,7 @@ _locked_pe_strike = None
 _locked_at_spot   = None
 _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
+_last_dash_args = {}  # cached dashboard args for post-exit refresh
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock CE/PE strikes and subscribe tokens. Only called on relock."""
@@ -1047,8 +1048,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     # Force dashboard refresh after exit so it shows "NOT IN TRADE" immediately
     if trade_done:
         try:
-            _write_dashboard(D.get_ltp(D.NIFTY_SPOT_TOKEN), 0, 0, D.get_vix(),
-                             "", {}, {}, None, datetime.now())
+            _da = _last_dash_args
+            if _da:
+                _write_dashboard(
+                    _da.get("spot_ltp", D.get_ltp(D.NIFTY_SPOT_TOKEN)),
+                    _da.get("atm_strike", 0), _da.get("dte", 0),
+                    _da.get("vix_ltp", D.get_vix()),
+                    _da.get("session", ""), _da.get("profile", {}),
+                    {}, _da.get("expiry"), datetime.now())
+            else:
+                _write_dashboard(D.get_ltp(D.NIFTY_SPOT_TOKEN), 0, 0,
+                                 D.get_vix(), "", {}, {}, None, datetime.now())
         except Exception:
             pass
     logger.info("[MAIN] EXIT " + lot_id + " " + symbol
@@ -1258,12 +1268,27 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         else:
             position = {"in_trade": False}
 
-        # ── Today summary ──
+        # ── Today summary from trade log (single source of truth) ──
+        _today_trades = _read_today_trades()
+        _today_pnl_actual = 0.0
+        _today_wins = 0
+        _today_losses = 0
+        for _tt in _today_trades:
+            try:
+                _p = float(_tt.get("pnl_pts", 0))
+                _today_pnl_actual += _p
+                if _p > 0:
+                    _today_wins += 1
+                else:
+                    _today_losses += 1
+            except Exception:
+                pass
         today_block = {
-            "pnl": round(st.get("daily_pnl", 0), 1),
-            "trades": st.get("daily_trades", 0),
-            "wins": st.get("daily_trades", 0) - st.get("daily_losses", 0),
-            "losses": st.get("daily_losses", 0),
+            "pnl": round(_today_pnl_actual, 1),
+            "pnl_rs": round(_today_pnl_actual * D.LOT_SIZE, 0),
+            "trades": len(_today_trades),
+            "wins": _today_wins,
+            "losses": _today_losses,
             "streak": st.get("consecutive_losses", 0),
             "paused": st.get("paused", False),
             "profit_locked": st.get("profit_locked", False),
@@ -1271,7 +1296,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
         # ── Today charges from trade log ──
         try:
-            _today_trades = _read_today_trades()
             _t_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
             _t_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
             _t_net = sum(float(t.get("net_pnl_rs", 0)) for t in _today_trades)
@@ -1786,7 +1810,14 @@ def _strategy_loop(kite):
                         "pe": pe_res,
                     }
 
-                # Write dashboard
+                # Write dashboard + cache args for post-exit refresh
+                global _last_dash_args
+                _last_dash_args = {
+                    "spot_ltp": spot_ltp, "atm_strike": atm_strike,
+                    "dte": dte, "vix_ltp": vix_ltp,
+                    "session": session, "profile": profile,
+                    "expiry": expiry,
+                }
                 try:
                     _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                                      profile, all_results, expiry, now,
