@@ -371,7 +371,8 @@ function render(d,trades,zones,mtf){
     trades.slice().reverse().forEach(function(t){
       var p=parseFloat(t.pnl_pts||0),c=p>0?'win':'loss',pc=p>0?'green':'red';
       th+='<div class="trade-card '+c+'"><div class="trade-pnl mono '+pc+'">'+fmt(p)+'</div>';
-      th+='<div class="trade-info"><div class="trade-sym">'+(t.direction||'')+' '+(t.strike||'')+'</div>';
+      var lotTag=t.lot_id&&t.lot_id!=='ALL'?' <span style="font-size:9px;color:var(--text3);font-weight:400">'+t.lot_id+'</span>':'';
+      th+='<div class="trade-info"><div class="trade-sym">'+(t.direction||'')+' '+(t.strike||'')+lotTag+'</div>';
       th+='<div class="trade-detail">'+esc(t.entry_time||'').slice(-8)+' → '+esc(t.exit_time||'')+' · ₹'+t.entry_price+' → ₹'+t.exit_price+'</div></div>';
       th+='<span class="trade-reason">'+esc(t.exit_reason||'')+'</span></div>';
     });

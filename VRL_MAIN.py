@@ -331,6 +331,7 @@ TRADE_FIELDNAMES = [
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
     "entry_slippage", "exit_slippage", "signal_price",
+    "lot_id",
 ]
 
 def _cleanup_trade_log():
@@ -356,12 +357,14 @@ def _cleanup_trade_log():
         logger.warning("[MAIN] Trade log cleanup error: " + str(e))
 
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
-               candles_held: int = 0, saved_entry: float = None):
+               candles_held: int = 0, saved_entry: float = None,
+               lot_id: str = "ALL", qty: int = 0):
     os.makedirs(os.path.dirname(D.TRADE_LOG_PATH), exist_ok=True)
     is_new  = not os.path.isfile(D.TRADE_LOG_PATH)
     entry   = saved_entry if saved_entry is not None else st.get("entry_price", 0)
     pnl_pts = round(exit_price - entry, 2)
-    pnl_rs  = round(pnl_pts * D.LOT_SIZE, 2)
+    _lot_qty = qty if qty > 0 else D.LOT_SIZE
+    pnl_rs  = round(pnl_pts * _lot_qty, 2)
 
     row = {
         "date"          : date.today().isoformat(),
@@ -396,11 +399,22 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "entry_slippage": st.get("entry_slippage", 0),
         "exit_slippage": 0,
         "signal_price": st.get("signal_price", 0),
+        "lot_id": lot_id,
     }
 
+    # Fix strike: use locked strike from state, fallback to ATM calculation
+    if not row["strike"] or row["strike"] == 0:
+        try:
+            _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            if _spot > 0:
+                _step = D.get_active_strike_step(st.get("dte_at_entry", 0))
+                row["strike"] = D.resolve_atm_strike(_spot, _step)
+        except Exception:
+            pass
+
     # Calculate charges
-    _num_exit_orders = 2 if st.get("lots_split", False) else 1
-    _qty = st.get("qty", D.LOT_SIZE * 2)
+    _num_exit_orders = 1  # per-lot logging = 1 exit order each
+    _qty = _lot_qty
     try:
         _ch = CHARGES.calculate_charges(entry, exit_price, _qty, _num_exit_orders)
         row["brokerage"] = _ch["brokerage"]
@@ -885,9 +899,12 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 
     pnl_lots = pnl * (exit_qty / D.LOT_SIZE)
 
+    # Log EVERY lot exit (not just trade_done)
+    _log_trade(state, actual_exit, reason, candles, saved_entry=entry,
+               lot_id=lot_id, qty=exit_qty)
+
     # Telegram alert
     if trade_done:
-        _log_trade(state, actual_exit, reason, candles, saved_entry=entry)
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl_lots, 2)
             if pnl < 0:

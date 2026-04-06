@@ -179,10 +179,11 @@ def init_db():
         except Exception:
             pass
 
-        # v13.1: Add slippage columns to trades
+        # v13.1: Add slippage + lot_id columns to trades
         for _sc, _st in [("entry_slippage", "REAL DEFAULT 0"),
                           ("exit_slippage", "REAL DEFAULT 0"),
-                          ("signal_price", "REAL DEFAULT 0")]:
+                          ("signal_price", "REAL DEFAULT 0"),
+                          ("lot_id", "TEXT DEFAULT 'ALL'")]:
             try:
                 c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
             except Exception:
@@ -348,6 +349,7 @@ _TRADE_FIELDS = [
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
     "entry_slippage", "exit_slippage", "signal_price",
+    "lot_id",
 ]
 
 def insert_trade(row):
