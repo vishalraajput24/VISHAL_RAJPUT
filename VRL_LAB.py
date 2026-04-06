@@ -311,36 +311,30 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
     for opt_type, info in _current_atm_tokens.items():
         token = info["token"]
         try:
+            # v13.1: check_entry uses (token, option_type, spot_ltp, dte, expiry_date, kite)
             result = _check_entry(
                 token       = token,
                 option_type = opt_type,
-                profile     = profile,
                 spot_ltp    = spot_ltp,
-                strike      = _current_atm_strike,
+                dte         = dte,
                 expiry_date = _current_expiry,
-                session     = session,
+                kite        = kite,
             )
 
-            d1 = result.get("details_1m", {})
-            d3 = result.get("details_3m", {})
-            g  = result.get("greeks", {})
-
+            # v13.1: Determine reject reason from v13 result keys
             if result.get("fired"):
                 reject = ""
-            elif result.get("regime") in ("CHOPPY", "UNKNOWN"):
-                reject = "REGIME_" + result.get("regime", "")
-            elif d3.get("conditions_met", 0) < 2 and d3.get("conditions_met", 0) > 0:
-                reject = "3M_GATE_" + str(d3.get("conditions_met", 0)) + "/4"
-            elif d1.get("rsi_reject"):
-                reject = d1.get("rsi_reject_reason", "RSI_ZONE")
-            elif not d1.get("body_ok") and d1.get("body_pct", 0) > 0:
-                reject = "BODY"
-            elif not d1.get("vol_ok") and d1.get("vol_ratio", 0) > 0:
-                reject = "VOLUME"
-            elif result.get("score", 0) > 0:
-                reject = "SCORE_" + str(result.get("score", 0))
             else:
-                reject = "BLOCKED"
+                reasons = []
+                if not result.get("ema_ok"):
+                    reasons.append("EMA_" + str(result.get("ema_gap", 0)))
+                if not result.get("rsi_ok"):
+                    reasons.append("RSI_" + str(result.get("rsi", 0)))
+                if not result.get("candle_green"):
+                    reasons.append("RED")
+                if not result.get("gap_widening"):
+                    reasons.append("SHRINK")
+                reject = "_".join(reasons) if reasons else "BLOCKED"
 
             rows.append({
                 "timestamp"      : ts_str,
@@ -350,26 +344,26 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "spot"           : round(spot_ltp, 2),
                 "direction"      : opt_type,
                 "entry_price"    : result.get("entry_price", 0),
-                "rsi_1m"         : d1.get("rsi_val", 0),
-                "body_pct_1m"    : d1.get("body_pct", 0),
-                "vol_ratio_1m"   : d1.get("vol_ratio", 0),
-                "rsi_rising_1m"  : int(d1.get("rsi_rising", False)),
-                "rsi_3m"         : d3.get("rsi_val_3m", 0),
-                "body_pct_3m"    : d3.get("body_pct_3m", 0),
-                "ema_spread_3m"  : d3.get("ema_spread_3m", 0),
-                "conditions_3m"  : d3.get("conditions_met", 0),
-                "mode_3m"        : d3.get("mode", ""),
-                "score"          : result.get("score", 0),
+                "rsi_1m"         : result.get("rsi", 0),
+                "body_pct_1m"    : 0,
+                "vol_ratio_1m"   : 0,
+                "rsi_rising_1m"  : int(result.get("rsi_ok", False)),
+                "spread_1m"      : result.get("ema_gap", 0),
+                "rsi_3m"         : 0,
+                "body_pct_3m"    : 0,
+                "ema_spread_3m"  : 0,
+                "conditions_3m"  : 0,
+                "mode_3m"        : "",
+                "score"          : 0,
                 "fired"          : int(result.get("fired", False)),
                 "reject_reason"  : reject,
-                "iv_pct"         : g.get("iv_pct", 0),
-                "delta"          : g.get("delta", 0),
+                "iv_pct"         : 0,
+                "delta"          : 0,
                 "vix"            : round(vix, 2),
                 "spot_rsi_3m"       : spot_3m.get("rsi", 0),
                 "spot_ema_spread_3m": spot_3m.get("spread", 0),
                 "spot_regime"       : spot_3m.get("regime", ""),
                 "spot_gap"          : round(spot_gap, 1),
-                "spread_1m"         : result.get("spread_1m", 0),
                 "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
                 "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
                 "straddle_decay_pct": 0.0,
@@ -386,7 +380,7 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 pass
 
         except Exception as e:
-            logger.debug("[LAB] scan log error " + opt_type + ": " + str(e))
+            logger.warning("[LAB] scan log error " + opt_type + ": " + str(e))
             continue
 
     if rows:
@@ -1823,7 +1817,7 @@ def _lab_loop():
                     try:
                         _log_signal_scan(_kite_ref, spot_ltp, now)
                     except Exception as e:
-                        logger.debug("[LAB] scan log: " + str(e))
+                        logger.warning("[LAB] scan log error: " + str(e))
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 1m skip — spot LTP not available yet")
 
