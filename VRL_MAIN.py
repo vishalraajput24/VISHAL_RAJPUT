@@ -1127,8 +1127,16 @@ def _compute_bonus(token: int) -> dict:
         fib = D.calculate_option_fib_pivots(token)
         bonus["fib_nearest"] = fib.get("nearest_level", "")
         bonus["fib_distance"] = fib.get("nearest_distance", 0)
+        bonus["fib_pivot"] = fib.get("pivot", 0)
+        bonus["fib_R1"] = fib.get("R1", 0)
+        bonus["fib_R2"] = fib.get("R2", 0)
+        bonus["fib_R3"] = fib.get("R3", 0)
+        bonus["fib_S1"] = fib.get("S1", 0)
+        bonus["fib_S2"] = fib.get("S2", 0)
+        bonus["fib_S3"] = fib.get("S3", 0)
     except Exception:
         bonus["fib_nearest"] = ""; bonus["fib_distance"] = 0
+        bonus["fib_pivot"] = 0
     try:
         vol = D.detect_volume_spike(token)
         bonus["vol_spike"] = vol.get("spike", False)
@@ -1139,8 +1147,11 @@ def _compute_bonus(token: int) -> dict:
         pdh = D.get_option_prev_day_hl(token)
         bonus["pdh_break"] = pdh.get("above_prev_high", False)
         bonus["pdl_break"] = pdh.get("below_prev_low", False)
+        bonus["prev_high"] = pdh.get("prev_high", 0)
+        bonus["prev_low"] = pdh.get("prev_low", 0)
     except Exception:
         bonus["pdh_break"] = False; bonus["pdl_break"] = False
+        bonus["prev_high"] = 0; bonus["prev_low"] = 0
     return bonus
 
 
@@ -1297,14 +1308,24 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         # Flatten bonus dict into signal for dashboard consumption
         for _sig in (ce_signal, pe_signal):
             _b = _sig.pop("bonus", {})
-            _sig["above_vwap"] = _b.get("above_vwap", False)
             _sig["vwap"] = _b.get("vwap", 0)
+            _sig["above_vwap"] = _b.get("above_vwap", False)
+            _sig["vwap_dist"] = _b.get("vwap_dist", 0)
             _sig["fib_nearest"] = _b.get("fib_nearest", "")
             _sig["fib_distance"] = _b.get("fib_distance", 0)
+            _sig["fib_pivot"] = _b.get("fib_pivot", 0)
+            _sig["fib_R1"] = _b.get("fib_R1", 0)
+            _sig["fib_R2"] = _b.get("fib_R2", 0)
+            _sig["fib_R3"] = _b.get("fib_R3", 0)
+            _sig["fib_S1"] = _b.get("fib_S1", 0)
+            _sig["fib_S2"] = _b.get("fib_S2", 0)
+            _sig["fib_S3"] = _b.get("fib_S3", 0)
             _sig["vol_spike"] = _b.get("vol_spike", False)
             _sig["vol_ratio"] = _b.get("vol_ratio", 0)
             _sig["pdh_break"] = _b.get("pdh_break", False)
             _sig["pdl_break"] = _b.get("pdl_break", False)
+            _sig["prev_high"] = _b.get("prev_high", 0)
+            _sig["prev_low"] = _b.get("prev_low", 0)
 
         # ── Fix LTP=0 when gate blocks early ──
         try:

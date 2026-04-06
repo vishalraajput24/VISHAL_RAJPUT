@@ -321,6 +321,15 @@ function render(d,trades,zones,mtf){
     pa+='<div class="floor '+(pk>=20?'hit':'next')+'">+20'+(pk>=20?' ✅':'')+'</div>';
     pa+='<div class="floor '+(pk>=30?'hit':'next')+'">+30'+(pk>=30?' ✅':'')+'</div></div>';
     pa+='<div class="pos-meta"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+(pos.candles||0)+'</b></span></div>';
+    // Fib + VWAP context for traded direction
+    var ts=pos.direction==='CE'?ce:pe;
+    if(ts&&(ts.vwap||ts.fib_nearest)){
+      pa+='<div style="padding:6px 14px;font-size:10px;color:var(--text3);border-top:1px solid var(--border)">';
+      if(ts.vwap){var _vc=ts.above_vwap?'var(--green)':'var(--red)';pa+='<span style="color:'+_vc+'">VWAP '+(ts.above_vwap?'✅':'✗')+'</span> ';}
+      if(ts.fib_nearest){pa+='<span style="color:var(--orange)">Fib '+ts.fib_nearest+' '+(ts.fib_distance>0?'+':'')+ts.fib_distance+'pts</span> ';}
+      if(ts.vol_spike){pa+='<span style="color:var(--orange)">Vol '+ts.vol_ratio+'x 🔥</span>';}
+      pa+='</div>';
+    }
     pa+='</div>';
   }
   document.getElementById('pos-area').innerHTML=pa;
@@ -353,6 +362,15 @@ function render(d,trades,zones,mtf){
     sh+='<div class="sig-row"><span class="sig-k">RSI</span><span class="sig-v '+(ro?'ok':'fail')+' mono">'+rv.toFixed(1)+' '+(ro?'↑ ✅':'❌')+'</span></div>';
     sh+='<div class="sig-row"><span class="sig-k">CANDLE</span><span class="sig-v '+(s.candle_green?'ok':'fail')+'">'+(s.candle_green?'GREEN ✅':'RED ❌')+'</span></div>';
     sh+='<div class="sig-row"><span class="sig-k">GAP TREND</span><span class="sig-v '+(s.gap_widening?'ok':'fail')+'">'+(s.gap_widening?'GROWING ✅':'SHRINK ❌')+'</span></div>';
+    // Bonus indicators
+    if(s.vwap||s.fib_nearest||s.vol_ratio){
+      sh+='<div style="border-top:1px solid var(--border);padding:6px 14px;font-size:10px;color:var(--text3)">';
+      if(s.vwap){var vc2=s.above_vwap?'var(--green)':'var(--red)';sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>VWAP ₹'+s.vwap+'</span><span style="color:'+vc2+'">'+(s.above_vwap?'ABOVE ✅':'BELOW ✗')+' ('+(s.vwap_dist>0?'+':'')+s.vwap_dist+')</span></div>';}
+      if(s.fib_nearest){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>Fib</span><span style="color:var(--orange)">'+s.fib_nearest+' '+(s.fib_distance>0?'+':'')+s.fib_distance+'pts</span></div>';}
+      var vr=s.vol_ratio||0;if(vr>0){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>Vol</span><span style="color:'+(s.vol_spike?'var(--orange)':'var(--text3)')+'">'+vr+'x'+(s.vol_spike?' 🔥':'')+'</span></div>';}
+      if(s.prev_high){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>PDH/L</span><span>'+(s.pdh_break?'<span style="color:var(--green)">PDH ↑</span>':s.pdl_break?'<span style="color:var(--red)">PDL ↓</span>':'—')+'</span></div>';}
+      sh+='</div>';
+    }
     sh+='<div class="sig-verdict '+vc+'">'+esc(s.verdict||'NO DATA')+'</div></div>';
   });
   sh+='</div>';
@@ -379,6 +397,27 @@ function render(d,trades,zones,mtf){
     mh+='<div class="mkt-section"><div class="mkt-header">📐 Fib Pivots</div>';
     mh+='<div class="mkt-row"><span class="mkt-k">Nearest</span><span class="mkt-v mono">'+mk.fib_nearest+' ('+mk.fib_distance+'pts)</span></div></div>';
   }
+  // Option Fib + VWAP for CE and PE
+  [['CE',ce],['PE',pe]].forEach(function(p){
+    var t=p[0],s=p[1];
+    if(s.fib_pivot||s.vwap){
+      mh+='<div class="mkt-section"><div class="mkt-header">'+(t==='CE'?'🟢':'🔴')+' '+t+' '+(s.strike||'')+' — Fib + VWAP</div>';
+      if(s.vwap){var vc3=s.above_vwap?'color:var(--green)':'color:var(--red)';mh+='<div class="mkt-row"><span class="mkt-k">VWAP</span><span class="mkt-v mono" style="'+vc3+'">₹'+s.vwap+' ('+(s.above_vwap?'above':'below')+' '+(s.vwap_dist>0?'+':'')+s.vwap_dist+')</span></div>';}
+      if(s.fib_pivot){
+        var ltp=s.ltp||0;
+        var lvls=[['R3',s.fib_R3],['R2',s.fib_R2],['R1',s.fib_R1],['P',s.fib_pivot],['S1',s.fib_S1],['S2',s.fib_S2],['S3',s.fib_S3]];
+        lvls.forEach(function(l){
+          var nm=l[0],pr=l[1];if(!pr)return;
+          var dist=ltp-pr,near=s.fib_nearest===nm;
+          var lc=nm.charAt(0)==='R'?'var(--red)':nm.charAt(0)==='S'?'var(--green)':'var(--orange)';
+          mh+='<div class="mkt-row" style="'+(near?'background:var(--orange-bg);font-weight:700':'')+'"><span class="mkt-k" style="color:'+lc+'">'+nm+(near?' ◄':'')+'</span><span class="mkt-v mono">₹'+pr+' <span style="color:var(--text3);font-size:9px">'+(dist>0?'+':'')+dist.toFixed(0)+'</span></span></div>';
+        });
+      }
+      if(s.prev_high){mh+='<div class="mkt-row"><span class="mkt-k">PDH/PDL</span><span class="mkt-v mono">H ₹'+s.prev_high+' L ₹'+s.prev_low+(s.pdh_break?' ↑BREAK':'')+'</span></div>';}
+      if(s.vol_ratio){mh+='<div class="mkt-row"><span class="mkt-k">Volume</span><span class="mkt-v mono">'+(s.vol_ratio||0)+'x avg'+(s.vol_spike?' 🔥':'')+'</span></div>';}
+      mh+='</div>';
+    }
+  });
   if(str&&str.open_price){
     var dcy=str.decay_pct||0;
     mh+='<div class="mkt-section"><div class="mkt-header">📉 Straddle</div>';
