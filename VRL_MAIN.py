@@ -1032,11 +1032,13 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             )
         else:
             _cd_min = _cd_cfg.get("after_loss", 5)
+            _fast_sl = "⚡ FAST SL — " + str(candles) + " candle exit\n" if reason == "HARD_SL" and candles <= 1 else ""
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 + reason + " | Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                + _fast_sl +
                 "Gross  : -₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
                 "Charges: -₹" + "{:,}".format(int(_ch["total_charges"])) + "\n"
                 "Net    : -₹" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"

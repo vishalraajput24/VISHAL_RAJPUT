@@ -259,7 +259,8 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DATA</b>\n"
         "/files     — browse folders\n"
-        "/download  — today's zip (or /download YYYY-MM-DD)\n"
+        "/download  — strategy data (trade log + DB + config + state)\n"
+        "/download_all — full day zip (or /download_all YYYY-MM-DD)\n"
         "/health    — system health check\n"
         "/livecheck — last 50 log lines\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -846,20 +847,42 @@ def _cmd_score(args):
 
 def _cmd_files(args):  _send_file_browser()
 def _cmd_download(args):
-    """
-    /download        → today's logs
-    /download 2026-04-01  → specific date
-    """
+    """Smart download — 4 key files only."""
+    import zipfile as _zf
+    from datetime import date as _d
+    _today = _d.today().strftime("%Y-%m-%d")
+    _zip_name = "vrl_strategy_" + _today + ".zip"
+    _zip_path = os.path.join(os.path.expanduser("~"), _zip_name)
+    _files = [
+        (os.path.expanduser("~/lab_data/vrl_trade_log.csv"), "vrl_trade_log.csv"),
+        (os.path.expanduser("~/lab_data/vrl_data.db"), "vrl_data.db"),
+        (os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml"), "config.yaml"),
+        (os.path.expanduser("~/state/vrl_live_state.json"), "vrl_live_state.json"),
+    ]
+    try:
+        with _zf.ZipFile(_zip_path, "w", _zf.ZIP_DEFLATED) as zf:
+            for fpath, fname in _files:
+                if os.path.isfile(fpath):
+                    zf.write(fpath, fname)
+        _tg_send_file(_zip_path, "📦 Strategy data — " + _today)
+        os.remove(_zip_path)
+    except Exception as e:
+        _tg_send("Download error: " + str(e))
+
+
+def _cmd_download_all(args):
+    """Full download — all logs for a date."""
     target = None
+    if isinstance(args, list):
+        args = " ".join(args)
     if args and args.strip():
         arg = args.strip()
-        # Accept YYYY-MM-DD or YYYYMMDD
         if len(arg) == 8 and arg.isdigit():
             target = arg[:4] + "-" + arg[4:6] + "-" + arg[6:8]
         elif len(arg) == 10 and arg[4] == "-" and arg[7] == "-":
             target = arg
         else:
-            _tg_send("Usage: /download or /download 2026-04-01")
+            _tg_send("Usage: /download_all or /download_all 2026-04-01")
             return
     _send_today_download(target)
 
@@ -1447,6 +1470,7 @@ _DISPATCH = {
     "/trades"      : _cmd_trades,
     "/files"       : _cmd_files,
     "/download"    : _cmd_download,
+    "/download_all": _cmd_download_all,
     "/health"      : _cmd_health,
     "/pause"       : _cmd_pause,
     "/reset_exit"  : _cmd_reset_exit,
