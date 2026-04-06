@@ -423,8 +423,9 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         row["gst"] = _ch["gst"]
         row["stamp_duty"] = _ch["stamp"]
         row["total_charges"] = _ch["total_charges"]
-        row["gross_pnl_rs"] = pnl_rs
+        row["gross_pnl_rs"] = _ch["gross_pnl"]
         row["net_pnl_rs"] = _ch["net_pnl"]
+        row["pnl_rs"] = _ch["gross_pnl"]  # override to match charges calc qty
         row["num_exit_orders"] = _num_exit_orders
     except Exception:
         pass
