@@ -89,6 +89,13 @@ DEFAULT_STATE = {
     "lots_split"         : False,
     "lot_count"          : 2,
     "lot2_trail_sl"      : 0.0,
+    "lot1_exit_price"    : 0.0,
+    "lot1_exit_pnl"      : 0.0,
+    "lot1_exit_reason"   : "",
+    "lot1_exit_time"     : "",
+    "lot2_exit_price"    : 0.0,
+    "lot2_exit_pnl"      : 0.0,
+    "lot2_exit_reason"   : "",
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
     "floor_10_alerted"   : False,
@@ -920,15 +927,29 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     actual_exit = fill["fill_price"] if fill["ok"] else exit_price
     pnl = round(actual_exit - entry, 2)
 
-    # Update lot state
+    # Update lot state + track per-lot exit data
     with _state_lock:
         if lot_id == "ALL":
             state["lot1_active"] = False
             state["lot2_active"] = False
+            state["lot1_exit_price"] = round(actual_exit, 2)
+            state["lot1_exit_pnl"] = round(pnl, 2)
+            state["lot1_exit_reason"] = reason
+            state["lot1_exit_time"] = datetime.now().strftime("%H:%M")
+            state["lot2_exit_price"] = round(actual_exit, 2)
+            state["lot2_exit_pnl"] = round(pnl, 2)
+            state["lot2_exit_reason"] = reason
         elif lot_id == "LOT1":
             state["lot1_active"] = False
+            state["lot1_exit_price"] = round(actual_exit, 2)
+            state["lot1_exit_pnl"] = round(pnl, 2)
+            state["lot1_exit_reason"] = reason
+            state["lot1_exit_time"] = datetime.now().strftime("%H:%M")
         elif lot_id == "LOT2":
             state["lot2_active"] = False
+            state["lot2_exit_price"] = round(actual_exit, 2)
+            state["lot2_exit_pnl"] = round(pnl, 2)
+            state["lot2_exit_reason"] = reason
 
     # Check if trade is fully closed
     trade_done = not state.get("lot1_active") and not state.get("lot2_active")
@@ -960,6 +981,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot2_trail_sl": 0.0,
+                "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
+                "lot1_exit_reason": "", "lot1_exit_time": "",
+                "lot2_exit_price": 0.0, "lot2_exit_pnl": 0.0,
+                "lot2_exit_reason": "",
                 "floor_10_alerted": False, "floor_20_alerted": False,
                 "floor_30_alerted": False, "split_alerted": False,
             })
@@ -1239,31 +1264,48 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             pass
 
-        # ── Position block ──
+        # ── Position block with independent lot tracking ──
         position = {}
         if st.get("in_trade"):
             opt_ltp = D.get_ltp(st.get("token", 0))
             entry = st.get("entry_price", 0)
-            pnl = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
-            sl_key = "phase1_sl" if st.get("exit_phase", 1) == 1 else "phase2_sl"
-            sl = st.get(sl_key, 0)
+            running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
+
+            # LOT 1 — independent
+            if st.get("lot1_active"):
+                lot1 = {"status": "active", "pnl": running,
+                         "sl": round(st.get("current_floor", 0), 2), "sl_type": "FLOOR"}
+            else:
+                lot1 = {"status": "exited", "pnl": round(st.get("lot1_exit_pnl", 0), 2),
+                         "exit_price": st.get("lot1_exit_price", 0),
+                         "exit_reason": st.get("lot1_exit_reason", ""),
+                         "exit_time": st.get("lot1_exit_time", ""), "sl": 0, "sl_type": ""}
+
+            # LOT 2 — independent
+            if st.get("lot2_active"):
+                _l2_split = st.get("lots_split", False)
+                _l2_sl = st.get("lot2_trail_sl", 0) if _l2_split else st.get("current_floor", 0)
+                lot2 = {"status": "riding" if _l2_split else "active", "pnl": running,
+                         "sl": round(_l2_sl, 2), "sl_type": "ATR" if _l2_split else "FLOOR"}
+            else:
+                lot2 = {"status": "exited", "pnl": round(st.get("lot2_exit_pnl", 0), 2),
+                         "exit_price": st.get("lot2_exit_price", 0),
+                         "exit_reason": st.get("lot2_exit_reason", ""), "sl": 0, "sl_type": ""}
+
             position = {
                 "in_trade": True,
                 "symbol": st.get("symbol", ""),
                 "direction": st.get("direction", ""),
                 "entry": entry,
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
-                "pnl": pnl,
+                "pnl": running,
                 "peak": round(st.get("peak_pnl", 0), 1),
-                "sl": round(sl, 2),
                 "candles": st.get("candles_held", 0),
-                "lot1_active": st.get("lot1_active", True),
-                "lot2_active": st.get("lot2_active", True),
                 "lots_split": st.get("lots_split", False),
-                "current_floor": round(st.get("current_floor", 0), 2),
                 "current_rsi": round(st.get("current_rsi", 0), 1),
                 "strike": st.get("strike", 0),
-                "lot2_trail_sl": round(st.get("lot2_trail_sl", 0), 2),
+                "lot1": lot1,
+                "lot2": lot2,
             }
         else:
             position = {"in_trade": False}
