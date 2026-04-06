@@ -1557,15 +1557,16 @@ def _strategy_loop(kite):
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
                 dir_tokens = dict(_locked_tokens)
 
-                # Fallback to ATM if locked tokens empty
+                # If locked tokens empty, force relock — never use unlocked ATM
                 if not dir_tokens:
-                    tokens = D.get_option_tokens(kite, atm_strike, expiry)
-                    if not tokens:
-                        logger.warning("[MAIN] No tokens resolved for ATM=" + str(atm_strike))
+                    logger.warning("[MAIN] Locked tokens empty — forcing relock")
+                    _lock_strikes(spot_ltp, dte, kite, expiry)
+                    dir_tokens = dict(_locked_tokens)
+                    dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
+                    if not dir_tokens:
+                        logger.warning("[MAIN] Relock failed — skipping cycle")
                         time.sleep(2)
                         continue
-                    dir_tokens = tokens
-                    dir_strikes = {"CE": atm_strike, "PE": atm_strike}
 
                 # v13.1: Same entry logic for ALL DTEs (including DTE=0)
                 # ── MINIMAL SCAN — EMA gap + RSI only ─────
