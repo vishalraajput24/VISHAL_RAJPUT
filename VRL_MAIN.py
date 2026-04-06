@@ -1032,6 +1032,13 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             D.refresh_margin(kite)
         except Exception:
             pass
+    # Force dashboard refresh after exit so it shows "NOT IN TRADE" immediately
+    if trade_done:
+        try:
+            _write_dashboard(D.get_ltp(D.NIFTY_SPOT_TOKEN), 0, 0, D.get_vix(),
+                             "", {}, {}, None, datetime.now())
+        except Exception:
+            pass
     logger.info("[MAIN] EXIT " + lot_id + " " + symbol
                 + " price=" + str(actual_exit) + " pnl=" + str(pnl)
                 + "pts reason=" + reason)
@@ -1222,6 +1229,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "current_floor": round(st.get("current_floor", 0), 2),
                 "current_rsi": round(st.get("current_rsi", 0), 1),
                 "strike": st.get("strike", 0),
+                "lot2_trail_sl": round(st.get("lot2_trail_sl", 0), 2),
             }
         else:
             position = {"in_trade": False}
@@ -1461,6 +1469,17 @@ def _strategy_loop(kite):
                     except Exception as e:
                         logger.warning("[MAIN] REST option LTP failed: " + str(e))
                 if option_ltp > 0:
+                    # Update RSI for dashboard display (independent of manage_exit)
+                    try:
+                        _dash_df = D.get_historical_data(_token, "minute", 5)
+                        _dash_df = D.add_indicators(_dash_df)
+                        if not _dash_df.empty and len(_dash_df) >= 2:
+                            _dash_rsi = round(float(_dash_df.iloc[-2].get("RSI", 0)), 1)
+                            with _state_lock:
+                                state["current_rsi"] = _dash_rsi
+                    except Exception:
+                        pass
+
                     with _state_lock:
                         cur_1m = now.strftime("%H:%M")
                         if cur_1m != state.get("_last_candle_held_min", ""):
