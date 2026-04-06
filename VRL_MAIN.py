@@ -1310,6 +1310,9 @@ def _strategy_loop(kite):
             session = D.get_session_block(now.hour, now.minute)
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
+            # v13.1: Auto-heal stale WebSocket (re-auth + reconnect)
+            D.check_and_reconnect()
+
             # v12.15: Warning system
             try:
                 _wmsg, _wupd = D.run_warnings(

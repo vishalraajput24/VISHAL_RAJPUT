@@ -550,6 +550,50 @@ def is_tick_live(token) -> bool:
         return False
     return (time.time() - entry["ts"]) < TICK_STALE_SECS
 
+
+_last_reconnect_attempt = 0
+
+def check_and_reconnect():
+    """
+    v13.1: Auto-heal stale WebSocket. If spot tick is 5+ min stale during
+    market hours, re-authenticate Kite and restart WebSocket.
+    Called from strategy loop every cycle.
+    """
+    global _last_reconnect_attempt, _kite, _ticker
+    if not is_market_open():
+        return
+    # Check if spot tick is stale
+    with _tick_lock:
+        spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
+    if spot_entry and (time.time() - spot_entry["ts"]) < 300:
+        return  # tick is fresh (< 5 min), no action needed
+    # Don't retry more than once per 5 minutes
+    if time.time() - _last_reconnect_attempt < 300:
+        return
+    _last_reconnect_attempt = time.time()
+    logger.warning("[DATA] Spot tick stale 5+ min — attempting re-auth + WS reconnect")
+    try:
+        from VRL_AUTH import get_kite
+        new_kite = get_kite()
+        if new_kite:
+            _kite = new_kite
+            # Stop old ticker
+            try:
+                if _ticker:
+                    _ticker.close()
+            except Exception:
+                pass
+            time.sleep(2)
+            # Start fresh ticker with new token
+            start_websocket()
+            with _subscribed_lock:
+                if _subscribed and _ticker:
+                    _ticker.subscribe(list(_subscribed))
+                    _ticker.set_mode(_ticker.MODE_FULL, list(_subscribed))
+            logger.info("[DATA] Re-auth + WS reconnect successful")
+    except Exception as e:
+        logger.error("[DATA] Re-auth failed: " + str(e))
+
 def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
