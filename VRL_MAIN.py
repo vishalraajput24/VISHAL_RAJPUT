@@ -1343,8 +1343,18 @@ def _strategy_loop(kite):
                     state["_eod_reported"] = True
                     # Save prev_close for gap detection next day
                     _eod_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                    if _eod_spot <= 0 and kite is not None:
+                        try:
+                            q = kite.ltp(["NSE:NIFTY 50"])
+                            _eod_spot = float(list(q.values())[0]["last_price"])
+                            logger.info("[MAIN] EOD spot via REST: " + str(_eod_spot))
+                        except Exception as _re:
+                            logger.warning("[MAIN] EOD spot REST fallback failed: " + str(_re))
                     if _eod_spot > 0:
                         state["prev_close"] = round(_eod_spot, 1)
+                        logger.info("[MAIN] prev_close saved: " + str(state["prev_close"]))
+                    else:
+                        logger.warning("[MAIN] prev_close NOT saved — both WS and REST returned 0")
                 _save_state()
                 try:
                     _generate_eod_report()

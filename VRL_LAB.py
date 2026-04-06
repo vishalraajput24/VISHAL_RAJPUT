@@ -271,6 +271,22 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
     Logs to nifty_signal_scan_YYYYMMDD.csv with forward fill columns.
     Critical for strategy validation — DO NOT REMOVE.
     """
+    global _current_atm_tokens, _current_atm_strike, _current_expiry
+    # Resolve tokens if not set (don't wait for 3-min collection)
+    if not _current_expiry:
+        try:
+            _current_expiry = D.get_nearest_expiry(kite)
+        except Exception:
+            pass
+    if not _current_atm_tokens and spot_ltp > 0 and _current_expiry:
+        try:
+            dte = D.calculate_dte(_current_expiry)
+            step = D.get_active_strike_step(dte)
+            _current_atm_strike = D.resolve_atm_strike(spot_ltp, step)
+            _current_atm_tokens = D.get_option_tokens(kite, _current_atm_strike, _current_expiry)
+            logger.info("[LAB] Scan: resolved ATM tokens at " + str(_current_atm_strike))
+        except Exception:
+            pass
     if not _current_atm_tokens or not _current_expiry:
         return
     if not D.is_market_open():
