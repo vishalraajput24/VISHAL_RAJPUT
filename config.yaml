@@ -5,7 +5,7 @@
 
 version: "v13.2"
 bot_name: "VISHAL RAJPUT TRADE"
-mode: live
+mode: paper
 
 instrument:
   name: NIFTY
