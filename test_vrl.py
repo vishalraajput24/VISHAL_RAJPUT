@@ -300,12 +300,12 @@ with patch.object(D, 'is_entry_fire_window', return_value=True), \
 # Same direction after small loss — 6 min elapsed (past cooldown)
 _cd_state4 = deepcopy(_cd_state)
 _cd_state4["last_exit_peak"] = 3.0
-_cd_state4["last_exit_time"] = (datetime.now() - timedelta(minutes=9)).isoformat()
+_cd_state4["last_exit_time"] = (datetime.now() - timedelta(minutes=7)).isoformat()
 with patch.object(D, 'is_entry_fire_window', return_value=True), \
      patch.object(D, 'is_market_open', return_value=True), \
      patch.object(D, 'is_tick_live', return_value=True):
     ok, reason = E.pre_entry_checks(None, 12345, _cd_state4, 200.0, {}, "", direction="CE")
-    test("Same dir after small loss (9min ago, 8min cd) → ALLOWED", ok == True,
+    test("Same dir after small loss (7min ago, 6min cd) → ALLOWED", ok == True,
          "ok=" + str(ok) + " reason=" + reason)
 
 

@@ -366,7 +366,24 @@ function render(d,trades,zones,mtf){
     if(s.vwap||s.fib_nearest||s.vol_ratio){
       sh+='<div style="border-top:1px solid var(--border);padding:6px 14px;font-size:10px;color:var(--text3)">';
       if(s.vwap){var vc2=s.above_vwap?'var(--green)':'var(--red)';sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>VWAP ₹'+s.vwap+'</span><span style="color:'+vc2+'">'+(s.above_vwap?'ABOVE ✅':'BELOW ✗')+' ('+(s.vwap_dist>0?'+':'')+s.vwap_dist+')</span></div>';}
-      if(s.fib_nearest){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>Fib</span><span style="color:var(--orange)">'+s.fib_nearest+' '+(s.fib_distance>0?'+':'')+s.fib_distance+'pts</span></div>';}
+      if(s.fib_pivot){
+        // Find nearest resistance above and support below
+        var _ltp=s.ltp||0,_resN='',_resP=0,_supN='',_supP=0;
+        var _rlvls=[['R3',s.fib_R3],['R2',s.fib_R2],['R1',s.fib_R1],['P',s.fib_pivot]];
+        var _slvls=[['P',s.fib_pivot],['S1',s.fib_S1],['S2',s.fib_S2],['S3',s.fib_S3]];
+        for(var _i=_rlvls.length-1;_i>=0;_i--){if(_rlvls[_i][1]>_ltp){_resN=_rlvls[_i][0];_resP=_rlvls[_i][1];break;}}
+        for(var _j=0;_j<_slvls.length;_j++){if(_slvls[_j][1]<_ltp){_supN=_slvls[_j][0];_supP=_slvls[_j][1];break;}}
+        var _fibLine='Fib: ';
+        if(_resN)_fibLine+='<span style="color:var(--red)">↑'+_resN+' ₹'+_resP+' (+'+((_resP-_ltp).toFixed(0))+')</span>';
+        if(_resN&&_supN)_fibLine+=' · ';
+        if(_supN)_fibLine+='<span style="color:var(--green)">↓'+_supN+' ₹'+_supP+' ('+((_supP-_ltp).toFixed(0))+')</span>';
+        if(!_resN&&!_supN)_fibLine+='No prev day data';
+        sh+='<div style="margin:2px 0">'+_fibLine+'</div>';
+      }else if(s.fib_nearest){
+        sh+='<div style="margin:2px 0">Fib: <span style="color:var(--orange)">'+s.fib_nearest+' '+(s.fib_distance>0?'+':'')+s.fib_distance+'pts</span></div>';
+      }else{
+        sh+='<div style="margin:2px 0;color:var(--text3)">Fib: No prev day data</div>';
+      }
       var vr=s.vol_ratio||0;if(vr>0){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>Vol</span><span style="color:'+(s.vol_spike?'var(--orange)':'var(--text3)')+'">'+vr+'x'+(s.vol_spike?' 🔥':'')+'</span></div>';}
       if(s.prev_high){sh+='<div style="display:flex;justify-content:space-between;margin:2px 0"><span>PDH/L</span><span>'+(s.pdh_break?'<span style="color:var(--green)">PDH ↑</span>':s.pdl_break?'<span style="color:var(--red)">PDL ↓</span>':'—')+'</span></div>';}
       sh+='</div>';
@@ -409,9 +426,10 @@ function render(d,trades,zones,mtf){
         lvls.forEach(function(l){
           var nm=l[0],pr=l[1];if(!pr)return;
           var dist=ltp-pr,near=s.fib_nearest===nm;
-          var lc=nm.charAt(0)==='R'?'var(--red)':nm.charAt(0)==='S'?'var(--green)':'var(--orange)';
-          mh+='<div class="mkt-row" style="'+(near?'background:var(--orange-bg);font-weight:700':'')+'"><span class="mkt-k" style="color:'+lc+'">'+nm+(near?' ◄':'')+'</span><span class="mkt-v mono">₹'+pr+' <span style="color:var(--text3);font-size:9px">'+(dist>0?'+':'')+dist.toFixed(0)+'</span></span></div>';
+          var lc=nm.charAt(0)==='R'?'#ef4444':nm.charAt(0)==='S'?'#22c55e':'#f59e0b';
+          mh+='<div class="mkt-row" style="'+(near?'background:var(--orange-bg);font-weight:700':'')+'"><span class="mkt-k" style="color:'+lc+'">'+nm+(near?' ◄':'')+'</span><span class="mkt-v mono">₹'+pr.toFixed(1)+' <span style="color:var(--text3);font-size:9px">'+(dist>0?'+':'')+dist.toFixed(0)+'pts</span></span></div>';
         });
+        mh+='<div class="mkt-row" style="background:var(--card-hover);font-weight:700"><span class="mkt-k" style="color:var(--primary)">LTP</span><span class="mkt-v mono">₹'+ltp+'</span></div>';
       }
       if(s.prev_high){mh+='<div class="mkt-row"><span class="mkt-k">PDH/PDL</span><span class="mkt-v mono">H ₹'+s.prev_high+' L ₹'+s.prev_low+(s.pdh_break?' ↑BREAK':'')+'</span></div>';}
       if(s.vol_ratio){mh+='<div class="mkt-row"><span class="mkt-k">Volume</span><span class="mkt-v mono">'+(s.vol_ratio||0)+'x avg'+(s.vol_spike?' 🔥':'')+'</span></div>';}

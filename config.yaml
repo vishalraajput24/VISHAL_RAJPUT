@@ -21,7 +21,7 @@ lots:
 
 cooldown:
   after_win: 10          # minutes: same-dir cooldown after peak >= 10pts
-  after_loss: 8          # minutes: same-dir cooldown after peak < 10pts
+  after_loss: 6          # minutes: same-dir cooldown after peak < 10pts
 
 entry:
   ema_gap_min: 3        # EMA9 - EMA21 minimum pts
