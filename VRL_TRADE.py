@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_TRADE.py — VISHAL RAJPUT TRADE v13.2
+#  VRL_TRADE.py — VISHAL RAJPUT TRADE v13.3
 #  Sealed order execution machine.
 #  ONLY file that touches Kite orders.
 #  Paper mode: simulated fills. Live mode: LIMIT entry + smart exit.
@@ -265,3 +265,58 @@ def place_exit(kite, symbol: str, token: int,
                     + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
     return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
             "order_id": "", "error": "EXIT_FAILED_MANUAL_REQUIRED", "slippage": 0}
+
+
+# ─── EXCHANGE SL BACKUP ──────────────────────────────────────
+
+def place_sl_order(kite, symbol: str, qty: int, sl_price: float) -> str:
+    """Place SL-M at exchange as crash backup."""
+    if D.PAPER_MODE:
+        return "PAPER_SL"
+    try:
+        order_id = kite.place_order(
+            variety          = kite.VARIETY_REGULAR,
+            exchange         = D.EXCHANGE_NFO,
+            tradingsymbol    = symbol,
+            transaction_type = kite.TRANSACTION_TYPE_SELL,
+            quantity         = qty,
+            order_type       = kite.ORDER_TYPE_SLM,
+            trigger_price    = round(sl_price, 1),
+            product          = kite.PRODUCT_MIS,
+        )
+        logger.info("[TRADE] SL-M placed: " + str(order_id)
+                     + " trigger=₹" + str(round(sl_price, 1)))
+        return str(order_id)
+    except Exception as e:
+        logger.error("[TRADE] SL-M failed: " + str(e))
+        return ""
+
+
+def cancel_sl_order(kite, order_id: str) -> bool:
+    """Cancel backup SL before normal exit."""
+    if D.PAPER_MODE or not order_id or order_id == "PAPER_SL":
+        return True
+    try:
+        kite.cancel_order(kite.VARIETY_REGULAR, order_id)
+        logger.info("[TRADE] SL-M cancelled: " + order_id)
+        return True
+    except Exception as e:
+        logger.warning("[TRADE] SL-M cancel: " + str(e))
+        return False
+
+
+def modify_sl_order(kite, order_id: str, new_trigger: float) -> bool:
+    """Update SL trigger when floors lock higher."""
+    if D.PAPER_MODE or not order_id or order_id == "PAPER_SL":
+        return True
+    try:
+        kite.modify_order(
+            variety       = kite.VARIETY_REGULAR,
+            order_id      = order_id,
+            trigger_price = round(new_trigger, 1),
+        )
+        logger.info("[TRADE] SL-M modified: trigger=₹" + str(round(new_trigger, 1)))
+        return True
+    except Exception as e:
+        logger.warning("[TRADE] SL-M modify: " + str(e))
+        return False

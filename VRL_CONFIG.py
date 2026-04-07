@@ -14,7 +14,7 @@ _CONFIG_PATH = os.environ.get(
 )
 
 _cfg = None
-_CONFIG_VERSION = "13.2"
+_CONFIG_VERSION = "13.3"
 
 
 class ConfigError(Exception):
@@ -51,7 +51,7 @@ def load(path: str = None) -> dict:
 def _validate(cfg: dict):
     """Validate all required top-level sections and critical keys."""
     required_sections = [
-        "mode", "instrument", "strategy", "risk", "trail",
+        "mode", "instrument", "strategy", "risk",
         "market_hours", "dte_profiles", "prediction_table",
     ]
     for sec in required_sections:

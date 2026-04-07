@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DATA.py — VISHAL RAJPUT TRADE v13.2
+#  VRL_DATA.py — VISHAL RAJPUT TRADE v13.3
 #  Foundation layer. Settings, logging, market data, Greeks.
 #  v12.15: Fib pivot points, expiry breakout mode,
 #          spot consolidation detection, expiry-specific rules.
@@ -22,7 +22,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v13.2"
+VERSION  = "v13.3"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──

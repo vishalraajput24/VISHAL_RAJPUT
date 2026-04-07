@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.2
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.3
 #  Master orchestration. Minimal strategy: EMA gap + RSI.
 #  2-lot execution with profit floors + RSI split.
 # ═══════════════════════════════════════════════════════════════
@@ -98,6 +98,8 @@ DEFAULT_STATE = {
     "lot2_exit_reason"   : "",
     "entry_mode"         : "",
     "momentum_pts"       : 0.0,
+    "_sl_order_id"       : "",
+    "_sl_trigger_at_exchange": 0,
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
     "floor_10_alerted"   : False,
@@ -635,9 +637,9 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : EMA gap ≥3 + RSI 50-72 rising\n"
-        "Cooldown: 10min same-dir after win, 5min after loss\n"
-        "SL     : -12pts | Floors +10/+20/+30 | RSI split 70/75\n"
+        "Entry  : MOMENTUM ★ (15pts/3c) + EMA (gap≥3)\n"
+        "Exit   : Floors +10→4, +15→8, +20→14, +25→19, +30→25\n"
+        "SL     : -12pts hard | RSI 80 blowoff | Exchange SL-M\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -832,6 +834,17 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
+    # Place exchange backup SL order
+    try:
+        from VRL_TRADE import place_sl_order
+        _sl_price = phase1_sl
+        _sl_oid = place_sl_order(kite, symbol, actual_qty, _sl_price)
+        with _state_lock:
+            state["_sl_order_id"] = _sl_oid
+            state["_sl_trigger_at_exchange"] = round(_sl_price, 1)
+    except Exception:
+        pass
+
     # Entry alert
     _slip_line = ""
     if _entry_slippage > 0:
@@ -930,6 +943,15 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     else:
         exit_qty = D.LOT_SIZE
 
+    # Cancel exchange backup SL before exit
+    try:
+        _sl_oid = state.get("_sl_order_id", "")
+        if _sl_oid:
+            from VRL_TRADE import cancel_sl_order
+            cancel_sl_order(kite, _sl_oid)
+    except Exception:
+        pass
+
     fill = place_exit(kite, symbol, token, direction,
                       exit_qty, exit_price, reason)
 
@@ -1000,6 +1022,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "lot1_exit_reason": "", "lot1_exit_time": "",
                 "lot2_exit_price": 0.0, "lot2_exit_pnl": 0.0,
                 "lot2_exit_reason": "",
+                "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
                 "floor_10_alerted": False, "floor_20_alerted": False,
                 "floor_30_alerted": False, "split_alerted": False,
             })
@@ -1725,22 +1748,28 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     exit_list = manage_exit(state, option_ltp, profile)
 
-                    # ── PROFIT FLOOR + SPLIT ALERTS (fire once per trade) ──
+                    # ── PROFIT FLOOR ALERTS + EXCHANGE SL UPDATE ──
                     if state.get("in_trade"):
                         _peak = state.get("peak_pnl", 0)
-                        _entry_px_alert = state.get("entry_price", 0)
+                        _floor = state.get("current_floor", 0)
                         if _peak >= 10 and not state.get("floor_10_alerted"):
                             state["floor_10_alerted"] = True
-                            _tg_send("🟢 +10pts — SL → ₹" + str(round(_entry_px_alert + 2, 1)) + " 🔒")
+                            _tg_send("🟢 +10pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
                         if _peak >= 20 and not state.get("floor_20_alerted"):
                             state["floor_20_alerted"] = True
-                            _tg_send("🟢 +20pts — SL → ₹" + str(round(_entry_px_alert + 12, 1)) + " 🔒")
+                            _tg_send("🟢 +20pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
                         if _peak >= 30 and not state.get("floor_30_alerted"):
                             state["floor_30_alerted"] = True
-                            _tg_send("🟢 +30pts — SL → ₹" + str(round(_entry_px_alert + 22, 1)) + " 🔒")
-                        if state.get("lots_split") and not state.get("split_alerted"):
-                            state["split_alerted"] = True
-                            _tg_send("⚡ RSI 70 — Lot1: floor SL | Lot2: ATR trail")
+                            _tg_send("🟢 +30pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
+                        # Update exchange SL when floor locks higher
+                        _old_trigger = state.get("_sl_trigger_at_exchange", 0)
+                        if _floor > _old_trigger and state.get("_sl_order_id"):
+                            try:
+                                from VRL_TRADE import modify_sl_order
+                                if modify_sl_order(kite, state["_sl_order_id"], _floor):
+                                    state["_sl_trigger_at_exchange"] = round(_floor, 1)
+                            except Exception:
+                                pass
 
                     # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
                     # Paper mode: exit at 15:28 as before

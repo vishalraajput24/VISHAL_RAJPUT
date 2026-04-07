@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v13.0 — Central Configuration
-#  Minimal strategy: EMA gap + RSI entry, 2-lot execution
+#  VISHAL RAJPUT TRADE v13.3 — Central Configuration
+#  Momentum primary + EMA secondary entry, unified 2-lot exit
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.2"
+version: "v13.3"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -20,89 +20,39 @@ lots:
   size: 65
 
 cooldown:
-  after_win: 10          # minutes: same-dir cooldown after peak >= 10pts
-  after_loss: 6          # minutes: same-dir cooldown after peak < 10pts
+  after_win: 10
+  after_loss: 6
 
 entry:
-  ema_gap_min: 3        # EMA9 - EMA21 minimum pts
-  rsi_min: 50           # RSI floor
-  rsi_max: 72           # RSI hard cap — blowoff territory, never enter
-  rsi_must_rise: true   # RSI > previous candle
-  momentum_pts: 15      # price must rise 15pts in N candles (Path B)
-  momentum_candles: 3   # lookback period for momentum
-  momentum_rsi_min: 45  # RSI floor for momentum entry
+  ema_gap_min: 3
+  rsi_min: 50
+  rsi_max: 72
+  rsi_must_rise: true
+  momentum_pts: 15
+  momentum_candles: 3
+  momentum_rsi_min: 45
 
 exit:
-  hard_sl: 12           # initial SL points
-  stale_candles: 5      # was 3, gives trade 2 more minutes to develop
-  stale_peak_min: 3     # minimum peak to not be stale
+  hard_sl: 12
+  stale_candles: 5
+  stale_peak_min: 3
 
 profit_floors:
   - peak: 10
-    lock: 2
+    lock: 4
+  - peak: 15
+    lock: 8
   - peak: 20
-    lock: 12
+    lock: 14
+  - peak: 25
+    lock: 19
   - peak: 30
-    lock: 22
+    lock: 25
   - peak: 40
-    lock: 32
+    lock: 35
 
 rsi_exit:
-  split_at: 70          # split lots at RSI 70
-  sell_spike: 75        # sell lot 1 at RSI 75-80
-  blowoff: 80           # sell everything above 80
-
-trail:
-  method: atr
-  atr_multiplier: 1.5
-  adaptive_ema:
-    low:
-      timeframe: 5minute
-      candles_below: 2
-    mid:
-      timeframe: 3minute
-      candles_below: 2
-    high:
-      timeframe: minute
-      candles_below: 1
-
-strategy:
-  lookback:
-    1m: 50
-    3m: 60
-    5m: 10
-  rsi:
-    1m_low: 30
-    1m_high_normal: 60
-    1m_high_strong: 70
-    1m_high_dte0: 70
-    3m_low: 42
-    3m_high: 72
-  adx:
-    choppy_bypass: 15
-    multi_tf_bonus: 25
-  spread:
-    ce_min: 0
-    pe_min: 0
-    ce_min_dte0: 0
-    pe_min_dte0: 0
-  strike:
-    step: 100
-    step_expiry: 50
-    premium_min: 100
-    premium_min_dte0: 50
-    premium_max: 400
-  scoring:
-    session_min:
-      OPEN: 4
-      MORNING: 4
-      AFTERNOON: 4
-      LATE: 5
-    excellence_bypass: 5
-    loss_streak_gate: 4
-  3min_gate:
-    min_conditions: 2
-    body_pct_min: 30
+  blowoff: 80
 
 strike:
   step_normal: 100
@@ -186,7 +136,6 @@ web:
   port: 8080
   auth: false
 
-# DTE profiles (kept for expiry breakout mode)
 dte_profiles:
   "6+":
     body_pct_min: 30
@@ -330,6 +279,44 @@ prediction_table:
     MORNING: 7
     AFTERNOON: 7
     LATE: 6
+
+strategy:
+  lookback:
+    1m: 50
+    3m: 60
+    5m: 10
+  rsi:
+    1m_low: 30
+    1m_high_normal: 60
+    1m_high_strong: 70
+    1m_high_dte0: 70
+    3m_low: 42
+    3m_high: 72
+  adx:
+    choppy_bypass: 15
+    multi_tf_bonus: 25
+  spread:
+    ce_min: 0
+    pe_min: 0
+    ce_min_dte0: 0
+    pe_min_dte0: 0
+  strike:
+    step: 100
+    step_expiry: 50
+    premium_min: 100
+    premium_min_dte0: 50
+    premium_max: 400
+  scoring:
+    session_min:
+      OPEN: 4
+      MORNING: 4
+      AFTERNOON: 4
+      LATE: 5
+    excellence_bypass: 5
+    loss_streak_gate: 4
+  3min_gate:
+    min_conditions: 2
+    body_pct_min: 30
 
 websocket:
   reconnect_delay: 5

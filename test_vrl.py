@@ -1,7 +1,7 @@
 #!/home/user/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.2 Test Suite
+ test_vrl.py — VISHAL RAJPUT TRADE v13.3 Test Suite
  Minimal strategy: EMA gap + RSI entry, 2-lot exit.
 ═══════════════════════════════════════════════════════════════
 """
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.2", D.VERSION == "v13.2", "got " + str(D.VERSION))
+test("VERSION = v13.3", D.VERSION == "v13.3", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -194,14 +194,14 @@ section("EXIT — PROFIT FLOORS")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     # Peak 10, drop to floor (entry+2)
-    st = _make_exit_state(200, peak=10, candles=5)
+    st = _make_exit_state(200, peak=10, candles=6)
     exits = E.manage_exit(st, 201, {})  # running=1, floor_sl=202
     test("Peak 10 running 1 → PROFIT_FLOOR",
          len(exits) == 1 and "FLOOR" in exits[0]["reason"],
          "got " + str(exits))
 
     # Peak 10, running 5 → no exit
-    st = _make_exit_state(200, peak=10, candles=5)
+    st = _make_exit_state(200, peak=10, candles=6)
     exits = E.manage_exit(st, 205, {})
     test("Peak 10 running 5 → no exit", len(exits) == 0, "got " + str(exits))
 
@@ -236,23 +236,8 @@ with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
              "got " + str(exits) + " rsi=" + str(st.get("current_rsi")))
 
 
-section("EXIT — RSI SPLIT")
-
-# RSI 50 → NOT split
-st = _make_exit_state(200, peak=15, candles=5)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(50)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        exits = E.manage_exit(st, 215, {})
-        test("RSI 50 → not split", st.get("lots_split") == False,
-             "split=" + str(st.get("lots_split")))
-
-# RSI 71 → SPLIT
-st = _make_exit_state(200, peak=15, candles=5)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(71)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        exits = E.manage_exit(st, 215, {})
-        test("RSI 71 → lots SPLIT", st.get("lots_split") == True,
-             "split=" + str(st.get("lots_split")))
+section("EXIT — v13.3 no split")
+# v13.3: RSI split removed. Both lots same path.
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -512,7 +497,7 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     test("STALE at 5 candles peak<3", len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
 
     # PROFIT_FLOOR at peak 10 drop to floor
-    _st = _make_exit_state(200, peak=10, candles=5)
+    _st = _make_exit_state(200, peak=10, candles=6)
     _ex = E.manage_exit(_st, 201, {})
     test("PROFIT_FLOOR peak 10", len(_ex) == 1 and "FLOOR" in _ex[0]["reason"])
 
@@ -523,20 +508,7 @@ with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
         _ex = E.manage_exit(_st, 220, {})
         test("RSI_BLOWOFF at 82", len(_ex) >= 1 and "BLOWOFF" in _ex[0]["reason"])
 
-# RSI split at 71
-_st = _make_exit_state(200, peak=15, candles=5)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(71)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        _ex = E.manage_exit(_st, 215, {})
-        test("RSI 71 sets lots_split", _st.get("lots_split") == True)
-
-# Partial exit: lot1 exits, lot2 stays
-_st = _make_exit_state(200, peak=15, candles=5, split=True)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(77)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        _ex = E.manage_exit(_st, 215, {})
-        has_lot1 = any(e.get("lot_id") == "LOT1" for e in _ex)
-        test("Partial: lot1 exits at RSI 77", has_lot1 and _st.get("lot2_active"))
+# v13.3: No split, no partial. Both lots exit together.
 
 
 # ═══════════════════════════════════════════════════════════════

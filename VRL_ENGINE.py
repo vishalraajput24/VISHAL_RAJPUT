@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.2
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.3
 #  Minimal signal logic. EMA gap + RSI entry. 2-lot exit.
 # ═══════════════════════════════════════════════════════════════
 
@@ -240,10 +240,7 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
-    """v13.0 exit — profit floors + RSI split + ATR trail.
-    Returns list of exit dicts: [{"lots": "ALL" or 1, "lot_id": "LOT1"/"LOT2"/"ALL", "reason": str, "price": float}]
-    Returns [] if no exit.
-    """
+    """v13.3 exit — both lots same path. No split, no ATR trail."""
     if not state.get("in_trade"):
         return []
 
@@ -251,9 +248,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     running = round(option_ltp - entry, 2)
     peak = state.get("peak_pnl", 0)
     candles = state.get("candles_held", 0)
-    lots_split = state.get("lots_split", False)
-    lot1_active = state.get("lot1_active", True)
-    lot2_active = state.get("lot2_active", True)
 
     if running > peak:
         state["peak_pnl"] = running
@@ -261,7 +255,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     if running < state.get("trough_pnl", 0):
         state["trough_pnl"] = running
 
-    # Get RSI
     token = state.get("token")
     rsi = 50
     try:
@@ -275,13 +268,9 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
 
     import VRL_CONFIG as CFG
     hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
-    stale_candles = CFG.get().get("exit", {}).get("stale_candles", 3)
+    stale_candles = CFG.get().get("exit", {}).get("stale_candles", 5)
     stale_peak = CFG.get().get("exit", {}).get("stale_peak_min", 3)
-    rsi_split = CFG.get().get("rsi_exit", {}).get("split_at", 70)
-    rsi_spike = CFG.get().get("rsi_exit", {}).get("sell_spike", 75)
     rsi_blowoff = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
-
-    exits = []
 
     # STALE EXIT
     if candles >= stale_candles and peak < stale_peak:
@@ -293,7 +282,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
         logger.info("[ENGINE] HARD_SL: running=" + str(running))
         return [{"lots": "ALL", "lot_id": "ALL", "reason": "HARD_SL", "price": option_ltp}]
 
-    # PROFIT FLOOR calculation
+    # PROFIT FLOOR
     floors = CFG.get().get("profit_floors", [])
     floor_sl = entry - hard_sl
     for f in sorted(floors, key=lambda x: x["peak"]):
@@ -302,56 +291,16 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     state["current_floor"] = round(floor_sl, 2)
 
     # RSI BLOWOFF > 80
-    if rsi > rsi_blowoff and (lot1_active or lot2_active):
-        logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi,1)))
+    if rsi > rsi_blowoff:
+        logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi, 1)))
         return [{"lots": "ALL", "lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
 
-    # RSI 75-80: sell lot 1
-    if rsi >= rsi_spike and rsi <= rsi_blowoff and lot1_active and lots_split:
-        logger.info("[ENGINE] RSI_SPIKE: lot1 exit, rsi=" + str(round(rsi,1)))
-        exits.append({"lots": 1, "lot_id": "LOT1", "reason": "RSI_SPIKE", "price": option_ltp})
-        state["lot1_active"] = False
-
-    # RSI >= 70: split lots
-    if rsi >= rsi_split and not lots_split:
-        state["lots_split"] = True
-        logger.info("[ENGINE] RSI " + str(round(rsi,1)) + " — lots SPLIT")
-
-    # LOT 2 ATR TRAIL (after split)
-    if lots_split and lot2_active:
-        try:
-            import pandas as pd
-            df2 = D.get_historical_data(token, "minute", 20)
-            if not df2.empty and len(df2) >= 15:
-                highs = df2["high"].astype(float)
-                lows = df2["low"].astype(float)
-                closes = df2["close"].astype(float).shift(1)
-                tr = pd.concat([highs-lows, (highs-closes).abs(), (lows-closes).abs()], axis=1).max(axis=1)
-                atr = float(tr.rolling(14).mean().iloc[-1])
-                atr_mult = CFG.get().get("trail", {}).get("atr_multiplier", 1.5)
-                atr_trail = option_ltp - (atr * atr_mult)
-                atr_trail = max(atr_trail, floor_sl)
-                prev_trail = state.get("lot2_trail_sl", floor_sl)
-                if atr_trail > prev_trail:
-                    state["lot2_trail_sl"] = round(atr_trail, 2)
-                if option_ltp <= state.get("lot2_trail_sl", floor_sl):
-                    logger.info("[ENGINE] ATR_TRAIL: lot2 exit at " + str(round(option_ltp,2)))
-                    exits.append({"lots": 1, "lot_id": "LOT2", "reason": "ATR_TRAIL", "price": option_ltp})
-                    state["lot2_active"] = False
-        except Exception:
-            pass
-
     # PROFIT FLOOR HIT
-    if not lots_split:
-        if option_ltp <= floor_sl and peak >= 10:
-            logger.info("[ENGINE] PROFIT_FLOOR: both lots at " + str(round(floor_sl,2)))
-            return [{"lots": "ALL", "lot_id": "ALL", "reason": "PROFIT_FLOOR", "price": option_ltp}]
-    else:
-        if lot1_active and option_ltp <= floor_sl:
-            logger.info("[ENGINE] FLOOR_SL: lot1 at " + str(round(floor_sl,2)))
-            exits.append({"lots": 1, "lot_id": "LOT1", "reason": "FLOOR_SL", "price": option_ltp})
-            state["lot1_active"] = False
+    if option_ltp <= floor_sl and peak >= 10:
+        logger.info("[ENGINE] PROFIT_FLOOR: at " + str(round(floor_sl, 2)) + " peak=" + str(round(peak, 1)))
+        return [{"lots": "ALL", "lot_id": "ALL", "reason": "PROFIT_FLOOR", "price": option_ltp}]
 
-    return exits
+    return []
+
 
 # v13.1: DTE=0 uses same check_entry() as regular days. No special expiry mode.
