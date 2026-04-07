@@ -761,14 +761,23 @@ def calculate_option_vwap(token: int) -> dict:
     """VWAP on option — today's intraday only."""
     result = {"vwap": 0.0, "above_vwap": False, "distance": 0.0}
     try:
-        df = get_historical_data(token, "minute", 200, today_only=True)
+        from datetime import date as _d
+        df = get_historical_data(token, "minute", 200)
         if df.empty or len(df) < 5:
+            return result
+        # Filter to TODAY only — today_only param unreliable
+        today_str = _d.today().strftime("%Y-%m-%d")
+        df = df.copy()
+        df["_date"] = df.index.map(
+            lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
+        df = df[df["_date"] == today_str]
+        if df.empty or len(df) < 3:
             return result
         typical_price = (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3
         vol = df["volume"].astype(float)
-        cum_vol = vol.cumsum()
+        cum_vol = vol.cumsum().replace(0, float("nan"))
         cum_tp_vol = (typical_price * vol).cumsum()
-        vwap = cum_tp_vol / cum_vol.replace(0, float("nan"))
+        vwap = cum_tp_vol / cum_vol
         vwap_val = round(float(vwap.iloc[-1]), 2)
         last_close = float(df["close"].iloc[-1])
         result["vwap"] = vwap_val
