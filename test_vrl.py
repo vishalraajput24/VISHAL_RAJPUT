@@ -110,7 +110,7 @@ _df_fire.iloc[-3, _df_fire.columns.get_loc("RSI")] = 52.0
 with patch.object(D, 'get_historical_data', return_value=_df_fire):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("EMA gap + RSI rising → FIRE", r["fired"] == True,
+        test("EMA gap + RSI rising → info only (no fire)", r["fired"] == False,
              "fired=" + str(r["fired"]) + " ema_gap=" + str(r["ema_gap"])
              + " rsi=" + str(r["rsi"]) + " rsi_prev=" + str(r["rsi_prev"]))
 
@@ -317,7 +317,7 @@ _df_rsi71.iloc[-3, _df_rsi71.columns.get_loc("RSI")] = 65.0
 with patch.object(D, 'get_historical_data', return_value=_df_rsi71):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 71 < 72 → NOT blocked by cap", r["fired"] == True,
+        test("RSI 71 < 72 → EMA info only (no fire)", r["fired"] == False,
              "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"])
              + " ema_gap=" + str(r["ema_gap"]))
 
@@ -499,7 +499,7 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     # PROFIT_FLOOR at peak 10 drop to floor
     _st = _make_exit_state(200, peak=10, candles=6)
     _ex = E.manage_exit(_st, 201, {})
-    test("PROFIT_FLOOR peak 10", len(_ex) == 1 and "FLOOR" in _ex[0]["reason"])
+    test("TRAIL_FLOOR peak 10", len(_ex) == 1 and "FLOOR" in _ex[0]["reason"])
 
 # RSI_BLOWOFF at 82
 _st = _make_exit_state(200, peak=15, candles=5)

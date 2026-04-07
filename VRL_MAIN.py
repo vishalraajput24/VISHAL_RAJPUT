@@ -100,6 +100,7 @@ DEFAULT_STATE = {
     "momentum_pts"       : 0.0,
     "_sl_order_id"       : "",
     "_sl_trigger_at_exchange": 0,
+    "_last_milestone"    : 0,
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
     "floor_10_alerted"   : False,
@@ -637,9 +638,9 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : MOMENTUM ★ (15pts/3c) + EMA (gap≥3)\n"
-        "Exit   : Floors +10→4, +15→8, +20→14, +25→19, +30→25\n"
-        "SL     : -12pts hard | RSI 80 blowoff | Exchange SL-M\n"
+        "Entry  : MOMENTUM +15pts/3c + RSI≥45 + Green + HL\n"
+        "         EMA confirms → CONFIRMED ★★\n"
+        "Exit   : Trail peak-6 after +10 | SL -12 | RSI 80\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -818,7 +819,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_floor"]      = phase1_sl
         state["entry_slippage"]     = _entry_slippage
         state["signal_price"]       = entry_price
-        state["entry_mode"]         = entry_result.get("entry_mode", "EMA")
+        state["entry_mode"]         = entry_result.get("entry_mode", "MOMENTUM")
+        state["_last_milestone"]    = 0
         state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
         _bonus_data = entry_result.get("bonus", {})
         state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
@@ -870,19 +872,19 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
     except Exception:
         _bonus_line = ""
-    _emode = entry_result.get("entry_mode", "EMA")
-    _mom_line = ""
-    if _emode == "MOMENTUM" or _emode == "BOTH":
-        _mom_line = "Mom: +" + str(entry_result.get("momentum_pts", 0)) + "pts in 3c\n"
+    _emode = entry_result.get("entry_mode", "MOMENTUM")
+    _mom_pts = entry_result.get("momentum_pts", 0)
+    if _emode == "CONFIRMED":
+        _detail = "Mom +" + str(_mom_pts) + "pts + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " — both agree 🔥\n"
+    else:
+        _detail = "Mom: +" + str(_mom_pts) + "pts/3c 🚀 | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
         + " × " + str(lot_count) + " LOTS [" + _emode + "]</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
-        "EMA +" + str(round(entry_result.get("ema_gap", 0), 1))
-        + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
-        + _mom_line + _slip_line +
+        + _detail + _slip_line +
         "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
         + _bonus_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1748,19 +1750,20 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     exit_list = manage_exit(state, option_ltp, profile)
 
-                    # ── PROFIT FLOOR ALERTS + EXCHANGE SL UPDATE ──
+                    # ── TRAILING FLOOR MILESTONES + EXCHANGE SL UPDATE ──
                     if state.get("in_trade"):
                         _peak = state.get("peak_pnl", 0)
                         _floor = state.get("current_floor", 0)
-                        if _peak >= 10 and not state.get("floor_10_alerted"):
-                            state["floor_10_alerted"] = True
-                            _tg_send("🟢 +10pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
-                        if _peak >= 20 and not state.get("floor_20_alerted"):
-                            state["floor_20_alerted"] = True
-                            _tg_send("🟢 +20pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
-                        if _peak >= 30 and not state.get("floor_30_alerted"):
-                            state["floor_30_alerted"] = True
-                            _tg_send("🟢 +30pts — SL → ₹" + str(round(_floor, 1)) + " 🔒")
+                        _last_ms = state.get("_last_milestone", 0)
+                        _entry_px = state.get("entry_price", 0)
+                        for _m in [10, 15, 20, 25, 30, 40, 50]:
+                            if _peak >= _m and _last_ms < _m:
+                                _locked = _m - 6
+                                state["_last_milestone"] = _m
+                                _tg_send("🟢 +" + str(_m) + "pts — SL → ₹"
+                                         + str(round(_entry_px + _locked, 1))
+                                         + " 🔒 (+" + str(_locked) + " locked)")
+                                break
                         # Update exchange SL when floor locks higher
                         _old_trigger = state.get("_sl_trigger_at_exchange", 0)
                         if _floor > _old_trigger and state.get("_sl_order_id"):

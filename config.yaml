@@ -24,32 +24,20 @@ cooldown:
   after_loss: 6
 
 entry:
-  ema_gap_min: 3
-  rsi_min: 50
-  rsi_max: 72
-  rsi_must_rise: true
   momentum_pts: 15
   momentum_candles: 3
   momentum_rsi_min: 45
+  rsi_max: 72
+  ema_gap_min: 3          # dashboard info only, not entry trigger
 
 exit:
   hard_sl: 12
   stale_candles: 5
   stale_peak_min: 3
 
-profit_floors:
-  - peak: 10
-    lock: 4
-  - peak: 15
-    lock: 8
-  - peak: 20
-    lock: 14
-  - peak: 25
-    lock: 19
-  - peak: 30
-    lock: 25
-  - peak: 40
-    lock: 35
+profit_trail:
+  activate_at: 10
+  giveback: 6
 
 rsi_exit:
   blowoff: 80

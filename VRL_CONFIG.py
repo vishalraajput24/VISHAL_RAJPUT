@@ -326,3 +326,9 @@ def web_port() -> int:
 
 def web_auth() -> bool:
     return _deep_get(get(), "web", "auth", default=False)
+
+
+# ── Profit Trail ──
+
+def profit_trail(key: str, default=None):
+    return _deep_get(get(), "profit_trail", key, default=default)
