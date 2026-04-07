@@ -164,6 +164,11 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             ref = float(df.iloc[-2 - mom_candles]["close"])
             mom_pts = round(entry_price - ref, 2)
             result["momentum_pts"] = mom_pts
+            # Spike quality: how much of the move came from last candle
+            last_candle_move = round(float(curr["close"]) - float(prev["close"]), 2)
+            result["last_candle_move"] = last_candle_move
+            spike_ratio = round(last_candle_move / mom_pts, 2) if mom_pts > 0 else 0
+            result["spike_ratio"] = spike_ratio
             path_mom = (mom_pts >= mom_pts_min and rsi >= mom_rsi_min
                         and candle_green and higher_low)
         result["path_b"] = path_mom
@@ -174,12 +179,14 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 result["entry_mode"] = "CONFIRMED"
                 logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED ★★]"
                     + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
+                    + (" spike" if spike_ratio > 0.6 else " steady")
                     + " ema=" + str(ema_gap) + " rsi=" + str(round(rsi, 1))
                     + " HL=Y entry=" + str(entry_price))
             else:
                 result["entry_mode"] = "MOMENTUM"
                 logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
                     + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
+                    + (" spike" if spike_ratio > 0.6 else " steady")
                     + " rsi=" + str(round(rsi, 1))
                     + " HL=Y entry=" + str(entry_price))
         else:

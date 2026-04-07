@@ -822,6 +822,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["entry_mode"]         = entry_result.get("entry_mode", "MOMENTUM")
         state["_last_milestone"]    = 0
         state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
+        state["spike_ratio"]        = entry_result.get("spike_ratio", 0)
         _bonus_data = entry_result.get("bonus", {})
         state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
         state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
@@ -874,10 +875,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _bonus_line = ""
     _emode = entry_result.get("entry_mode", "MOMENTUM")
     _mom_pts = entry_result.get("momentum_pts", 0)
+    _sr = entry_result.get("spike_ratio", 0)
+    _quality = "spike ⚡" if _sr > 0.6 else "steady"
     if _emode == "CONFIRMED":
-        _detail = "Mom +" + str(_mom_pts) + "pts + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " — both agree 🔥\n"
+        _detail = "Mom +" + str(_mom_pts) + "pts (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n"
     else:
-        _detail = "Mom: +" + str(_mom_pts) + "pts/3c 🚀 | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n"
+        _detail = "Mom: +" + str(_mom_pts) + "pts/3c | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1343,6 +1346,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "momentum_pts": result.get("momentum_pts", 0),
                 "path_a": result.get("path_a", False),
                 "path_b": result.get("path_b", False),
+                "spike_ratio": result.get("spike_ratio", 0),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
