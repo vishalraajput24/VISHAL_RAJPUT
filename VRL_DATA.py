@@ -575,22 +575,35 @@ def check_and_reconnect():
     try:
         from VRL_AUTH import get_kite
         new_kite = get_kite()
-        if new_kite:
-            _kite = new_kite
-            # Stop old ticker
-            try:
-                if _ticker:
-                    _ticker.close()
-            except Exception:
-                pass
-            time.sleep(2)
-            # Start fresh ticker with new token
+        if not new_kite:
+            logger.error("[DATA] Re-auth returned None")
+            return
+        _kite = new_kite
+        # Stop old ticker safely
+        try:
+            if _ticker:
+                _ticker.close()
+                time.sleep(1)
+        except Exception:
+            pass
+        _ticker = None
+        time.sleep(2)
+        # Start fresh ticker with new token
+        try:
             start_websocket()
-            with _subscribed_lock:
-                if _subscribed and _ticker:
+        except Exception as _ws_err:
+            logger.error("[DATA] WS restart failed: " + str(_ws_err))
+            return
+        # Wait for connection before subscribing
+        time.sleep(3)
+        with _subscribed_lock:
+            if _subscribed and _ticker and _ws_connected:
+                try:
                     _ticker.subscribe(list(_subscribed))
                     _ticker.set_mode(_ticker.MODE_FULL, list(_subscribed))
-            logger.info("[DATA] Re-auth + WS reconnect successful")
+                except Exception:
+                    pass
+        logger.info("[DATA] Re-auth + WS reconnect successful")
     except Exception as e:
         logger.error("[DATA] Re-auth failed: " + str(e))
 
