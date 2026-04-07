@@ -99,17 +99,20 @@ def loss_streak_gate(state: dict) -> bool:
 
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None) -> dict:
-    """v13.0 minimal entry — 1-min EMA gap + RSI only."""
+    """v13.2 entry — EMA gap OR momentum. Two paths, same trade."""
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "ema9": 0, "ema21": 0,
         "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
         "ema_ok": False, "rsi_ok": False,
+        "candle_green": False, "gap_widening": False,
+        "entry_mode": "", "momentum_pts": 0,
+        "path_a": False, "path_b": False,
     }
     try:
         df = D.get_historical_data(token, "minute", 20)
         df = D.add_indicators(df)
-        if df.empty or len(df) < 3:
+        if df.empty or len(df) < 5:
             return result
 
         curr = df.iloc[-2]
@@ -130,11 +133,12 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         })
 
         import VRL_CONFIG as CFG
-        ema_min = CFG.get().get("entry", {}).get("ema_gap_min", 3)
-        rsi_min = CFG.get().get("entry", {}).get("rsi_min", 50)
-        rsi_max = CFG.get().get("entry", {}).get("rsi_max", 72)
+        entry_cfg = CFG.get().get("entry", {})
+        ema_min = entry_cfg.get("ema_gap_min", 3)
+        rsi_min = entry_cfg.get("rsi_min", 50)
+        rsi_max = entry_cfg.get("rsi_max", 72)
 
-        # RSI HARD CAP — blowoff territory, never enter
+        # RSI HARD CAP — blocks BOTH paths
         if rsi > rsi_max:
             result["ema_ok"] = ema_gap >= ema_min
             result["rsi_ok"] = False
@@ -142,18 +146,10 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                         + " > " + str(rsi_max) + " — BLOCKED")
             return result
 
-        # CHECK 1: EMA gap trending
+        # ═══ PATH A: EMA GAP (existing — unchanged) ═══
         ema_ok = ema_gap >= ema_min
-
-        # CHECK 2: RSI rising above minimum
         rsi_ok = rsi >= rsi_min and rsi > rsi_prev
-
-        # CHECK 3: Green candle — last closed candle must be bullish
-        # Prevents entering on a red candle where momentum just died
         candle_green = float(curr["close"]) > float(curr["open"])
-
-        # CHECK 4: EMA gap WIDENING — gap must be growing, not shrinking
-        # Prevents entering at the top when EMA gap already peaked
         prev_ema9 = float(prev.get("EMA_9", 0))
         prev_ema21 = float(prev.get("EMA_21", 0))
         prev_gap = round(prev_ema9 - prev_ema21, 2)
@@ -164,22 +160,55 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         result["candle_green"] = candle_green
         result["gap_widening"] = gap_widening
 
-        all_pass = ema_ok and rsi_ok and candle_green and gap_widening
+        path_a = ema_ok and rsi_ok and candle_green and gap_widening
+        result["path_a"] = path_a
 
-        if all_pass:
+        # ═══ PATH B: MOMENTUM (catches V-reversals) ═══
+        momentum_pts_min = entry_cfg.get("momentum_pts", 15)
+        momentum_candles = entry_cfg.get("momentum_candles", 3)
+        momentum_rsi_min = entry_cfg.get("momentum_rsi_min", 45)
+
+        path_b = False
+        momentum_pts = 0
+        if len(df) >= momentum_candles + 2:
+            ref_close = float(df.iloc[-2 - momentum_candles]["close"])
+            momentum_pts = round(entry_price - ref_close, 2)
+            result["momentum_pts"] = momentum_pts
+            path_b = (momentum_pts >= momentum_pts_min
+                      and rsi >= momentum_rsi_min
+                      and candle_green)
+        result["path_b"] = path_b
+
+        # ═══ FIRE if EITHER path passes ═══
+        if path_a and path_b:
             result["fired"] = True
-            logger.info("[ENGINE] " + option_type + " ENTRY SIGNAL"
+            result["entry_mode"] = "BOTH"
+            logger.info("[ENGINE] " + option_type + " ENTRY [BOTH]"
+                + " ema=" + str(ema_gap) + " mom=+" + str(momentum_pts)
+                + " rsi=" + str(round(rsi, 1)) + " entry=" + str(entry_price))
+        elif path_a:
+            result["fired"] = True
+            result["entry_mode"] = "EMA"
+            logger.info("[ENGINE] " + option_type + " ENTRY [EMA]"
                 + " ema_gap=" + str(ema_gap) + "(w:" + str(prev_gap) + ")"
-                + " rsi=" + str(round(rsi,1)) + ">" + str(round(rsi_prev,1))
-                + " green=Y entry=" + str(entry_price))
+                + " rsi=" + str(round(rsi, 1)) + ">" + str(round(rsi_prev, 1))
+                + " entry=" + str(entry_price))
+        elif path_b:
+            result["fired"] = True
+            result["entry_mode"] = "MOMENTUM"
+            logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
+                + " +" + str(momentum_pts) + "pts/" + str(momentum_candles) + "c"
+                + " rsi=" + str(round(rsi, 1)) + " entry=" + str(entry_price))
         else:
             reasons = []
             if not ema_ok: reasons.append("ema=" + str(ema_gap) + "❌")
             else: reasons.append("ema=" + str(ema_gap) + "✅")
-            if not rsi_ok: reasons.append("rsi=" + str(round(rsi,1)) + "❌")
-            else: reasons.append("rsi=" + str(round(rsi,1)) + "✅")
+            if not rsi_ok: reasons.append("rsi=" + str(round(rsi, 1)) + "❌")
+            else: reasons.append("rsi=" + str(round(rsi, 1)) + "✅")
             if not candle_green: reasons.append("RED❌")
             if not gap_widening: reasons.append("gap_shrink❌")
+            if momentum_pts > 10:
+                reasons.append("mom=" + str(momentum_pts) + "pts")
             logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
 
         return result

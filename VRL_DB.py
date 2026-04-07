@@ -190,7 +190,9 @@ def init_db():
                           ("bonus_vol_spike", "INTEGER DEFAULT 0"),
                           ("bonus_vol_ratio", "REAL DEFAULT 0"),
                           ("bonus_pdh_break", "INTEGER DEFAULT 0"),
-                          ("qty_exited", "INTEGER DEFAULT 130")]:
+                          ("qty_exited", "INTEGER DEFAULT 130"),
+                          ("entry_mode", "TEXT DEFAULT 'EMA'"),
+                          ("momentum_pts", "REAL DEFAULT 0")]:
             try:
                 c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
             except Exception:
@@ -360,6 +362,7 @@ _TRADE_FIELDS = [
     "bonus_vwap", "bonus_fib_level", "bonus_fib_dist",
     "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
     "qty_exited",
+    "entry_mode", "momentum_pts",
 ]
 
 def insert_trade(row):

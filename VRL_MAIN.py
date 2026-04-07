@@ -96,6 +96,8 @@ DEFAULT_STATE = {
     "lot2_exit_price"    : 0.0,
     "lot2_exit_pnl"      : 0.0,
     "lot2_exit_reason"   : "",
+    "entry_mode"         : "",
+    "momentum_pts"       : 0.0,
     "current_rsi"        : 0.0,
     "current_floor"      : 0.0,
     "floor_10_alerted"   : False,
@@ -343,6 +345,7 @@ TRADE_FIELDNAMES = [
     "bonus_vwap", "bonus_fib_level", "bonus_fib_dist",
     "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
     "qty_exited",
+    "entry_mode", "momentum_pts",
 ]
 
 def _cleanup_trade_log():
@@ -418,6 +421,8 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "bonus_vol_ratio": round(st.get("bonus_vol_ratio", 0), 2),
         "bonus_pdh_break": 1 if st.get("bonus_pdh_break") else 0,
         "qty_exited": _lot_qty,
+        "entry_mode": st.get("entry_mode", "EMA"),
+        "momentum_pts": round(st.get("momentum_pts", 0), 2),
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -811,6 +816,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_floor"]      = phase1_sl
         state["entry_slippage"]     = _entry_slippage
         state["signal_price"]       = entry_price
+        state["entry_mode"]         = entry_result.get("entry_mode", "EMA")
+        state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
         _bonus_data = entry_result.get("bonus", {})
         state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
         state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
@@ -850,13 +857,19 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
     except Exception:
         _bonus_line = ""
+    _emode = entry_result.get("entry_mode", "EMA")
+    _mom_line = ""
+    if _emode == "MOMENTUM" or _emode == "BOTH":
+        _mom_line = "Mom: +" + str(entry_result.get("momentum_pts", 0)) + "pts in 3c\n"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0)) + " × " + str(lot_count) + " LOTS</b>\n"
+        "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
+        + " × " + str(lot_count) + " LOTS [" + _emode + "]</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
-        "EMA +" + str(round(entry_result.get("ema_gap", 0), 1)) + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
-        + _slip_line +
+        "EMA +" + str(round(entry_result.get("ema_gap", 0), 1))
+        + "  |  RSI " + str(round(entry_result.get("rsi", 0), 0)) + "↑\n"
+        + _mom_line + _slip_line +
         "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
         + _bonus_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1272,7 +1285,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             rsi_ok = result.get("rsi_ok", False)
 
             if result.get("fired"):
-                verdict = "FIRED"
+                _em = result.get("entry_mode", "EMA")
+                verdict = "FIRED [" + _em + "]"
             elif not ema_ok and not rsi_ok:
                 verdict = "EMA " + str(ema_gap) + " RSI " + str(rsi_val)
             elif not ema_ok:
@@ -1300,6 +1314,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
+                "entry_mode": result.get("entry_mode", ""),
+                "momentum_pts": result.get("momentum_pts", 0),
+                "path_a": result.get("path_a", False),
+                "path_b": result.get("path_b", False),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))

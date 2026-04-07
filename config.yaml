@@ -28,6 +28,9 @@ entry:
   rsi_min: 50           # RSI floor
   rsi_max: 72           # RSI hard cap — blowoff territory, never enter
   rsi_must_rise: true   # RSI > previous candle
+  momentum_pts: 15      # price must rise 15pts in N candles (Path B)
+  momentum_candles: 3   # lookback period for momentum
+  momentum_rsi_min: 45  # RSI floor for momentum entry
 
 exit:
   hard_sl: 12           # initial SL points
