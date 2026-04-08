@@ -40,7 +40,9 @@ exit:
 
 profit_trail:
   activate_at: 10
-  giveback: 6
+  giveback_low: 8       # peak 10-19: room to breathe
+  giveback_mid: 7       # peak 20-29: tightening
+  giveback_high: 6      # peak 30+: lock hard
 
 rsi_exit:
   blowoff: 80

@@ -1433,6 +1433,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "candles": st.get("candles_held", 0),
                 "lots_split": st.get("lots_split", False),
                 "current_rsi": round(st.get("current_rsi", 0), 1),
+                "current_floor": round(st.get("current_floor", 0), 2),
+                "current_giveback": st.get("current_giveback", 8),
                 "strike": st.get("strike", 0),
                 "lot1": lot1,
                 "lot2": lot2,
@@ -1764,11 +1766,14 @@ def _strategy_loop(kite):
                         _entry_px = state.get("entry_price", 0)
                         for _m in [10, 15, 20, 25, 30, 40, 50]:
                             if _peak >= _m and _last_ms < _m:
-                                _locked = _m - 6
+                                # Use same giveback logic as manage_exit
+                                _gb = 6 if _m >= 30 else 7 if _m >= 20 else 8
+                                _locked = _m - _gb
                                 state["_last_milestone"] = _m
                                 _tg_send("🟢 +" + str(_m) + "pts — SL → ₹"
                                          + str(round(_entry_px + _locked, 1))
-                                         + " 🔒 (+" + str(_locked) + " locked)")
+                                         + " 🔒 (+" + str(_locked) + " locked, "
+                                         + str(_gb) + "pt trail)")
                                 break
                         # Update exchange SL when floor locks higher
                         _old_trigger = state.get("_sl_trigger_at_exchange", 0)

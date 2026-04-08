@@ -286,7 +286,9 @@ function render(d,trades,zones,mtf){
       pa+='<div class="lot-card" style="border-left:3px solid var(--green)"><div class="lot-label">LOT 1</div>';
       pa+='<div class="lot-status" style="color:var(--green)">Active 🟢</div>';
       pa+='<div class="lot-pnl mono" style="color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+fmt(pnl)+'pts</div>';
-      pa+='<div class="lot-sl mono">SL ₹'+l1.sl+' '+l1.sl_type+'</div></div>';
+      var _gb1=pos.current_giveback||8,_lk1=Math.round((pos.peak||0)-_gb1);
+      var _slLab1=(pos.peak||0)>=10?'TRAIL (+'+_lk1+', '+_gb1+'pt give)':l1.sl_type;
+      pa+='<div class="lot-sl mono">SL ₹'+l1.sl+' '+_slLab1+'</div></div>';
     }else{
       var l1c=l1.pnl>=0?'var(--green)':'var(--red)';
       pa+='<div class="lot-card" style="border-left:3px solid var(--text3);opacity:0.7"><div class="lot-label">LOT 1 — EXITED</div>';
@@ -298,7 +300,9 @@ function render(d,trades,zones,mtf){
       pa+='<div class="lot-card" style="border-left:3px solid var(--green)"><div class="lot-label">LOT 2</div>';
       pa+='<div class="lot-status" style="color:var(--green)">Active 🟢</div>';
       pa+='<div class="lot-pnl mono" style="color:'+(pnl>=0?'var(--green)':'var(--red)')+'">'+fmt(pnl)+'pts</div>';
-      pa+='<div class="lot-sl mono">SL ₹'+l2.sl+' '+l2.sl_type+'</div></div>';
+      var _gb2=pos.current_giveback||8,_lk2=Math.round((pos.peak||0)-_gb2);
+      var _slLab2=(pos.peak||0)>=10?'TRAIL (+'+_lk2+', '+_gb2+'pt give)':l2.sl_type;
+      pa+='<div class="lot-sl mono">SL ₹'+l2.sl+' '+_slLab2+'</div></div>';
     }else if(l2.status==='riding'){
       pa+='<div class="lot-card" style="border-left:3px solid #f97316"><div class="lot-label">LOT 2 (ATR)</div>';
       pa+='<div class="lot-status" style="color:#f97316">Riding 🔥</div>';

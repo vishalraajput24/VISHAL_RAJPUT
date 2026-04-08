@@ -266,7 +266,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     rsi_blowoff = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
     trail_cfg = CFG.get().get("profit_trail", {})
     trail_activate = trail_cfg.get("activate_at", 10)
-    trail_giveback = trail_cfg.get("giveback", 6)
     # STALE EXIT
     if candles >= stale_candles and peak < stale_peak:
         logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + " candles, peak=" + str(peak))
@@ -275,9 +274,17 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     if running <= -hard_sl:
         logger.info("[ENGINE] HARD_SL: running=" + str(running))
         return [{"lots": "ALL", "lot_id": "ALL", "reason": "HARD_SL", "price": option_ltp}]
+    # VARIABLE GIVEBACK by peak level
+    if peak >= 30:
+        giveback = trail_cfg.get("giveback_high", 6)
+    elif peak >= 20:
+        giveback = trail_cfg.get("giveback_mid", 7)
+    else:
+        giveback = trail_cfg.get("giveback_low", 8)
+    state["current_giveback"] = giveback
     # TRAILING FLOOR
     if peak >= trail_activate:
-        floor_sl = entry + (peak - trail_giveback)
+        floor_sl = entry + (peak - giveback)
     else:
         floor_sl = entry - hard_sl
     state["current_floor"] = round(floor_sl, 2)
@@ -287,9 +294,10 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
         return [{"lots": "ALL", "lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
     # TRAILING FLOOR HIT
     if peak >= trail_activate and option_ltp <= floor_sl:
-        locked = round(peak - trail_giveback, 1)
+        locked = round(peak - giveback, 1)
         logger.info("[ENGINE] TRAIL_FLOOR: peak=" + str(round(peak, 1))
-                     + " locked=+" + str(locked) + " floor=₹" + str(round(floor_sl, 2)))
+                     + " locked=+" + str(locked) + " give=" + str(giveback)
+                     + " floor=₹" + str(round(floor_sl, 2)))
         return [{"lots": "ALL", "lot_id": "ALL", "reason": "TRAIL_FLOOR", "price": option_ltp}]
     return []
 
