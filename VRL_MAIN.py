@@ -943,7 +943,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                 logger.warning("[VALIDATE] " + _f)
             _tg_send(_fail_msg)
         else:
-            <logger.info>("[VALIDATE] Entry: 10/10 checks passed ✅")
+            logger.info("[VALIDATE] Entry: 10/10 checks passed ✅")
     except Exception as _ve:
         logger.warning("[VALIDATE] Entry validation error: " + str(_ve))
 
