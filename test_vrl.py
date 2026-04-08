@@ -93,11 +93,12 @@ def _make_1min_df(candles):
 
 # EMA gap >= 3, RSI >= 50 rising → FIRE
 # Pre-build df with forced indicators to guarantee pass
+# Momentum = close[-2] - close[-5] = 115 - 100 = 15 (>= 12 threshold)
 _df_fire = pd.DataFrame({
-    "close": [100.0]*18 + [110.0, 115.0],
-    "open":  [99.0]*18 + [105.0, 110.0],
-    "high":  [101.0]*18 + [112.0, 117.0],
-    "low":   [98.0]*18 + [104.0, 109.0],
+    "close": [100.0]*18 + [112.0, 115.0],
+    "open":  [99.0]*18 + [108.0, 110.0],
+    "high":  [101.0]*18 + [113.0, 117.0],
+    "low":   [98.0]*18 + [101.0, 109.0],
     "volume": [1000]*20,
 })
 _df_fire.index = [datetime(2026,4,1,9,15) + timedelta(minutes=i) for i in range(20)]

@@ -349,6 +349,7 @@ TRADE_FIELDNAMES = [
     "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
     "qty_exited",
     "entry_mode", "momentum_pts",
+    "rsi_rising", "spot_confirms", "spot_move",
 ]
 
 def _cleanup_trade_log():
@@ -426,6 +427,9 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "qty_exited": _lot_qty,
         "entry_mode": st.get("entry_mode", "EMA"),
         "momentum_pts": round(st.get("momentum_pts", 0), 2),
+        "rsi_rising": 1 if st.get("rsi_rising") else 0,
+        "spot_confirms": 1 if st.get("spot_confirms") else 0,
+        "spot_move": round(st.get("spot_move", 0), 2),
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -823,6 +827,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_last_milestone"]    = 0
         state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
         state["spike_ratio"]        = entry_result.get("spike_ratio", 0)
+        state["rsi_rising"]         = entry_result.get("rsi_rising", False)
+        state["spot_confirms"]      = entry_result.get("spot_confirms", False)
+        state["spot_move"]          = entry_result.get("spot_move", 0)
         _bonus_data = entry_result.get("bonus", {})
         state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
         state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
@@ -875,13 +882,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _bonus_line = ""
     _emode = entry_result.get("entry_mode", "MOMENTUM")
     _mom_pts = entry_result.get("momentum_pts", 0)
-    _mom_thr = entry_result.get("momentum_threshold", 15)
     _sr = entry_result.get("spike_ratio", 0)
     _quality = "spike ⚡" if _sr > 0.6 else "steady"
+    _rsi_tag = "RSI↑" if entry_result.get("rsi_rising") else "RSI↓"
+    _spot_tag = "SPOT✅" if entry_result.get("spot_confirms") else "SPOT❌"
+    _spot_mv = entry_result.get("spot_move", 0)
+    _confirm_line = "Confirm: " + _rsi_tag + " | " + _spot_tag + " (" + ("+" if _spot_mv >= 0 else "") + str(_spot_mv) + "pts)\n"
     if _emode == "CONFIRMED":
-        _detail = "Mom +" + str(_mom_pts) + "pts (DTE" + str(dte) + ":" + str(_mom_thr) + ") (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n"
+        _detail = "Mom +" + str(_mom_pts) + "pts (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n" + _confirm_line
     else:
-        _detail = "Mom: +" + str(_mom_pts) + "pts/3c (DTE" + str(dte) + ":" + str(_mom_thr) + ") | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n"
+        _detail = "Mom: +" + str(_mom_pts) + "pts/3c | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n" + _confirm_line
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -941,6 +951,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
+        _entry_rsi_rising = state.get("rsi_rising", False)
+        _entry_spot_confirms = state.get("spot_confirms", False)
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
@@ -1053,6 +1065,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
                    "charges_pts": 0}
         if pnl >= 0:
+            _confirm_exit = ("RSI↑" if _entry_rsi_rising else "RSI↓") + " " + ("SPOT✅" if _entry_spot_confirms else "SPOT❌")
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "✅ <b>" + _sym_short + "  +" + str(round(pnl, 1)) + "pts</b>\n"
@@ -1060,6 +1073,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1))
                 + " | " + reason + "\n"
                 "Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
+                "Confirm at entry: " + _confirm_exit + "\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "Gross  : +₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
                 "Charges: -₹" + "{:,}".format(int(_ch["total_charges"]))
@@ -1074,12 +1088,14 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         else:
             _cd_min = _cd_cfg.get("after_loss", 5)
             _fast_sl = "⚡ FAST SL — " + str(candles) + " candle exit\n" if reason == "HARD_SL" and candles <= 1 else ""
+            _confirm_exit_l = ("RSI↑" if _entry_rsi_rising else "RSI↓") + " " + ("SPOT✅" if _entry_spot_confirms else "SPOT❌")
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 + reason + " | Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
                 + _fast_sl +
+                "Confirm at entry: " + _confirm_exit_l + "\n"
                 "Gross  : -₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
                 "Charges: -₹" + "{:,}".format(int(_ch["total_charges"])) + "\n"
                 "Net    : -₹" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
@@ -1348,6 +1364,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "path_b": result.get("path_b", False),
                 "spike_ratio": result.get("spike_ratio", 0),
                 "momentum_threshold": result.get("momentum_threshold", 15),
+                "rsi_rising": result.get("rsi_rising", False),
+                "spot_confirms": result.get("spot_confirms", False),
+                "spot_move": result.get("spot_move", 0),
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))

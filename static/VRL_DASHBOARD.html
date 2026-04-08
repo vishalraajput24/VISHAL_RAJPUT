@@ -378,6 +378,12 @@ function render(d,trades,zones,mtf){
       sh+='<span style="color:'+(s.path_b?'var(--green)':'var(--text3)')+'">MOM '+(s.path_b?'✅ +'+mp+'pts ('+sq+')':'❌ +'+mp+'/'+mt+'pts')+'</span>';
       sh+='</div>';
     }
+    // RSI rising + SPOT direction confirmation
+    var _rr=s.rsi_rising,_sc=s.spot_confirms,_sm=s.spot_move||0;
+    sh+='<div style="display:flex;justify-content:space-around;padding:4px 14px;font-size:9px;border-top:1px solid var(--border)">';
+    sh+='<span style="color:'+(_rr?'var(--green)':'var(--red)')+'">RSI'+(_rr?'↑ ✅':'↓ ❌')+'</span>';
+    sh+='<span style="color:'+(_sc?'var(--green)':'var(--red)')+'">SPOT '+(_sc?'✅':'❌')+' ('+(_sm>0?'+':'')+_sm+'pts)</span>';
+    sh+='</div>';
     sh+='<div class="sig-verdict '+vc+'">'+esc(s.verdict||'NO DATA')+'</div></div>';
   });
   sh+='</div>';

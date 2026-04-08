@@ -122,20 +122,34 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         ema_gap = round(ema9 - ema21, 2)
         rsi = float(curr.get("RSI", 50))
         rsi_prev = float(prev.get("RSI", 50))
+        rsi_rising = rsi > rsi_prev
         result.update({"entry_price": round(entry_price, 2),
             "ema9": round(ema9, 2), "ema21": round(ema21, 2),
-            "ema_gap": ema_gap, "rsi": round(rsi, 1), "rsi_prev": round(rsi_prev, 1)})
+            "ema_gap": ema_gap, "rsi": round(rsi, 1), "rsi_prev": round(rsi_prev, 1),
+            "rsi_rising": rsi_rising})
+
+        # Spot direction check — info only
+        spot_confirms = False
+        spot_move = 0
+        try:
+            _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 10)
+            if _spot_df is not None and not _spot_df.empty and len(_spot_df) >= 5:
+                _spot_now = float(_spot_df.iloc[-2]["close"])
+                _spot_3ago = float(_spot_df.iloc[-5]["close"])
+                spot_move = round(_spot_now - _spot_3ago, 2)
+                if option_type == "CE":
+                    spot_confirms = spot_move > 0
+                else:
+                    spot_confirms = spot_move < 0
+        except Exception:
+            pass
+        result["spot_move"] = spot_move
+        result["spot_confirms"] = spot_confirms
 
         import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
         rsi_max = cfg.get("rsi_max", 72)
-        # DTE-based momentum threshold
-        if dte == 0:
-            mom_pts_min = cfg.get("momentum_pts_dte0", 15)
-        elif dte == 1:
-            mom_pts_min = cfg.get("momentum_pts_dte1", 12)
-        else:
-            mom_pts_min = cfg.get("momentum_pts_dte2plus", 10)
+        mom_pts_min = cfg.get("momentum_pts", 12)
         result["momentum_threshold"] = mom_pts_min
         mom_candles = cfg.get("momentum_candles", 3)
         mom_rsi_min = cfg.get("momentum_rsi_min", 45)
@@ -188,6 +202,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                     + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
                     + (" spike" if spike_ratio > 0.6 else " steady")
                     + " ema=" + str(ema_gap) + " rsi=" + str(round(rsi, 1))
+                    + (" RSI↑" if rsi_rising else " RSI↓")
+                    + (" SPOT✅" if spot_confirms else " SPOT❌")
+                    + " spot_mv=" + str(spot_move)
                     + " HL=Y entry=" + str(entry_price))
             else:
                 result["entry_mode"] = "MOMENTUM"
@@ -195,6 +212,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                     + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
                     + (" spike" if spike_ratio > 0.6 else " steady")
                     + " rsi=" + str(round(rsi, 1))
+                    + (" RSI↑" if rsi_rising else " RSI↓")
+                    + (" SPOT✅" if spot_confirms else " SPOT❌")
+                    + " spot_mv=" + str(spot_move)
                     + " HL=Y entry=" + str(entry_price))
         else:
             reasons = []
@@ -204,6 +224,8 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             else: reasons.append("rsi=" + str(round(rsi, 1)) + "✅")
             if not candle_green: reasons.append("RED❌")
             if not higher_low: reasons.append("LOW↓❌")
+            reasons.append("RSI↑" if rsi_rising else "RSI↓")
+            reasons.append("SPOT✅" if spot_confirms else "SPOT❌")
             if path_ema: reasons.append("[EMA✅]")
             logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
         return result

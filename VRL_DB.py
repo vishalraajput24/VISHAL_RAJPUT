@@ -192,7 +192,10 @@ def init_db():
                           ("bonus_pdh_break", "INTEGER DEFAULT 0"),
                           ("qty_exited", "INTEGER DEFAULT 130"),
                           ("entry_mode", "TEXT DEFAULT 'EMA'"),
-                          ("momentum_pts", "REAL DEFAULT 0")]:
+                          ("momentum_pts", "REAL DEFAULT 0"),
+                          ("rsi_rising", "INTEGER DEFAULT 0"),
+                          ("spot_confirms", "INTEGER DEFAULT 0"),
+                          ("spot_move", "REAL DEFAULT 0")]:
             try:
                 c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
             except Exception:
@@ -363,6 +366,7 @@ _TRADE_FIELDS = [
     "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
     "qty_exited",
     "entry_mode", "momentum_pts",
+    "rsi_rising", "spot_confirms", "spot_move",
 ]
 
 def insert_trade(row):
