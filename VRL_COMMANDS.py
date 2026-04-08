@@ -1507,5 +1507,6 @@ _DISPATCH = {
     "/source"      : _cmd_source,
     "/token"       : _cmd_token,
     "/slippage"    : _cmd_slippage,
-    "/streak"      : _cmd_streak
+    "/streak"      : _cmd_streak,
+    "/validate"    : _cmd_validate,
 }

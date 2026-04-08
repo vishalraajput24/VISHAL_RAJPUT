@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v13.0
+#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v13.3
 #  20 live market validation checks. Run on every entry + exit.
 #  Silent on PASS, alerts + logs on FAIL.
 #  Zero impact on trading speed (runs after orders, not in critical path).
@@ -107,8 +107,8 @@ def validate_entry(state, entry_result, kite=None):
         if not state.get("_sl_order_id"):
             failures.append("EXCHANGE_SL: no SL order placed (live mode)")
 
-    # CHECK 6: Entry mode is valid
-    mode = state.get("mode", "")
+    # CHECK 6: Entry mode is valid (v13.3: entry_mode is the source of truth)
+    mode = state.get("entry_mode", "") or state.get("mode", "")
     valid_modes = ("MOMENTUM", "CONFIRMED", "BOTH", "EMA",
                    "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION")
     if mode and mode not in valid_modes:

@@ -930,6 +930,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                     )
         except Exception:
             pass
+    # ── Live validation: 10 entry checks (silent on PASS, alerts on FAIL) ──
+    try:
+        from VRL_VALIDATE import validate_entry
+        with _state_lock:
+            _vstate = dict(state)
+        _failures = validate_entry(_vstate, entry_result, kite)
+        if _failures:
+            _fail_msg = "⚠️ <b>ENTRY VALIDATION</b>\n"
+            for _f in _failures:
+                _fail_msg += "❌ " + _f + "\n"
+                logger.warning("[VALIDATE] " + _f)
+            _tg_send(_fail_msg)
+        else:
+            <logger.info>("[VALIDATE] Entry: 10/10 checks passed ✅")
+    except Exception as _ve:
+        logger.warning("[VALIDATE] Entry validation error: " + str(_ve))
+
 
 def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     """v13.0: Execute a single exit (partial or full).
