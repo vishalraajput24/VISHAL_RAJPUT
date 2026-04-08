@@ -1795,33 +1795,34 @@ def _strategy_loop(kite):
                                       "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
                                       "price": option_ltp}]
 
-                    # Dashboard update EVERY cycle during trade (before exits)
-                    try:
-                        _trade_scan = {}
-                        _trade_dir = state.get("direction", "")
-                        _trade_token = state.get("token")
-                        _trade_strike = state.get("strike", 0)
-                        for _dt in ("CE", "PE"):
-                            if _dt == _trade_dir and _trade_token:
-                                # Use ACTIVE trade token for the traded direction
-                                _sr = check_entry(_trade_token, _dt, spot_ltp, dte, expiry, kite)
-                                _sr["_strike"] = _trade_strike
-                            else:
-                                # Use locked token for opposite direction
-                                _oi = _locked_tokens.get(_dt) if _locked_tokens else None
-                                if _oi:
-                                    _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
-                                    _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                    # Dashboard signal scan — only on new 1-min candle
+                    _scan_min = now.strftime("%H:%M")
+                    if _scan_min != state.get("_last_dash_scan_min", "") and now.second >= 31:
+                        state["_last_dash_scan_min"] = _scan_min
+                        try:
+                            _trade_scan = {}
+                            _trade_dir = state.get("direction", "")
+                            _trade_token = state.get("token")
+                            _trade_strike = state.get("strike", 0)
+                            for _dt in ("CE", "PE"):
+                                if _dt == _trade_dir and _trade_token:
+                                    _sr = check_entry(_trade_token, _dt, spot_ltp, dte, expiry, kite)
+                                    _sr["_strike"] = _trade_strike
                                 else:
-                                    _sr = None
-                            if _sr:
-                                _trade_scan[_dt] = _sr
-                        _write_dashboard(spot_ltp, state.get("strike", 0),
-                                         dte, D.get_vix(), session,
-                                         profile, _trade_scan, expiry, now,
-                                         dir_strikes={"CE": _locked_ce_strike, "PE": _locked_pe_strike})
-                    except Exception:
-                        pass
+                                    _oi = _locked_tokens.get(_dt) if _locked_tokens else None
+                                    if _oi:
+                                        _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
+                                        _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
+                                    else:
+                                        _sr = None
+                                if _sr:
+                                    _trade_scan[_dt] = _sr
+                            _write_dashboard(spot_ltp, state.get("strike", 0),
+                                             dte, D.get_vix(), session,
+                                             profile, _trade_scan, expiry, now,
+                                             dir_strikes={"CE": _locked_ce_strike, "PE": _locked_pe_strike})
+                        except Exception:
+                            pass
 
                     # Capture entry_price BEFORE any exit resets it
                     _saved_entry = state.get("entry_price", 0)
