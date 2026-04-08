@@ -1151,6 +1151,26 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 + " price=" + str(actual_exit) + " pnl=" + str(pnl)
                 + "pts reason=" + reason)
 
+    # ── Live validation: 10 exit checks (only on full close) ──
+    if trade_done:
+        try:
+            from VRL_VALIDATE import validate_exit
+            with _state_lock:
+                _vstate = dict(state)
+            _failures = validate_exit(
+                _vstate, pnl, actual_exit, reason,
+                entry, exit_qty, kite)
+            if _failures:
+                _fail_msg = "⚠️ <b>EXIT VALIDATION</b>\n"
+                for _f in _failures:
+                    _fail_msg += "❌ " + _f + "\n"
+                    logger.warning("[VALIDATE] " + _f)
+                _tg_send(_fail_msg)
+            else:
+                logger.info("[VALIDATE] Exit: 10/10 checks passed ✅")
+        except Exception as _ve:
+            logger.warning("[VALIDATE] Exit validation error: " + str(_ve))
+
 
 def _execute_exit(kite, option_ltp: float, reason: str):
     """Legacy wrapper — exits all lots."""
@@ -1162,9 +1182,12 @@ def _execute_exit(kite, option_ltp: float, reason: str):
 # ═══════════════════════════════════════════════════════════════
 
 def _is_new_1min_candle(now: datetime) -> bool:
+    # Wait at least 30 seconds into the new minute so the closed candle
+    # is fully available from the broker. Window stays open for the
+    # remaining 29 seconds so a brief loop hiccup can't skip a minute.
     key = now.strftime("%Y%m%d%H%M")
     with _state_lock:
-        if state.get("_last_1min_candle") != key and 31 <= now.second <= 36:
+        if state.get("_last_1min_candle") != key and now.second >= 30:
             state["_last_1min_candle"] = key
             return True
     return False
@@ -1907,8 +1930,13 @@ def _strategy_loop(kite):
                 # ── STRIKE LOCKING — stable scanning ──────────────
                 # Lock strikes until spot moves 150+ pts or trade exits
                 _relock = False
+                _is_initial_lock = False
+                _spot_move = 0.0
+                _old_ce = None
+                _old_pe = None
                 if _locked_at_spot is None:
                     _relock = True
+                    _is_initial_lock = True
                 elif abs(spot_ltp - _locked_at_spot) > _LOCK_SHIFT_THRESHOLD:
                     _relock = True
                     _spot_move = round(spot_ltp - _locked_at_spot, 1)
@@ -1920,7 +1948,7 @@ def _strategy_loop(kite):
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
                     # Telegram alert on relock (not initial lock)
-                    if '_spot_move' in dir():
+                    if not _is_initial_lock:
                         _tg_send(
                             "\U0001f512 <b>RELOCK</b>: CE "
                             + str(_old_ce) + " → " + str(_locked_ce_strike)
@@ -2271,7 +2299,7 @@ def main():
                 for k in ["pnl_pts", "pnl_points", "pnl_rs", "pnl"]:
                     if k in row:
                         try: return float(row[k])
-                        except: pass
+                        except (TypeError, ValueError): pass
                 return 0.0
 
             wins   = [t for t in trades_today if _get_pnl(t) > 0]

@@ -1,8 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_DATA.py — VISHAL RAJPUT TRADE v13.3
 #  Foundation layer. Settings, logging, market data, Greeks.
-#  v12.15: Fib pivot points, expiry breakout mode,
-#          spot consolidation detection, expiry-specific rules.
 # ═══════════════════════════════════════════════════════════════
 
 import os
@@ -675,7 +673,8 @@ def get_lot_size(kite=None) -> int:
 # ── Historical data cache — avoids duplicate API calls within same minute ──
 _hist_cache = {}
 _hist_cache_lock = threading.Lock()
-_HIST_CACHE_TTL = 30  # seconds
+_HIST_CACHE_TTL = 30   # seconds
+_HIST_CACHE_MAX = 256  # hard cap on entries — prevents unbounded growth
 
 def _hist_cache_key(token: int, interval: str, lookback: int) -> str:
     return str(token) + "|" + interval + "|" + str(lookback)
@@ -690,11 +689,16 @@ def _hist_cache_get(key: str):
 def _hist_cache_put(key: str, df):
     with _hist_cache_lock:
         _hist_cache[key] = {"df": df.copy(), "ts": time.time()}
-        # Evict old entries
+        # Evict by age first
         now = time.time()
         stale = [k for k, v in _hist_cache.items() if now - v["ts"] > _HIST_CACHE_TTL * 2]
         for k in stale:
             del _hist_cache[k]
+        # Hard cap: drop oldest entries if still over max
+        if len(_hist_cache) > _HIST_CACHE_MAX:
+            ordered = sorted(_hist_cache.items(), key=lambda kv: kv[1]["ts"])
+            for k, _v in ordered[:len(_hist_cache) - _HIST_CACHE_MAX]:
+                del _hist_cache[k]
 
 def get_historical_data(token: int, interval: str, lookback: int,
                         today_only: bool = False) -> pd.DataFrame:
@@ -1464,14 +1468,16 @@ def get_nearest_fib_level(spot_price: float) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 _spot_1m_buffer = []   # List of (timestamp, open, high, low, close)
+_spot_buffer_lock = threading.Lock()
 _SPOT_BUFFER_MAX = 20  # Keep last 20 candles
 
 def update_spot_buffer(candle: dict):
     """Called by strategy loop or lab to feed 1-min spot candles."""
     global _spot_1m_buffer
-    _spot_1m_buffer.append(candle)
-    if len(_spot_1m_buffer) > _SPOT_BUFFER_MAX:
-        _spot_1m_buffer = _spot_1m_buffer[-_SPOT_BUFFER_MAX:]
+    with _spot_buffer_lock:
+        _spot_1m_buffer.append(candle)
+        if len(_spot_1m_buffer) > _SPOT_BUFFER_MAX:
+            _spot_1m_buffer = _spot_1m_buffer[-_SPOT_BUFFER_MAX:]
 
 
 def detect_spot_consolidation() -> dict:
@@ -1484,10 +1490,10 @@ def detect_spot_consolidation() -> dict:
         "consolidating": False, "range": 0, "high": 0, "low": 0,
         "candles": 0, "near_fib": {}, "mid": 0,
     }
-    if len(_spot_1m_buffer) < n:
-        return result
-
-    recent = _spot_1m_buffer[-n:]
+    with _spot_buffer_lock:
+        if len(_spot_1m_buffer) < n:
+            return result
+        recent = list(_spot_1m_buffer[-n:])
     highs = [float(c.get("high", c.get("close", 0))) for c in recent]
     lows  = [float(c.get("low",  c.get("close", 0))) for c in recent]
     h = max(highs)

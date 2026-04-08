@@ -113,7 +113,14 @@ def _read_dash():
     if not os.path.isfile(DASH_FILE): return {}
     try:
         with open(DASH_FILE) as f: return json.load(f)
-    except: return {}
+    except (json.JSONDecodeError, OSError) as e:
+        # Dashboard JSON corrupted or unreadable — return empty so UI degrades gracefully
+        try:
+            import logging
+            logging.getLogger("vrl_web").debug("[WEB] _read_dash error: " + str(e))
+        except Exception:
+            pass
+        return {}
 
 import glob as _glob
 
@@ -166,7 +173,7 @@ def _read_multitf():
         try:
             with open(path) as f: rows = list(csv.DictReader(f))
             return rows[-1] if rows else None
-        except: return None
+        except Exception: return None
     def _lasttype(path, t):
         if not path or not os.path.isfile(path): return None
         try:
@@ -174,13 +181,13 @@ def _read_multitf():
             for r in reversed(rows):
                 if r.get("type") == t: return r
             return None
-        except: return None
-    def _f(r, k, d=0): 
+        except Exception: return None
+    def _f(r, k, d=0):
         try: return round(float(r.get(k, d)), 1)
-        except: return d
+        except (TypeError, ValueError): return d
     def _f3(r, k, d=0):
         try: return round(float(r.get(k, d)), 3)
-        except: return d
+        except (TypeError, ValueError): return d
     spot = []
     for label, prefix in [("1m","nifty_spot_1min"),("3m","nifty_spot_3min_"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("D","nifty_spot_daily")]:
         r = _last(_latest(spot_dir, prefix))
@@ -226,8 +233,8 @@ def _read_trades():
             for r in csv.DictReader(f):
                 if r.get("date","").strip() == today:
                     try: trades.append({k: r.get(k,"") for k in r})
-                    except: pass
-    except: pass
+                    except Exception: pass
+    except Exception: pass
     return trades
 
 HTML = r"""<!DOCTYPE html>

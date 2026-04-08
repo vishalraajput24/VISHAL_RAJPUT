@@ -262,6 +262,7 @@ def _cmd_help(args):
         "/download  — strategy data (trade log + DB + config + state)\n"
         "/download_all — full day zip (or /download_all YYYY-MM-DD)\n"
         "/health    — system health check\n"
+        "/validate  — 10 system alignment checks\n"
         "/livecheck — last 50 log lines\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>CONTROL</b>\n"
@@ -1235,6 +1236,31 @@ def _cmd_trades(args):
 # ═══════════════════════════════════════════════════════════════
 #  v12.15: PIVOT COMMAND
 # ═══════════════════════════════════════════════════════════════
+
+def _cmd_validate(args):
+    """Manual system validation — runs 10 ad-hoc health checks."""
+    try:
+        from VRL_VALIDATE import manual_validate
+        with _state_lock:
+            st = dict(state)
+        result = manual_validate(st)
+        lines = ""
+        for name, ok, detail in result["checks"]:
+            icon = "✅" if ok else "❌"
+            lines += icon + " " + name + ": " + str(detail) + "\n"
+        passed = result["passed"]
+        total  = result["total"]
+        summary_icon = "✅" if passed == total else ("⚠️" if passed >= total - 2 else "❌")
+        _tg_send(
+            "🔍 <b>SYSTEM VALIDATION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + lines
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + summary_icon + " " + str(passed) + "/" + str(total) + " checks passed"
+        )
+    except Exception as e:
+        _tg_send("Validate error: " + str(e))
+
 
 def _cmd_pivot(args):
     """Show fib pivot levels + nearest level to current spot."""
