@@ -129,7 +129,14 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
         rsi_max = cfg.get("rsi_max", 72)
-        mom_pts_min = cfg.get("momentum_pts", 15)
+        # DTE-based momentum threshold
+        if dte == 0:
+            mom_pts_min = cfg.get("momentum_pts_dte0", 15)
+        elif dte == 1:
+            mom_pts_min = cfg.get("momentum_pts_dte1", 12)
+        else:
+            mom_pts_min = cfg.get("momentum_pts_dte2plus", 10)
+        result["momentum_threshold"] = mom_pts_min
         mom_candles = cfg.get("momentum_candles", 3)
         mom_rsi_min = cfg.get("momentum_rsi_min", 45)
         ema_min = cfg.get("ema_gap_min", 3)
@@ -191,7 +198,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                     + " HL=Y entry=" + str(entry_price))
         else:
             reasons = []
-            if mom_pts < mom_pts_min: reasons.append("mom=" + str(mom_pts) + "❌")
+            if mom_pts < mom_pts_min: reasons.append("mom=" + str(mom_pts) + "/" + str(mom_pts_min) + "❌")
             else: reasons.append("mom=" + str(mom_pts) + "✅")
             if rsi < mom_rsi_min: reasons.append("rsi=" + str(round(rsi, 1)) + "❌")
             else: reasons.append("rsi=" + str(round(rsi, 1)) + "✅")

@@ -110,7 +110,7 @@ _df_fire.iloc[-3, _df_fire.columns.get_loc("RSI")] = 52.0
 with patch.object(D, 'get_historical_data', return_value=_df_fire):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("EMA gap + RSI rising → info only (no fire)", r["fired"] == False,
+        test("Momentum + EMA both pass → CONFIRMED fires", r["fired"] == True,
              "fired=" + str(r["fired"]) + " ema_gap=" + str(r["ema_gap"])
              + " rsi=" + str(r["rsi"]) + " rsi_prev=" + str(r["rsi_prev"]))
 
@@ -317,7 +317,7 @@ _df_rsi71.iloc[-3, _df_rsi71.columns.get_loc("RSI")] = 65.0
 with patch.object(D, 'get_historical_data', return_value=_df_rsi71):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 71 < 72 → EMA info only (no fire)", r["fired"] == False,
+        test("RSI 71 < 72 → momentum can fire", r["fired"] == True,
              "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"])
              + " ema_gap=" + str(r["ema_gap"]))
 

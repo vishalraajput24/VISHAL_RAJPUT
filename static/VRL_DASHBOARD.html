@@ -393,8 +393,8 @@ function render(d,trades,zones,mtf){
     if(s.path_a||s.path_b||mp>5){
       sh+='<div style="display:flex;justify-content:space-around;padding:4px 14px;font-size:9px;border-top:1px solid var(--border)">';
       sh+='<span style="color:'+(s.path_a?'var(--green)':'var(--text3)')+'">EMA '+(s.path_a?'✅':'❌')+'</span>';
-      var sr=s.spike_ratio||0,sq=sr>0.6?'spike ⚡':'steady';
-      sh+='<span style="color:'+(s.path_b?'var(--green)':'var(--text3)')+'">MOM '+(s.path_b?'✅ +'+mp+'pts ('+sq+')':'❌ +'+mp+'pts')+'</span>';
+      var sr=s.spike_ratio||0,sq=sr>0.6?'spike ⚡':'steady',mt=s.momentum_threshold||15;
+      sh+='<span style="color:'+(s.path_b?'var(--green)':'var(--text3)')+'">MOM '+(s.path_b?'✅ +'+mp+'pts ('+sq+')':'❌ +'+mp+'/'+mt+'pts')+'</span>';
       sh+='</div>';
     }
     sh+='<div class="sig-verdict '+vc+'">'+esc(s.verdict||'NO DATA')+'</div></div>';

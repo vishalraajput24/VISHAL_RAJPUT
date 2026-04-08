@@ -24,7 +24,10 @@ cooldown:
   after_loss: 6
 
 entry:
-  momentum_pts: 15
+  momentum_pts: 15           # default fallback
+  momentum_pts_dte0: 15      # expiry day — bigger moves expected
+  momentum_pts_dte1: 12      # next day — moderate
+  momentum_pts_dte2plus: 10  # weekly — smaller moves
   momentum_candles: 3
   momentum_rsi_min: 45
   rsi_max: 72
