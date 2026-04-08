@@ -942,10 +942,9 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
 
-    # Determine qty
+    # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
-        active_lots = (1 if state.get("lot1_active") else 0) + (1 if state.get("lot2_active") else 0)
-        exit_qty = D.LOT_SIZE * active_lots
+        exit_qty = state.get("qty", D.LOT_SIZE * 2)
     else:
         exit_qty = D.LOT_SIZE
 
