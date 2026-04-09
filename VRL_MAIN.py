@@ -761,7 +761,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                    expiry, dte: int, session: str = "MORNING"):
     token       = option_info["token"]
     symbol      = option_info["symbol"]
-    entry_price = entry_result["entry_price"]
+    entry_price = entry_result.get("entry_level") or entry_result["entry_price"]
 
     import VRL_CONFIG as CFG
     lot_count = CFG.get().get("lots", {}).get("count", 2)
@@ -2006,7 +2006,7 @@ def _strategy_loop(kite):
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
                     # Telegram alert on relock (not initial lock)
-                    if not _is_initial_lock:
+                    if False:  # v13.3: relock alerts silenced — dashboard shows current strike
                         _tg_send(
                             "\U0001f512 <b>RELOCK</b>: CE "
                             + str(_old_ce) + " → " + str(_locked_ce_strike)

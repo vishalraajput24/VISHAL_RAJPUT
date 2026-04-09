@@ -97,25 +97,35 @@ def loss_streak_gate(state: dict) -> bool:
 #  v13.0 ENTRY — 1-MIN EMA GAP + RSI ONLY
 # ═══════════════════════════════════════════════════════════════
 
+
+# v13.3 ENTRY -- LIMIT at breakout level. EMA as 2nd path.
+
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None) -> dict:
-    """v13.3: Momentum entry only. EMA is info."""
+    """v13.3: LIMIT entry. Momentum or EMA fires -> entry_level for LIMIT order.
+    Removed: green candle check, higher_low check.
+    Added: EMA as 2nd path (gap>=5), dynamic thresholds, entry_level."""
     result = {
         "fired": False, "option_type": option_type,
-        "entry_price": 0, "ema9": 0, "ema21": 0,
-        "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
-        "ema_ok": False, "rsi_ok": False,
-        "candle_green": False, "gap_widening": False,
-        "higher_low": False, "entry_mode": "", "momentum_pts": 0,
+        "entry_price": 0, "entry_level": 0,
+        "ema9": 0, "ema21": 0, "ema_gap": 0,
+        "rsi": 0, "rsi_prev": 0,
+        "ema_ok": False, "rsi_ok": False, "gap_widening": False,
+        "entry_mode": "", "momentum_pts": 0,
+        "momentum_threshold": 0,
         "ema_would_fire": False, "path_a": False, "path_b": False,
+        "rsi_rising": False, "spot_confirms": False, "spot_move": 0,
+        "spike_ratio": 0,
     }
     try:
         df = D.get_historical_data(token, "minute", 50)
         df = D.add_indicators(df)
         if df.empty or len(df) < 7:
             return result
+
         curr = df.iloc[-2]
         prev = df.iloc[-3]
+
         entry_price = float(curr["close"])
         ema9 = float(curr.get("EMA_9", 0))
         ema21 = float(curr.get("EMA_21", 0))
@@ -123,24 +133,24 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         rsi = float(curr.get("RSI", 50))
         rsi_prev = float(prev.get("RSI", 50))
         rsi_rising = rsi > rsi_prev
-        result.update({"entry_price": round(entry_price, 2),
-            "ema9": round(ema9, 2), "ema21": round(ema21, 2),
-            "ema_gap": ema_gap, "rsi": round(rsi, 1), "rsi_prev": round(rsi_prev, 1),
-            "rsi_rising": rsi_rising})
 
-        # Spot direction check — info only
+        result.update({
+            "entry_price": round(entry_price, 2),
+            "ema9": round(ema9, 2), "ema21": round(ema21, 2),
+            "ema_gap": ema_gap, "rsi": round(rsi, 1),
+            "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
+        })
+
+        # Spot direction -- info only
         spot_confirms = False
         spot_move = 0
         try:
-            _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 10)
-            if _spot_df is not None and not _spot_df.empty and len(_spot_df) >= 5:
-                _spot_now = float(_spot_df.iloc[-2]["close"])
-                _spot_3ago = float(_spot_df.iloc[-5]["close"])
-                spot_move = round(_spot_now - _spot_3ago, 2)
-                if option_type == "CE":
-                    spot_confirms = spot_move > 0
-                else:
-                    spot_confirms = spot_move < 0
+            _sdf = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 10)
+            if _sdf is not None and not _sdf.empty and len(_sdf) >= 5:
+                _sn = float(_sdf.iloc[-2]["close"])
+                _s3 = float(_sdf.iloc[-5]["close"])
+                spot_move = round(_sn - _s3, 2)
+                spot_confirms = (spot_move > 0) if option_type == "CE" else (spot_move < 0)
         except Exception:
             pass
         result["spot_move"] = spot_move
@@ -148,98 +158,111 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
 
         import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
-        rsi_max = cfg.get("rsi_max", 72)
-        mom_pts_min = cfg.get("momentum_pts", 14)
-        result["momentum_threshold"] = mom_pts_min
-        mom_candles = cfg.get("momentum_candles", 3)
-        mom_rsi_min = cfg.get("momentum_rsi_min", 45)
-        ema_min = cfg.get("ema_gap_min", 3)
+        rsi_max       = cfg.get("rsi_max", 72)
+        rsi_max_ema   = cfg.get("rsi_max_ema", 68)
+        mom_pts_std   = cfg.get("momentum_pts", 14)
+        mom_pts_conf  = cfg.get("momentum_pts_confirmed", 10)
+        mom_pts_spike = cfg.get("momentum_pts_spike", 16)
+        mom_candles   = cfg.get("momentum_candles", 3)
+        mom_rsi_min   = cfg.get("momentum_rsi_min", 45)
+        ema_info_min  = cfg.get("ema_gap_min", 3)
+        ema_fire_min  = cfg.get("ema_fire_min", 5)
 
-        if rsi > rsi_max:
-            logger.info("[ENGINE] " + option_type + " RSI_CAP " + str(round(rsi, 1)))
-            return result
-
-        candle_green = float(curr["close"]) > float(curr["open"])
-        higher_low = float(curr["low"]) > float(prev["low"])
-        result["candle_green"] = candle_green
-        result["higher_low"] = higher_low
-
-        # EMA info (never fires alone)
-        rsi_ok = rsi >= 50 and rsi > rsi_prev
+        # -- EMA conditions --
+        rsi_ok = rsi >= 50 and rsi_rising
         prev_e9 = float(prev.get("EMA_9", 0))
         prev_e21 = float(prev.get("EMA_21", 0))
-        prev_gap = round(prev_e9 - prev_e21, 2)
-        gap_widening = ema_gap > prev_gap
-        ema_ok = ema_gap >= ema_min
-        result["ema_ok"] = ema_ok
+        gap_widening = ema_gap > round(prev_e9 - prev_e21, 2)
+        ema_info = ema_gap >= ema_info_min
+        ema_strong = ema_gap >= ema_fire_min
+        result["ema_ok"] = ema_info
         result["rsi_ok"] = rsi_ok
         result["gap_widening"] = gap_widening
-        path_ema = ema_ok and rsi_ok and candle_green and gap_widening and higher_low
+        path_ema = ema_strong and rsi_ok and gap_widening
         result["ema_would_fire"] = path_ema
         result["path_a"] = path_ema
 
-        # MOMENTUM — the only entry trigger
+        # -- MOMENTUM calculation --
         mom_pts = 0
-        path_mom = False
         spike_ratio = 0
         if len(df) >= mom_candles + 3:
             ref = float(df.iloc[-3 - mom_candles]["close"])
             mom_pts = round(float(prev["close"]) - ref, 2)
             result["momentum_pts"] = mom_pts
             prev_prev = df.iloc[-4]
-            last_mom_move = round(float(prev["close"]) - float(prev_prev["close"]), 2)
-            result["last_candle_move"] = last_mom_move
+            last_mom = round(float(prev["close"]) - float(prev_prev["close"]), 2)
+            result["last_candle_move"] = last_mom
             if mom_pts > 0:
-                spike_ratio = round(last_mom_move / mom_pts, 2)
+                spike_ratio = round(last_mom / mom_pts, 2)
             result["spike_ratio"] = spike_ratio
-            path_mom = (mom_pts >= mom_pts_min and rsi >= mom_rsi_min
-                        and candle_green and higher_low)
+
+        # -- Dynamic threshold --
+        if spike_ratio > 0.6:
+            mom_threshold = mom_pts_spike
+        elif path_ema:
+            mom_threshold = mom_pts_conf
+        else:
+            mom_threshold = mom_pts_std
+        result["momentum_threshold"] = mom_threshold
+
+        # -- MOMENTUM FIRE (primary) --
+        path_mom = (mom_pts >= mom_threshold
+                    and rsi >= mom_rsi_min
+                    and rsi <= rsi_max)
         result["path_b"] = path_mom
 
         if path_mom:
             result["fired"] = True
+            result["entry_level"] = round(float(prev["close"]), 2)
             if path_ema:
                 result["entry_mode"] = "CONFIRMED"
-                logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED ★★]"
-                    + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
+                logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
+                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold)
+                    + " ema=" + str(ema_gap)
+                    + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
-                    + " ema=" + str(ema_gap) + " rsi=" + str(round(rsi, 1))
-                    + (" RSI↑" if rsi_rising else " RSI↓")
-                    + (" SPOT✅" if spot_confirms else " SPOT❌")
-                    + " spot_mv=" + str(spot_move)
-                    + " HL=Y entry=" + str(entry_price))
+                    + " LIMIT=" + str(round(float(prev["close"]), 2)))
             else:
                 result["entry_mode"] = "MOMENTUM"
                 logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
-                    + " mom=" + str(mom_pts) + "pts/" + str(mom_candles) + "c"
-                    + (" spike" if spike_ratio > 0.6 else " steady")
+                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold)
                     + " rsi=" + str(round(rsi, 1))
-                    + (" RSI↑" if rsi_rising else " RSI↓")
-                    + (" SPOT✅" if spot_confirms else " SPOT❌")
-                    + " spot_mv=" + str(spot_move)
-                    + " HL=Y entry=" + str(entry_price))
+                    + (" spike" if spike_ratio > 0.6 else " steady")
+                    + " LIMIT=" + str(round(float(prev["close"]), 2)))
+
+        # -- EMA INDEPENDENT FIRE (secondary) --
+        elif path_ema and rsi <= rsi_max_ema and not result["fired"]:
+            result["fired"] = True
+            result["entry_mode"] = "EMA"
+            result["entry_level"] = round(entry_price, 2)
+            logger.info("[ENGINE] " + option_type + " ENTRY [EMA]"
+                + " gap=" + str(ema_gap) + " rsi=" + str(round(rsi, 1))
+                + " LIMIT=" + str(round(entry_price, 2)))
+
         else:
             reasons = []
-            if mom_pts < mom_pts_min: reasons.append("mom=" + str(mom_pts) + "/" + str(mom_pts_min) + "❌")
-            else: reasons.append("mom=" + str(mom_pts) + "✅")
-            if rsi < mom_rsi_min: reasons.append("rsi=" + str(round(rsi, 1)) + "❌")
-            else: reasons.append("rsi=" + str(round(rsi, 1)) + "✅")
-            if not candle_green: reasons.append("RED❌")
-            if not higher_low: reasons.append("LOW↓❌")
-            reasons.append("RSI↑" if rsi_rising else "RSI↓")
-            reasons.append("SPOT✅" if spot_confirms else "SPOT❌")
-            if path_ema: reasons.append("[EMA✅]")
+            if mom_pts < mom_threshold:
+                reasons.append("mom=" + str(mom_pts) + "/" + str(mom_threshold) + "X")
+            else:
+                reasons.append("mom=" + str(mom_pts) + "V")
+            if rsi > rsi_max:
+                reasons.append("RSI_CAP=" + str(round(rsi, 1)))
+            elif rsi < mom_rsi_min:
+                reasons.append("rsi=" + str(round(rsi, 1)) + "X")
+            else:
+                reasons.append("rsi=" + str(round(rsi, 1)) + "V")
+            reasons.append("RSI^" if rsi_rising else "RSIv")
+            reasons.append("SPOTV" if spot_confirms else "SPOTX")
+            if path_ema:
+                reasons.append("[EMAV]")
+            elif ema_info:
+                reasons.append("[ema=" + str(ema_gap) + "]")
             logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
+
         return result
     except Exception as e:
         logger.error("[ENGINE] check_entry error: " + str(e))
         return result
-
-
-
-# ═══════════════════════════════════════════════════════════════
-#  SL + PROFIT LOCK
-# ═══════════════════════════════════════════════════════════════
 
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
     """v13.0: Simple fixed SL."""

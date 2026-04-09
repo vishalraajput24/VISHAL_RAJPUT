@@ -27,10 +27,15 @@ cooldown:
 
 entry:
   momentum_pts: 14
+  momentum_pts_confirmed: 10
+  momentum_pts_spike: 16
   momentum_candles: 3
   momentum_rsi_min: 45
   rsi_max: 72
-  ema_gap_min: 3          # dashboard info only, not entry trigger
+  rsi_max_ema: 68
+  ema_gap_min: 3
+  ema_fire_min: 5
+  limit_timeout_sec: 120          # dashboard info only, not entry trigger
 
 exit:
   hard_sl: 12

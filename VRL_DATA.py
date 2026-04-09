@@ -1543,7 +1543,7 @@ VIX_WARN_LEVEL    = 22
 VIX_DANGER_LEVEL  = 28
 STRADDLE_WARN_PCT = 5.0
 ENTRY_FIRE_HOUR   = 9
-ENTRY_FIRE_MIN    = 45
+ENTRY_FIRE_MIN    = 31   # v13.3: 9:31 — catch morning moves
 
 _straddle_open     = 0.0
 _straddle_captured = False
