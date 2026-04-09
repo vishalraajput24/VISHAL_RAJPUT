@@ -166,53 +166,10 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         cfg = CFG.get().get("entry", {})
         rsi_max       = cfg.get("rsi_max", 72)
         rsi_max_ema   = cfg.get("rsi_max_ema", 68)
-        mom_pts_std   = cfg.get("momentum_pts", 14)
-        mom_pts_conf  = cfg.get("momentum_pts_confirmed", 10)
-        mom_pts_spike = cfg.get("momentum_pts_spike", 16)
-        mom_candles   = cfg.get("momentum_candles", 3)
-        mom_rsi_min   = cfg.get("momentum_rsi_min", 45)
-        ema_info_min  = cfg.get("ema_gap_min", 3)
-        ema_fire_min  = cfg.get("ema_fire_min", 5)
-
-        # -- EMA conditions --
-        rsi_ok = rsi >= 50 and rsi_rising
-        prev_e9 = float(prev.get("EMA_9", 0))
-        prev_e21 = float(prev.get("EMA_21", 0))
-        gap_widening = ema_gap > round(prev_e9 - prev_e21, 2)
-        ema_info = ema_gap >= ema_info_min
-        ema_strong = ema_gap >= ema_fire_min
-        result["ema_ok"] = ema_info
-        result["rsi_ok"] = rsi_ok
-        result["gap_widening"] = gap_widening
-        path_ema = ema_strong and rsi_ok and gap_widening
-        result["ema_would_fire"] = path_ema
-        result["path_a"] = path_ema
-
-        # -- MOMENTUM calculation --
-        mom_pts = 0
-        spike_ratio = 0
-        if len(df) >= mom_candles + 3:
-            ref = float(df.iloc[-3 - mom_candles]["close"])
-            mom_pts = round(float(prev["close"]) - ref, 2)
-            result["momentum_pts"] = mom_pts
-            prev_prev = df.iloc[-4]
-            last_mom = round(float(prev["close"]) - float(prev_prev["close"]), 2)
-            result["last_candle_move"] = last_mom
-            if mom_pts > 0:
-                spike_ratio = round(last_mom / mom_pts, 2)
-            result["spike_ratio"] = spike_ratio
-
-        # -- Dynamic threshold --
-        if spike_ratio > 0.6:
-            mom_threshold = mom_pts_spike
-        elif path_ema:
-            mom_threshold = mom_pts_conf
-        else:
-            mom_threshold = mom_pts_std
-        result["momentum_threshold"] = mom_threshold
-
+        mom_pts_min = cfg.get("momentum_pts", 20)
+        result["momentum_threshold"] = mom_pts_min
         # -- MOMENTUM FIRE (primary) --
-        path_mom = (mom_pts >= mom_threshold
+        path_mom = (mom_pts >= mom_pts_min
                     and rsi >= mom_rsi_min
                     and rsi <= rsi_max
                     and candle_green
@@ -225,7 +182,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             if path_ema:
                 result["entry_mode"] = "CONFIRMED"
                 if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
+                    + " mom=" + str(mom_pts) + "/" + str(mom_pts_min) + " (3m)"
                     + " ema=" + str(ema_gap)
                     + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
@@ -233,14 +190,14 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             else:
                 result["entry_mode"] = "MOMENTUM"
                 if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
+                    + " mom=" + str(mom_pts) + "/" + str(mom_pts_min) + " (3m)"
                     + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
                     + " LIMIT=" + str(round(float(prev["close"]), 2)))
         else:
             reasons = []
-            if mom_pts < mom_threshold:
-                reasons.append("mom=" + str(mom_pts) + "/" + str(mom_threshold) + "X")
+            if mom_pts < mom_pts_min:
+                reasons.append("mom=" + str(mom_pts) + "/" + str(mom_pts_min) + "X")
             else:
                 reasons.append("mom=" + str(mom_pts) + "V")
             if rsi > rsi_max:

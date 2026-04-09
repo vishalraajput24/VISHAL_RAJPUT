@@ -27,8 +27,6 @@ cooldown:
 
 entry:
   momentum_pts: 20             # 3-min timeframe: 20pts/3c = 9 min move
-  momentum_pts_confirmed: 14   # CONFIRMED (mom+ema)
-  momentum_pts_spike: 24       # spike ratio > 0.6
   momentum_candles: 3
   momentum_timeframe: 3minute  # entry scan timeframe
   momentum_rsi_min: 45
