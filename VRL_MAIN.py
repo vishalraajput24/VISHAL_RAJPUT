@@ -663,7 +663,7 @@ def _alert_bot_started():
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "ENTRY: 1m +14/4c OR 3m +20/3c\n"
-        "  + green + RSI↑ + RSI<72 + other falling\n"
+        "  + green + RSI↑ + RSI under 72 + other falling\n"
         "EXIT: Candle close -12 | Divergence exit\n"
         "TRAIL: FAST 75% from +15 | CONFIRMED 65% from +20\n"
         "COOLDOWN: Div 0m | Trail 3m | SL 8m\n"
