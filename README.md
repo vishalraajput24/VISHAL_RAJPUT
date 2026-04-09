@@ -1,8 +1,8 @@
-# VISHAL RAJPUT TRADE — v13.2
+# VISHAL RAJPUT TRADE — v13.5
 
 **Algorithmic Options Trading Bot for Nifty 50**
 
-Minimal strategy options trading system. 2-lot execution with profit floors and RSI-based lot splitting. Runs on Zerodha Kite API with Telegram command interface and live web dashboard.
+Minimal strategy options trading system. 2-lot execution with dynamic trail and divergence-aware exits. Runs on Zerodha Kite API with Telegram command interface and live web dashboard.
 
 > **Status:** Paper Trading | **Market:** NSE Nifty 50 Options | **Expiry:** Weekly
 
@@ -12,29 +12,32 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 
 ```
 ┌─────────────────────────────────────────────────┐
-│               CRONTAB (Mon-Fri)                  │
-│  8:00 AUTH → 9:00 WEB → 9:10 BOT → 9:18 HC     │
+│          CRONTAB (Mon-Fri): AUTH @ 8AM           │
+│      Everything else runs under systemd          │
 └─────────────────┬───────────────────────────────┘
                   │
      ┌────────────┼────────────┐
      │            │            │
 ┌────▼────┐ ┌────▼────┐ ┌─────▼─────┐
 │VRL_AUTH │ │VRL_MAIN │ │  VRL_WEB  │
-│  Token  │ │  Brain  │ │ Dashboard │
+│(cron)   │ │(systemd)│ │ (systemd) │
 └────┬────┘ └────┬────┘ └─────┬─────┘
      │           │            │ reads
   ┌──▼──┐ ┌─────▼─────┐   ┌──▼──────────┐
-  │KITE │ │VRL_ENGINE │   │ dashboard   │
-  │ API │ │ Entry/Exit│   │ .json       │
+  │KITE │ │VRL_ENGINE │   │ SQLite /    │
+  │ API │ │ Entry/Exit│   │ dashboard   │
   └─────┘ └─────┬─────┘   └─────────────┘
           ┌─────▼─────┐
           │VRL_TRADE  │  ┌────────────┐
           │  Orders   │  │VRL_COMMANDS│
-          └───────────┘  │  Telegram  │
-                         └────────────┘
+          └─────┬─────┘  │  Telegram  │
+                │        └────────────┘
+          ┌─────▼──────┐
+          │VRL_VALIDATE│  20 post-trade alignment checks
+          └────────────┘
      ┌──────────┐
      │ VRL_LAB  │ → ~/lab_data/ (1m/3m/5m/15m/60m/daily)
-     │Data Coll.│
+     │Data Coll.│    (systemd)
      └──────────┘
 ```
 
@@ -44,75 +47,83 @@ Minimal strategy options trading system. 2-lot execution with profit floors and 
 
 | File | Purpose |
 |------|---------|
-| `config.yaml` | **Central config** — all tunable values. Change here, restart, done. |
+| `config.yaml` | **Central config** — all tunable values. Change here, restart service, done. |
 | `VRL_CONFIG.py` | Config loader + validator. Typed accessors, fails fast. |
 | `VRL_MAIN.py` | Master orchestrator. Strategy loop, 2-lot execution, state, alerts, dashboard. |
-| `VRL_ENGINE.py` | **Minimal signal logic.** EMA gap + RSI entry. Profit floors + RSI split exit. Direction-aware cooldown. RSI hard cap. |
+| `VRL_ENGINE.py` | **Minimal signal logic.** 3-path entry (FAST/CONFIRMED/EMA) + divergence-aware exit chain. |
 | `VRL_DATA.py` | Foundation. WebSocket, indicators, Greeks, spot analysis, data cache, IST timezone. |
-| `VRL_DB.py` | **SQLite database layer.** 11 tables, WAL mode, dual-write with CSV. Query helpers. |
+| `VRL_DB.py` | **SQLite database layer.** WAL mode, dual-write with CSV. Query helpers. |
 | `VRL_LAB.py` | Data collector. All timeframes, forward fill at EOD, daily summary. Writes CSV + SQLite. |
-| `VRL_AUTH.py` | Kite authentication. Auto-login via TOTP. |
+| `VRL_AUTH.py` | Kite authentication. Auto-login via TOTP. Runs from crontab at 8:00. |
 | `VRL_TRADE.py` | Order execution. Paper + Live mode in one file. Only file that touches orders. |
-| `VRL_WEB.py` | War Room API server. Serves `static/VRL_DASHBOARD.html` + JSON APIs. SQLite-powered endpoints. |
-| `static/VRL_DASHBOARD.html` | **Production dashboard.** Glassmorphism dark theme, gradient backgrounds, RSI progress bars. |
+| `VRL_VALIDATE.py` | **20 live market alignment checks.** Runs on every entry + exit, silent on PASS, alerts on FAIL. |
+| `VRL_WEB.py` | War Room API server. Serves `static/VRL_DASHBOARD.html` + JSON APIs. |
+| `static/VRL_DASHBOARD.html` | **Production dashboard.** Glassmorphism dark theme, RSI progress bars. |
 | `VRL_COMMANDS.py` | Telegram command handlers. |
 | `VRL_CHARGES.py` | Brokerage calculator (STT, exchange, GST, stamp duty). |
-| `VRL_DEPLOY.py` | Telegram-triggered deployment (uses systemd restart). |
+| `VRL_DEPLOY.py` | Telegram-triggered deployment (uses `systemctl restart vrl-main`). |
 | `VRL_BUGS.md` | Bug sheet — all bugs found and fixed, prevention rules. |
-| `test_vrl.py` | **58 automated tests** for v13.2 (cooldown, RSI cap, PNL correctness). |
+| `test_vrl.py` | **58 automated tests** covering entry paths, exit chain, cooldown, PNL. |
 
 ---
 
-## Entry — v13.0 Minimal
+## Entry — 3 Paths with Divergence Gate
 
-**4 checks. Nothing else.**
+**Divergence gate (hard prerequisite, both CE and PE):** the opposite side must be falling (4-candle 1m move < 0). If the other side is up or flat, **no entry fires** regardless of which path qualifies.
 
-| # | Check | Condition | Why |
-|---|-------|-----------|-----|
-| 1 | **EMA Gap** | EMA9 - EMA21 >= 3pts | Trend exists |
-| 2 | **RSI** | RSI >= 50 AND rising AND <= 72 | Momentum confirmed, not blowoff |
-| 3 | **Green Candle** | Close > Open | Not entering on reversal |
-| 4 | **Gap Widening** | Current gap > Previous gap | Trend accelerating, not fading |
+Once the gate passes, any one of three independent paths can fire:
 
-All 4 pass → **ENTER 2 LOTS**
+| Path | Timeframe | Momentum | Candles | Also Required |
+|------|-----------|----------|---------|---------------|
+| **FAST** | 1-minute | ≥ 14 pts | 4 | Current candle green, RSI rising, RSI ≤ 72 |
+| **CONFIRMED** | 3-minute | ≥ 20 pts | 3 | 3m candle green, 3m RSI rising, 3m RSI ≤ 72 |
+| **EMA** | 1-minute | — | — | EMA9-EMA21 ≥ 3, RSI ≥ 50 & rising, green, gap widening — **informational only, does not fire on its own** |
+
+Fire logic:
+- `FAST` and `CONFIRMED` both true → log as **CONFIRMED **** (strongest)
+- `FAST` only → log as **FAST**
+- `CONFIRMED` only → log as **CONFIRMED ***
+- `EMA` only → logged as `[EMAV]` hint, **no trade**
+
+All firing paths enter **2 LOTS**.
 
 ### Pre-Entry Guards
+
 | Guard | Rule |
 |-------|------|
 | **RSI Hard Cap** | RSI > 72 = BLOCKED (blowoff territory) |
-| **Direction Cooldown** | Same direction after big win (peak >= 10pts): blocked 10min |
-| | Same direction after small/loss (peak < 10pts): blocked 5min |
-| | Opposite direction: enter immediately |
+| **Divergence Gate** | Other side 4-candle move must be negative |
+| **Direction Cooldown** | Same dir after big win (peak ≥ 10): 10min; after loss/small (peak < 10): 5min; opposite dir: immediate |
 | **Daily Limits** | Max trades, max losses per config |
-| **Market Hours** | 9:15-15:10 IST |
+| **Market Hours** | 9:15–15:10 IST |
 
 ---
 
-## Exit — Profit Floors + RSI Split
+## Exit — Priority Chain
 
-### Phase 1: Hard SL
-- SL = entry - 12pts
-- Both lots exit together
-- **Stale exit**: 3 candles held + peak < 3pts → exit (signal was wrong)
+Exits are evaluated top-down on every tick. **First match wins**, no fallthrough.
 
-### Phase 2: Profit Floors (move SL up, never down)
+| # | Reason | Trigger | Notes |
+|---|--------|---------|-------|
+| 1 | `EMERGENCY_SL` | `running ≤ -20` | Absolute floor; protects from gap moves |
+| 2 | `STALE_ENTRY` | `candles ≥ 5` AND `peak < 3` | Signal never materialized, cut it |
+| 3 | `RSI_BLOWOFF` | `RSI > 80` | Top-ticking, exit the party |
+| 4 | `DIVERGENCE_EXIT` | Other side reversed (2 green + RSI rising) AND `peak ≥ 6` | Market regime flipped, take profits |
+| 5 | `SPIKE_ABSORBED` | Candle low touched -12 but close recovered AND other still falling | **HOLD** — absorb the wick, don't exit |
+| 5b | `WEAK_SL` | Same wick, but other side **not** falling | No support from other side, exit |
+| 6 | `CANDLE_SL` | `running ≤ -12` (close-based, not wick) | Real drop, not a spike |
+| 7 | `TRAIL_FLOOR` | Profit floor trails peak | See below |
 
-| Peak PNL | SL moves to |
-|----------|-------------|
-| +10pts | entry + 2 |
-| +20pts | entry + 12 |
-| +30pts | entry + 22 |
-| +40pts | entry + 32 |
+### Profit Floors (dynamic trail)
 
-### Phase 3: RSI Split (lots managed separately)
+Once `peak ≥ trail_activate`, the floor trails as a fraction of peak:
 
-| RSI Level | Action |
-|-----------|--------|
-| RSI >= 70 | **SPLIT** — Lot 1 on floor SL, Lot 2 on ATR trail |
-| RSI 75-80 | **LOT 1 SELLS** (capture spike) |
-| RSI > 80 | **SELL ALL** (blowoff top) |
+- Normal: `floor = entry + peak × keep_normal`
+- Warning (other side showing strength): `floor = entry + peak × keep_warning`
+- `floor` is clamped to a minimum lock; it only moves up, never down.
+- Exit fires when `option_ltp ≤ floor`.
 
-**Lot 2 ATR Trail**: `trail_sl = price - (ATR × 1.5)`. Trail only moves up. Never below profit floor.
+All tunables live in `config.yaml` under `exit:` / `trail:`.
 
 ---
 
@@ -139,26 +150,30 @@ cooldown:
   after_loss: 5      # minutes: same-dir cooldown after peak < 10pts
 
 entry:
-  ema_gap_min: 3     # EMA9 - EMA21 minimum
-  rsi_min: 50        # RSI floor
-  rsi_max: 72        # RSI hard cap — blowoff territory
+  ema_gap_min: 3            # EMA info path
+  rsi_min: 50
+  rsi_max: 72               # hard cap, all paths
+  fast_momentum_pts: 14     # FAST path threshold
+  fast_momentum_candles: 4
+  confirmed_momentum_pts: 20    # CONFIRMED path threshold
+  confirmed_momentum_candles: 3
 
 exit:
-  hard_sl: 12        # initial SL points
+  max_sl: 20         # EMERGENCY_SL
+  candle_sl: 12      # CANDLE_SL (close-based)
+  stale_candles: 5
+  stale_peak: 3
+  rsi_blowoff: 80
+  spike_recovery: 3  # SPIKE_ABSORBED tolerance
 
-profit_floors:
-  - { peak: 10, lock: 2 }
-  - { peak: 20, lock: 12 }
-  - { peak: 30, lock: 22 }
-  - { peak: 40, lock: 32 }
-
-rsi_exit:
-  split_at: 70       # split lots
-  sell_spike: 75     # sell lot 1
-  blowoff: 80        # sell everything
+trail:
+  activate: 10       # peak points to start trailing
+  keep_normal: 0.6
+  keep_warning: 0.75
+  min_lock: 2
 ```
 
-Change any value, restart bot. No code changes needed.
+Change any value, `sudo systemctl restart vrl-main`. No code changes needed.
 
 ---
 
@@ -167,15 +182,18 @@ Change any value, restart bot. No code changes needed.
 | Command | Action |
 |---------|--------|
 | `/status` | Trade status + P&L |
-| `/pnl` | Today's P&L summary |
+| `/pnl` | Today's P&L summary with charges |
 | `/trades` | Today's trade list |
 | `/spot` | Spot trend + gap |
 | `/pivot` | Fib pivot levels |
 | `/download` | Today's data zip (or `/download 2026-04-01`) |
 | `/health` | System health check |
+| `/validate` | 10 system alignment checks |
 | `/pause` | Block new entries |
 | `/resume` | Re-enable entries |
 | `/forceexit` | Emergency exit all lots |
+| `/restart` | Restart bot via systemd |
+| `/token` | Manage subscriber access tokens |
 
 ---
 
@@ -186,16 +204,16 @@ Change any value, restart bot. No code changes needed.
 **Signals Tab** — CE/PE side by side:
 - EMA9, EMA21, EMA Gap (with color + icons)
 - RSI (with rising indicator)
-- Green candle, gap trend
+- FAST / CONFIRMED / EMA path status
+- Divergence gate status (other side falling?)
 - Verdict: FIRED / READY / waiting reason
 - Cooldown timer when active
 
 **Position Card** (when in trade):
 - Gradient border (green = profit, red = loss)
 - Big PNL with rupee value
-- Lot 1/Lot 2 status with SL values
-- RSI progress bar to split (animated, glows near 70)
-- Floor step indicators: [+10 ✅] → [+20 ✅] → [+30 ⏳]
+- Entry mode badge (FAST / CONFIRMED / CONFIRMED**)
+- Dynamic trail floor indicator
 - Clean symbols: "CE 22500" not "NIFTY2640722500CE"
 
 **Market Tab** — Spot data, multi-TF tables, fib pivots, zones, straddle
@@ -216,7 +234,7 @@ All timeframes collected for future ML. **Dual write: CSV + SQLite.**
 | Forward fill | EOD at 15:35 | Updated in-place via SQL |
 | Daily summary | EOD | CSV only |
 
-**Database**: `~/lab_data/vrl_data.db` (SQLite, WAL mode, ~3MB)
+**Database**: `~/lab_data/vrl_data.db` (SQLite, WAL mode)
 
 **API Endpoints** (SQLite-powered):
 | Endpoint | Example |
@@ -232,16 +250,35 @@ All timeframes collected for future ML. **Dual write: CSV + SQLite.**
 
 ## Infrastructure
 
+All long-running processes run as **systemd services**. No `pkill`, no `nohup`, no backgrounded cron jobs.
+
+| Service | Unit | Purpose |
+|---------|------|---------|
+| `vrl-main` | `vrl-main.service` | Strategy loop (VRL_MAIN.py) |
+| `vrl-web` | `vrl-web.service` | Dashboard + API (VRL_WEB.py) |
+| `vrl-lab` | `vrl-lab.service` | Data collector (VRL_LAB.py) |
+
+Standard operations:
+
+```bash
+sudo systemctl status  vrl-main
+sudo systemctl restart vrl-main
+sudo systemctl stop    vrl-main
+journalctl -u vrl-main -f       # live logs
+```
+
+Systemd handles auto-restart on crash, logs to journald, and survives reboots.
+
 | Feature | Detail |
 |---------|--------|
-| **Auto Paper/Live** | `mode: live` in config → imports VRL_TRADE_LIVE |
+| **Auto Paper/Live** | `mode: live` in config → live order path in VRL_TRADE |
 | **Position Reconciliation** | Startup check: saved state vs broker positions |
 | **Data Cache** | 30s TTL on historical API calls |
 | **Timezone** | IST (Asia/Kolkata) everywhere |
 | **Central Logs** | `~/logs/` with date-wise files + error mirror |
-| **Log Download** | `/download` on Telegram or `/api/logs/download` on web |
 | **Strike Locking** | Locked until spot moves 150+ pts |
 | **Circuit Breaker** | 5 consecutive errors → pause + alert |
+| **Validation** | VRL_VALIDATE runs 20 alignment checks after every entry/exit |
 
 ---
 
@@ -249,7 +286,7 @@ All timeframes collected for future ML. **Dual write: CSV + SQLite.**
 
 ```bash
 # Requirements
-pip install kiteconnect pandas pyotp pyyaml requests
+pip install -r requirements.txt
 
 # Environment (~/.env)
 KITE_API_KEY=xxx
@@ -258,18 +295,21 @@ KITE_TOTP_KEY=xxx
 TG_TOKEN=xxx
 TG_GROUP_ID=xxx
 
-# Run
+# Verify
 cd ~/VISHAL_RAJPUT
-~/kite_env/bin/python3 test_vrl.py          # verify 58/58
-~/kite_env/bin/python3 VRL_MAIN.py          # start bot
+~/kite_env/bin/python3 test_vrl.py          # expect 58/58
+
+# Start
+sudo systemctl enable --now vrl-main vrl-web vrl-lab
 ```
 
 ### Crontab
+
+Only **AUTH** is scheduled via crontab (runs once a day before market open). Everything else is a systemd service.
+
 ```
 PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
-0  8 * * 1-5  /home/.../kite_env/bin/python3 VRL_AUTH.py
-0  9 * * 1-5  pkill -f VRL_WEB.py; .../python3 VRL_WEB.py &
-10 9 * * 1-5  pkill -f VRL_MAIN.py; .../python3 VRL_MAIN.py &
+0 8 * * 1-5  /home/vishalraajput24/kite_env/bin/python3 /home/vishalraajput24/VISHAL_RAJPUT/VRL_AUTH.py
 ```
 
 ---
@@ -279,13 +319,11 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 `test_vrl.py` — **58 tests**:
 - Strike selection (DTE 0/1+, tolerance zones)
 - Version check
-- EMA gap + RSI entry (fire, block on gap, block on RSI)
+- Entry paths: FAST fires, CONFIRMED fires, EMA info-only
+- Divergence gate: blocked when other side up
 - Entry SL calculation
-- Hard SL exit
-- Stale entry cut
-- Profit floors
-- RSI blowoff exit
-- RSI lot split
+- Exit chain priority: EMERGENCY_SL, STALE_ENTRY, RSI_BLOWOFF, DIVERGENCE_EXIT, SPIKE_ABSORBED hold, WEAK_SL, CANDLE_SL
+- Dynamic trail floor
 - **Cooldown: same direction blocked after big win (10min)**
 - **Cooldown: opposite direction allowed immediately**
 - **Cooldown: same direction blocked after loss (5min)**

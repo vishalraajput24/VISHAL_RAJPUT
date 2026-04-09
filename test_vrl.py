@@ -1,7 +1,7 @@
-#!/home/user/kite_env/bin/python3
+#!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.3 Test Suite
+ test_vrl.py — VISHAL RAJPUT TRADE v13.5 Test Suite
  Minimal strategy: EMA gap + RSI entry, 2-lot exit.
 ═══════════════════════════════════════════════════════════════
 """

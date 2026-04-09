@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.3
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.5
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -266,13 +266,11 @@ def _cmd_help(args):
         "/livecheck — last 50 log lines\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>CONTROL</b>\n"
-        "/token     — manage subscriber access tokens\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>CONTROL</b>\n"
         "/pause     — block new entries\n"
         "/resume    — re-enable entries\n"
         "/forceexit — emergency exit all lots\n"
         "/restart   — restart bot\n"
+        "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
         + " | EMA gap≥3 + RSI 50-72↑ + Green + Widening\n"

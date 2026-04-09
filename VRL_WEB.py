@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.1
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.5
 Dashboard server with admin login + subscriber token access.
 """
 import csv, json, os, hashlib, secrets, time, threading
@@ -1077,6 +1077,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v13.0 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v13.5 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()

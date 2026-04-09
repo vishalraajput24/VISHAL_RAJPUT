@@ -195,25 +195,7 @@ def init_db():
             access_ips TEXT DEFAULT ''
         )""")
 
-        # v13.1: Add charge columns to existing trades table
-        _new_cols = [
-            ("brokerage", "REAL DEFAULT 0"),
-            ("stt", "REAL DEFAULT 0"),
-            ("exchange_charges", "REAL DEFAULT 0"),
-            ("gst", "REAL DEFAULT 0"),
-            ("stamp_duty", "REAL DEFAULT 0"),
-            ("total_charges", "REAL DEFAULT 0"),
-            ("net_pnl_rs", "REAL DEFAULT 0"),
-            ("gross_pnl_rs", "REAL DEFAULT 0"),
-            ("num_exit_orders", "INTEGER DEFAULT 1"),
-        ]
-        for col_name, col_type in _new_cols:
-            try:
-                c.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
-            except Exception:
-                pass  # column already exists
-
-        # v13.1: Add access_ips to dashboard_tokens
+        # Migrate dashboard_tokens for databases created before access_ips existed
         try:
             c.execute("ALTER TABLE dashboard_tokens ADD COLUMN access_ips TEXT DEFAULT ''")
         except Exception:
