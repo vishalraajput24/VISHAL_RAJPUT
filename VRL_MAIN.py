@@ -662,10 +662,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : Mom 14pts/3c + confirm candle + HL\n"
-        "         EMA confirms → CONFIRMED ★★\n"
-        "Exit   : 🔍Scout SL-6 | 🎖️Soldier SL-12\n"
-        "Trail  : peak-8/7/6 from +8\n"
+        "ENTRY: 1m +14/4c OR 3m +20/3c\n"
+        "  + green + RSI↑ + RSI<72 + other falling\n"
+        "EXIT: Candle close -12 | Divergence exit\n"
+        "TRAIL: FAST 75% from +15 | CONFIRMED 65% from +20\n"
+        "COOLDOWN: Div 0m | Trail 3m | SL 8m\n"
         "Strike : True ATM 50 | Stale 5c | RSI 80 blowoff\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
@@ -1530,22 +1531,26 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             entry = st.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            # LOT 1 (Scout) — independent
+            # v13.5: single lot path. SL = entry - candle_close_sl (12)
             import VRL_CONFIG as _CFG_pos
-            _lot1_pts = _CFG_pos.get().get("lots", {}).get("lot1_sl", 6)
-            _lot2_pts = _CFG_pos.get().get("lots", {}).get("lot2_sl", 12)
-            _trail_act = _CFG_pos.get().get("profit_trail", {}).get("activate_at", 8)
+            _candle_sl = _CFG_pos.get().get("exit", {}).get("candle_close_sl", 12)
+            _entry_mode_pos = st.get("entry_mode", "FAST")
+            if _entry_mode_pos == "CONFIRMED":
+                _trail_act = _CFG_pos.get().get("profit_trail", {}).get("confirmed_activate_at", 20)
+            else:
+                _trail_act = _CFG_pos.get().get("profit_trail", {}).get("fast_activate_at", 15)
             _peak = st.get("peak_pnl", 0)
             _floor = st.get("current_floor", 0)
             _trail_on = _peak >= _trail_act and _floor > 0
 
+            # Lot1 (maintained for dashboard compat — actually same path as lot2)
             if st.get("lot1_active"):
-                _l1_sl_price = round(entry - _lot1_pts, 2)
+                _l1_sl_price = round(entry - _candle_sl, 2)
                 if _trail_on and _floor > _l1_sl_price:
                     _l1_sl_price = round(_floor, 2)
                     _l1_type = "TRAIL"
                 else:
-                    _l1_type = "SCOUT"
+                    _l1_type = "CANDLE_SL"
                 lot1 = {"status": "active", "pnl": running,
                          "sl": _l1_sl_price, "sl_type": _l1_type}
             else:
@@ -1554,14 +1559,14 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                          "exit_reason": st.get("lot1_exit_reason", ""),
                          "exit_time": st.get("lot1_exit_time", ""), "sl": 0, "sl_type": ""}
 
-            # LOT 2 (Soldier) — independent
+            # Lot2 (same path as lot1 in v13.5)
             if st.get("lot2_active"):
-                _l2_sl_price = round(entry - _lot2_pts, 2)
+                _l2_sl_price = round(entry - _candle_sl, 2)
                 if _trail_on and _floor > _l2_sl_price:
                     _l2_sl_price = round(_floor, 2)
                     _l2_type = "TRAIL"
                 else:
-                    _l2_type = "SOLDIER"
+                    _l2_type = "CANDLE_SL"
                 lot2 = {"status": "active", "pnl": running,
                          "sl": _l2_sl_price, "sl_type": _l2_type}
             else:
