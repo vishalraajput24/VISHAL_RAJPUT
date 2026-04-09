@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.3
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.5
 #  Master orchestration. Minimal strategy: EMA gap + RSI.
 #  2-lot execution with profit floors + RSI split.
 # ═══════════════════════════════════════════════════════════════
