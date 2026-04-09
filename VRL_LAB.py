@@ -319,7 +319,7 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 dte         = dte,
                 expiry_date = _current_expiry,
                 kite        = kite,
-            )
+                silent=True)
 
             # v13.1: Determine reject reason from v13 result keys
             if result.get("fired"):

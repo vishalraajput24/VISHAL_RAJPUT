@@ -1923,12 +1923,12 @@ def _strategy_loop(kite):
                             _trade_strike = state.get("strike", 0)
                             for _dt in ("CE", "PE"):
                                 if _dt == _trade_dir and _trade_token:
-                                    _sr = check_entry(_trade_token, _dt, spot_ltp, dte, expiry, kite)
+                                    _sr = check_entry(_trade_token, _dt, spot_ltp, dte, expiry, kite, silent=True)
                                     _sr["_strike"] = _trade_strike
                                 else:
                                     _oi = _locked_tokens.get(_dt) if _locked_tokens else None
                                     if _oi:
-                                        _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite)
+                                        _sr = check_entry(_oi["token"], _dt, spot_ltp, dte, expiry, kite, silent=True)
                                         _sr["_strike"] = _locked_ce_strike if _dt == "CE" else _locked_pe_strike
                                     else:
                                         _sr = None

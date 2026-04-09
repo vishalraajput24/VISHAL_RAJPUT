@@ -101,7 +101,8 @@ def loss_streak_gate(state: dict) -> bool:
 # v13.3 ENTRY -- LIMIT at breakout level. EMA as 2nd path.
 
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
-                dte: int = 99, expiry_date=None, kite=None) -> dict:
+                dte: int = 99, expiry_date=None, kite=None,
+                silent: bool = False) -> dict:
     """v13.3: LIMIT entry. Momentum or EMA fires -> entry_level for LIMIT order.
     Removed: green candle check, higher_low check.
     Added: EMA as 2nd path (gap>=5), dynamic thresholds, entry_level."""
@@ -223,7 +224,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             result["entry_level"] = round(float(prev["close"]), 2)
             if path_ema:
                 result["entry_mode"] = "CONFIRMED"
-                logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
+                if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
                     + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
                     + " ema=" + str(ema_gap)
                     + " rsi=" + str(round(rsi, 1))
@@ -231,21 +232,11 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                     + " LIMIT=" + str(round(float(prev["close"]), 2)))
             else:
                 result["entry_mode"] = "MOMENTUM"
-                logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
+                if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
                     + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
                     + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
                     + " LIMIT=" + str(round(float(prev["close"]), 2)))
-
-        # -- EMA INDEPENDENT FIRE (secondary) --
-        elif path_ema and rsi <= rsi_max_ema and not result["fired"]:
-            result["fired"] = True
-            result["entry_mode"] = "EMA"
-            result["entry_level"] = round(entry_price, 2)
-            logger.info("[ENGINE] " + option_type + " ENTRY [EMA]"
-                + " gap=" + str(ema_gap) + " rsi=" + str(round(rsi, 1))
-                + " LIMIT=" + str(round(entry_price, 2)))
-
         else:
             reasons = []
             if mom_pts < mom_threshold:
@@ -264,7 +255,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 reasons.append("[EMAV]")
             elif ema_info:
                 reasons.append("[ema=" + str(ema_gap) + "]")
-            logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
+            if not silent: logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
 
         return result
     except Exception as e:
