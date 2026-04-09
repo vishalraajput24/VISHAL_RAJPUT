@@ -118,7 +118,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "spike_ratio": 0,
     }
     try:
-        df = D.get_historical_data(token, "minute", 50)
+        import VRL_CONFIG as _CFG2
+        _tf = _CFG2.get().get("entry", {}).get("momentum_timeframe", "3minute")
+        df = D.get_historical_data(token, _tf, 50)
         df = D.add_indicators(df)
         if df.empty or len(df) < 7:
             return result
@@ -133,12 +135,15 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         rsi = float(curr.get("RSI", 50))
         rsi_prev = float(prev.get("RSI", 50))
         rsi_rising = rsi > rsi_prev
+        candle_green = float(curr["close"]) > float(curr["open"])
+        higher_low = float(curr["low"]) > float(prev["low"])
 
         result.update({
             "entry_price": round(entry_price, 2),
             "ema9": round(ema9, 2), "ema21": round(ema21, 2),
             "ema_gap": ema_gap, "rsi": round(rsi, 1),
             "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
+            "candle_green": candle_green, "higher_low": higher_low,
         })
 
         # Spot direction -- info only
@@ -208,7 +213,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         # -- MOMENTUM FIRE (primary) --
         path_mom = (mom_pts >= mom_threshold
                     and rsi >= mom_rsi_min
-                    and rsi <= rsi_max)
+                    and rsi <= rsi_max
+                    and candle_green
+                    and higher_low)
         result["path_b"] = path_mom
 
         if path_mom:
@@ -217,7 +224,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             if path_ema:
                 result["entry_mode"] = "CONFIRMED"
                 logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold)
+                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
                     + " ema=" + str(ema_gap)
                     + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
@@ -225,7 +232,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             else:
                 result["entry_mode"] = "MOMENTUM"
                 logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold)
+                    + " mom=" + str(mom_pts) + "/" + str(mom_threshold) + " (3m)"
                     + " rsi=" + str(round(rsi, 1))
                     + (" spike" if spike_ratio > 0.6 else " steady")
                     + " LIMIT=" + str(round(float(prev["close"]), 2)))

@@ -115,6 +115,42 @@ def init_db():
             spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
             bias TEXT, vix_at_entry REAL, hourly_rsi REAL, straddle_decay REAL)""")
 
+        # v13.3: migrate trades table — add columns that may not exist yet
+        _new_trade_cols = [
+            ("brokerage",       "REAL DEFAULT 0"),
+            ("stt",             "REAL DEFAULT 0"),
+            ("exchange_charges","REAL DEFAULT 0"),
+            ("gst",             "REAL DEFAULT 0"),
+            ("stamp_duty",      "REAL DEFAULT 0"),
+            ("total_charges",   "REAL DEFAULT 0"),
+            ("net_pnl_rs",      "REAL DEFAULT 0"),
+            ("gross_pnl_rs",    "REAL DEFAULT 0"),
+            ("num_exit_orders", "INTEGER DEFAULT 1"),
+            ("entry_slippage",  "REAL DEFAULT 0"),
+            ("exit_slippage",   "REAL DEFAULT 0"),
+            ("signal_price",    "REAL DEFAULT 0"),
+            ("lot_id",          "TEXT DEFAULT 'ALL'"),
+            ("bonus_vwap",      "INTEGER DEFAULT 0"),
+            ("bonus_fib_level", "TEXT DEFAULT ''"),
+            ("bonus_fib_dist",  "REAL DEFAULT 0"),
+            ("bonus_vol_spike", "INTEGER DEFAULT 0"),
+            ("bonus_vol_ratio", "REAL DEFAULT 0"),
+            ("bonus_pdh_break", "INTEGER DEFAULT 0"),
+            ("qty_exited",      "INTEGER DEFAULT 0"),
+            ("entry_mode",      "TEXT DEFAULT ''"),
+            ("momentum_pts",    "REAL DEFAULT 0"),
+            ("rsi_rising",      "INTEGER DEFAULT 0"),
+            ("spot_confirms",   "INTEGER DEFAULT 0"),
+            ("spot_move",       "REAL DEFAULT 0"),
+        ]
+        _existing = {row[1] for row in c.execute("PRAGMA table_info(trades)")}
+        for _cname, _ctype in _new_trade_cols:
+            if _cname not in _existing:
+                try:
+                    c.execute("ALTER TABLE trades ADD COLUMN " + _cname + " " + _ctype)
+                except Exception:
+                    pass
+
         # ── INDEXES ──
         _indexes = [
             ("idx_spot1m_ts", "spot_1min", "timestamp"),

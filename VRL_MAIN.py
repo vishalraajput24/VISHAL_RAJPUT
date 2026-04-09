@@ -104,6 +104,7 @@ DEFAULT_STATE = {
     "_sl_trigger_lot1"   : 0,
     "_sl_trigger_lot2"   : 0,
     "_last_scan_minute"  : "",
+    "_last_scan_key"     : "",
     "_sl_trigger_at_exchange": 0,
     "_last_milestone"    : 0,
     "current_rsi"        : 0.0,
@@ -479,8 +480,8 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     try:
         import VRL_DB as _DB
         _DB.insert_trade(row)
-    except Exception:
-        pass
+    except Exception as _dbe:
+        logger.warning("[MAIN] DB insert_trade error: " + str(_dbe))
 
 def _read_today_trades() -> list:
     today_str = date.today().isoformat()
@@ -906,10 +907,15 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _spot_tag = "SPOT✅" if entry_result.get("spot_confirms") else "SPOT❌"
     _spot_mv = entry_result.get("spot_move", 0)
     _confirm_line = "Confirm: " + _rsi_tag + " | " + _spot_tag + " (" + ("+" if _spot_mv >= 0 else "") + str(_spot_mv) + "pts)\n"
+    if not entry_result.get("spot_confirms"):
+        _confirm_line += "⚠️ AGAINST TREND — Spot moving opposite\n"
+    # v13.3: loud warning when entering against spot direction
+    if not entry_result.get("spot_confirms"):
+        _confirm_line += "⚠️ AGAINST TREND — Spot moving opposite\n"
     if _emode == "CONFIRMED":
-        _detail = "Mom +" + str(_mom_pts) + "pts (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n" + _confirm_line
+        _detail = "Mom +" + str(_mom_pts) + "pts/3c (3min) (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n" + _confirm_line
     else:
-        _detail = "Mom: +" + str(_mom_pts) + "pts/3c | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n" + _confirm_line
+        _detail = "Mom: +" + str(_mom_pts) + "pts/3c (3min) | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n" + _confirm_line
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1770,6 +1776,23 @@ def _strategy_loop(kite):
 
             with _state_lock:
                 _eod_done = state.get("_eod_reported")
+            # v13.3: Save prev_close continuously from 15:25 onward — avoids missing
+            # the 30-second EOD window if the loop is slow.
+            if now.hour == 15 and now.minute >= 25:
+                try:
+                    _safe_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                    if _safe_spot <= 0 and kite is not None:
+                        try:
+                            q = kite.ltp(["NSE:NIFTY 50"])
+                            _safe_spot = float(list(q.values())[0]["last_price"])
+                        except Exception:
+                            pass
+                    if _safe_spot > 0:
+                        with _state_lock:
+                            state["prev_close"] = round(_safe_spot, 1)
+                except Exception:
+                    pass
+
             if (now.hour == 15 and now.minute == 35
                     and not _eod_done
                     and now.second < 30):
@@ -2003,6 +2026,20 @@ def _strategy_loop(kite):
                                     + " target=" + str(_target_atm)
                                     + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
+                # v13.3: Skip relock if either side has momentum building (>10pts)
+                _building = False
+                try:
+                    _cer = all_results.get("CE", {}) if "all_results" in dir() else {}
+                    _per = all_results.get("PE", {}) if "all_results" in dir() else {}
+                    _cm = abs(_cer.get("momentum_pts", 0))
+                    _pm = abs(_per.get("momentum_pts", 0))
+                    _building = (_cm > 10 or _pm > 10) and not state.get("in_trade")
+                except Exception:
+                    pass
+                if _relock and _building:
+                    logger.info("[MAIN] Relock SKIPPED — momentum building"
+                                + " CE=" + str(round(_cm, 1)) + " PE=" + str(round(_pm, 1)))
+                    _relock = False
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
                     # Telegram alert on relock (not initial lock)
@@ -2038,12 +2075,16 @@ def _strategy_loop(kite):
                 best_opt_info = None
 
                 # v13.3: Scan once per minute
-                _scan_key = datetime.now().strftime("%H:%M")
-                if _scan_key == state.get("_last_scan_minute", ""):
+                # v13.3: 3-min scan boundary (entry timeframe is 3-min)
+                _now_scan = datetime.now()
+                _scan_key = _now_scan.strftime("%Y%m%d%H") + "_" + str(_now_scan.minute // 3)
+                _should_scan = _scan_key != state.get("_last_scan_key", "")
+                if not _should_scan:
                     time.sleep(1)
                     continue
                 with _state_lock:
-                    state["_last_scan_minute"] = _scan_key
+                    state["_last_scan_key"] = _scan_key
+                    state["_last_scan_minute"] = _now_scan.strftime("%H:%M")
 
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
