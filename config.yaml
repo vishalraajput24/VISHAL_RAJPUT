@@ -20,8 +20,13 @@ lots:
   size: 65
 
 cooldown:
-  after_win: 10
-  after_loss: 6
+  after_divergence: 0
+  after_trail: 3
+  after_candle_sl: 8
+  after_stale: 3
+  after_blowoff: 5
+  after_emergency: 10
+  opposite_always: 0
 
 entry:
   # 1-min primary (fast)

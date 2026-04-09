@@ -1093,6 +1093,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_time"] = datetime.now().isoformat()
             state["last_exit_direction"] = direction
             state["last_exit_peak"] = peak
+            state["last_exit_reason"] = reason
             old_token = state["token"]
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
