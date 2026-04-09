@@ -95,10 +95,10 @@ def _make_1min_df(candles):
 # Pre-build df with forced indicators to guarantee pass
 # Momentum = close[-2] - close[-5] = 115 - 100 = 15 (>= 12 threshold)
 _df_fire = pd.DataFrame({
-    "close": [100.0]*17 + [115.0, 117.0, 118.0],
-    "open":  [99.5]*17 + [108.0, 116.0, 117.0],
-    "high":  [101.0]*17 + [116.0, 118.0, 119.0],
-    "low":   [98.0]*17 + [108.0, 114.0, 117.0],
+    "close": [100.0]*14 + [100.0, 103.0, 108.0, 115.0, 117.0, 118.0],
+    "open":  [99.5]*14 + [99.5, 101.0, 106.0, 108.0, 116.0, 117.0],
+    "high":  [101.0]*14 + [101.0, 104.0, 109.0, 116.0, 118.0, 119.0],
+    "low":   [98.0]*14 + [98.0, 100.0, 105.0, 106.0, 114.0, 117.0],
     "volume": [1000]*20,
 })
 _df_fire.index = [datetime(2026,4,1,9,15) + timedelta(minutes=i) for i in range(20)]
