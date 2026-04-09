@@ -110,9 +110,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "ema_would_fire": False, "path_a": False, "path_b": False,
     }
     try:
-        df = D.get_historical_data(token, "minute", 20)
+        df = D.get_historical_data(token, "minute", 50)
         df = D.add_indicators(df)
-        if df.empty or len(df) < 5:
+        if df.empty or len(df) < 7:
             return result
         curr = df.iloc[-2]
         prev = df.iloc[-3]
@@ -149,7 +149,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
         rsi_max = cfg.get("rsi_max", 72)
-        mom_pts_min = cfg.get("momentum_pts", 12)
+        mom_pts_min = cfg.get("momentum_pts", 14)
         result["momentum_threshold"] = mom_pts_min
         mom_candles = cfg.get("momentum_candles", 3)
         mom_rsi_min = cfg.get("momentum_rsi_min", 45)
@@ -181,14 +181,16 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         # MOMENTUM — the only entry trigger
         mom_pts = 0
         path_mom = False
-        if len(df) >= mom_candles + 2:
-            ref = float(df.iloc[-2 - mom_candles]["close"])
-            mom_pts = round(entry_price - ref, 2)
+        spike_ratio = 0
+        if len(df) >= mom_candles + 3:
+            ref = float(df.iloc[-3 - mom_candles]["close"])
+            mom_pts = round(float(prev["close"]) - ref, 2)
             result["momentum_pts"] = mom_pts
-            # Spike quality: how much of the move came from last candle
-            last_candle_move = round(float(curr["close"]) - float(prev["close"]), 2)
-            result["last_candle_move"] = last_candle_move
-            spike_ratio = round(last_candle_move / mom_pts, 2) if mom_pts > 0 else 0
+            prev_prev = df.iloc[-4]
+            last_mom_move = round(float(prev["close"]) - float(prev_prev["close"]), 2)
+            result["last_candle_move"] = last_mom_move
+            if mom_pts > 0:
+                spike_ratio = round(last_mom_move / mom_pts, 2)
             result["spike_ratio"] = spike_ratio
             path_mom = (mom_pts >= mom_pts_min and rsi >= mom_rsi_min
                         and candle_green and higher_low)
@@ -255,11 +257,11 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     return False
 
 # ═══════════════════════════════════════════════════════════════
-#  v13.0 EXIT — PROFIT FLOORS + RSI SPLIT + ATR TRAIL (2-LOT)
+#  v13.3 EXIT — SCOUT (LOT1 SL-6) + SOLDIER (LOT2 SL-12) + TRAIL
 # ═══════════════════════════════════════════════════════════════
 
 def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
-    """v13.3: Trailing floor. Both lots same path."""
+    """v13.3: Scout (LOT1 SL-6) + Soldier (LOT2 SL-12) + peak-giveback trail."""
     if not state.get("in_trade"):
         return []
     entry = state.get("entry_price", 0)
@@ -274,7 +276,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     token = state.get("token")
     rsi = 50
     try:
-        df = D.get_historical_data(token, "minute", 5)
+        df = D.get_historical_data(token, "minute", 25)
         df = D.add_indicators(df)
         if not df.empty and len(df) >= 2:
             rsi = float(df.iloc[-2].get("RSI", 50))
@@ -282,21 +284,26 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
         pass
     state["current_rsi"] = round(rsi, 1)
     import VRL_CONFIG as CFG
-    hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
+    cfg_lots      = CFG.get().get("lots", {})
+    lot1_sl_pts   = cfg_lots.get("lot1_sl", 6)
+    lot2_sl_pts   = cfg_lots.get("lot2_sl", 12)
     stale_candles = CFG.get().get("exit", {}).get("stale_candles", 5)
-    stale_peak = CFG.get().get("exit", {}).get("stale_peak_min", 3)
-    rsi_blowoff = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
-    trail_cfg = CFG.get().get("profit_trail", {})
-    trail_activate = trail_cfg.get("activate_at", 10)
-    # STALE EXIT
+    stale_peak    = CFG.get().get("exit", {}).get("stale_peak_min", 3)
+    rsi_blowoff   = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
+    trail_cfg      = CFG.get().get("profit_trail", {})
+    trail_activate = trail_cfg.get("activate_at", 8)
+
+    lot1_active = state.get("lot1_active", True)
+    lot2_active = state.get("lot2_active", True)
+
     if candles >= stale_candles and peak < stale_peak:
         logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + " candles, peak=" + str(peak))
-        return [{"lots": "ALL", "lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
-    # HARD SL
-    if running <= -hard_sl:
-        logger.info("[ENGINE] HARD_SL: running=" + str(running))
-        return [{"lots": "ALL", "lot_id": "ALL", "reason": "HARD_SL", "price": option_ltp}]
-    # VARIABLE GIVEBACK by peak level
+        return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
+
+    if rsi > rsi_blowoff:
+        logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi, 1)))
+        return [{"lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
+
     if peak >= 30:
         giveback = trail_cfg.get("giveback_high", 6)
     elif peak >= 20:
@@ -304,22 +311,39 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     else:
         giveback = trail_cfg.get("giveback_low", 8)
     state["current_giveback"] = giveback
-    # TRAILING FLOOR
+
     if peak >= trail_activate:
         floor_sl = entry + (peak - giveback)
     else:
-        floor_sl = entry - hard_sl
-    state["current_floor"] = round(floor_sl, 2)
-    # RSI BLOWOFF
-    if rsi > rsi_blowoff:
-        logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi, 1)))
-        return [{"lots": "ALL", "lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
-    # TRAILING FLOOR HIT
-    if peak >= trail_activate and option_ltp <= floor_sl:
-        locked = round(peak - giveback, 1)
-        logger.info("[ENGINE] TRAIL_FLOOR: peak=" + str(round(peak, 1))
-                     + " locked=+" + str(locked) + " give=" + str(giveback)
-                     + " floor=₹" + str(round(floor_sl, 2)))
-        return [{"lots": "ALL", "lot_id": "ALL", "reason": "TRAIL_FLOOR", "price": option_ltp}]
-    return []
+        floor_sl = 0
+    state["current_floor"] = round(floor_sl, 2) if peak >= trail_activate else 0
+
+    exits = []
+
+    if lot1_active:
+        lot1_trigger = entry - lot1_sl_pts
+        if peak >= trail_activate:
+            lot1_trigger = max(lot1_trigger, floor_sl)
+        if option_ltp <= lot1_trigger:
+            reason = "TRAIL_FLOOR" if peak >= trail_activate else "SCOUT_SL"
+            logger.info("[ENGINE] LOT1 " + reason
+                + ": running=" + str(running)
+                + " trigger=₹" + str(round(lot1_trigger, 2)))
+            exits.append({"lot_id": "LOT1", "reason": reason,
+                          "price": option_ltp, "qty": D.LOT_SIZE})
+
+    if lot2_active:
+        lot2_trigger = entry - lot2_sl_pts
+        if peak >= trail_activate:
+            lot2_trigger = max(lot2_trigger, floor_sl)
+        if option_ltp <= lot2_trigger:
+            reason = "TRAIL_FLOOR" if peak >= trail_activate else "HARD_SL"
+            logger.info("[ENGINE] LOT2 " + reason
+                + ": running=" + str(running)
+                + " trigger=₹" + str(round(lot2_trigger, 2)))
+            exits.append({"lot_id": "LOT2", "reason": reason,
+                          "price": option_ltp, "qty": D.LOT_SIZE})
+
+    return exits
+
 

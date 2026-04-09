@@ -944,10 +944,8 @@ def calculate_atr_sl(token: int, profile: dict,
     return sl
 
 def get_active_strike_step(dte: int = None) -> int:
-    """v12.10: Returns 50-step on expiry day, 100-step otherwise."""
-    if dte is not None and dte == 0:
-        return STRIKE_STEP_EXPIRY
-    return STRIKE_STEP
+    """v13.3: True ATM — 50-step for ALL DTE."""
+    return 50
 
 def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
     if step is None:
@@ -961,26 +959,10 @@ STRIKE_PREMIUM_MAX      = CFG.strike_cfg("premium_max", 400)
 
 def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
     """
-    v12.15: Smart strike selection with tolerance zone.
-    DTE 0: step 50, tolerance ±20
-    DTE 1+: step 100, tolerance ±40
-
-    Within tolerance: same strike for both CE/PE (ATM)
-    Outside tolerance: CE rounds down, PE rounds up (ITM)
+    v13.3: True ATM — round to nearest 50 for ALL DTE.
+    Both CE and PE use the SAME ATM strike. Premium naturally balanced.
     """
-    step = 50 if dte == 0 else 100
-    tolerance = 20 if step == 50 else 40
-
-    nearest = round(spot / step) * step
-    distance = abs(spot - nearest)
-
-    if distance <= tolerance:
-        return int(nearest)
-    else:
-        if direction == "CE":
-            return int(spot // step) * step
-        else:
-            return int(-(-spot // step)) * step
+    return int(round(spot / 50) * 50)
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:

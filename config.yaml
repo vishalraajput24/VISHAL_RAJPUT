@@ -18,13 +18,15 @@ instrument:
 lots:
   count: 2
   size: 65
+  lot1_sl: 6             # scout — tight SL
+  lot2_sl: 12            # soldier — normal SL
 
 cooldown:
   after_win: 10
   after_loss: 6
 
 entry:
-  momentum_pts: 12
+  momentum_pts: 14
   momentum_candles: 3
   momentum_rsi_min: 45
   rsi_max: 72
@@ -36,8 +38,8 @@ exit:
   stale_peak_min: 3
 
 profit_trail:
-  activate_at: 10
-  giveback_low: 8       # peak 10-19: room to breathe
+  activate_at: 8
+  giveback_low: 8       # peak 8-19: room to breathe
   giveback_mid: 7       # peak 20-29: tightening
   giveback_high: 6      # peak 30+: lock hard
 
@@ -45,9 +47,9 @@ rsi_exit:
   blowoff: 80
 
 strike:
-  step_normal: 100
+  step_normal: 50
   step_dte0: 50
-  tolerance_normal: 40
+  tolerance_normal: 20
   tolerance_dte0: 20
   lock_shift: 150
   gap_relock_threshold: 200

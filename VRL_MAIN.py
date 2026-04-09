@@ -99,6 +99,11 @@ DEFAULT_STATE = {
     "entry_mode"         : "",
     "momentum_pts"       : 0.0,
     "_sl_order_id"       : "",
+    "_sl_order_id_lot1"  : "",
+    "_sl_order_id_lot2"  : "",
+    "_sl_trigger_lot1"   : 0,
+    "_sl_trigger_lot2"   : 0,
+    "_last_scan_minute"  : "",
     "_sl_trigger_at_exchange": 0,
     "_last_milestone"    : 0,
     "current_rsi"        : 0.0,
@@ -642,9 +647,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : MOMENTUM +15pts/3c + RSI≥45 + Green + HL\n"
+        "Entry  : Mom 14pts/3c + confirm candle + HL\n"
         "         EMA confirms → CONFIRMED ★★\n"
-        "Exit   : Trail peak-6 after +10 | SL -12 | RSI 80\n"
+        "Exit   : 🔍Scout SL-6 | 🎖️Soldier SL-12\n"
+        "Trail  : peak-8/7/6 from +8\n"
+        "Strike : True ATM 50 | Stale 5c | RSI 80 blowoff\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -844,16 +851,27 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
-    # Place exchange backup SL order
+    # v13.3: Place TWO exchange backup SL-M orders (Scout -6 + Soldier -12)
     try:
         from VRL_TRADE import place_sl_order
-        _sl_price = phase1_sl
-        _sl_oid = place_sl_order(kite, symbol, actual_qty, _sl_price)
+        _cfg_lots    = CFG.get().get("lots", {})
+        _lot_size    = _cfg_lots.get("size", D.LOT_SIZE)
+        _lot1_sl_pts = _cfg_lots.get("lot1_sl", 6)
+        _lot2_sl_pts = _cfg_lots.get("lot2_sl", 12)
+        _lot1_sl_price = round(actual_price - _lot1_sl_pts, 2)
+        _lot2_sl_price = round(actual_price - _lot2_sl_pts, 2)
+        _sl_oid_lot1 = place_sl_order(kite, symbol, _lot_size, _lot1_sl_price)
+        _sl_oid_lot2 = place_sl_order(kite, symbol, _lot_size, _lot2_sl_price)
         with _state_lock:
-            state["_sl_order_id"] = _sl_oid
-            state["_sl_trigger_at_exchange"] = round(_sl_price, 1)
-    except Exception:
-        pass
+            state["_sl_order_id_lot1"] = _sl_oid_lot1
+            state["_sl_order_id_lot2"] = _sl_oid_lot2
+            state["_sl_trigger_lot1"]  = round(_lot1_sl_price, 1)
+            state["_sl_trigger_lot2"]  = round(_lot2_sl_price, 1)
+            state["_sl_order_id"] = _sl_oid_lot2
+            state["_sl_trigger_at_exchange"] = round(_lot2_sl_price, 1)
+    except Exception as _se:
+        import logging as _lg
+        _lg.getLogger("vrl_live").warning("[MAIN] SL-M place error: " + str(_se))
 
     # Entry alert
     _slip_line = ""
@@ -977,11 +995,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     else:
         exit_qty = D.LOT_SIZE
 
-    # Cancel exchange backup SL before exit
+    # v13.3: Cancel the relevant exchange SL-M order(s)
     try:
+        from VRL_TRADE import cancel_sl_order
+        _sl_oid_lot1 = state.get("_sl_order_id_lot1", "")
+        _sl_oid_lot2 = state.get("_sl_order_id_lot2", "")
+        if lot_id in ("LOT1", "ALL") and _sl_oid_lot1:
+            cancel_sl_order(kite, _sl_oid_lot1)
+        if lot_id in ("LOT2", "ALL") and _sl_oid_lot2:
+            cancel_sl_order(kite, _sl_oid_lot2)
         _sl_oid = state.get("_sl_order_id", "")
-        if _sl_oid:
-            from VRL_TRADE import cancel_sl_order
+        if _sl_oid and _sl_oid not in (_sl_oid_lot1, _sl_oid_lot2):
             cancel_sl_order(kite, _sl_oid)
     except Exception:
         pass
@@ -1057,6 +1081,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "lot2_exit_price": 0.0, "lot2_exit_pnl": 0.0,
                 "lot2_exit_reason": "",
                 "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
+                "_sl_order_id_lot1": "", "_sl_order_id_lot2": "",
+                "_sl_trigger_lot1": 0, "_sl_trigger_lot2": 0,
                 "floor_10_alerted": False, "floor_20_alerted": False,
                 "floor_30_alerted": False, "split_alerted": False,
             })
@@ -1833,15 +1859,24 @@ def _strategy_loop(kite):
                                          + " 🔒 (+" + str(_locked) + " locked, "
                                          + str(_gb) + "pt trail)")
                                 break
-                        # Update exchange SL when floor locks higher
-                        _old_trigger = state.get("_sl_trigger_at_exchange", 0)
-                        if _floor > _old_trigger and state.get("_sl_order_id"):
-                            try:
-                                from VRL_TRADE import modify_sl_order
-                                if modify_sl_order(kite, state["_sl_order_id"], _floor):
-                                    state["_sl_trigger_at_exchange"] = round(_floor, 1)
-                            except Exception:
-                                pass
+                        # v13.3: Update BOTH exchange SL-M triggers when floor locks higher
+                        try:
+                            from VRL_TRADE import modify_sl_order
+                            _new_trigger = round(_floor, 1)
+                            for _slid_key, _trig_key in (
+                                ("_sl_order_id_lot1", "_sl_trigger_lot1"),
+                                ("_sl_order_id_lot2", "_sl_trigger_lot2"),
+                            ):
+                                _sid = state.get(_slid_key, "")
+                                _cur = state.get(_trig_key, 0)
+                                if _sid and _new_trigger > _cur:
+                                    if modify_sl_order(kite, _sid, _new_trigger):
+                                        with _state_lock:
+                                            state[_trig_key] = _new_trigger
+                                            if _slid_key == "_sl_order_id_lot2":
+                                                state["_sl_trigger_at_exchange"] = _new_trigger
+                        except Exception:
+                            pass
 
                     # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
                     # Paper mode: exit at 15:28 as before
@@ -1995,6 +2030,14 @@ def _strategy_loop(kite):
                 best_result = None
                 best_type = None
                 best_opt_info = None
+
+                # v13.3: Scan once per minute
+                _scan_key = datetime.now().strftime("%H:%M")
+                if _scan_key == state.get("_last_scan_minute", ""):
+                    time.sleep(1)
+                    continue
+                with _state_lock:
+                    state["_last_scan_minute"] = _scan_key
 
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])

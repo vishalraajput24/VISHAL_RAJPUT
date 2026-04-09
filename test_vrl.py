@@ -49,9 +49,9 @@ test("CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
 s = D.resolve_strike_for_direction(22819, "PE", 3)
 test("PE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
 s = D.resolve_strike_for_direction(22845, "CE", 3)
-test("CE 22845 DTE3 → 22800 (round down)", s == 22800, "got " + str(s))
+test("CE 22845 → 22850 (nearest 50)", s == 22850, "got " + str(s))
 s = D.resolve_strike_for_direction(22845, "PE", 3)
-test("PE 22845 DTE3 → 22900 (round up)", s == 22900, "got " + str(s))
+test("PE 22845 → 22850 (nearest 50)", s == 22850, "got " + str(s))
 s = D.resolve_strike_for_direction(22820, "CE", 0)
 test("CE 22820 DTE0 → 22800", s == 22800, "got " + str(s))
 s = D.resolve_strike_for_direction(22835, "PE", 0)
@@ -95,10 +95,10 @@ def _make_1min_df(candles):
 # Pre-build df with forced indicators to guarantee pass
 # Momentum = close[-2] - close[-5] = 115 - 100 = 15 (>= 12 threshold)
 _df_fire = pd.DataFrame({
-    "close": [100.0]*18 + [112.0, 115.0],
-    "open":  [99.0]*18 + [108.0, 110.0],
-    "high":  [101.0]*18 + [113.0, 117.0],
-    "low":   [98.0]*18 + [101.0, 109.0],
+    "close": [100.0]*17 + [115.0, 117.0, 118.0],
+    "open":  [99.5]*17 + [108.0, 116.0, 117.0],
+    "high":  [101.0]*17 + [116.0, 118.0, 119.0],
+    "low":   [98.0]*17 + [108.0, 114.0, 117.0],
     "volume": [1000]*20,
 })
 _df_fire.index = [datetime(2026,4,1,9,15) + timedelta(minutes=i) for i in range(20)]
@@ -162,16 +162,24 @@ def _make_exit_state(entry, peak=0, candles=0, lot1=True, lot2=True, split=False
     }
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # Running -12 → HARD_SL
+    # Running -6.5 → Scout SL (LOT1 only)
+    st = _make_exit_state(200, peak=0, candles=1)
+    exits = E.manage_exit(st, 193.5, {})
+    lot1_hit = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in exits)
+    lot2_hit = any(x["lot_id"] == "LOT2" for x in exits)
+    test("Running -6.5 → Scout SL only", lot1_hit and not lot2_hit, "got " + str(exits))
+
+    # Running -5.5 → neither lot
+    st = _make_exit_state(200, peak=0, candles=1)
+    exits = E.manage_exit(st, 194.5, {})
+    test("Running -5.5 → no exit", len(exits) == 0, "got " + str(exits))
+
+    # Running -12 → both lots exit
     st = _make_exit_state(200, peak=0, candles=1)
     exits = E.manage_exit(st, 188, {})
-    test("Running -12 → HARD_SL", len(exits) == 1 and exits[0]["reason"] == "HARD_SL",
-         "got " + str(exits))
-
-    # Running -11 → no exit
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 189, {})
-    test("Running -11 → no exit", len(exits) == 0, "got " + str(exits))
+    l1 = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in exits)
+    l2 = any(x["lot_id"] == "LOT2" and x["reason"] == "HARD_SL" for x in exits)
+    test("Running -12 → LOT1 SCOUT_SL + LOT2 HARD_SL", l1 and l2, "got " + str(exits))
 
 
 section("EXIT — STALE ENTRY")
@@ -197,8 +205,8 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     # Peak 10, drop to floor (entry+2)
     st = _make_exit_state(200, peak=10, candles=6)
     exits = E.manage_exit(st, 201, {})  # running=1, floor_sl=202
-    test("Peak 10 running 1 → PROFIT_FLOOR",
-         len(exits) == 1 and "FLOOR" in exits[0]["reason"],
+    test("Peak 10 running 1 → TRAIL_FLOOR (both lots)",
+         len(exits) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in exits),
          "got " + str(exits))
 
     # Peak 10, running 5 → no exit
@@ -209,8 +217,8 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     # Peak 20, drop to floor (entry+12)
     st = _make_exit_state(200, peak=20, candles=8)
     exits = E.manage_exit(st, 211, {})  # running=11, floor_sl=212
-    test("Peak 20 running 11 → PROFIT_FLOOR",
-         len(exits) == 1 and "FLOOR" in exits[0]["reason"],
+    test("Peak 20 running 11 → TRAIL_FLOOR (both lots)",
+         len(exits) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in exits),
          "got " + str(exits))
 
 
@@ -487,10 +495,12 @@ if hasattr(DB._local, "conn"):
 section("EXIT PATHS — COMPREHENSIVE")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # HARD_SL at exactly -12
+    # v13.3: -12 fires both LOT1 SCOUT_SL + LOT2 HARD_SL
     _st = _make_exit_state(200, peak=0, candles=1)
     _ex = E.manage_exit(_st, 188, {})
-    test("HARD_SL at -12", len(_ex) == 1 and _ex[0]["reason"] == "HARD_SL")
+    _l1 = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in _ex)
+    _l2 = any(x["lot_id"] == "LOT2" and x["reason"] == "HARD_SL" for x in _ex)
+    test("Both lots at -12", _l1 and _l2, "got " + str(_ex))
 
     # STALE at 5 candles + peak < 3
     _st = _make_exit_state(200, peak=2, candles=5)
@@ -500,7 +510,7 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     # PROFIT_FLOOR at peak 10 drop to floor
     _st = _make_exit_state(200, peak=10, candles=6)
     _ex = E.manage_exit(_st, 201, {})
-    test("TRAIL_FLOOR peak 10", len(_ex) == 1 and "FLOOR" in _ex[0]["reason"])
+    test("TRAIL_FLOOR peak 10", len(_ex) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in _ex))
 
 # RSI_BLOWOFF at 82
 _st = _make_exit_state(200, peak=15, candles=5)
