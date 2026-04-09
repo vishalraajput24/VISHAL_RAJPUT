@@ -1436,6 +1436,21 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             else:
                 verdict = "READY"
 
+            # v13.5: verdict based on 1m/3m momentum + divergence
+            _mom = result.get("momentum_pts", 0)
+            _mode = result.get("entry_mode", "")
+            _mom_tf = result.get("momentum_tf", "")
+            _other_falling = result.get("other_falling", False)
+            _other_move = result.get("other_move", 0)
+            _fired = result.get("fired", False)
+            if _fired:
+                verdict = "FIRED [" + _mode + " " + _mom_tf + "]"
+            elif not _other_falling and result.get("other_move", 0) != 0:
+                verdict = "OTHER UP (" + str(_other_move) + "pts) — divergence fail"
+            elif _mom < 14:
+                verdict = "SCANNING (1m " + str(_mom) + "/14)"
+            else:
+                verdict = "Waiting confirmation"
             return {
                 "ema9": result.get("ema9", 0),
                 "ema21": result.get("ema21", 0),
@@ -1446,20 +1461,23 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "rsi": round(rsi_val, 1),
                 "rsi_prev": result.get("rsi_prev", 0),
                 "rsi_ok": rsi_ok,
-                "fired": result.get("fired", False),
+                "fired": _fired,
                 "verdict": verdict,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
-                "entry_mode": result.get("entry_mode", ""),
-                "momentum_pts": result.get("momentum_pts", 0),
+                "entry_mode": _mode,
+                "momentum_tf": _mom_tf,
+                "momentum_pts": _mom,
+                "momentum_threshold": result.get("momentum_threshold", 14),
                 "path_a": result.get("path_a", False),
                 "path_b": result.get("path_b", False),
                 "spike_ratio": result.get("spike_ratio", 0),
-                "momentum_threshold": result.get("momentum_threshold", 15),
                 "rsi_rising": result.get("rsi_rising", False),
                 "spot_confirms": result.get("spot_confirms", False),
                 "spot_move": result.get("spot_move", 0),
+                "other_falling": _other_falling,
+                "other_move": _other_move,
             }
 
         ce_signal = _build_signal("CE", all_results.get("CE"))
