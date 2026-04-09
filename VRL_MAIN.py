@@ -1981,21 +1981,27 @@ def _strategy_loop(kite):
 
                 # ── STRIKE LOCKING — stable scanning ──────────────
                 # Lock strikes until spot moves 150+ pts or trade exits
+                # v13.3: True ATM-50 — relock whenever the nearest 50 changes.
+                # The old 150pt threshold was fine for 100pt strikes but skips
+                # 2-3 strikes when the step is 50.
                 _relock = False
                 _is_initial_lock = False
                 _spot_move = 0.0
                 _old_ce = None
                 _old_pe = None
-                if _locked_at_spot is None:
+                if _locked_at_spot is None or _locked_ce_strike is None:
                     _relock = True
                     _is_initial_lock = True
-                elif abs(spot_ltp - _locked_at_spot) > _LOCK_SHIFT_THRESHOLD:
-                    _relock = True
-                    _spot_move = round(spot_ltp - _locked_at_spot, 1)
-                    _old_ce = _locked_ce_strike
-                    _old_pe = _locked_pe_strike
-                    logger.info("[MAIN] Spot moved " + str(round(abs(_spot_move), 1))
-                                + "pts from lock — RELOCKING")
+                else:
+                    _target_atm = int(round(spot_ltp / 50) * 50)
+                    if _target_atm != _locked_ce_strike:
+                        _relock = True
+                        _spot_move = round(spot_ltp - _locked_at_spot, 1)
+                        _old_ce = _locked_ce_strike
+                        _old_pe = _locked_pe_strike
+                        logger.info("[MAIN] ATM drift: locked=" + str(_locked_ce_strike)
+                                    + " target=" + str(_target_atm)
+                                    + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
