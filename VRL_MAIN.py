@@ -1491,22 +1491,40 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             entry = st.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            # LOT 1 — independent
+            # LOT 1 (Scout) — independent
+            import VRL_CONFIG as _CFG_pos
+            _lot1_pts = _CFG_pos.get().get("lots", {}).get("lot1_sl", 6)
+            _lot2_pts = _CFG_pos.get().get("lots", {}).get("lot2_sl", 12)
+            _trail_act = _CFG_pos.get().get("profit_trail", {}).get("activate_at", 8)
+            _peak = st.get("peak_pnl", 0)
+            _floor = st.get("current_floor", 0)
+            _trail_on = _peak >= _trail_act and _floor > 0
+
             if st.get("lot1_active"):
+                _l1_sl_price = round(entry - _lot1_pts, 2)
+                if _trail_on and _floor > _l1_sl_price:
+                    _l1_sl_price = round(_floor, 2)
+                    _l1_type = "TRAIL"
+                else:
+                    _l1_type = "SCOUT"
                 lot1 = {"status": "active", "pnl": running,
-                         "sl": round(st.get("current_floor", 0), 2), "sl_type": "FLOOR"}
+                         "sl": _l1_sl_price, "sl_type": _l1_type}
             else:
                 lot1 = {"status": "exited", "pnl": round(st.get("lot1_exit_pnl", 0), 2),
                          "exit_price": st.get("lot1_exit_price", 0),
                          "exit_reason": st.get("lot1_exit_reason", ""),
                          "exit_time": st.get("lot1_exit_time", ""), "sl": 0, "sl_type": ""}
 
-            # LOT 2 — independent
+            # LOT 2 (Soldier) — independent
             if st.get("lot2_active"):
-                _l2_split = st.get("lots_split", False)
-                _l2_sl = st.get("lot2_trail_sl", 0) if _l2_split else st.get("current_floor", 0)
-                lot2 = {"status": "riding" if _l2_split else "active", "pnl": running,
-                         "sl": round(_l2_sl, 2), "sl_type": "ATR" if _l2_split else "FLOOR"}
+                _l2_sl_price = round(entry - _lot2_pts, 2)
+                if _trail_on and _floor > _l2_sl_price:
+                    _l2_sl_price = round(_floor, 2)
+                    _l2_type = "TRAIL"
+                else:
+                    _l2_type = "SOLDIER"
+                lot2 = {"status": "active", "pnl": running,
+                         "sl": _l2_sl_price, "sl_type": _l2_type}
             else:
                 lot2 = {"status": "exited", "pnl": round(st.get("lot2_exit_pnl", 0), 2),
                          "exit_price": st.get("lot2_exit_price", 0),
