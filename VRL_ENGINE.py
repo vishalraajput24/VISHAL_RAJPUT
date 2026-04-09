@@ -166,8 +166,40 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         cfg = CFG.get().get("entry", {})
         rsi_max       = cfg.get("rsi_max", 72)
         rsi_max_ema   = cfg.get("rsi_max_ema", 68)
-        mom_pts_min = cfg.get("momentum_pts", 20)
+        mom_pts_min   = cfg.get("momentum_pts", 20)
+        mom_rsi_min   = cfg.get("momentum_rsi_min", 45)
+        mom_candles   = cfg.get("momentum_candles", 3)
+        ema_info_min  = cfg.get("ema_gap_min", 3)
+        ema_fire_min  = cfg.get("ema_fire_min", 5)
         result["momentum_threshold"] = mom_pts_min
+
+        # EMA conditions (info + CONFIRMED tag — never fires alone)
+        rsi_ok = rsi >= 50 and rsi_rising
+        prev_e9 = float(prev.get("EMA_9", 0))
+        prev_e21 = float(prev.get("EMA_21", 0))
+        gap_widening = ema_gap > round(prev_e9 - prev_e21, 2)
+        ema_info = ema_gap >= ema_info_min
+        ema_strong = ema_gap >= ema_fire_min
+        result["ema_ok"] = ema_info
+        result["rsi_ok"] = rsi_ok
+        result["gap_widening"] = gap_widening
+        path_ema = ema_strong and rsi_ok and gap_widening
+        result["ema_would_fire"] = path_ema
+        result["path_a"] = path_ema
+
+        # MOMENTUM calc (confirmation candle shift: from prev back N candles)
+        mom_pts = 0
+        spike_ratio = 0
+        if len(df) >= mom_candles + 3:
+            ref = float(df.iloc[-3 - mom_candles]["close"])
+            mom_pts = round(float(prev["close"]) - ref, 2)
+            result["momentum_pts"] = mom_pts
+            prev_prev = df.iloc[-4]
+            last_mom = round(float(prev["close"]) - float(prev_prev["close"]), 2)
+            if mom_pts > 0:
+                spike_ratio = round(last_mom / mom_pts, 2)
+            result["spike_ratio"] = spike_ratio
+
         # -- MOMENTUM FIRE (primary) --
         path_mom = (mom_pts >= mom_pts_min
                     and rsi >= mom_rsi_min
