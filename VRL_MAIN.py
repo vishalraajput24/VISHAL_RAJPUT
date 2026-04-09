@@ -99,6 +99,17 @@ DEFAULT_STATE = {
     "entry_mode"         : "",
     "momentum_pts"       : 0.0,
     "_sl_order_id"       : "",
+    "_3m_confirmed"      : False,
+    "_candle_low"        : 0.0,
+    "_last_candle_min"   : "",
+    "other_token"        : 0,
+    "other_falling"      : False,
+    "other_warning"      : False,
+    "other_reversing"    : False,
+    "other_move"         : 0,
+    "current_keep"       : 0.0,
+    "current_lock"       : 0.0,
+    "momentum_tf"        : "",
     "_sl_order_id_lot1"  : "",
     "_sl_order_id_lot2"  : "",
     "_sl_trigger_lot1"   : 0,
@@ -436,6 +447,9 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "rsi_rising": 1 if st.get("rsi_rising") else 0,
         "spot_confirms": 1 if st.get("spot_confirms") else 0,
         "spot_move": round(st.get("spot_move", 0), 2),
+        "momentum_tf": st.get("momentum_tf", ""),
+        "other_falling": 1 if st.get("other_falling") else 0,
+        "other_move": round(st.get("other_move", 0), 2),
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -831,7 +845,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_floor"]      = phase1_sl
         state["entry_slippage"]     = _entry_slippage
         state["signal_price"]       = entry_price
-        state["entry_mode"]         = entry_result.get("entry_mode", "MOMENTUM")
+        state["entry_mode"]         = entry_result.get("entry_mode", "FAST")
+        state["momentum_tf"]        = entry_result.get("momentum_tf", "")
+        state["other_falling"]      = bool(entry_result.get("other_falling"))
+        state["other_move"]         = entry_result.get("other_move", 0)
+        # v13.5: store the OTHER side token for manage_exit divergence check
+        _sym_curr = symbol.upper()
+        _other_token_entry = 0
+        try:
+            if option_type == "CE" and _pe_info_v15:
+                _other_token_entry = _pe_info_v15.get("token", 0)
+            elif option_type == "PE" and _ce_info_v15:
+                _other_token_entry = _ce_info_v15.get("token", 0)
+        except Exception:
+            pass
+        state["other_token"]        = _other_token_entry
+        state["_3m_confirmed"]      = False
+        state["_candle_low"]        = actual_price
         state["_last_milestone"]    = 0
         state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
         state["spike_ratio"]        = entry_result.get("spike_ratio", 0)
@@ -852,27 +882,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
-    # v13.3: Place TWO exchange backup SL-M orders (Scout -6 + Soldier -12)
+    # v13.5: Place ONE exchange backup SL-M for full qty at entry - candle_close_sl
     try:
         from VRL_TRADE import place_sl_order
         _cfg_lots    = CFG.get().get("lots", {})
         _lot_size    = _cfg_lots.get("size", D.LOT_SIZE)
-        _lot1_sl_pts = _cfg_lots.get("lot1_sl", 6)
-        _lot2_sl_pts = _cfg_lots.get("lot2_sl", 12)
-        _lot1_sl_price = round(actual_price - _lot1_sl_pts, 2)
-        _lot2_sl_price = round(actual_price - _lot2_sl_pts, 2)
-        _sl_oid_lot1 = place_sl_order(kite, symbol, _lot_size, _lot1_sl_price)
-        _sl_oid_lot2 = place_sl_order(kite, symbol, _lot_size, _lot2_sl_price)
+        _lot_count   = _cfg_lots.get("count", 2)
+        _candle_sl   = CFG.get().get("exit", {}).get("candle_close_sl", 12)
+        _sl_price    = round(actual_price - _candle_sl, 2)
+        _full_qty    = _lot_size * _lot_count
+        _sl_oid = place_sl_order(kite, symbol, _full_qty, _sl_price)
         with _state_lock:
-            state["_sl_order_id_lot1"] = _sl_oid_lot1
-            state["_sl_order_id_lot2"] = _sl_oid_lot2
-            state["_sl_trigger_lot1"]  = round(_lot1_sl_price, 1)
-            state["_sl_trigger_lot2"]  = round(_lot2_sl_price, 1)
-            state["_sl_order_id"] = _sl_oid_lot2
-            state["_sl_trigger_at_exchange"] = round(_lot2_sl_price, 1)
+            state["_sl_order_id"] = _sl_oid
+            state["_sl_trigger_at_exchange"] = round(_sl_price, 1)
+            state["_sl_order_id_lot1"] = ""
+            state["_sl_order_id_lot2"] = ""
     except Exception as _se:
-        import logging as _lg
-        _lg.getLogger("vrl_live").warning("[MAIN] SL-M place error: " + str(_se))
+        logger.warning("[MAIN] SL-M place error: " + str(_se))
 
     # Entry alert
     _slip_line = ""
@@ -1001,17 +1027,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     else:
         exit_qty = D.LOT_SIZE
 
-    # v13.3: Cancel the relevant exchange SL-M order(s)
+    # v13.5: Cancel the single exchange SL-M order
     try:
         from VRL_TRADE import cancel_sl_order
-        _sl_oid_lot1 = state.get("_sl_order_id_lot1", "")
-        _sl_oid_lot2 = state.get("_sl_order_id_lot2", "")
-        if lot_id in ("LOT1", "ALL") and _sl_oid_lot1:
-            cancel_sl_order(kite, _sl_oid_lot1)
-        if lot_id in ("LOT2", "ALL") and _sl_oid_lot2:
-            cancel_sl_order(kite, _sl_oid_lot2)
         _sl_oid = state.get("_sl_order_id", "")
-        if _sl_oid and _sl_oid not in (_sl_oid_lot1, _sl_oid_lot2):
+        if _sl_oid:
             cancel_sl_order(kite, _sl_oid)
     except Exception:
         pass
@@ -1879,9 +1899,33 @@ def _strategy_loop(kite):
                         if cur_1m != state.get("_last_candle_held_min", ""):
                             state["_last_candle_held_min"] = cur_1m
                             state["candles_held"] = state.get("candles_held", 0) + 1
+                            # v13.5: reset candle_low on new 1-min candle boundary
+                            state["_candle_low"] = option_ltp
+                            # v13.5: 3-min CONFIRMED upgrade during FAST trade
+                            if state.get("entry_mode") == "FAST" and not state.get("_3m_confirmed"):
+                                try:
+                                    _upg_token = state.get("token")
+                                    _df3u = D.get_historical_data(_upg_token, "3minute", 10)
+                                    if _df3u is not None and len(_df3u) >= 6:
+                                        _prev3u = _df3u.iloc[-3]
+                                        _ref3u = float(_df3u.iloc[-6]["close"])
+                                        _mom3u = round(float(_prev3u["close"]) - _ref3u, 2)
+                                        _cfg_up = CFG.get().get("entry", {})
+                                        _conf_thr = _cfg_up.get("confirmed_momentum_pts", 20)
+                                        if _mom3u >= _conf_thr:
+                                            with _state_lock:
+                                                state["entry_mode"] = "CONFIRMED"
+                                                state["_3m_confirmed"] = True
+                                            logger.info("[MAIN] 3-min CONFIRMED upgrade: mom_3m=" + str(_mom3u))
+                                            _tg_send("★★ 3-min CONFIRMED — "
+                                                + state.get("direction", "") + " +" + str(_mom3u) + "pts (3m)\n"
+                                                + "Trail widened: keep 65% from +20 🔥")
+                                except Exception as _ue:
+                                    logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
                     # v13.0: manage_exit returns list of exit dicts
-                    exit_list = manage_exit(state, option_ltp, profile)
+                    _mex_other_tok = state.get("other_token", 0)
+                    exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
                     # ── TRAILING FLOOR MILESTONES + EXCHANGE SL UPDATE ──
                     if state.get("in_trade"):
@@ -1900,22 +1944,16 @@ def _strategy_loop(kite):
                                          + " 🔒 (+" + str(_locked) + " locked, "
                                          + str(_gb) + "pt trail)")
                                 break
-                        # v13.3: Update BOTH exchange SL-M triggers when floor locks higher
+                        # v13.5: Update single exchange SL-M trigger when floor locks higher
                         try:
                             from VRL_TRADE import modify_sl_order
                             _new_trigger = round(_floor, 1)
-                            for _slid_key, _trig_key in (
-                                ("_sl_order_id_lot1", "_sl_trigger_lot1"),
-                                ("_sl_order_id_lot2", "_sl_trigger_lot2"),
-                            ):
-                                _sid = state.get(_slid_key, "")
-                                _cur = state.get(_trig_key, 0)
-                                if _sid and _new_trigger > _cur:
-                                    if modify_sl_order(kite, _sid, _new_trigger):
-                                        with _state_lock:
-                                            state[_trig_key] = _new_trigger
-                                            if _slid_key == "_sl_order_id_lot2":
-                                                state["_sl_trigger_at_exchange"] = _new_trigger
+                            _sid = state.get("_sl_order_id", "")
+                            _cur = state.get("_sl_trigger_at_exchange", 0)
+                            if _sid and _new_trigger > _cur:
+                                if modify_sl_order(kite, _sid, _new_trigger):
+                                    with _state_lock:
+                                        state["_sl_trigger_at_exchange"] = _new_trigger
                         except Exception:
                             pass
 
@@ -2095,7 +2133,8 @@ def _strategy_loop(kite):
                 # v13.3: Scan once per minute
                 # v13.3: 3-min scan boundary (entry timeframe is 3-min)
                 _now_scan = datetime.now()
-                _scan_key = _now_scan.strftime("%Y%m%d%H") + "_" + str(_now_scan.minute // 3)
+                # v13.5: 1-min scan boundary (check_entry handles both 1m + 3m)
+                _scan_key = _now_scan.strftime("%Y%m%d%H%M")
                 _should_scan = _scan_key != state.get("_last_scan_key", "")
                 if not _should_scan:
                     time.sleep(1)
@@ -2107,11 +2146,18 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
+                # v13.5: extract both tokens for divergence check
+                _ce_info_v15 = _locked_tokens.get("CE") if _locked_tokens else None
+                _pe_info_v15 = _locked_tokens.get("PE") if _locked_tokens else None
+                _ce_tok_v15 = _ce_info_v15.get("token", 0) if _ce_info_v15 else 0
+                _pe_tok_v15 = _pe_info_v15.get("token", 0) if _pe_info_v15 else 0
+
                 for opt_type in ("CE", "PE"):
                     opt_info = dir_tokens.get(opt_type)
                     if not opt_info:
                         continue
 
+                    _other_tok = _pe_tok_v15 if opt_type == "CE" else _ce_tok_v15
                     result = check_entry(
                         token=opt_info["token"],
                         option_type=opt_type,
@@ -2119,6 +2165,7 @@ def _strategy_loop(kite):
                         dte=dte,
                         expiry_date=expiry,
                         kite=kite,
+                        other_token=_other_tok,
                     )
                     result["_strike"] = dir_strikes.get(opt_type, atm_strike)
                     # Bonus indicators — info only, never block

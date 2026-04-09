@@ -102,148 +102,185 @@ def loss_streak_gate(state: dict) -> bool:
 
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None,
-                silent: bool = False) -> dict:
-    """v13.3: LIMIT entry. Momentum or EMA fires -> entry_level for LIMIT order.
-    Removed: green candle check, higher_low check.
-    Added: EMA as 2nd path (gap>=5), dynamic thresholds, entry_level."""
+                other_token: int = 0, silent: bool = False) -> dict:
+    """v13.5: Dual timeframe momentum + divergence."""
     result = {
         "fired": False, "option_type": option_type,
-        "entry_price": 0, "entry_level": 0,
-        "ema9": 0, "ema21": 0, "ema_gap": 0,
-        "rsi": 0, "rsi_prev": 0,
-        "ema_ok": False, "rsi_ok": False, "gap_widening": False,
-        "entry_mode": "", "momentum_pts": 0,
-        "momentum_threshold": 0,
+        "entry_price": 0, "ema9": 0, "ema21": 0,
+        "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
+        "ema_ok": False, "rsi_ok": False,
+        "candle_green": False, "gap_widening": False,
+        "higher_low": False, "entry_mode": "",
+        "momentum_pts": 0, "momentum_tf": "",
         "ema_would_fire": False, "path_a": False, "path_b": False,
         "rsi_rising": False, "spot_confirms": False, "spot_move": 0,
-        "spike_ratio": 0,
+        "spike_ratio": 0, "other_falling": False, "other_move": 0,
+        "momentum_threshold": 0,
     }
     try:
-        import VRL_CONFIG as _CFG2
-        _tf = _CFG2.get().get("entry", {}).get("momentum_timeframe", "3minute")
-        df = D.get_historical_data(token, _tf, 50)
-        df = D.add_indicators(df)
-        if df.empty or len(df) < 7:
+        import VRL_CONFIG as CFG
+        cfg = CFG.get().get("entry", {})
+        rsi_max      = cfg.get("rsi_max", 72)
+        fast_pts     = cfg.get("fast_momentum_pts", 14)
+        fast_candles = cfg.get("fast_momentum_candles", 4)
+        conf_pts     = cfg.get("confirmed_momentum_pts", 20)
+        conf_candles = cfg.get("confirmed_momentum_candles", 3)
+
+        # ═══ 1-MIN DATA ═══
+        df_1m = D.get_historical_data(token, "minute", 50)
+        df_1m = D.add_indicators(df_1m)
+        if df_1m.empty or len(df_1m) < 7:
             return result
 
-        curr = df.iloc[-2]
-        prev = df.iloc[-3]
+        curr_1m = df_1m.iloc[-2]
+        prev_1m = df_1m.iloc[-3]
 
-        entry_price = float(curr["close"])
-        ema9 = float(curr.get("EMA_9", 0))
-        ema21 = float(curr.get("EMA_21", 0))
-        ema_gap = round(ema9 - ema21, 2)
-        rsi = float(curr.get("RSI", 50))
-        rsi_prev = float(prev.get("RSI", 50))
+        entry_price = float(curr_1m["close"])
+        rsi = float(curr_1m.get("RSI", 50))
+        rsi_prev = float(prev_1m.get("RSI", 50))
         rsi_rising = rsi > rsi_prev
-        candle_green = float(curr["close"]) > float(curr["open"])
-        higher_low = float(curr["low"]) > float(prev["low"])
+        ema9 = float(curr_1m.get("EMA_9", 0))
+        ema21 = float(curr_1m.get("EMA_21", 0))
+        ema_gap = round(ema9 - ema21, 2)
 
         result.update({
             "entry_price": round(entry_price, 2),
             "ema9": round(ema9, 2), "ema21": round(ema21, 2),
             "ema_gap": ema_gap, "rsi": round(rsi, 1),
             "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
-            "candle_green": candle_green, "higher_low": higher_low,
         })
 
-        # Spot direction -- info only
-        spot_confirms = False
-        spot_move = 0
-        try:
-            _sdf = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 10)
-            if _sdf is not None and not _sdf.empty and len(_sdf) >= 5:
-                _sn = float(_sdf.iloc[-2]["close"])
-                _s3 = float(_sdf.iloc[-5]["close"])
-                spot_move = round(_sn - _s3, 2)
-                spot_confirms = (spot_move > 0) if option_type == "CE" else (spot_move < 0)
-        except Exception:
-            pass
-        result["spot_move"] = spot_move
-        result["spot_confirms"] = spot_confirms
+        # RSI HARD CAP
+        if rsi > rsi_max:
+            if not silent: logger.info("[ENGINE] " + option_type + " RSI_CAP " + str(round(rsi, 1)))
+            return result
 
-        import VRL_CONFIG as CFG
-        cfg = CFG.get().get("entry", {})
-        rsi_max       = cfg.get("rsi_max", 72)
-        rsi_max_ema   = cfg.get("rsi_max_ema", 68)
-        mom_pts_min   = cfg.get("momentum_pts", 20)
-        mom_rsi_min   = cfg.get("momentum_rsi_min", 45)
-        mom_candles   = cfg.get("momentum_candles", 3)
-        ema_info_min  = cfg.get("ema_gap_min", 3)
-        ema_fire_min  = cfg.get("ema_fire_min", 5)
-        result["momentum_threshold"] = mom_pts_min
+        # ═══ OTHER SIDE CHECK (divergence) ═══
+        other_falling = False
+        other_move = 0
+        if other_token:
+            try:
+                other_df = D.get_historical_data(other_token, "minute", 10)
+                if other_df is not None and not other_df.empty and len(other_df) >= 6:
+                    other_now = float(other_df.iloc[-2]["close"])
+                    other_4ago = float(other_df.iloc[-6]["close"])
+                    other_move = round(other_now - other_4ago, 2)
+                    other_falling = other_move < 0
+            except Exception:
+                pass
+        result["other_falling"] = other_falling
+        result["other_move"] = other_move
 
-        # EMA conditions (info + CONFIRMED tag — never fires alone)
-        rsi_ok = rsi >= 50 and rsi_rising
-        prev_e9 = float(prev.get("EMA_9", 0))
-        prev_e21 = float(prev.get("EMA_21", 0))
-        gap_widening = ema_gap > round(prev_e9 - prev_e21, 2)
-        ema_info = ema_gap >= ema_info_min
-        ema_strong = ema_gap >= ema_fire_min
-        result["ema_ok"] = ema_info
+        # If other side NOT falling - no entry from either timeframe
+        if not other_falling and other_token:
+            reasons = ["OTHER_UP X (" + str(other_move) + "pts)"]
+            if not silent: logger.info("[ENGINE] " + option_type + " DIVERGENCE FAIL " + " ".join(reasons))
+            if len(df_1m) >= fast_candles + 3:
+                ref_1m = float(df_1m.iloc[-3 - fast_candles]["close"])
+                mom_1m = round(float(prev_1m["close"]) - ref_1m, 2)
+                result["momentum_pts"] = mom_1m
+            result["candle_green"] = float(curr_1m["close"]) > float(curr_1m["open"])
+            return result
+
+        # ═══ EMA INFO (never fires alone) ═══
+        rsi_ok = rsi >= 50 and rsi > rsi_prev
+        prev_e9 = float(prev_1m.get("EMA_9", 0))
+        prev_e21 = float(prev_1m.get("EMA_21", 0))
+        prev_gap = round(prev_e9 - prev_e21, 2)
+        gap_widening = ema_gap > prev_gap
+        ema_ok = ema_gap >= cfg.get("ema_gap_min", 3)
+        result["ema_ok"] = ema_ok
         result["rsi_ok"] = rsi_ok
         result["gap_widening"] = gap_widening
-        path_ema = ema_strong and rsi_ok and gap_widening
+        _curr_green_1m = float(curr_1m["close"]) > float(curr_1m["open"])
+        path_ema = ema_ok and rsi_ok and _curr_green_1m and gap_widening
         result["ema_would_fire"] = path_ema
         result["path_a"] = path_ema
 
-        # MOMENTUM calc (confirmation candle shift: from prev back N candles)
-        mom_pts = 0
-        spike_ratio = 0
-        if len(df) >= mom_candles + 3:
-            ref = float(df.iloc[-3 - mom_candles]["close"])
-            mom_pts = round(float(prev["close"]) - ref, 2)
-            result["momentum_pts"] = mom_pts
-            prev_prev = df.iloc[-4]
-            last_mom = round(float(prev["close"]) - float(prev_prev["close"]), 2)
-            if mom_pts > 0:
-                spike_ratio = round(last_mom / mom_pts, 2)
-            result["spike_ratio"] = spike_ratio
+        # ═══ 1-MIN MOMENTUM (FAST) ═══
+        path_fast = False
+        mom_1m = 0
+        if len(df_1m) >= fast_candles + 3:
+            ref_1m = float(df_1m.iloc[-3 - fast_candles]["close"])
+            mom_1m = round(float(prev_1m["close"]) - ref_1m, 2)
+            path_fast = (mom_1m >= fast_pts
+                         and _curr_green_1m
+                         and rsi_rising
+                         and rsi <= rsi_max)
 
-        # -- MOMENTUM FIRE (primary) --
-        path_mom = (mom_pts >= mom_pts_min
-                    and rsi >= mom_rsi_min
-                    and rsi <= rsi_max
-                    and candle_green
-                    and higher_low)
-        result["path_b"] = path_mom
+        # ═══ 3-MIN MOMENTUM (CONFIRMED) ═══
+        path_conf = False
+        mom_3m = 0
+        try:
+            df_3m = D.get_historical_data(token, "3minute", 50)
+            df_3m = D.add_indicators(df_3m)
+            if not df_3m.empty and len(df_3m) >= conf_candles + 3:
+                curr_3m = df_3m.iloc[-2]
+                prev_3m = df_3m.iloc[-3]
+                ref_3m = float(df_3m.iloc[-3 - conf_candles]["close"])
+                mom_3m = round(float(prev_3m["close"]) - ref_3m, 2)
+                curr_3m_green = float(curr_3m["close"]) > float(curr_3m["open"])
+                rsi_3m = float(curr_3m.get("RSI", 50))
+                rsi_3m_prev = float(prev_3m.get("RSI", 50))
+                rsi_3m_rising = rsi_3m > rsi_3m_prev
+                path_conf = (mom_3m >= conf_pts
+                             and curr_3m_green
+                             and rsi_3m_rising
+                             and rsi_3m <= rsi_max)
+        except Exception:
+            pass
 
-        if path_mom:
+        result["momentum_pts"] = max(mom_1m, mom_3m)
+        result["candle_green"] = _curr_green_1m
+        result["path_b"] = path_fast or path_conf
+
+        # ═══ FIRE LOGIC ═══
+        if path_fast and path_conf:
             result["fired"] = True
-            result["entry_level"] = round(float(prev["close"]), 2)
-            if path_ema:
-                result["entry_mode"] = "CONFIRMED"
-                if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_pts_min) + " (3m)"
-                    + " ema=" + str(ema_gap)
-                    + " rsi=" + str(round(rsi, 1))
-                    + (" spike" if spike_ratio > 0.6 else " steady")
-                    + " LIMIT=" + str(round(float(prev["close"]), 2)))
-            else:
-                result["entry_mode"] = "MOMENTUM"
-                if not silent: logger.info("[ENGINE] " + option_type + " ENTRY [MOMENTUM]"
-                    + " mom=" + str(mom_pts) + "/" + str(mom_pts_min) + " (3m)"
-                    + " rsi=" + str(round(rsi, 1))
-                    + (" spike" if spike_ratio > 0.6 else " steady")
-                    + " LIMIT=" + str(round(float(prev["close"]), 2)))
+            result["entry_mode"] = "CONFIRMED"
+            result["momentum_tf"] = "1m+3m"
+            result["momentum_threshold"] = fast_pts
+            if not silent: logger.info("[ENGINE] " + option_type
+                + " ENTRY [CONFIRMED **] 1m=" + str(mom_1m)
+                + " 3m=" + str(mom_3m)
+                + " rsi=" + str(round(rsi, 1))
+                + " other=" + str(other_move)
+                + " entry=" + str(entry_price))
+        elif path_fast:
+            result["fired"] = True
+            result["entry_mode"] = "FAST"
+            result["momentum_tf"] = "1m"
+            result["momentum_threshold"] = fast_pts
+            if not silent: logger.info("[ENGINE] " + option_type
+                + " ENTRY [FAST] 1m=" + str(mom_1m) + "/" + str(fast_pts)
+                + " rsi=" + str(round(rsi, 1))
+                + (" RSIup" if rsi_rising else " RSIdn")
+                + " other=" + str(other_move)
+                + " entry=" + str(entry_price))
+        elif path_conf:
+            result["fired"] = True
+            result["entry_mode"] = "CONFIRMED"
+            result["momentum_tf"] = "3m"
+            result["momentum_threshold"] = conf_pts
+            if not silent: logger.info("[ENGINE] " + option_type
+                + " ENTRY [CONFIRMED *] 3m=" + str(mom_3m) + "/" + str(conf_pts)
+                + " rsi=" + str(round(rsi, 1))
+                + " other=" + str(other_move)
+                + " entry=" + str(entry_price))
         else:
             reasons = []
-            if mom_pts < mom_pts_min:
-                reasons.append("mom=" + str(mom_pts) + "/" + str(mom_pts_min) + "X")
-            else:
-                reasons.append("mom=" + str(mom_pts) + "V")
-            if rsi > rsi_max:
-                reasons.append("RSI_CAP=" + str(round(rsi, 1)))
-            elif rsi < mom_rsi_min:
-                reasons.append("rsi=" + str(round(rsi, 1)) + "X")
-            else:
-                reasons.append("rsi=" + str(round(rsi, 1)) + "V")
-            reasons.append("RSI^" if rsi_rising else "RSIv")
-            reasons.append("SPOTV" if spot_confirms else "SPOTX")
+            reasons.append("1m=" + str(mom_1m) + "/" + str(fast_pts)
+                           + ("V" if mom_1m >= fast_pts else "X"))
+            reasons.append("3m=" + str(mom_3m) + "/" + str(conf_pts)
+                           + ("V" if mom_3m >= conf_pts else "X"))
+            if not _curr_green_1m:
+                reasons.append("REDX")
+            if not rsi_rising:
+                reasons.append("RSIdnX")
+            reasons.append("other=" + str(other_move)
+                           + ("V" if other_falling else "X"))
             if path_ema:
                 reasons.append("[EMAV]")
-            elif ema_info:
-                reasons.append("[ema=" + str(ema_gap) + "]")
             if not silent: logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
 
         return result
@@ -270,19 +307,24 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 #  v13.3 EXIT — SCOUT (LOT1 SL-6) + SOLDIER (LOT2 SL-12) + TRAIL
 # ═══════════════════════════════════════════════════════════════
 
-def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
-    """v13.3: Scout (LOT1 SL-6) + Soldier (LOT2 SL-12) + peak-giveback trail."""
+def manage_exit(state: dict, option_ltp: float, profile: dict,
+                other_token: int = 0) -> list:
+    """v13.5: Logic-based exits. Candle close SL. Dynamic trail."""
     if not state.get("in_trade"):
         return []
+
     entry = state.get("entry_price", 0)
     running = round(option_ltp - entry, 2)
     peak = state.get("peak_pnl", 0)
     candles = state.get("candles_held", 0)
+
     if running > peak:
         state["peak_pnl"] = running
         peak = running
     if running < state.get("trough_pnl", 0):
         state["trough_pnl"] = running
+
+    # RSI on 1-min
     token = state.get("token")
     rsi = 50
     try:
@@ -293,67 +335,114 @@ def manage_exit(state: dict, option_ltp: float, profile: dict) -> list:
     except Exception:
         pass
     state["current_rsi"] = round(rsi, 1)
+
+    # Candle low tracking for spike detection
+    candle_low = state.get("_candle_low", option_ltp)
+    if candle_low <= 0:
+        candle_low = option_ltp
+    if option_ltp < candle_low:
+        state["_candle_low"] = option_ltp
+        candle_low = option_ltp
+
     import VRL_CONFIG as CFG
-    cfg_lots      = CFG.get().get("lots", {})
-    lot1_sl_pts   = cfg_lots.get("lot1_sl", 6)
-    lot2_sl_pts   = cfg_lots.get("lot2_sl", 12)
-    stale_candles = CFG.get().get("exit", {}).get("stale_candles", 5)
-    stale_peak    = CFG.get().get("exit", {}).get("stale_peak_min", 3)
-    rsi_blowoff   = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
-    trail_cfg      = CFG.get().get("profit_trail", {})
-    trail_activate = trail_cfg.get("activate_at", 8)
+    exit_cfg = CFG.get().get("exit", {})
+    candle_sl       = exit_cfg.get("candle_close_sl", 12)
+    max_sl          = exit_cfg.get("max_sl", 20)
+    spike_recovery  = exit_cfg.get("spike_recovery", 8)
+    stale_candles   = exit_cfg.get("stale_candles", 5)
+    stale_peak      = exit_cfg.get("stale_peak_min", 3)
+    rsi_blowoff     = CFG.get().get("rsi_exit", {}).get("blowoff", 80)
 
-    lot1_active = state.get("lot1_active", True)
-    lot2_active = state.get("lot2_active", True)
+    trail_cfg = CFG.get().get("profit_trail", {})
+    entry_mode = state.get("entry_mode", "FAST")
+    min_lock = trail_cfg.get("min_lock", 2)
 
+    if entry_mode == "CONFIRMED":
+        trail_activate = trail_cfg.get("confirmed_activate_at", 20)
+        keep_normal = trail_cfg.get("confirmed_keep_normal", 0.65)
+        keep_warning = trail_cfg.get("confirmed_keep_warning", 0.80)
+    else:
+        trail_activate = trail_cfg.get("fast_activate_at", 15)
+        keep_normal = trail_cfg.get("fast_keep_normal", 0.75)
+        keep_warning = trail_cfg.get("fast_keep_warning", 0.85)
+
+    # ═══ OTHER SIDE ANALYSIS ═══
+    other_reversing = False
+    other_warning = False
+    other_falling = True
+    if other_token:
+        try:
+            other_df = D.get_historical_data(other_token, "3minute", 10)
+            if other_df is not None and not other_df.empty and len(other_df) >= 4:
+                other_curr = other_df.iloc[-2]
+                other_prev = other_df.iloc[-3]
+                other_curr_green = float(other_curr["close"]) > float(other_curr["open"])
+                other_prev_green = float(other_prev["close"]) > float(other_prev["open"])
+                other_rsi = float(other_curr.get("RSI", 50))
+                other_rsi_prev = float(other_prev.get("RSI", 50))
+                other_rsi_rising = other_rsi > other_rsi_prev
+                other_reversing = other_curr_green and other_prev_green and other_rsi_rising
+                other_warning = other_curr_green and not other_prev_green
+                other_falling = not other_curr_green
+        except Exception:
+            pass
+
+    state["other_reversing"] = other_reversing
+    state["other_warning"] = other_warning
+    state["other_falling"] = other_falling
+
+    # ═══ EXIT PRIORITY ORDER ═══
+
+    # 1. EMERGENCY: running below -20
+    if running <= -max_sl:
+        logger.info("[ENGINE] EMERGENCY_SL: running=" + str(running))
+        return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
+
+    # 2. STALE: 5 candles, peak < 3
     if candles >= stale_candles and peak < stale_peak:
-        logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + " candles, peak=" + str(peak))
+        logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + "c peak=" + str(peak))
         return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
 
+    # 3. RSI BLOWOFF > 80
     if rsi > rsi_blowoff:
         logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi, 1)))
         return [{"lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
 
-    if peak >= 30:
-        giveback = trail_cfg.get("giveback_high", 6)
-    elif peak >= 20:
-        giveback = trail_cfg.get("giveback_mid", 7)
-    else:
-        giveback = trail_cfg.get("giveback_low", 8)
-    state["current_giveback"] = giveback
+    # 4. OTHER SIDE REVERSED: 2 green + RSI rising, peak >= 6
+    if other_reversing and peak >= 6:
+        logger.info("[ENGINE] DIVERGENCE_EXIT: other reversed, peak=" + str(round(peak, 1)))
+        return [{"lot_id": "ALL", "reason": "DIVERGENCE_EXIT", "price": option_ltp}]
 
+    # 5. SPIKE CHECK: low touched -12 but close recovered
+    low_touch = candle_low - entry
+    if low_touch <= -candle_sl and running > -spike_recovery:
+        if other_falling:
+            logger.info("[ENGINE] SPIKE_ABSORBED: low=" + str(round(low_touch, 1))
+                         + " close=" + str(round(running, 1)) + " other still falling")
+        else:
+            logger.info("[ENGINE] WEAK_SL: spike + other not falling")
+            return [{"lot_id": "ALL", "reason": "WEAK_SL", "price": option_ltp}]
+
+    # 6. CANDLE CLOSE SL: real drop, not spike
+    if running <= -candle_sl:
+        logger.info("[ENGINE] CANDLE_SL: running=" + str(running))
+        return [{"lot_id": "ALL", "reason": "CANDLE_SL", "price": option_ltp}]
+
+    # 7. DYNAMIC TRAIL
     if peak >= trail_activate:
-        floor_sl = entry + (peak - giveback)
-    else:
-        floor_sl = 0
-    state["current_floor"] = round(floor_sl, 2) if peak >= trail_activate else 0
+        keep = keep_warning if other_warning else keep_normal
+        lock_pts = round(peak * keep, 1)
+        lock_pts = max(lock_pts, min_lock)
+        floor_sl = entry + lock_pts
+        state["current_floor"] = round(floor_sl, 2)
+        state["current_keep"] = keep
+        state["current_lock"] = round(lock_pts, 1)
 
-    exits = []
+        if option_ltp <= floor_sl:
+            logger.info("[ENGINE] TRAIL_FLOOR: peak=" + str(round(peak, 1))
+                         + " keep=" + str(keep) + " lock=+" + str(lock_pts)
+                         + " floor=" + str(round(floor_sl, 2)))
+            return [{"lot_id": "ALL", "reason": "TRAIL_FLOOR", "price": option_ltp}]
 
-    if lot1_active:
-        lot1_trigger = entry - lot1_sl_pts
-        if peak >= trail_activate:
-            lot1_trigger = max(lot1_trigger, floor_sl)
-        if option_ltp <= lot1_trigger:
-            reason = "TRAIL_FLOOR" if peak >= trail_activate else "SCOUT_SL"
-            logger.info("[ENGINE] LOT1 " + reason
-                + ": running=" + str(running)
-                + " trigger=₹" + str(round(lot1_trigger, 2)))
-            exits.append({"lot_id": "LOT1", "reason": reason,
-                          "price": option_ltp, "qty": D.LOT_SIZE})
-
-    if lot2_active:
-        lot2_trigger = entry - lot2_sl_pts
-        if peak >= trail_activate:
-            lot2_trigger = max(lot2_trigger, floor_sl)
-        if option_ltp <= lot2_trigger:
-            reason = "TRAIL_FLOOR" if peak >= trail_activate else "HARD_SL"
-            logger.info("[ENGINE] LOT2 " + reason
-                + ": running=" + str(running)
-                + " trigger=₹" + str(round(lot2_trigger, 2)))
-            exits.append({"lot_id": "LOT2", "reason": reason,
-                          "price": option_ltp, "qty": D.LOT_SIZE})
-
-    return exits
-
+    return []
 

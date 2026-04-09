@@ -109,8 +109,7 @@ def validate_entry(state, entry_result, kite=None):
 
     # CHECK 6: Entry mode is valid (v13.3: entry_mode is the source of truth)
     mode = state.get("entry_mode", "") or state.get("mode", "")
-    valid_modes = ("MOMENTUM", "CONFIRMED", "BOTH", "EMA",
-                   "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION")
+    valid_modes = ("FAST", "CONFIRMED", "MOMENTUM", "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION")
     if mode and mode not in valid_modes:
         failures.append("ENTRY_MODE: invalid mode=" + str(mode))
 
@@ -173,12 +172,7 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
         failures.append("CHECK11_ERR: " + str(e))
 
     # CHECK 12: Exit reason is in the known set
-    valid_reasons = (
-        "HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL",
-        "RSI_BLOWOFF", "RSI_SPIKE", "STALE_ENTRY", "EOD_EXIT",
-        "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "ATR_TRAIL",
-        "CIRCUIT_BREAKER_EXIT",
-    )
+    valid_reasons = ("HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL", "RSI_BLOWOFF", "RSI_SPIKE", "STALE_ENTRY", "EOD_EXIT", "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "ATR_TRAIL", "CIRCUIT_BREAKER_EXIT", "SCOUT_SL", "CANDLE_SL", "EMERGENCY_SL", "DIVERGENCE_EXIT", "WEAK_SL")
     if exit_reason not in valid_reasons:
         failures.append("EXIT_REASON: unknown=" + str(exit_reason))
 

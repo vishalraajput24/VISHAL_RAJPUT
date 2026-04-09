@@ -143,6 +143,9 @@ def init_db():
             ("spot_confirms",   "INTEGER DEFAULT 0"),
             ("spot_move",       "REAL DEFAULT 0"),
             ("spike_ratio",     "REAL DEFAULT 0"),
+            ("momentum_tf",     "TEXT DEFAULT ''"),
+            ("other_falling",   "INTEGER DEFAULT 0"),
+            ("other_move",      "REAL DEFAULT 0"),
         ]
         _existing = {row[1] for row in c.execute("PRAGMA table_info(trades)")}
         for _cname, _ctype in _new_trade_cols:

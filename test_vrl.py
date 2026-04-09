@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.3", D.VERSION == "v13.3", "got " + str(D.VERSION))
+test("VERSION = v13.5", D.VERSION == "v13.5", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -150,7 +150,7 @@ test("SL = entry - 15", sl == 135.0, "got " + str(sl))
 #  ENGINE TESTS — v13.0 EXIT
 # ═══════════════════════════════════════════════════════════════
 
-section("EXIT — HARD SL")
+section("EXIT — v13.5 CANDLE CLOSE SL")
 
 def _make_exit_state(entry, peak=0, candles=0, lot1=True, lot2=True, split=False):
     return {
@@ -158,28 +158,38 @@ def _make_exit_state(entry, peak=0, candles=0, lot1=True, lot2=True, split=False
         "trough_pnl": 0, "candles_held": candles, "token": 12345,
         "lot1_active": lot1, "lot2_active": lot2,
         "lots_split": split, "lot2_trail_sl": 0.0,
-        "mode": "MINIMAL", "current_rsi": 50,
+        "mode": "FAST", "entry_mode": "FAST",
+        "current_rsi": 50, "_candle_low": entry,
     }
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # Running -6.5 → Scout SL (LOT1 only)
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 193.5, {})
-    lot1_hit = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in exits)
-    lot2_hit = any(x["lot_id"] == "LOT2" for x in exits)
-    test("Running -6.5 → Scout SL only", lot1_hit and not lot2_hit, "got " + str(exits))
-
-    # Running -5.5 → neither lot
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 194.5, {})
-    test("Running -5.5 → no exit", len(exits) == 0, "got " + str(exits))
-
-    # Running -12 → both lots exit
+    # Running -12 → CANDLE_SL (ALL, not per-lot)
     st = _make_exit_state(200, peak=0, candles=1)
     exits = E.manage_exit(st, 188, {})
-    l1 = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in exits)
-    l2 = any(x["lot_id"] == "LOT2" and x["reason"] == "HARD_SL" for x in exits)
-    test("Running -12 → LOT1 SCOUT_SL + LOT2 HARD_SL", l1 and l2, "got " + str(exits))
+    test("Running -12 → CANDLE_SL (ALL)",
+         len(exits) == 1 and exits[0]["reason"] == "CANDLE_SL"
+         and exits[0]["lot_id"] == "ALL",
+         "got " + str(exits))
+
+    # Running -11 → no exit (below candle_close_sl)
+    st = _make_exit_state(200, peak=0, candles=1)
+    exits = E.manage_exit(st, 189, {})
+    test("Running -11 → no exit", len(exits) == 0, "got " + str(exits))
+
+    # Running -20 → EMERGENCY_SL
+    st = _make_exit_state(200, peak=0, candles=1)
+    exits = E.manage_exit(st, 180, {})
+    test("Running -20 → EMERGENCY_SL",
+         len(exits) == 1 and exits[0]["reason"] == "EMERGENCY_SL",
+         "got " + str(exits))
+
+    # Spike absorbed: low touched -13 but close -5, no other_token (treated as falling) → hold
+    st = _make_exit_state(200, peak=0, candles=1)
+    st["_candle_low"] = 187  # low hit -13
+    exits = E.manage_exit(st, 195, {})  # close -5
+    test("Spike absorbed: low -13 close -5 → HOLD",
+         len(exits) == 0, "got " + str(exits))
+
 
 
 section("EXIT — STALE ENTRY")
@@ -202,12 +212,6 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
 section("EXIT — PROFIT FLOORS")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # Peak 10, drop to floor (entry+2)
-    st = _make_exit_state(200, peak=10, candles=6)
-    exits = E.manage_exit(st, 201, {})  # running=1, floor_sl=202
-    test("Peak 10 running 1 → TRAIL_FLOOR (both lots)",
-         len(exits) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in exits),
-         "got " + str(exits))
 
     # Peak 10, running 5 → no exit
     st = _make_exit_state(200, peak=10, candles=6)
@@ -495,22 +499,31 @@ if hasattr(DB._local, "conn"):
 section("EXIT PATHS — COMPREHENSIVE")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # v13.3: -12 fires both LOT1 SCOUT_SL + LOT2 HARD_SL
+    # CANDLE_SL at -12
     _st = _make_exit_state(200, peak=0, candles=1)
     _ex = E.manage_exit(_st, 188, {})
-    _l1 = any(x["lot_id"] == "LOT1" and x["reason"] == "SCOUT_SL" for x in _ex)
-    _l2 = any(x["lot_id"] == "LOT2" and x["reason"] == "HARD_SL" for x in _ex)
-    test("Both lots at -12", _l1 and _l2, "got " + str(_ex))
+    test("CANDLE_SL at -12",
+         len(_ex) == 1 and _ex[0]["reason"] == "CANDLE_SL")
+
+    # EMERGENCY_SL at -20
+    _st = _make_exit_state(200, peak=0, candles=1)
+    _ex = E.manage_exit(_st, 180, {})
+    test("EMERGENCY_SL at -20",
+         len(_ex) == 1 and _ex[0]["reason"] == "EMERGENCY_SL")
 
     # STALE at 5 candles + peak < 3
     _st = _make_exit_state(200, peak=2, candles=5)
     _ex = E.manage_exit(_st, 201, {})
-    test("STALE at 5 candles peak<3", len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
+    test("STALE at 5 candles peak<3",
+         len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
 
-    # PROFIT_FLOOR at peak 10 drop to floor
-    _st = _make_exit_state(200, peak=10, candles=6)
-    _ex = E.manage_exit(_st, 201, {})
-    test("TRAIL_FLOOR peak 10", len(_ex) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in _ex))
+    # FAST TRAIL_FLOOR at peak 15
+    _st = _make_exit_state(200, peak=15, candles=6)
+    _st["entry_mode"] = "FAST"
+    _ex = E.manage_exit(_st, 211, {})
+    test("FAST TRAIL_FLOOR peak 15",
+         len(_ex) == 1 and _ex[0]["reason"] == "TRAIL_FLOOR")
+
 
 # RSI_BLOWOFF at 82
 _st = _make_exit_state(200, peak=15, candles=5)

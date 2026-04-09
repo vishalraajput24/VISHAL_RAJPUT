@@ -3,7 +3,7 @@
 #  Momentum primary + EMA secondary entry, unified 2-lot exit
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.3"
+version: "v13.5"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -18,34 +18,40 @@ instrument:
 lots:
   count: 2
   size: 65
-  lot1_sl: 6             # scout — tight SL
-  lot2_sl: 12            # soldier — normal SL
 
 cooldown:
   after_win: 10
   after_loss: 6
 
 entry:
-  momentum_pts: 20             # 3-min timeframe: 20pts/3c = 9 min move
-  momentum_candles: 3
-  momentum_timeframe: 3minute  # entry scan timeframe
-  momentum_rsi_min: 45
+  # 1-min primary (fast)
+  fast_momentum_pts: 14
+  fast_momentum_candles: 4
+  # 3-min secondary (confirmed)
+  confirmed_momentum_pts: 20
+  confirmed_momentum_candles: 3
+  # Common
   rsi_max: 72
-  rsi_max_ema: 68
-  ema_gap_min: 3
-  ema_fire_min: 5
-  limit_timeout_sec: 120          # dashboard info only, not entry trigger
+  ema_gap_min: 3              # info only
 
 exit:
-  hard_sl: 12
+  candle_close_sl: 12         # exit only on candle CLOSE below -12
+  max_sl: 20                  # absolute emergency
+  spike_recovery: 8           # if low hits -12 but close > -8, hold
   stale_candles: 5
   stale_peak_min: 3
 
 profit_trail:
-  activate_at: 8
-  giveback_low: 8       # peak 8-19: room to breathe
-  giveback_mid: 7       # peak 20-29: tightening
-  giveback_high: 6      # peak 30+: lock hard
+  # FAST entry (1-min only)
+  fast_activate_at: 15
+  fast_keep_normal: 0.75      # other falling → keep 75%
+  fast_keep_warning: 0.85     # other 1 green → keep 85%
+  # CONFIRMED entry (3-min agrees)
+  confirmed_activate_at: 20
+  confirmed_keep_normal: 0.65  # wider — let runners run
+  confirmed_keep_warning: 0.80
+  # Common
+  min_lock: 2                  # never below +2 once trail active
 
 rsi_exit:
   blowoff: 80
