@@ -176,6 +176,13 @@
 - **Lesson:** Config entries that are never read by the engine are worse than missing — they create a false sense of safety. Always verify config keys are actually consumed by the code path they're supposed to control.
 - **File:** VRL_ENGINE.py manage_exit(), VRL_MAIN.py FORCE_EXIT
 
+## BUG-028: Phantom trade state after market close
+- **Found:** April 10, 2026
+- **Root cause:** CE 24050 trade entered at 15:05:31 was still open in state when market closed at 15:30. The EOD cutoff handler fires at 15:28 (paper) but only if the strategy loop reaches that code within that exact minute. If the bot is slow, restarted, or the loop misses the window, the trade survives in state as in_trade=True forever. After restart, the bot resumed polling option LTP via REST every second to monitor a phantom position on a closed market.
+- **Fix:** Three layers of protection: (1) Catch-all EOD handler at 15:30+ that force-exits any still-open position, gated by `_eod_exited` flag to run once per day. (2) Startup safety check that clears phantom trade state if bot starts outside market hours with in_trade=True, sends a Telegram alert with the phantom position details, and calls _save_state(). (3) Shutdown handler logs a warning when shutting down with an open trade so the operator knows state was preserved. Verified all 6 exit code paths call _save_state() after setting in_trade=False.
+- **Lesson:** Every state mutation must be immediately persisted. Never assume the next loop iteration will save state — the process may be killed first. EOD handlers must have a catch-all at market close time, not just a narrow minute window.
+- **File:** VRL_MAIN.py
+
 ---
 
 ## Prevention Rules

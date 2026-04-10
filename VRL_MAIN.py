@@ -306,6 +306,7 @@ def _reset_daily(today_str: str):
         state["daily_pnl"]             = 0.0
         state["profit_locked"]         = False
         state["_eod_reported"]         = False
+        state["_eod_exited"]           = False
         state["paused"]                = False
         state["_bias_done"]            = False
         state["_straddle_done"]        = False
@@ -1994,6 +1995,15 @@ def _strategy_loop(kite):
                                       "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
                                       "price": option_ltp}]
 
+                    # BUG-028: catch-all EOD exit at 15:30+ if cutoff above was missed
+                    if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
+                        if not state.get("_eod_exited"):
+                            logger.warning("[MAIN] 15:30 catch-all — forcing exit on open trade")
+                            _tg_send("⚠️ <b>15:30 MARKET CLOSE</b>\nForcing exit on open position")
+                            exit_list = [{"lots": "ALL", "lot_id": "ALL",
+                                          "reason": "MARKET_CLOSE", "price": option_ltp}]
+                            state["_eod_exited"] = True
+
                     # Dashboard signal scan — only on new 1-min candle
                     _scan_min = now.strftime("%H:%M")
                     if _scan_min != state.get("_last_dash_scan_min", "") and now.second >= 31:
@@ -2422,6 +2432,11 @@ def _shutdown(signum, frame):
     logger.info("[MAIN] Shutdown signal received")
     _running = False
     _stop_telegram_listener()
+    # BUG-028: warn if shutting down with open trade
+    if state.get("in_trade"):
+        logger.warning("[MAIN] Shutdown with open trade — state preserved for resume"
+                       " (symbol=" + state.get("symbol", "?")
+                       + " pnl=" + str(state.get("peak_pnl", 0)) + ")")
     _save_state()
     _remove_pid()
     logger.info("[MAIN] Clean shutdown")
@@ -2457,6 +2472,32 @@ def main():
 
     _load_state()
     _reconcile_positions(kite)
+
+    # BUG-028: Clear phantom trade state if bot starts outside market hours
+    if state.get("in_trade") and not D.is_market_open():
+        logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
+        _tg_send("⚠️ Phantom trade detected on startup — state cleared\n"
+                 "Symbol: " + state.get("symbol", "?") + "\n"
+                 "Entry: " + str(state.get("entry_price", 0)) + "\n"
+                 "Peak: " + str(state.get("peak_pnl", 0)))
+        with _state_lock:
+            state["in_trade"] = False
+            state["symbol"] = ""
+            state["token"] = None
+            state["direction"] = ""
+            state["entry_price"] = 0.0
+            state["entry_time"] = ""
+            state["exit_phase"] = 1
+            state["phase1_sl"] = 0.0
+            state["peak_pnl"] = 0.0
+            state["candles_held"] = 0
+            state["lot1_active"] = True
+            state["lot2_active"] = True
+            state["lots_split"] = False
+            state["_static_floor_sl"] = 0
+            state["current_floor"] = 0.0
+        _save_state()
+        logger.info("[MAIN] Phantom trade state cleared ✓")
 
     # Run daily lab data cleanup
     try:
