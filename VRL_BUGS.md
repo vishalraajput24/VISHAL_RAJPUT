@@ -107,11 +107,18 @@
 - **Lesson:** Same lesson as BUG-015 — never define paths in two files. Always use a single REPO_DIR constant. BASE_DIR (home) should only be used for things genuinely outside the repo (like ~/.kite_env).
 - **File:** VRL_DATA.py
 
+## BUG-017: DB corruption hidden at DEBUG level
+- **Found:** April 10, 2026
+- **Root cause:** Every DB exception handler in VRL_DB.py used `logger.debug`, so a malformed SQLite file failed silently every minute (twice per cycle, once for CE scan + once for PE scan). No Telegram alert, no WARNING in the live log — the only trace was DEBUG-level "Query error: database disk image is malformed" that never made it to production log files.
+- **Fix:** Added `_report_db_error(context, exc)` helper in VRL_DB.py. First occurrence of each distinct error surfaces at WARNING, subsequent repeats throttle down to DEBUG to avoid log spam. Any error containing "malformed", "corrupt", or "not a database" also triggers a one-shot Telegram alert with recovery instructions. All 8 catch blocks in VRL_DB.py now route through this helper. Added a startup `PRAGMA quick_check` in `init_db()` so corruption is detected immediately on bot start instead of waiting for the first query.
+- **Lesson:** Reinforces Prevention Rule #1 — NEVER use `logger.debug` in DB/critical catch blocks. If a failure mode can leave the bot running but broken, it MUST alert.
+- **File:** VRL_DB.py
+
 ---
 
 ## Prevention Rules
 
-1. **Never use `logger.debug` in catch blocks** — use `logger.warning` minimum
+1. **Never use `logger.debug` in catch blocks** — use `logger.warning` minimum. For DB/IO errors that can repeat every cycle, throttle repeats via a per-error-signature `seen` set rather than downgrading the first sighting (see `_report_db_error` in VRL_DB.py).
 2. **Never fall back to unlocked ATM** — force relock or skip
 3. **Always capture state values BEFORE state reset** — entry, strike, peak, candles
 4. **Always pass strike explicitly** — never rely on regex parsing of NIFTY symbols

@@ -17,6 +17,65 @@ _local = threading.local()
 _init_lock = threading.Lock()
 _initialized = False
 
+# ── Error visibility ─────────────────────────────────────────
+# BUG-017: DB errors used to log at DEBUG level and vanish silently.
+# Now the first occurrence of each distinct error surfaces at WARNING,
+# repeats are throttled to DEBUG, and malformed/corrupt errors trigger
+# a one-shot Telegram alert so a broken DB can't hide for a full session.
+_db_seen_errors = set()
+_db_corruption_alerted = False
+_db_alert_lock = threading.Lock()
+
+
+def _report_db_error(context: str, err: Exception):
+    """Central DB error reporter. First sighting → WARNING. Repeat → DEBUG.
+    Corruption errors also trigger a one-shot Telegram alert."""
+    global _db_corruption_alerted
+    msg_full = "[DB] " + context + ": " + str(err)
+    sig = context + "|" + type(err).__name__ + "|" + str(err)[:80]
+
+    with _db_alert_lock:
+        first_time = sig not in _db_seen_errors
+        if first_time:
+            _db_seen_errors.add(sig)
+
+    if first_time:
+        logger.warning(msg_full)
+    else:
+        logger.debug(msg_full)
+
+    # Catastrophic: DB file corrupt. Alert once per session.
+    err_str = str(err).lower()
+    if ("malformed" in err_str or "corrupt" in err_str
+            or "not a database" in err_str):
+        with _db_alert_lock:
+            if _db_corruption_alerted:
+                return
+            _db_corruption_alerted = True
+        try:
+            import VRL_DATA as _D
+            import requests as _rq
+            if _D.TELEGRAM_TOKEN and _D.TELEGRAM_CHAT_ID:
+                _rq.post(
+                    "https://api.telegram.org/bot" + _D.TELEGRAM_TOKEN + "/sendMessage",
+                    json={
+                        "chat_id": _D.TELEGRAM_CHAT_ID,
+                        "text": ("🚨 <b>DB CORRUPT</b>\n"
+                                 "File: " + DB_PATH + "\n"
+                                 "Context: " + context + "\n"
+                                 "Error: " + str(err)[:200] + "\n\n"
+                                 "Trading continues (uses Kite API, not DB),\n"
+                                 "but scans/trades aren't being logged.\n"
+                                 "Recover with: sqlite3 " + DB_PATH
+                                 + " '.recover' | sqlite3 recovered.db"),
+                        "parse_mode": "HTML",
+                    },
+                    timeout=10,
+                )
+                logger.error("[DB] Corruption alert sent to Telegram")
+        except Exception as _e:
+            logger.error("[DB] Failed to send corruption alert: " + str(_e))
+
 
 def get_conn():
     """Get thread-local connection with WAL mode."""
@@ -29,6 +88,25 @@ def get_conn():
     return _local.conn
 
 
+def _startup_integrity_check(conn):
+    """Run PRAGMA quick_check once at startup. If the DB is corrupt,
+    _report_db_error triggers the Telegram alert before the bot even
+    starts scanning. Non-fatal: we let init_db continue so trading
+    (which doesn't need the DB) still works."""
+    try:
+        row = conn.execute("PRAGMA quick_check").fetchone()
+        result = (row[0] if row else "unknown") or "unknown"
+        if str(result).lower() != "ok":
+            _report_db_error(
+                "startup integrity",
+                sqlite3.DatabaseError("quick_check returned: " + str(result)),
+            )
+        else:
+            logger.info("[DB] Startup integrity check: ok")
+    except Exception as e:
+        _report_db_error("startup integrity", e)
+
+
 def init_db():
     """Create all tables and indexes if not exist. Call at startup. Thread-safe."""
     global _initialized
@@ -36,6 +114,7 @@ def init_db():
         if _initialized:
             return
         conn = get_conn()
+        _startup_integrity_check(conn)
         c = conn.cursor()
 
         # ── SPOT TABLES ──
@@ -242,7 +321,7 @@ def _insert(table, row, fields):
         conn.execute(f"INSERT OR IGNORE INTO {table}({cols}) VALUES ({placeholders})", vals)
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] Insert " + table + ": " + str(e))
+        _report_db_error("Insert " + table, e)
 
 
 def _insert_many(table, rows, fields):
@@ -257,7 +336,7 @@ def _insert_many(table, rows, fields):
         conn.executemany(f"INSERT OR IGNORE INTO {table}({cols}) VALUES ({placeholders})", data)
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] Insert many " + table + ": " + str(e))
+        _report_db_error("Insert many " + table, e)
 
 
 def _insert_many_fn(table, fields):
@@ -410,7 +489,7 @@ def update_scan_fwd(timestamp, direction, fwd_3c, fwd_5c, fwd_10c, outcome):
         )
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] Update scan fwd: " + str(e))
+        _report_db_error("Update scan fwd", e)
 
 
 def update_option_1min_fwd(timestamp, opt_type, fwd_1c, fwd_3c, fwd_5c, outcome):
@@ -423,7 +502,7 @@ def update_option_1min_fwd(timestamp, opt_type, fwd_1c, fwd_3c, fwd_5c, outcome)
         )
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] Update opt1m fwd: " + str(e))
+        _report_db_error("Update opt1m fwd", e)
 
 
 def update_option_3min_fwd(timestamp, opt_type, fwd_3c, fwd_6c, fwd_9c, outcome):
@@ -436,7 +515,7 @@ def update_option_3min_fwd(timestamp, opt_type, fwd_3c, fwd_6c, fwd_9c, outcome)
         )
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] Update opt3m fwd: " + str(e))
+        _report_db_error("Update opt3m fwd", e)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -454,7 +533,7 @@ def query(sql, params=None):
         return rows
     except Exception as e:
         conn.row_factory = None
-        logger.debug("[DB] Query error: " + str(e))
+        _report_db_error("Query error", e)
         return []
 
 
@@ -529,7 +608,7 @@ def create_token(name: str, days: int = 30) -> str:
                      (token, name, now, expires))
         conn.commit()
     except Exception as e:
-        logger.debug("[DB] create_token: " + str(e))
+        _report_db_error("create_token", e)
     return token
 
 
@@ -623,7 +702,7 @@ def cleanup_old_db_data(retention_days=30):
                 total += n
                 logger.info("[DB] Cleaned " + t + ": " + str(n) + " rows (before " + cutoff + ")")
         except Exception as e:
-            logger.debug("[DB] Cleanup " + t + ": " + str(e))
+            _report_db_error("Cleanup " + t, e)
     if total > 0:
         conn.commit()
         logger.info("[DB] Total cleaned: " + str(total) + " rows")
@@ -639,7 +718,7 @@ def vacuum_db():
         after = db_size_mb()
         logger.info("[DB] Vacuum done: " + str(before) + "MB → " + str(after) + "MB")
     except Exception as e:
-        logger.debug("[DB] Vacuum error: " + str(e))
+        _report_db_error("Vacuum error", e)
 
 
 def db_size_mb() -> float:
