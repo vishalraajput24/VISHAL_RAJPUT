@@ -31,10 +31,13 @@ if not val_logger.handlers:
     val_logger.propagate = False
 
 # ── Paths ─────────────────────────────────────────────────────
+# Token + state paths come from VRL_DATA so AUTH/MAIN/VALIDATE all
+# agree on one location. BUG-015.
+import VRL_DATA as _D
 _DB_PATH    = os.path.expanduser("~/lab_data/vrl_data.db")
 _CSV_PATH   = os.path.expanduser("~/lab_data/vrl_trade_log.csv")
-_DASH_PATH  = os.path.expanduser("~/state/vrl_dashboard.json")
-_TOKEN_PATH = os.path.expanduser("~/state/access_token.json")
+_DASH_PATH  = os.path.join(_D.STATE_DIR, "vrl_dashboard.json")
+_TOKEN_PATH = _D.TOKEN_FILE_PATH
 
 
 def _safe(fn, *a, **kw):

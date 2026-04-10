@@ -51,6 +51,7 @@ TELEGRAM_TOKEN   = os.getenv("TG_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TG_GROUP_ID", "")
 
 BASE_DIR         = os.path.expanduser("~")
+REPO_DIR         = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR         = os.path.join(BASE_DIR, "logs")
 LIVE_LOG_DIR     = os.path.join(LOGS_DIR, "live")
 LAB_LOG_DIR      = os.path.join(LOGS_DIR, "lab")
@@ -61,7 +62,9 @@ HEALTH_LOG_DIR   = os.path.join(LOGS_DIR, "health")
 ZONES_LOG_DIR    = os.path.join(LOGS_DIR, "zones")
 ML_LOG_DIR       = os.path.join(LOGS_DIR, "ml")
 ERROR_LOG_DIR    = os.path.join(LOGS_DIR, "errors")
-STATE_DIR        = os.path.join(BASE_DIR, "state")
+# STATE_DIR lives next to the code (inside the repo) so AUTH and MAIN
+# always agree on the token location. BUG-015.
+STATE_DIR        = os.path.join(REPO_DIR, "state")
 LAB_DIR          = os.path.join(BASE_DIR, "lab_data")
 BACKUP_DIR       = os.path.join(BASE_DIR, "backups")
 OPTIONS_3MIN_DIR = os.path.join(LAB_DIR, "options_3min")

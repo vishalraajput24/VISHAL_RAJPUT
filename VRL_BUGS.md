@@ -93,6 +93,13 @@
 - **Fix:** `_log_trade` falls back to ATM calculation if strike=0. Entry uses locked strike.
 - **File:** VRL_MAIN.py
 
+## BUG-015: WebSocket stale at market open — token path mismatch
+- **Found:** April 10, 2026
+- **Root cause:** VRL_AUTH wrote access_token.json to ~/state/ but VRL_MAIN read from ~/VISHAL_RAJPUT/state/. MAIN never saw fresh tokens at startup, WebSocket stayed stale until manual reconnect after market opened.
+- **Fix:** VRL_AUTH now imports TOKEN_FILE_PATH from VRL_DATA.py — single source of truth for token location. Both files now write/read from ~/VISHAL_RAJPUT/state/access_token.json.
+- **Lesson:** Never hardcode paths in two files. Always import from a central constant.
+- **File:** VRL_AUTH.py, VRL_DATA.py
+
 ---
 
 ## Prevention Rules
