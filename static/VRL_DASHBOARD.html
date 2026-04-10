@@ -191,7 +191,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=mk.version||d.version||'v13.5';
+document.getElementById('ver').textContent=d.version||mk.version||'v13.5';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -202,10 +202,15 @@ if(mk.regime){tg+='<span class="tag '+regC(mk.regime)+'">'+esc(mk.regime)+'</spa
 if(mk.market_open&&!mk.indicators_warm)tg+='<span class="tag tw">WARMUP</span>';
 document.getElementById('tags').innerHTML=tg;
 
-var dp=parseFloat(td.pnl||0),dc=dp>=0?'gn':'rd';
+// BUG-025: include floating open PNL in day total
+var _realized=parseFloat(td.pnl||0);
+var _open=pos.in_trade?parseFloat(pos.pnl||0):0;
+var dp=_realized+_open,dc=dp>=0?'gn':'rd';
 document.getElementById('st-pnl').className='va mono '+dc;
 document.getElementById('st-pnl').textContent=fmt(dp)+'pts';
-document.getElementById('st-rs').textContent=rs(dp);
+var _rs_sub=rs(dp);
+if(pos.in_trade&&_open!==0)_rs_sub+='<br><span style="font-size:8px;color:var(--tx3)">Realized '+fmt(_realized)+' Open '+fmt(_open)+'</span>';
+document.getElementById('st-rs').innerHTML=_rs_sub;
 document.getElementById('st-pnl-card').className='stat '+(dp>=0?'st-up':'st-dn');
 document.getElementById('st-trades').textContent=td.trades||0;
 var _w=td.wins||0,_l=td.losses||0,_tc=td.trades||0;
@@ -222,10 +227,19 @@ if(pos.in_trade){
   var sym=shortSym(pos.symbol,pos.direction,pos.strike);
   var pnl=parseFloat(pos.pnl||0),pk=parseFloat(pos.peak||0);
   var entry=parseFloat(pos.entry||0),ltp=parseFloat(pos.ltp||0);
-  var sl=parseFloat(pos.sl||0),rsi=parseFloat(pos.current_rsi||pos.rsi||0);
-  var cn=pos.candles||0,l1=pos.lot1_active,l2=pos.lot2_active,sp=pos.lots_split;
-  var al=(l1?1:0)+(l2?1:0);
+  var rsi=parseFloat(pos.current_rsi||pos.rsi||0);
+  var cn=pos.candles||0,sp=pos.lots_split;
+  // BUG-022: read lot active status from lot1/lot2 objects
+  var _lot1=pos.lot1||{},_lot2=pos.lot2||{};
+  var l1=(_lot1.status==='active'),l2=(_lot2.status==='active');
+  var al=(l1?1:0)+(l2?1:0); if(al===0)al=2; // fallback: both active
   var prs=Math.round(pnl*65*al),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
+  // BUG-023: compute active SL from lot objects + profit floors
+  var sl=parseFloat(l1?_lot1.sl:_lot2.sl)||parseFloat(pos.sl||0);
+  if(sl<=0)sl=Math.round((entry-12)*100)/100;
+  var _pk=parseFloat(pos.peak||0);
+  var _pfloors=[{p:10,l:2},{p:20,l:12},{p:30,l:22},{p:40,l:32}];
+  for(var _i=0;_i<_pfloors.length;_i++){if(_pk>=_pfloors[_i].p){var _c=Math.round((entry+_pfloors[_i].l)*100)/100;if(_c>sl)sl=_c;}}
   var em=pos.entry_mode||pos.mode||'',bc=em==='FAST'?'bf':'bc';
   pa+='<div class="pos '+pc+'">';
   pa+='<div class="ph"><div class="ps"><div class="pd '+(sp?'s':'g')+'"></div>'+esc(sym)+' '+(sp?'SPLIT':'IN TRADE')+'</div>';
@@ -245,10 +259,10 @@ if(pos.in_trade){
     pa+='<div class="lt"><div class="ll">Lot 2</div><div class="lv" style="color:'+(l2?'var(--or)':'var(--tx3)')+'">'+( l2?'ATR Trail':'Exited')+'</div>'+(l2?'<div class="ls mono">SL \u20B9'+sl2+'</div>':'')+'</div>';
   }
   pa+='</div>';
-  // RSI bar
-  var rp=Math.min(Math.max((rsi/80)*100,0),100);
-  pa+='<div class="rb"><div class="rl"><span>RSI '+Math.round(rsi)+(sp?' \u26A1':'')+' \u2192 split at 70</span><span>'+Math.round(rp)+'%</span></div>';
-  pa+='<div class="rt"><div class="rf" style="width:'+rp+'%;background:linear-gradient(90deg,var(--gn),var(--yl),var(--or))"></div><div class="rm" style="left:87.5%"></div></div></div>';
+  // BUG-024: RSI bar — cap at 72, no split label
+  var rp=Math.min(Math.max((rsi/72)*100,0),100);
+  pa+='<div class="rb"><div class="rl"><span>RSI '+Math.round(rsi)+' \u2192 cap 72</span><span>'+Math.round(rp)+'%</span></div>';
+  pa+='<div class="rt"><div class="rf" style="width:'+rp+'%;background:linear-gradient(90deg,var(--gn),var(--yl),var(--or))"></div></div></div>';
   // Floors
   var floors=[10,20,30,40];
   pa+='<div class="fls">';
@@ -357,7 +371,11 @@ if(trades&&trades.length){
     th+='<div class="tp2 mono '+(w?'gn':'rd')+'">'+fmt(p)+'</div>';
     th+='<div class="ti"><div class="tn">'+esc(shortSym(t.symbol,t.direction,t.strike));
     var em2=t.entry_mode||t.mode||'';
-    if(em2)th+=' <span class="bg '+(em2==='FAST'?'bf':'bc')+'" style="font-size:7px;padding:2px 8px">'+esc(em2)+'</span>';
+    // BUG-026: show LEGACY for old MINIMAL/empty modes
+    if(em2==='MINIMAL'||em2==='EMA')em2='LEGACY';
+    var _bc2=em2==='FAST'?'bf':em2==='LEGACY'?'':'bc';
+    var _bstyle=em2==='LEGACY'?'background:var(--bg2);color:var(--tx3);box-shadow:none':'';
+    if(em2)th+=' <span class="bg '+_bc2+'" style="font-size:7px;padding:2px 8px;'+_bstyle+'">'+esc(em2)+'</span>';
     th+='</div><div class="tt">'+(t.entry_time||'')+' \u2192 '+(t.exit_time||'')+' \u00B7 '+(t.candles_held||0)+'c \u00B7 Peak '+fmt(t.peak_pnl||0)+'</div></div>';
     th+='<div class="tre">'+esc(t.exit_reason||'')+'</div></div>';
   });

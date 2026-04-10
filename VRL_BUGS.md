@@ -139,6 +139,43 @@
 - **Fix:** Added `_relock_skip_count` — max 3 consecutive skips. After 3 skips, force relock regardless of momentum. Counter resets on successful relock.
 - **File:** VRL_MAIN.py (relock section in strategy loop)
 
+## BUG-022: Dashboard position card shows ₹0 rupee value
+- **Found:** April 10, 2026
+- **Root cause:** Dashboard JS read `pos.lot1_active` / `pos.lot2_active` which don't exist at the top level of the position JSON. The lot active status lives inside `pos.lot1.status` and `pos.lot2.status`. So `al=0` → `prs=0`.
+- **Fix:** Read lot active status from `pos.lot1.status==='active'` and `pos.lot2.status==='active'`. Fallback to 2 lots if both are undefined.
+- **File:** static/VRL_DASHBOARD.html
+
+## BUG-023: Dashboard lot cards show "SL ₹0"
+- **Found:** April 10, 2026
+- **Root cause:** Dashboard read `pos.sl` which isn't set in the position JSON. The SL lives inside `lot1.sl` / `lot2.sl`. Additionally, profit floor ratchets weren't computed for display.
+- **Fix:** Read SL from lot objects, then iterate profit_floors to ratchet up based on `pos.peak`. Shares the same floor computation as BUG-018.
+- **File:** static/VRL_DASHBOARD.html
+
+## BUG-024: Dashboard RSI bar shows stale "split at 70" label
+- **Found:** April 10, 2026
+- **Root cause:** v13.0 lot-splitting at RSI 70 was removed in v13.5, but the dashboard label still said "RSI → split at 70" with the orange marker at 87.5% (70/80).
+- **Fix:** Changed label to "RSI → cap 72", scaled bar as rsi/72, removed the orange split marker.
+- **File:** static/VRL_DASHBOARD.html
+
+## BUG-025: Day PNL stat excludes floating open position
+- **Found:** April 10, 2026
+- **Root cause:** Day P&L stat showed only `td.pnl` (realized), ignoring any open position's unrealized PNL. Users saw a red day total while a profitable trade was open.
+- **Fix:** Display PNL as `realized + open_floating`. Added breakdown text "Realized X Open Y" below when a position is active.
+- **File:** static/VRL_DASHBOARD.html
+
+## BUG-026: Trade cards show MINIMAL badge for legacy trades
+- **Found:** April 10, 2026
+- **Root cause:** Trades from v13.0 era had `entry_mode="MINIMAL"` or `"EMA"`. Dashboard rendered these with the blue CONFIRMED styling, which was confusing alongside real FAST/CONFIRMED v13.5 badges.
+- **Fix:** Map `MINIMAL` and `EMA` modes to a gray "LEGACY" badge. New trades always write `entry_mode` from `entry_result` in VRL_MAIN's state capture (already working since v13.5).
+- **File:** static/VRL_DASHBOARD.html
+
+## BUG-027: Profit floor SL never persisted to state — peak +10.8 trade exited at 0pts
+- **Found:** April 10, 2026
+- **Root cause:** PE 24000 trade peaked at +10.8pts (above the +10 floor threshold) but the engine's manage_exit only had the dynamic trail which activates at peak ≥15 (FAST) or ≥20 (CONFIRMED). The static `profit_floors` config was never read by the engine — only used for display in VRL_COMMANDS. So no floor ratcheted the SL. Later, FORCE_EXIT used `option_ltp or entry_price` and with a stale LTP of 0, exited at entry price → PNL 0.
+- **Fix:** Added static profit floor check in manage_exit between CANDLE_SL and DYNAMIC TRAIL. Reads `profit_floors` from config, finds highest applicable floor for current peak, persists to `state["_static_floor_sl"]` AND `state["phase1_sl"]`, logs "[FLOOR] Peak X crossed, SL ratcheted to Y". Also fixed FORCE_EXIT to use `max(entry_price, floor_sl)` as fallback when LTP is 0.
+- **Lesson:** Config entries that are never read by the engine are worse than missing — they create a false sense of safety. Always verify config keys are actually consumed by the code path they're supposed to control.
+- **File:** VRL_ENGINE.py manage_exit(), VRL_MAIN.py FORCE_EXIT
+
 ---
 
 ## Prevention Rules

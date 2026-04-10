@@ -1415,7 +1415,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
-            # v13.0: Simple verdict from EMA gap + RSI
+            # v13.5: Verdict from dual-timeframe momentum + divergence gate
             ema_gap = result.get("ema_gap", 0)
             rsi_val = result.get("rsi", 0)
             ema_ok = result.get("ema_ok", False)
@@ -1892,7 +1892,10 @@ def _strategy_loop(kite):
                 _entry_px = state.get("entry_price", 0)
             if _force and _in_trade:
                 option_ltp = D.get_ltp(_token)
-                _execute_exit(kite, option_ltp or _entry_px, "FORCE_EXIT")
+                # BUG-027: use floor SL as minimum if LTP is stale/zero
+                _floor_sl = state.get("_static_floor_sl", state.get("phase1_sl", 0))
+                _exit_px = option_ltp if option_ltp > 0 else max(_entry_px, _floor_sl)
+                _execute_exit(kite, _exit_px, "FORCE_EXIT")
                 time.sleep(1)
                 continue
 
@@ -2105,7 +2108,9 @@ def _strategy_loop(kite):
                                     + " target=" + str(_target_atm)
                                     + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
-                # v13.5: Skip relock if momentum building, but max 3 consecutive skips (BUG-021)
+                # v13.5: Skip relock if momentum building, but max 3 consecutive skips
+                # BUG-021 resolved April 10, 2026: 3-skip limit is intentional to prevent
+                # bot from staying on stale strikes indefinitely when momentum builds.
                 _building = False
                 try:
                     _cer = all_results.get("CE", {}) if "all_results" in dir() else {}
@@ -2157,7 +2162,7 @@ def _strategy_loop(kite):
                         continue
 
                 # v13.1: Same entry logic for ALL DTEs (including DTE=0)
-                # ── MINIMAL SCAN — EMA gap + RSI only ─────
+                # ── v13.5 SCAN — dual-TF momentum + divergence ─────
                 all_results = {}
                 best_result = None
                 best_type = None

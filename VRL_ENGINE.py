@@ -428,7 +428,32 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.info("[ENGINE] CANDLE_SL: running=" + str(running))
         return [{"lot_id": "ALL", "reason": "CANDLE_SL", "price": option_ltp}]
 
-    # 7. DYNAMIC TRAIL
+    # 6b. STATIC PROFIT FLOORS (BUG-027: persist floor SL to state)
+    _floors = CFG.get().get("profit_floors", [])
+    _best_floor = None
+    for _f in _floors:
+        if peak >= _f.get("peak", 999):
+            _best_floor = _f
+    if _best_floor is not None:
+        _lock = _best_floor.get("lock", 0)
+        _floor_sl = round(entry + _lock, 2)
+        _prev_floor = state.get("_static_floor_sl", 0)
+        if _floor_sl > _prev_floor:
+            state["_static_floor_sl"] = _floor_sl
+            # Also persist to phase1_sl so FORCE_EXIT and /status see it
+            if _floor_sl > state.get("phase1_sl", 0):
+                state["phase1_sl"] = _floor_sl
+            logger.info("[FLOOR] Peak " + str(round(peak, 1))
+                        + " crossed +" + str(_best_floor.get("peak", 0))
+                        + ", SL ratcheted to " + str(_floor_sl)
+                        + " (+" + str(_lock) + " locked)")
+        _active_floor = max(_floor_sl, state.get("_static_floor_sl", 0))
+        if option_ltp <= _active_floor:
+            logger.info("[ENGINE] PROFIT_FLOOR: peak=" + str(round(peak, 1))
+                        + " floor=" + str(_active_floor))
+            return [{"lot_id": "ALL", "reason": "PROFIT_FLOOR", "price": option_ltp}]
+
+    # 7. DYNAMIC TRAIL (activates at higher peaks than static floors)
     if peak >= trail_activate:
         keep = keep_warning if other_warning else keep_normal
         lock_pts = round(peak * keep, 1)
