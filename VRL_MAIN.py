@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.5
-#  Master orchestration. Minimal strategy: EMA gap + RSI.
-#  2-lot execution with profit floors + RSI split.
+#  Master orchestration. Dual-TF momentum + divergence.
+#  2-lot execution with profit floors.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -662,12 +662,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY: 1m +14/4c OR 3m +20/3c\n"
-        "  + green + RSI↑ + RSI under 72 + other falling\n"
-        "EXIT: Candle close -12 | Divergence exit\n"
-        "TRAIL: FAST 75% from +15 | CONFIRMED 65% from +20\n"
-        "COOLDOWN: Div 0m | Trail 3m | SL 8m\n"
-        "Strike : True ATM 50 | Stale 5c | RSI 80 blowoff\n"
+        "ENTRY: FAST 1m +14pts/4c OR CONFIRMED 3m +20pts/3c\n"
+        "GATES: green + RSI↑ + RSI<72 + other side falling\n"
+        "EXIT: candle close -12 | divergence reversal | stale 5c<3pts | emergency -20\n"
+        "FLOORS: +10→+2 | +20→+12 | +30→+22 | +40→+32\n"
+        "COOLDOWN: 5min same dir, immediate opposite\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -2106,7 +2105,7 @@ def _strategy_loop(kite):
                                     + " target=" + str(_target_atm)
                                     + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
-                # v13.3: Skip relock if either side has momentum building (>10pts)
+                # v13.5: Skip relock if momentum building, but max 3 consecutive skips (BUG-021)
                 _building = False
                 try:
                     _cer = all_results.get("CE", {}) if "all_results" in dir() else {}
@@ -2117,11 +2116,21 @@ def _strategy_loop(kite):
                 except Exception:
                     pass
                 if _relock and _building:
-                    logger.info("[MAIN] Relock SKIPPED — momentum building"
-                                + " CE=" + str(round(_cm, 1)) + " PE=" + str(round(_pm, 1)))
-                    _relock = False
+                    _relock_skip_count = state.get("_relock_skip_count", 0) + 1
+                    state["_relock_skip_count"] = _relock_skip_count
+                    if _relock_skip_count <= 3:
+                        logger.info("[MAIN] Relock SKIPPED (" + str(_relock_skip_count) + "/3)"
+                                    + " — momentum building"
+                                    + " CE=" + str(round(_cm, 1)) + " PE=" + str(round(_pm, 1)))
+                        _relock = False
+                    else:
+                        logger.info("[MAIN] Relock FORCED after " + str(_relock_skip_count)
+                                    + " skips — momentum CE=" + str(round(_cm, 1))
+                                    + " PE=" + str(round(_pm, 1)))
+                        state["_relock_skip_count"] = 0
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
+                    state["_relock_skip_count"] = 0  # BUG-021: reset on successful relock
                     # Telegram alert on relock (not initial lock)
                     if False:  # v13.3: relock alerts silenced — dashboard shows current strike
                         _tg_send(
@@ -2523,6 +2532,36 @@ def main():
             logger.info("[MAIN] No trades found for today — starting fresh")
     except Exception as e:
         logger.warning("[MAIN] Trade log restore failed: " + str(e))
+
+    # BUG-020: Sync CSV trades into DB on startup (backfill after DB rebuild)
+    try:
+        import csv as _sync_csv
+        import VRL_DB as _sync_db
+        _sync_db.init_db()
+        _today_iso = date.today().isoformat()
+        _csv_path = D.TRADE_LOG_PATH
+        _csv_trades = []
+        if os.path.isfile(_csv_path):
+            with open(_csv_path) as _sf:
+                for _row in _sync_csv.DictReader(_sf):
+                    _d = _row.get("date", "").strip()
+                    if _d == _today_iso:
+                        _csv_trades.append(_row)
+        _db_trades = _sync_db.get_trades(_today_iso)
+        _db_times = {t.get("entry_time", "").strip() for t in _db_trades}
+        _inserted = 0
+        for _ct in _csv_trades:
+            _et = _ct.get("entry_time", "").strip()
+            if _et and _et not in _db_times:
+                _sync_db.insert_trade(_ct)
+                _inserted += 1
+        if _inserted > 0:
+            logger.info("[SYNC] CSV→DB backfill: " + str(_inserted) + " rows inserted")
+        else:
+            logger.info("[SYNC] CSV/DB in sync for " + _today_iso
+                        + " (CSV=" + str(len(_csv_trades)) + " DB=" + str(len(_db_trades)) + ")")
+    except Exception as _se:
+        logger.warning("[SYNC] CSV→DB backfill failed: " + str(_se))
 
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])

@@ -114,6 +114,31 @@
 - **Lesson:** Reinforces Prevention Rule #1 — NEVER use `logger.debug` in DB/critical catch blocks. If a failure mode can leave the bot running but broken, it MUST alert.
 - **File:** VRL_DB.py
 
+## BUG-018: /status shows stale SL during profit floor
+- **Found:** April 10, 2026
+- **Root cause:** `/status` read `phase1_sl` (original hard SL) even after profit floors ratcheted the active SL upward. Peak could be +25pts but /status showed the original entry-12 SL.
+- **Fix:** Compute active SL by iterating config `profit_floors` and taking the highest applicable `entry + lock` value. Display whichever is higher: the base SL or the floor SL.
+- **File:** VRL_COMMANDS.py `_cmd_status()`
+
+## BUG-019: /help and startup banner show v13.0 strategy text
+- **Found:** April 10, 2026
+- **Root cause:** Strategy text in `/help` footer and `_alert_bot_started()` banner was never updated from v13.0 (EMA gap≥3, RSI split 70/75, Widening). Showed wrong cooldown values and exit rules.
+- **Fix:** Updated both locations to reflect v13.5 actual logic: FAST 1m +14/4c, CONFIRMED 3m +20/3c, divergence gate, candle close SL -12, profit floors, 5min same-dir cooldown.
+- **File:** VRL_COMMANDS.py, VRL_MAIN.py
+
+## BUG-020: DB/CSV/state PNL sync drift after DB rebuild
+- **Found:** April 10, 2026
+- **Root cause:** After BUG-017 DB rebuild, trades table was empty but CSV and state.json carried old data. Dashboard showed mismatched counts (DB=2 CSV=3) and PNL (state=-16 dashboard=-14.1).
+- **Fix:** Added CSV→DB backfill on startup: reads today's CSV trades, inserts any missing into DB. Runs once after `_reconcile_positions()`, before WebSocket starts.
+- **Lesson:** After any DB rebuild, always reconcile from the CSV source of truth.
+- **File:** VRL_MAIN.py `main()`
+
+## BUG-021: Relock SKIPPED loop traps bot on stale strikes
+- **Found:** April 10, 2026
+- **Root cause:** When ATM drifted but either side had momentum >10pts, relock was skipped indefinitely. Bot could stay on stale strikes for 5+ minutes while market moved away, missing entries on the correct strike.
+- **Fix:** Added `_relock_skip_count` — max 3 consecutive skips. After 3 skips, force relock regardless of momentum. Counter resets on successful relock.
+- **File:** VRL_MAIN.py (relock section in strategy loop)
+
 ---
 
 ## Prevention Rules

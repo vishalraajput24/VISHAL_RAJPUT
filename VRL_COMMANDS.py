@@ -273,8 +273,10 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | EMA gap≥3 + RSI 50-72↑ + Green + Widening\n"
-        + "2 lots | SL -12 | Floors +10/+20/+30 | RSI split 70/75\n"
+        + " | FAST 1m +14/4c OR CONFIRMED 3m +20/3c\n"
+        + "green + RSI↑ + RSI<72 + other falling\n"
+        + "SL -12 close | Floors +10→+2 | +20→+12 | +30→+22 | +40→+32\n"
+        + "Cooldown 5min same dir | Emergency -20\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
@@ -321,8 +323,25 @@ def _cmd_status(args):
     pnl     = round(ltp - entry, 1) if ltp > 0 else 0
     peak    = st.get("peak_pnl", 0)
     phase   = st.get("exit_phase", 1)
-    sl_key  = "phase1_sl" if phase == 1 else "phase2_sl"
-    sl_val  = st.get(sl_key, 0)
+
+    # BUG-018: Compute active SL incorporating profit floors
+    sl_val  = st.get("phase1_sl", st.get("current_floor", 0))
+    if sl_val <= 0:
+        sl_val = round(entry - 12, 2)  # fallback to hard SL
+    # Ratchet up to highest applicable profit floor
+    try:
+        import VRL_CONFIG as _CFG_sl
+        _floors = _CFG_sl.get().get("profit_floors", [
+            {"peak": 10, "lock": 2}, {"peak": 20, "lock": 12},
+            {"peak": 30, "lock": 22}, {"peak": 40, "lock": 32},
+        ])
+        for _f in _floors:
+            if peak >= _f.get("peak", 0):
+                _candidate = round(entry + _f.get("lock", 0), 2)
+                if _candidate > sl_val:
+                    sl_val = _candidate
+    except Exception:
+        pass
     sl_dist = round(ltp - sl_val, 1) if ltp > 0 and sl_val > 0 else "—"
     md_level = "—"
     if peak > 20 and pnl > 0:
