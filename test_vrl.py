@@ -581,12 +581,13 @@ section("v13.7 — ENTRY CUTOFF 15:10")
 # Mock time to 15:11
 with patch.object(D, 'get_historical_data', return_value=_df_fire):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        with patch('VRL_ENGINE.datetime') as mock_dt:
-            mock_dt.now.return_value = datetime(2026, 4, 11, 15, 11, 0)
-            mock_dt.fromisoformat = datetime.fromisoformat
-            r = E.check_entry(12345, "CE", 22900, 5)
-            test("15:11 → entry blocked", r["fired"] == False,
-                 "fired=" + str(r["fired"]))
+        with patch.object(D, 'is_market_open', return_value=True):
+            with patch('VRL_ENGINE.datetime') as mock_dt:
+                mock_dt.now.return_value = datetime(2026, 4, 11, 15, 11, 0)
+                mock_dt.fromisoformat = datetime.fromisoformat
+                r = E.check_entry(12345, "CE", 22900, 5)
+                test("15:11 → entry blocked", r["fired"] == False,
+                     "fired=" + str(r["fired"]))
 
 
 section("v13.7 — EOD AUTO-EXIT AT 15:30")
