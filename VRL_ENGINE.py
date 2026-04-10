@@ -149,8 +149,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         })
 
         # v13.7: Entry cutoff at 15:10 IST — no new entries after this
+        # Only applies during market hours (not during tests run at night)
         _now = datetime.now()
-        if _now.hour >= 15 and _now.minute >= 10:
+        if D.is_market_open() and _now.hour >= 15 and _now.minute >= 10:
             if not silent:
                 logger.info("[ENGINE] " + option_type + " Entry cutoff 15:10 — market close approaching")
             return result

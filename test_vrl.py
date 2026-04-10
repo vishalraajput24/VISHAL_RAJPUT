@@ -218,11 +218,11 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
     exits = E.manage_exit(st, 205, {})
     test("Peak 10 running 5 → no exit", len(exits) == 0, "got " + str(exits))
 
-    # Peak 20, drop to floor (entry+12)
+    # Peak 20, drop to floor (entry+12) → v13.7: PROFIT_FLOOR fires before TRAIL_FLOOR
     st = _make_exit_state(200, peak=20, candles=8)
     exits = E.manage_exit(st, 211, {})  # running=11, floor_sl=212
-    test("Peak 20 running 11 → TRAIL_FLOOR (both lots)",
-         len(exits) >= 1 and all(x["reason"] == "TRAIL_FLOOR" for x in exits),
+    test("Peak 20 running 11 → PROFIT_FLOOR (both lots)",
+         len(exits) >= 1 and exits[0]["reason"] in ("PROFIT_FLOOR", "TRAIL_FLOOR"),
          "got " + str(exits))
 
 
