@@ -665,7 +665,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "ENTRY: FAST 1m +14pts/4c OR CONFIRMED 3m +20pts/3c | RSI cap 75\n"
         "GATES: green + RSI↑ + other side falling | No entry after 15:10\n"
-        "EXIT: candle close -12 | divergence | stale 5c<3 | emergency -20 | EOD 15:30\n"
+        "EXIT: candle close -12 | divergence | stale 5c peakstale 5c<3lt;3 | emergency -20 | EOD 15:30\n"
         "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
         "COOLDOWN: 5min same dir | 2 lots fixed | Paper mode\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
