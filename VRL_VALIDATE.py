@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v13.3
+#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v13.7
 #  20 live market validation checks. Run on every entry + exit.
 #  Silent on PASS, alerts + logs on FAIL.
 #  Zero impact on trading speed (runs after orders, not in critical path).

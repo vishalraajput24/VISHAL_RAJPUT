@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DATA.py — VISHAL RAJPUT TRADE v13.3
+#  VRL_DATA.py — VISHAL RAJPUT TRADE v13.7
 #  Foundation layer. Settings, logging, market data, Greeks.
 # ═══════════════════════════════════════════════════════════════
 

@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.5
+VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.7
 Dashboard server with admin login + subscriber token access.
 """
 import csv, json, os, hashlib, secrets, time, threading
@@ -386,7 +386,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // RSI progress bar
     ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
     ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:4px">';
-    ph+='<span>RSI '+rsi.toFixed(0)+' (split at 70)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
+    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 75)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
     // Lot status
     if(!split){
       ph+='<div class="pos-lot">LOT1: '+(lot1?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
@@ -1080,6 +1080,6 @@ class H(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v13.5 — http://0.0.0.0:"+str(PORT))
+    print("VRL War Room v13.7 — http://0.0.0.0:"+str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()

@@ -1,4 +1,4 @@
-# VISHAL RAJPUT TRADE — v13.5
+# VISHAL RAJPUT TRADE — v13.7
 
 **Algorithmic Options Trading Bot for Nifty 50**
 
@@ -50,7 +50,7 @@ Minimal strategy options trading system. 2-lot execution with dynamic trail and 
 | `config.yaml` | **Central config** — all tunable values. Change here, restart service, done. |
 | `VRL_CONFIG.py` | Config loader + validator. Typed accessors, fails fast. |
 | `VRL_MAIN.py` | Master orchestrator. Strategy loop, 2-lot execution, state, alerts, dashboard. |
-| `VRL_ENGINE.py` | **Minimal signal logic.** 3-path entry (FAST/CONFIRMED/EMA) + divergence-aware exit chain. |
+| `VRL_ENGINE.py` | **Dual-TF momentum + divergence.** FAST 1m / CONFIRMED 3m entry. RSI cap 75. Static profit floors + dynamic trail exit. Entry cutoff 15:10. |
 | `VRL_DATA.py` | Foundation. WebSocket, indicators, Greeks, spot analysis, data cache, IST timezone. |
 | `VRL_DB.py` | **SQLite database layer.** WAL mode, dual-write with CSV. Query helpers. |
 | `VRL_LAB.py` | Data collector. All timeframes, forward fill at EOD, daily summary. Writes CSV + SQLite. |
@@ -63,37 +63,29 @@ Minimal strategy options trading system. 2-lot execution with dynamic trail and 
 | `VRL_CHARGES.py` | Brokerage calculator (STT, exchange, GST, stamp duty). |
 | `VRL_DEPLOY.py` | Telegram-triggered deployment (uses `systemctl restart vrl-main`). |
 | `VRL_BUGS.md` | Bug sheet — all bugs found and fixed, prevention rules. |
-| `test_vrl.py` | **58 automated tests** covering entry paths, exit chain, cooldown, PNL. |
+| `test_vrl.py` | **70 automated tests** covering entry paths, RSI cap, profit floors, exit chain, cooldown, entry cutoff, EOD handler, phantom clear. |
 
 ---
 
-## Entry — 3 Paths with Divergence Gate
+## Entry — Dual-TF Momentum + Divergence Gate
 
-**Divergence gate (hard prerequisite, both CE and PE):** the opposite side must be falling (4-candle 1m move < 0). If the other side is up or flat, **no entry fires** regardless of which path qualifies.
-
-Once the gate passes, any one of three independent paths can fire:
+**Divergence gate (hard prerequisite):** the opposite side must be falling (4-candle 1m move < 0). If the other side is up or flat, **no entry fires**.
 
 | Path | Timeframe | Momentum | Candles | Also Required |
 |------|-----------|----------|---------|---------------|
-| **FAST** | 1-minute | ≥ 14 pts | 4 | Current candle green, RSI rising, RSI ≤ 72 |
-| **CONFIRMED** | 3-minute | ≥ 20 pts | 3 | 3m candle green, 3m RSI rising, 3m RSI ≤ 72 |
-| **EMA** | 1-minute | — | — | EMA9-EMA21 ≥ 3, RSI ≥ 50 & rising, green, gap widening — **informational only, does not fire on its own** |
+| **FAST** | 1-minute | ≥ 14 pts | 4 | Green candle, RSI rising, RSI ≤ 75 |
+| **CONFIRMED** | 3-minute | ≥ 20 pts | 3 | 3m green, 3m RSI rising, 3m RSI ≤ 75 |
 
-Fire logic:
-- `FAST` and `CONFIRMED` both true → log as **CONFIRMED **** (strongest)
-- `FAST` only → log as **FAST**
-- `CONFIRMED` only → log as **CONFIRMED ***
-- `EMA` only → logged as `[EMAV]` hint, **no trade**
-
-All firing paths enter **2 LOTS**.
+Fire logic: FAST takes priority. Both fire → **CONFIRMED ****. All entries = **2 LOTS** (130 qty).
 
 ### Pre-Entry Guards
 
 | Guard | Rule |
 |-------|------|
-| **RSI Hard Cap** | RSI > 72 = BLOCKED (blowoff territory) |
+| **RSI Hard Cap** | RSI > 75 = BLOCKED (near-miss logged for analysis) |
 | **Divergence Gate** | Other side 4-candle move must be negative |
-| **Direction Cooldown** | Same dir after big win (peak ≥ 10): 10min; after loss/small (peak < 10): 5min; opposite dir: immediate |
+| **Entry Cutoff** | No new entries after 15:10 IST |
+| **Direction Cooldown** | 5min same direction, opposite immediate |
 | **Daily Limits** | Max trades, max losses per config |
 | **Market Hours** | 9:15–15:10 IST |
 
@@ -105,25 +97,33 @@ Exits are evaluated top-down on every tick. **First match wins**, no fallthrough
 
 | # | Reason | Trigger | Notes |
 |---|--------|---------|-------|
-| 1 | `EMERGENCY_SL` | `running ≤ -20` | Absolute floor; protects from gap moves |
-| 2 | `STALE_ENTRY` | `candles ≥ 5` AND `peak < 3` | Signal never materialized, cut it |
-| 3 | `RSI_BLOWOFF` | `RSI > 80` | Top-ticking, exit the party |
-| 4 | `DIVERGENCE_EXIT` | Other side reversed (2 green + RSI rising) AND `peak ≥ 6` | Market regime flipped, take profits |
-| 5 | `SPIKE_ABSORBED` | Candle low touched -12 but close recovered AND other still falling | **HOLD** — absorb the wick, don't exit |
-| 5b | `WEAK_SL` | Same wick, but other side **not** falling | No support from other side, exit |
-| 6 | `CANDLE_SL` | `running ≤ -12` (close-based, not wick) | Real drop, not a spike |
-| 7 | `TRAIL_FLOOR` | Profit floor trails peak | See below |
+| 1 | `EMERGENCY_SL` | `running ≤ -20` | Absolute floor |
+| 2 | `STALE_ENTRY` | `candles ≥ 5` AND `peak < 3` | Signal never materialized |
+| 3 | `RSI_BLOWOFF` | `RSI > 80` | Top-ticking exit |
+| 4 | `DIVERGENCE_EXIT` | Other reversed + `peak ≥ 6` | Regime flipped |
+| 5 | `SPIKE_ABSORBED` | Low -12 but close recovered, other falling | **HOLD** |
+| 5b | `WEAK_SL` | Same wick, other **not** falling | Exit |
+| 6 | `CANDLE_SL` | `running ≤ -12` (close-based) | Real drop |
+| 6b | `PROFIT_FLOOR` | Static floor SL breached | See below |
+| 7 | `TRAIL_FLOOR` | Dynamic trail at higher peaks | See below |
+| 8 | `MARKET_CLOSE` | 15:30 IST | EOD auto-exit |
 
-### Profit Floors (dynamic trail)
+### Static Profit Floors (v13.7)
 
-Once `peak ≥ trail_activate`, the floor trails as a fraction of peak:
+| Peak PNL | SL ratchets to | Effect |
+|----------|---------------|--------|
+| +5 | entry - 6 | Damage control (tighter than -12) |
+| +10 | entry + 2 | Breakeven+ |
+| +20 | entry + 12 | Lock profit |
+| +30 | entry + 22 | Scale profit |
+| +40 | entry + 32 | Compound profit |
+| +50 | entry + 42 | Extended runners |
 
-- Normal: `floor = entry + peak × keep_normal`
-- Warning (other side showing strength): `floor = entry + peak × keep_warning`
-- `floor` is clamped to a minimum lock; it only moves up, never down.
-- Exit fires when `option_ltp ≤ floor`.
+Floors persist to `state["phase1_sl"]` immediately on crossing. SL only ratchets **up**, never down.
 
-All tunables live in `config.yaml` under `exit:` / `trail:`.
+### Dynamic Trail (higher peaks)
+
+Once `peak ≥ trail_activate` (15 FAST / 20 CONFIRMED), the floor trails as `entry + peak × keep_pct`. Dynamic trail activates above the static floors and provides tighter protection on large runners.
 
 ---
 
@@ -143,34 +143,31 @@ All tunables live in `config.yaml` under `exit:` / `trail:`.
 ## Central Config — `config.yaml`
 
 ```yaml
-mode: paper          # paper | live
+mode: paper
 
 cooldown:
-  after_win: 10      # minutes: same-dir cooldown after peak >= 10pts
-  after_loss: 5      # minutes: same-dir cooldown after peak < 10pts
+  same_direction: 5       # opposite always immediate
 
 entry:
-  ema_gap_min: 3            # EMA info path
-  rsi_min: 50
-  rsi_max: 72               # hard cap, all paths
-  fast_momentum_pts: 14     # FAST path threshold
+  rsi_max: 75             # v13.7: raised from 72
+  fast_momentum_pts: 14
   fast_momentum_candles: 4
-  confirmed_momentum_pts: 20    # CONFIRMED path threshold
+  confirmed_momentum_pts: 20
   confirmed_momentum_candles: 3
 
 exit:
-  max_sl: 20         # EMERGENCY_SL
-  candle_sl: 12      # CANDLE_SL (close-based)
+  candle_close_sl: 12     # close-based SL
+  max_sl: 20              # EMERGENCY_SL
   stale_candles: 5
-  stale_peak: 3
-  rsi_blowoff: 80
-  spike_recovery: 3  # SPIKE_ABSORBED tolerance
+  stale_peak_min: 3
 
-trail:
-  activate: 10       # peak points to start trailing
-  keep_normal: 0.6
-  keep_warning: 0.75
-  min_lock: 2
+profit_floors:            # v13.7: static, persisted to state
+  - { peak: 5,  lock: -6 }
+  - { peak: 10, lock: 2 }
+  - { peak: 20, lock: 12 }
+  - { peak: 30, lock: 22 }
+  - { peak: 40, lock: 32 }
+  - { peak: 50, lock: 42 }
 ```
 
 Change any value, `sudo systemctl restart vrl-main`. No code changes needed.
@@ -297,7 +294,7 @@ TG_GROUP_ID=xxx
 
 # Verify
 cd ~/VISHAL_RAJPUT
-~/kite_env/bin/python3 test_vrl.py          # expect 58/58
+~/kite_env/bin/python3 test_vrl.py          # expect 70/70
 
 # Start
 sudo systemctl enable --now vrl-main vrl-web vrl-lab
@@ -316,17 +313,17 @@ PYTHONPATH=/home/vishalraajput24/VISHAL_RAJPUT
 
 ## Test Suite
 
-`test_vrl.py` — **58 tests**:
+`test_vrl.py` — **70 tests**:
 - Strike selection (DTE 0/1+, tolerance zones)
-- Version check
-- Entry paths: FAST fires, CONFIRMED fires, EMA info-only
-- Divergence gate: blocked when other side up
-- Entry SL calculation
-- Exit chain priority: EMERGENCY_SL, STALE_ENTRY, RSI_BLOWOFF, DIVERGENCE_EXIT, SPIKE_ABSORBED hold, WEAK_SL, CANDLE_SL
-- Dynamic trail floor
-- **Cooldown: same direction blocked after big win (10min)**
-- **Cooldown: opposite direction allowed immediately**
-- **Cooldown: same direction blocked after loss (5min)**
-- **Cooldown: same direction allowed after cooldown expires**
-- **RSI hard cap: RSI 73 blocked, RSI 71 allowed**
-- **PNL: split lot correctness (saved_entry_price survives reset)**
+- Version check (v13.7)
+- Entry: FAST fires, CONFIRMED fires, flat blocked, low RSI blocked
+- RSI hard cap: 76 blocked, 74 allowed (v13.7 cap = 75)
+- Entry cutoff: 15:11 blocked
+- Exit chain: EMERGENCY_SL, STALE_ENTRY, RSI_BLOWOFF, CANDLE_SL, PROFIT_FLOOR
+- Static profit floors: +5→-6 (damage control), +50→+42 (extended)
+- Floor persistence to state.phase1_sl (BUG-027)
+- Force exit respects floor SL, not entry price
+- EOD auto-exit handler, startup phantom clear
+- Cooldown: same dir blocked, opposite allowed, expiry works
+- PNL: split lot correctness
+- Charges calculator, bonus indicators, DB operations

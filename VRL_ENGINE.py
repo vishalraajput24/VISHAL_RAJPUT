@@ -91,7 +91,7 @@ def pre_entry_checks(kite, token: int, state: dict,
     return True, ""
 
 def loss_streak_gate(state: dict) -> bool:
-    """v13.0: Always permit — streak management handled upstream."""
+    """Always permit — streak management handled upstream."""
     return True
 
 # ═══════════════════════════════════════════════════════════════
@@ -298,7 +298,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         return result
 
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
-    """v13.0: Simple fixed SL."""
+    """Simple fixed SL. Exit fires on candle close beyond this."""
     return round(entry_price - hard_sl, 2)
 
 def check_profit_lock(state: dict, daily_pnl: float) -> bool:
@@ -313,12 +313,12 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     return False
 
 # ═══════════════════════════════════════════════════════════════
-#  v13.3 EXIT — SCOUT (LOT1 SL-6) + SOLDIER (LOT2 SL-12) + TRAIL
+#  v13.7 EXIT — Priority chain + static profit floors + dynamic trail
 # ═══════════════════════════════════════════════════════════════
 
 def manage_exit(state: dict, option_ltp: float, profile: dict,
                 other_token: int = 0) -> list:
-    """v13.5: Logic-based exits. Candle close SL. Dynamic trail."""
+    """v13.7: Priority chain exits. Static profit floors + dynamic trail."""
     if not state.get("in_trade"):
         return []
 

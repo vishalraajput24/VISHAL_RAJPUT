@@ -532,7 +532,7 @@ with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
         _ex = E.manage_exit(_st, 220, {})
         test("RSI_BLOWOFF at 82", len(_ex) >= 1 and "BLOWOFF" in _ex[0]["reason"])
 
-# v13.3: No split, no partial. Both lots exit together.
+# v13.7: No split. Both lots same path, exit together.
 
 
 # ═══════════════════════════════════════════════════════════════
