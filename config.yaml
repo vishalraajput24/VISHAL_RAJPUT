@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v13.3 — Central Configuration
-#  Momentum primary + EMA secondary entry, unified 2-lot exit
+#  VISHAL RAJPUT TRADE v13.6 — Central Configuration
+#  Minimal EMA9 strategy — 2 green above EMA9 + divergence gate
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.5"
+version: "v13.6"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -20,46 +20,23 @@ lots:
   size: 65
 
 cooldown:
-  after_divergence: 0
-  after_trail: 3
-  after_candle_sl: 8
-  after_stale: 3
-  after_blowoff: 5
-  after_emergency: 10
-  opposite_always: 0
+  same_direction: 5        # minutes — opposite direction always allowed immediately
 
 entry:
-  # 1-min primary (fast)
-  fast_momentum_pts: 14
-  fast_momentum_candles: 4
-  # 3-min secondary (confirmed)
-  confirmed_momentum_pts: 20
-  confirmed_momentum_candles: 3
-  # Common
-  rsi_max: 72
-  ema_gap_min: 3              # info only
+  rsi_max: 72              # hard cap — blocks both FAST and CONFIRMED paths
 
 exit:
-  candle_close_sl: 12         # exit only on candle CLOSE below -12
-  max_sl: 20                  # absolute emergency
-  spike_recovery: 8           # if low hits -12 but close > -8, hold
+  hard_sl: 12              # candle close SL (CANDLE_SL)
+  emergency_sl: 20         # absolute max loss (EMERGENCY_SL)
   stale_candles: 5
-  stale_peak_min: 3
+  stale_peak: 3
+  divergence_peak: 6       # min peak for DIVERGENCE_EXIT to fire
 
-profit_trail:
-  # FAST entry (1-min only)
-  fast_activate_at: 15
-  fast_keep_normal: 0.75      # other falling → keep 75%
-  fast_keep_warning: 0.85     # other 1 green → keep 85%
-  # CONFIRMED entry (3-min agrees)
-  confirmed_activate_at: 20
-  confirmed_keep_normal: 0.65  # wider — let runners run
-  confirmed_keep_warning: 0.80
-  # Common
-  min_lock: 2                  # never below +2 once trail active
-
-rsi_exit:
-  blowoff: 80
+profit_floors:
+  - { peak: 10, lock: 2 }
+  - { peak: 20, lock: 12 }
+  - { peak: 30, lock: 22 }
+  - { peak: 40, lock: 32 }
 
 strike:
   step_normal: 50
