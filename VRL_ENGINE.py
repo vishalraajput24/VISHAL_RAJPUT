@@ -1,6 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.5
-#  Minimal signal logic. EMA gap + RSI entry. 2-lot exit.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.7
+#  Dual-TF momentum + divergence. Static profit floors.
+#  2-lot execution. RSI cap 75. Entry cutoff 15:10.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -94,16 +95,13 @@ def loss_streak_gate(state: dict) -> bool:
     return True
 
 # ═══════════════════════════════════════════════════════════════
-#  v13.0 ENTRY — 1-MIN EMA GAP + RSI ONLY
+#  v13.7 ENTRY — Dual-TF momentum + divergence gate
 # ═══════════════════════════════════════════════════════════════
-
-
-# v13.3 ENTRY -- LIMIT at breakout level. EMA as 2nd path.
 
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None,
                 other_token: int = 0, silent: bool = False) -> dict:
-    """v13.5: Dual timeframe momentum + divergence."""
+    """v13.7: Dual timeframe momentum + divergence. RSI cap 75. Entry cutoff 15:10."""
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "ema9": 0, "ema21": 0,
@@ -120,7 +118,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
     try:
         import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
-        rsi_max      = cfg.get("rsi_max", 72)
+        rsi_max      = cfg.get("rsi_max", 75)
         fast_pts     = cfg.get("fast_momentum_pts", 14)
         fast_candles = cfg.get("fast_momentum_candles", 4)
         conf_pts     = cfg.get("confirmed_momentum_pts", 20)
@@ -150,9 +148,19 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
         })
 
-        # RSI HARD CAP
+        # v13.7: Entry cutoff at 15:10 IST — no new entries after this
+        _now = datetime.now()
+        if _now.hour >= 15 and _now.minute >= 10:
+            if not silent:
+                logger.info("[ENGINE] " + option_type + " Entry cutoff 15:10 — market close approaching")
+            return result
+
+        # RSI HARD CAP (v13.7: raised to 75)
         if rsi > rsi_max:
-            if not silent: logger.info("[ENGINE] " + option_type + " RSI_CAP " + str(round(rsi, 1)))
+            # Enhancement 5: near-miss logging when RSI blocks a would-fire signal
+            if not silent:
+                logger.info("[NEAR_MISS] " + option_type + " RSI cap block: rsi="
+                            + str(round(rsi, 1)) + " rsi_max=" + str(rsi_max))
             return result
 
         # ═══ OTHER SIDE CHECK (divergence) ═══

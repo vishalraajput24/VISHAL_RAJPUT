@@ -183,6 +183,15 @@
 - **Lesson:** Every state mutation must be immediately persisted. Never assume the next loop iteration will save state — the process may be killed first. EOD handlers must have a catch-all at market close time, not just a narrow minute window.
 - **File:** VRL_MAIN.py
 
+## v13.7: Strategy enhancements (April 10, 2026)
+- **RSI cap raised from 72 to 75** — PE momentum hit 42pts at RSI 78 but was blocked at 72. Cap 75 allows bigger moves; RSI_BLOWOFF exit at 80 still protects.
+- **Peak protection floor at +5 → SL entry-6** — damage control: tightens SL from -12 to -6 once peak crosses +5. Prevents +10 peak trades from exiting at -12.
+- **Extended runner floor at +50 → lock +42** — for expiry day runners that exceed +40.
+- **Entry cutoff at 15:10 IST** — no new entries in last 20 minutes. Existing positions managed until EOD.
+- **Near-miss logging** — logs `[NEAR_MISS]` when RSI cap blocks a would-fire signal, for future threshold analysis.
+- **Relock skip reduced from 3 to 2** with new override: force relock if spot drifted >30pts from lock point regardless of momentum.
+- **Full floor ladder**: +5→-6, +10→+2, +20→+12, +30→+22, +40→+32, +50→+42
+
 ---
 
 ## Prevention Rules

@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.5 Test Suite
- Minimal strategy: EMA gap + RSI entry, 2-lot exit.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.7 Test Suite
+ Dual-TF momentum + divergence. Static profit floors. RSI cap 75.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.5", D.VERSION == "v13.5", "got " + str(D.VERSION))
+test("VERSION = v13.7", D.VERSION == "v13.7", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -311,26 +311,26 @@ with patch.object(D, 'is_entry_fire_window', return_value=True), \
 #  RSI HARD CAP TESTS
 # ═══════════════════════════════════════════════════════════════
 
-section("ENTRY — RSI HARD CAP")
+section("ENTRY — RSI HARD CAP (v13.7: raised to 75)")
 
-# RSI 73 → BLOCKED
-_df_rsi73 = _df_fire.copy()
-_df_rsi73.iloc[-2, _df_rsi73.columns.get_loc("RSI")] = 73.0
-_df_rsi73.iloc[-3, _df_rsi73.columns.get_loc("RSI")] = 68.0
-with patch.object(D, 'get_historical_data', return_value=_df_rsi73):
+# RSI 76 → BLOCKED
+_df_rsi76 = _df_fire.copy()
+_df_rsi76.iloc[-2, _df_rsi76.columns.get_loc("RSI")] = 76.0
+_df_rsi76.iloc[-3, _df_rsi76.columns.get_loc("RSI")] = 70.0
+with patch.object(D, 'get_historical_data', return_value=_df_rsi76):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 73 > 72 → BLOCKED (blowoff)", r["fired"] == False,
+        test("RSI 76 > 75 → BLOCKED", r["fired"] == False,
              "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"]))
 
-# RSI 71 → ALLOWED (if other conditions pass)
-_df_rsi71 = _df_fire.copy()
-_df_rsi71.iloc[-2, _df_rsi71.columns.get_loc("RSI")] = 71.0
-_df_rsi71.iloc[-3, _df_rsi71.columns.get_loc("RSI")] = 65.0
-with patch.object(D, 'get_historical_data', return_value=_df_rsi71):
+# RSI 74 → ALLOWED (v13.7: cap at 75)
+_df_rsi74 = _df_fire.copy()
+_df_rsi74.iloc[-2, _df_rsi74.columns.get_loc("RSI")] = 74.0
+_df_rsi74.iloc[-3, _df_rsi74.columns.get_loc("RSI")] = 68.0
+with patch.object(D, 'get_historical_data', return_value=_df_rsi74):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 71 < 72 → momentum can fire", r["fired"] == True,
+        test("RSI 74 < 75 → momentum can fire", r["fired"] == True,
              "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"])
              + " ema_gap=" + str(r["ema_gap"]))
 
@@ -533,6 +533,90 @@ with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
         test("RSI_BLOWOFF at 82", len(_ex) >= 1 and "BLOWOFF" in _ex[0]["reason"])
 
 # v13.3: No split, no partial. Both lots exit together.
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v13.7 NEW TESTS
+# ═══════════════════════════════════════════════════════════════
+
+section("v13.7 — PROFIT FLOOR +5 DAMAGE CONTROL")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    # Peak 5, price drops to entry-6 → floor should trigger
+    _st = _make_exit_state(200, peak=5, candles=3)
+    _ex = E.manage_exit(_st, 194, {})
+    test("Peak +5 floor: SL at entry-6 (₹194)",
+         len(_ex) == 1 and _ex[0]["reason"] == "PROFIT_FLOOR",
+         "got " + str(_ex))
+
+    # Peak 5 but price at entry-5 → NO exit (above floor)
+    _st = _make_exit_state(200, peak=5, candles=3)
+    _ex = E.manage_exit(_st, 195, {})
+    test("Peak +5 but price entry-5 → no exit", len(_ex) == 0, "got " + str(_ex))
+
+
+section("v13.7 — PROFIT FLOOR +50 EXTENDED RUNNER")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    _st = _make_exit_state(200, peak=50, candles=20)
+    _ex = E.manage_exit(_st, 241, {})
+    test("Peak +50 floor: SL at entry+42 (₹242)",
+         len(_ex) == 1 and (_ex[0]["reason"] == "PROFIT_FLOOR" or _ex[0]["reason"] == "TRAIL_FLOOR"),
+         "got " + str(_ex))
+
+
+section("v13.7 — FLOOR PERSISTS TO STATE (BUG-027)")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    _st = _make_exit_state(200, peak=10, candles=5)
+    _st["phase1_sl"] = 188.0  # original SL
+    _ex = E.manage_exit(_st, 210, {})  # still above floor, no exit
+    test("Peak +10 ratchets phase1_sl to 202",
+         _st.get("phase1_sl", 0) >= 202 or _st.get("_static_floor_sl", 0) >= 202,
+         "phase1_sl=" + str(_st.get("phase1_sl")) + " static=" + str(_st.get("_static_floor_sl")))
+
+
+section("v13.7 — ENTRY CUTOFF 15:10")
+
+# Mock time to 15:11
+with patch.object(D, 'get_historical_data', return_value=_df_fire):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        with patch('VRL_ENGINE.datetime') as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 4, 11, 15, 11, 0)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            r = E.check_entry(12345, "CE", 22900, 5)
+            test("15:11 → entry blocked", r["fired"] == False,
+                 "fired=" + str(r["fired"]))
+
+
+section("v13.7 — EOD AUTO-EXIT AT 15:30")
+
+# Verify the EOD handler exists in _strategy_loop by checking code presence
+import inspect
+_main_src = inspect.getsource(D) if False else ""
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_MAIN.py")) as _mf:
+        _main_src = _mf.read()
+except Exception:
+    pass
+test("VRL_MAIN has _eod_exited flag", "_eod_exited" in _main_src, "missing _eod_exited")
+test("VRL_MAIN has 15:30 catch-all", "15:30 catch-all" in _main_src or "minute >= 30" in _main_src)
+test("VRL_MAIN has MARKET_CLOSE exit", '"MARKET_CLOSE"' in _main_src)
+
+
+section("v13.7 — STARTUP PHANTOM CLEAR")
+
+test("VRL_MAIN has phantom clear on startup",
+     "Phantom trade detected" in _main_src or "phantom state" in _main_src,
+     "missing phantom clear")
+
+
+section("v13.7 — FORCE EXIT RESPECTS FLOOR SL (BUG-027)")
+
+test("VRL_MAIN force exit uses floor SL",
+     "_static_floor_sl" in _main_src and "max(" in _main_src.split("FORCE_EXIT")[0][-200:]
+     if "FORCE_EXIT" in _main_src else False,
+     "force exit may not respect floor")
 
 
 # ═══════════════════════════════════════════════════════════════

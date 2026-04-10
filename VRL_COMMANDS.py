@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.5
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.7
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -273,10 +273,10 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | FAST 1m +14/4c OR CONFIRMED 3m +20/3c\n"
-        + "green + RSI↑ + RSI<72 + other falling\n"
-        + "SL -12 close | Floors +10→+2 | +20→+12 | +30→+22 | +40→+32\n"
-        + "Cooldown 5min same dir | Emergency -20\n"
+        + " | FAST 1m +14/4c OR CONFIRMED 3m +20/3c | RSI cap 75\n"
+        + "green + RSI↑ + other falling | No entry after 15:10\n"
+        + "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
+        + "SL -12 close | Emergency -20 | EOD 15:30 | 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
@@ -332,8 +332,9 @@ def _cmd_status(args):
     try:
         import VRL_CONFIG as _CFG_sl
         _floors = _CFG_sl.get().get("profit_floors", [
-            {"peak": 10, "lock": 2}, {"peak": 20, "lock": 12},
-            {"peak": 30, "lock": 22}, {"peak": 40, "lock": 32},
+            {"peak": 5, "lock": -6}, {"peak": 10, "lock": 2},
+            {"peak": 20, "lock": 12}, {"peak": 30, "lock": 22},
+            {"peak": 40, "lock": 32}, {"peak": 50, "lock": 42},
         ])
         for _f in _floors:
             if peak >= _f.get("peak", 0):

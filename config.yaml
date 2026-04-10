@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v13.3 — Central Configuration
-#  Momentum primary + EMA secondary entry, unified 2-lot exit
+#  VISHAL RAJPUT TRADE v13.7 — Central Configuration
+#  Dual-TF momentum + divergence, static profit floors
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.5"
+version: "v13.7"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -36,7 +36,7 @@ entry:
   confirmed_momentum_pts: 20
   confirmed_momentum_candles: 3
   # Common
-  rsi_max: 72
+  rsi_max: 75
   ema_gap_min: 3              # info only
 
 exit:
@@ -60,6 +60,14 @@ profit_trail:
 
 rsi_exit:
   blowoff: 80
+
+profit_floors:
+  - { peak: 5,  lock: -6 }
+  - { peak: 10, lock: 2 }
+  - { peak: 20, lock: 12 }
+  - { peak: 30, lock: 22 }
+  - { peak: 40, lock: 32 }
+  - { peak: 50, lock: 42 }
 
 strike:
   step_normal: 50

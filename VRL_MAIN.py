@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.5
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.7
 #  Master orchestration. Dual-TF momentum + divergence.
-#  2-lot execution with profit floors.
+#  2-lot execution. Static profit floors. RSI cap 75. Entry cutoff 15:10.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -663,11 +663,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY: FAST 1m +14pts/4c OR CONFIRMED 3m +20pts/3c\n"
-        "GATES: green + RSI↑ + RSI<72 + other side falling\n"
-        "EXIT: candle close -12 | divergence reversal | stale 5c<3pts | emergency -20\n"
-        "FLOORS: +10→+2 | +20→+12 | +30→+22 | +40→+32\n"
-        "COOLDOWN: 5min same dir, immediate opposite\n"
+        "ENTRY: FAST 1m +14pts/4c OR CONFIRMED 3m +20pts/3c | RSI cap 75\n"
+        "GATES: green + RSI↑ + other side falling | No entry after 15:10\n"
+        "EXIT: candle close -12 | divergence | stale 5c<3 | emergency -20 | EOD 15:30\n"
+        "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
+        "COOLDOWN: 5min same dir | 2 lots fixed | Paper mode\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -2118,9 +2118,8 @@ def _strategy_loop(kite):
                                     + " target=" + str(_target_atm)
                                     + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
-                # v13.5: Skip relock if momentum building, but max 3 consecutive skips
-                # BUG-021 resolved April 10, 2026: 3-skip limit is intentional to prevent
-                # bot from staying on stale strikes indefinitely when momentum builds.
+                # v13.7: Skip relock if momentum building, max 2 consecutive skips.
+                # BUG-021 resolved April 10. Override: force relock if spot drifted >30pts.
                 _building = False
                 try:
                     _cer = all_results.get("CE", {}) if "all_results" in dir() else {}
@@ -2130,11 +2129,13 @@ def _strategy_loop(kite):
                     _building = (_cm > 10 or _pm > 10) and not state.get("in_trade")
                 except Exception:
                     pass
-                if _relock and _building:
+                # v13.7: force relock if spot drifted >30pts regardless of momentum
+                _spot_drift = abs(spot_ltp - _locked_at_spot) if _locked_at_spot else 0
+                if _relock and _building and _spot_drift <= 30:
                     _relock_skip_count = state.get("_relock_skip_count", 0) + 1
                     state["_relock_skip_count"] = _relock_skip_count
-                    if _relock_skip_count <= 3:
-                        logger.info("[MAIN] Relock SKIPPED (" + str(_relock_skip_count) + "/3)"
+                    if _relock_skip_count <= 2:
+                        logger.info("[MAIN] Relock SKIPPED (" + str(_relock_skip_count) + "/2)"
                                     + " — momentum building"
                                     + " CE=" + str(round(_cm, 1)) + " PE=" + str(round(_pm, 1)))
                         _relock = False

@@ -156,7 +156,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.5</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.7</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -191,7 +191,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v13.5';
+document.getElementById('ver').textContent=d.version||mk.version||'v13.7';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -238,7 +238,7 @@ if(pos.in_trade){
   var sl=parseFloat(l1?_lot1.sl:_lot2.sl)||parseFloat(pos.sl||0);
   if(sl<=0)sl=Math.round((entry-12)*100)/100;
   var _pk=parseFloat(pos.peak||0);
-  var _pfloors=[{p:10,l:2},{p:20,l:12},{p:30,l:22},{p:40,l:32}];
+  var _pfloors=[{p:5,l:-6},{p:10,l:2},{p:20,l:12},{p:30,l:22},{p:40,l:32},{p:50,l:42}];
   for(var _i=0;_i<_pfloors.length;_i++){if(_pk>=_pfloors[_i].p){var _c=Math.round((entry+_pfloors[_i].l)*100)/100;if(_c>sl)sl=_c;}}
   var em=pos.entry_mode||pos.mode||'',bc=em==='FAST'?'bf':'bc';
   pa+='<div class="pos '+pc+'">';
@@ -259,12 +259,13 @@ if(pos.in_trade){
     pa+='<div class="lt"><div class="ll">Lot 2</div><div class="lv" style="color:'+(l2?'var(--or)':'var(--tx3)')+'">'+( l2?'ATR Trail':'Exited')+'</div>'+(l2?'<div class="ls mono">SL \u20B9'+sl2+'</div>':'')+'</div>';
   }
   pa+='</div>';
-  // BUG-024: RSI bar — cap at 72, no split label
-  var rp=Math.min(Math.max((rsi/72)*100,0),100);
-  pa+='<div class="rb"><div class="rl"><span>RSI '+Math.round(rsi)+' \u2192 cap 72</span><span>'+Math.round(rp)+'%</span></div>';
-  pa+='<div class="rt"><div class="rf" style="width:'+rp+'%;background:linear-gradient(90deg,var(--gn),var(--yl),var(--or))"></div></div></div>';
+  // v13.7: RSI bar — cap at 75, color red when > 70
+  var rp=Math.min(Math.max((rsi/75)*100,0),100);
+  var _rsiClr=rsi>70?'linear-gradient(90deg,var(--or),var(--rd))':'linear-gradient(90deg,var(--gn),var(--yl),var(--or))';
+  pa+='<div class="rb"><div class="rl"><span>RSI '+Math.round(rsi)+' \u2192 cap 75</span><span>'+Math.round(rp)+'%</span></div>';
+  pa+='<div class="rt"><div class="rf" style="width:'+rp+'%;background:'+_rsiClr+'"></div></div></div>';
   // Floors
-  var floors=[10,20,30,40];
+  var floors=[5,10,20,30,40,50];
   pa+='<div class="fls">';
   floors.forEach(function(f,i){
     var hit=pk>=f;
