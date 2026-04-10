@@ -273,9 +273,8 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | EMA9 strategy: 2 green above + RSI↑ + other below\n"
-        + "2 lots | SL -12 close | Floors +10/+20/+30/+40\n"
-        + "Cooldown 5min same dir | RSI cap 72\n"
+        + " | EMA gap≥3 + RSI 50-72↑ + Green + Widening\n"
+        + "2 lots | SL -12 | Floors +10/+20/+30 | RSI split 70/75\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
