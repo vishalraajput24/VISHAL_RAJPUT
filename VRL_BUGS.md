@@ -100,6 +100,13 @@
 - **Lesson:** Never hardcode paths in two files. Always import from a central constant.
 - **File:** VRL_AUTH.py, VRL_DATA.py
 
+## BUG-016: Dashboard.json path mismatch (same root cause as BUG-015)
+- **Found:** April 10, 2026
+- **Root cause:** VRL_DATA.py BASE_DIR was set to os.path.expanduser("~") = /home/vishalraajput24/. So STATE_DIR resolved to ~/state/ (home), but VRL_WEB.py used its own BASE = repo dir, looking at ~/VISHAL_RAJPUT/state/. VRL_MAIN wrote dashboard.json to home/state, VRL_WEB read from repo/state, /api/dashboard returned empty, VWAP/Fib/Vol/PDH all missing on dashboard.
+- **Fix:** Defined REPO_DIR = directory of VRL_DATA.py file. STATE_DIR now uses REPO_DIR instead of BASE_DIR. All state files now live inside the repo, consistent with VRL_WEB's expectations.
+- **Lesson:** Same lesson as BUG-015 — never define paths in two files. Always use a single REPO_DIR constant. BASE_DIR (home) should only be used for things genuinely outside the repo (like ~/.kite_env).
+- **File:** VRL_DATA.py
+
 ---
 
 ## Prevention Rules

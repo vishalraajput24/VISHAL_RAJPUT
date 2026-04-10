@@ -11,7 +11,10 @@ from http.cookies import SimpleCookie
 
 PORT = 8080
 BASE = os.path.expanduser("~")
-DASH_FILE = os.path.join(BASE, "state", "vrl_dashboard.json")
+# State files live inside the repo so AUTH/MAIN/WEB all agree. BUG-016.
+import VRL_DATA as _D
+STATE_DIR = _D.STATE_DIR
+DASH_FILE = os.path.join(STATE_DIR, "vrl_dashboard.json")
 TRADE_LOG = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
 
 # ── AUTH CONFIG ──
@@ -131,7 +134,7 @@ _FOLDERS = {
     "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
     "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
     "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
-    "state":        ("⚙️ State + Config",         os.path.join(BASE, "state")),
+    "state":        ("⚙️ State + Config",         STATE_DIR),
     "logs_live":    ("📋 Live Logs",              os.path.join(BASE, "logs", "live")),
     "logs_lab":     ("📋 Lab Logs",               os.path.join(BASE, "logs", "lab")),
     "logs_auth":    ("📋 Auth Logs",              os.path.join(BASE, "logs", "auth")),
@@ -1049,7 +1052,7 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
         elif p=="/api/zones":
-            zp = os.path.join(BASE, "state", "vrl_zones.json")
+            zp = os.path.join(STATE_DIR, "vrl_zones.json")
             if os.path.isfile(zp):
                 with open(zp) as _zf:
                     self._j(json.load(_zf))
