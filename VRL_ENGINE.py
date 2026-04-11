@@ -1,7 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.7
-#  Dual-TF momentum + divergence. Static profit floors.
-#  2-lot execution. RSI cap 75. Entry cutoff 15:10.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.8
+#  FAST: 2 green above EMA9 + RSI↑ + spot aligned + other below.
+#  CONFIRMED: 3m momentum backup. Time-aware RSI cap.
+#  Straddle aggressive mode. Stop hunt recovery.
+#  Static profit floors + dynamic trail. Entry cutoff 15:10.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -24,7 +26,6 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
         if df.empty or len(df) < 4:
             return 0.0
         last = df.iloc[-2]
-        # Momentum fallback only on DTE <= 1 with thin candles
         if dte <= 1 and len(df) < 25:
             lookback_idx = min(5, len(df) - 2)
             ref_close = df.iloc[-2 - lookback_idx]["close"]
@@ -35,7 +36,27 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
         return 0.0
 
 # ═══════════════════════════════════════════════════════════════
-#  PRE-ENTRY GUARDS
+#  TIME-AWARE RSI CAP (v13.8 Change 2)
+# ═══════════════════════════════════════════════════════════════
+
+def _get_rsi_cap(aggressive: bool = False) -> tuple:
+    """Return (rsi_cap, session_name) based on time of day.
+    Morning trending (9:15-10:15): 78. Midday chop (10:15-14:00): 72.
+    Afternoon balanced (14:00-15:10): 75. Aggressive mode adds +3."""
+    now = datetime.now()
+    if now.hour < 10 or (now.hour == 10 and now.minute <= 15):
+        cap, session = 78, "MORNING"
+    elif now.hour < 14:
+        cap, session = 72, "MIDDAY"
+    else:
+        cap, session = 75, "AFTERNOON"
+    if aggressive:
+        cap += 3
+    return cap, session
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PRE-ENTRY GUARDS (v13.8: stop hunt recovery — Change 5)
 # ═══════════════════════════════════════════════════════════════
 
 def pre_entry_checks(kite, token: int, state: dict,
@@ -45,37 +66,45 @@ def pre_entry_checks(kite, token: int, state: dict,
         return False, "MAX_DAILY_TRADES reached"
     if state.get("daily_losses", 0) >= D.MAX_DAILY_LOSSES:
         return False, "MAX_DAILY_LOSSES reached"
+
     last_exit = state.get("last_exit_time")
     if last_exit:
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
             last_dir = state.get("last_exit_direction", "")
-            last_peak = state.get("last_exit_peak", 0)
-
-            # Direction-aware cooldown
-            import VRL_CONFIG as CFG
-            cooldown_after_win = CFG.get().get("cooldown", {}).get("after_win", 10)
-            cooldown_after_loss = CFG.get().get("cooldown", {}).get("after_loss", 5)
+            last_reason = state.get("last_exit_reason", "")
+            last_exit_price = float(state.get("last_exit_price", 0))
 
             if direction and direction == last_dir:
-                # Same direction re-entry: longer cooldown after big win
-                cooldown = cooldown_after_win if last_peak >= 10 else cooldown_after_loss
-                if elapsed < cooldown:
-                    remaining = round(cooldown - elapsed, 1)
-                    logger.info("[ENGINE] COOLDOWN " + str(remaining) + "min remaining"
-                                + " (same dir=" + direction + " peak=" + str(round(last_peak, 1)) + ")")
-                    return False, "Cooldown: " + str(remaining) + "min (same dir)"
+                # v13.8 Change 5: Stop hunt recovery — skip cooloff if CANDLE_SL
+                # exit and price recovered 5+ pts within 1+ minute
+                if (last_reason == "CANDLE_SL"
+                        and option_ltp > last_exit_price + 5
+                        and elapsed >= 1):
+                    logger.info("[COOLOFF] Stop hunt recovery detected — "
+                                + direction + " re-entry allowed"
+                                + " (exit=" + str(last_exit_price)
+                                + " now=" + str(option_ltp) + ")")
+                    # Skip cooloff, allow entry to continue
+                else:
+                    # Standard 5-minute same-direction cooloff
+                    cooldown = 5
+                    if elapsed < cooldown:
+                        remaining = round(cooldown - elapsed, 1)
+                        logger.info("[ENGINE] COOLDOWN " + str(remaining)
+                                    + "min remaining (same dir=" + direction + ")")
+                        return False, "Cooldown: " + str(remaining) + "min (same dir)"
             elif direction and direction != last_dir and last_dir:
-                # Opposite direction: enter immediately — no cooldown
+                # Opposite direction: enter immediately
                 pass
             else:
-                # Fallback: use default cooldown
                 if elapsed < D.REENTRY_COOLDOWN_MIN:
                     return False, "Cooldown: " + str(round(D.REENTRY_COOLDOWN_MIN - elapsed, 1)) + "min"
         except Exception:
             pass
+
     if state.get("in_trade"):                return False, "Already in trade"
-    if not D.is_entry_fire_window():         return False, "Before 9:45"
+    if not D.is_entry_fire_window():         return False, "Before entry window"
     if not D.is_market_open():               return False, "Market closed"
     if not D.is_tick_live(D.NIFTY_SPOT_TOKEN): return False, "Spot tick stale"
     if option_ltp <= 0:                      return False, "Option LTP zero"
@@ -90,39 +119,52 @@ def pre_entry_checks(kite, token: int, state: dict,
             pass
     return True, ""
 
+
 def loss_streak_gate(state: dict) -> bool:
     """Always permit — streak management handled upstream."""
     return True
 
+
 # ═══════════════════════════════════════════════════════════════
-#  v13.7 ENTRY — Dual-TF momentum + divergence gate
+#  v13.8 ENTRY — FAST (2 green EMA9) + CONFIRMED (3m momentum)
 # ═══════════════════════════════════════════════════════════════
 
 def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None,
-                other_token: int = 0, silent: bool = False) -> dict:
-    """v13.7: Dual timeframe momentum + divergence. RSI cap 75. Entry cutoff 15:10."""
+                other_token: int = 0, silent: bool = False,
+                state: dict = None) -> dict:
+    """v13.8: FAST = 2 green above EMA9, CONFIRMED = 3m momentum backup.
+    Time-aware RSI cap. Spot alignment. Straddle aggressive mode."""
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "ema9": 0, "ema21": 0,
         "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
         "ema_ok": False, "rsi_ok": False,
         "candle_green": False, "gap_widening": False,
-        "higher_low": False, "entry_mode": "",
+        "entry_mode": "", "rsi_rising": False,
+        "other_falling": False, "other_move": 0,
+        "spot_aligned": False, "two_green_above": False,
+        "other_below_ema": False, "rsi_cap_active": 0,
+        # Legacy compat fields (dashboard reads these)
+        "path_a": False, "path_b": False,
         "momentum_pts": 0, "momentum_tf": "",
-        "ema_would_fire": False, "path_a": False, "path_b": False,
-        "rsi_rising": False, "spot_confirms": False, "spot_move": 0,
-        "spike_ratio": 0, "other_falling": False, "other_move": 0,
-        "momentum_threshold": 0,
+        "momentum_threshold": 0, "spike_ratio": 0,
+        "spot_confirms": False, "spot_move": 0,
+        "higher_low": False, "ema_would_fire": False,
     }
+    if state is None:
+        state = {}
     try:
-        import VRL_CONFIG as CFG
         cfg = CFG.get().get("entry", {})
-        rsi_max      = cfg.get("rsi_max", 75)
-        fast_pts     = cfg.get("fast_momentum_pts", 14)
-        fast_candles = cfg.get("fast_momentum_candles", 4)
-        conf_pts     = cfg.get("confirmed_momentum_pts", 20)
+        aggressive = state.get("aggressive_mode", False)
+        rsi_cap, session_name = _get_rsi_cap(aggressive)
+        result["rsi_cap_active"] = rsi_cap
+
+        conf_pts = cfg.get("confirmed_momentum_pts", 20)
         conf_candles = cfg.get("confirmed_momentum_candles", 3)
+        # v13.8 Change 3: aggressive mode lowers confirmed threshold
+        if aggressive:
+            conf_pts = min(conf_pts, 15)
 
         # ═══ 1-MIN DATA ═══
         df_1m = D.get_historical_data(token, "minute", 50)
@@ -141,83 +183,105 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         ema21 = float(curr_1m.get("EMA_21", 0))
         ema_gap = round(ema9 - ema21, 2)
 
+        _curr_green = entry_price > float(curr_1m["open"])
+        _prev_green = float(prev_1m["close"]) > float(prev_1m["open"])
+        _curr_above = ema9 > 0 and entry_price > ema9
+        _prev_ema9 = float(prev_1m.get("EMA_9", 0))
+        _prev_above = _prev_ema9 > 0 and float(prev_1m["close"]) > _prev_ema9
+        _two_green_above = _curr_green and _prev_green and _curr_above and _prev_above
+
         result.update({
             "entry_price": round(entry_price, 2),
             "ema9": round(ema9, 2), "ema21": round(ema21, 2),
             "ema_gap": ema_gap, "rsi": round(rsi, 1),
             "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
+            "candle_green": _curr_green,
+            "two_green_above": _two_green_above,
         })
 
-        # v13.7: Entry cutoff at 15:10 IST — no new entries after this
-        # Only applies during market hours (not during tests run at night)
+        # Entry cutoff at 15:10 IST
         _now = datetime.now()
         if D.is_market_open() and _now.hour >= 15 and _now.minute >= 10:
             if not silent:
-                logger.info("[ENGINE] " + option_type + " Entry cutoff 15:10 — market close approaching")
+                logger.info("[ENGINE] " + option_type
+                            + " Entry cutoff 15:10 — market close approaching")
             return result
 
-        # RSI HARD CAP (v13.7: raised to 75)
-        if rsi > rsi_max:
-            # Enhancement 5: near-miss logging when RSI blocks a would-fire signal
+        # RSI HARD CAP (v13.8: time-aware)
+        if rsi > rsi_cap:
             if not silent:
                 logger.info("[NEAR_MISS] " + option_type + " RSI cap block: rsi="
-                            + str(round(rsi, 1)) + " rsi_max=" + str(rsi_max))
+                            + str(round(rsi, 1)) + " cap=" + str(rsi_cap)
+                            + " (" + session_name
+                            + ("+AGG" if aggressive else "") + ")")
             return result
 
-        # ═══ OTHER SIDE CHECK (divergence) ═══
+        # ═══ OTHER SIDE CHECK ═══
         other_falling = False
+        other_below_ema = False
         other_move = 0
         if other_token:
             try:
                 other_df = D.get_historical_data(other_token, "minute", 10)
+                other_df = D.add_indicators(other_df)
                 if other_df is not None and not other_df.empty and len(other_df) >= 6:
-                    other_now = float(other_df.iloc[-2]["close"])
-                    other_4ago = float(other_df.iloc[-6]["close"])
-                    other_move = round(other_now - other_4ago, 2)
+                    _o_curr = other_df.iloc[-2]
+                    _o_close = float(_o_curr["close"])
+                    _o_ema9 = float(_o_curr.get("EMA_9", 0))
+                    _o_4ago = float(other_df.iloc[-6]["close"])
+                    other_move = round(_o_close - _o_4ago, 2)
                     other_falling = other_move < 0
+                    other_below_ema = _o_ema9 > 0 and _o_close < _o_ema9
             except Exception:
                 pass
         result["other_falling"] = other_falling
         result["other_move"] = other_move
+        result["other_below_ema"] = other_below_ema
 
-        # If other side NOT falling - no entry from either timeframe
+        # Divergence gate: other side must be falling
         if not other_falling and other_token:
-            reasons = ["OTHER_UP X (" + str(other_move) + "pts)"]
-            if not silent: logger.info("[ENGINE] " + option_type + " DIVERGENCE FAIL " + " ".join(reasons))
-            if len(df_1m) >= fast_candles + 3:
-                ref_1m = float(df_1m.iloc[-3 - fast_candles]["close"])
-                mom_1m = round(float(prev_1m["close"]) - ref_1m, 2)
-                result["momentum_pts"] = mom_1m
-            result["candle_green"] = float(curr_1m["close"]) > float(curr_1m["open"])
+            result["candle_green"] = _curr_green
+            if not silent:
+                logger.info("[ENGINE] " + option_type
+                            + " DIVERGENCE FAIL other=" + str(other_move) + "pts")
             return result
 
-        # ═══ EMA INFO (never fires alone) ═══
-        rsi_ok = rsi >= 50 and rsi > rsi_prev
-        prev_e9 = float(prev_1m.get("EMA_9", 0))
-        prev_e21 = float(prev_1m.get("EMA_21", 0))
-        prev_gap = round(prev_e9 - prev_e21, 2)
-        gap_widening = ema_gap > prev_gap
-        ema_ok = ema_gap >= cfg.get("ema_gap_min", 3)
-        result["ema_ok"] = ema_ok
-        result["rsi_ok"] = rsi_ok
-        result["gap_widening"] = gap_widening
-        _curr_green_1m = float(curr_1m["close"]) > float(curr_1m["open"])
-        path_ema = ema_ok and rsi_ok and _curr_green_1m and gap_widening
-        result["ema_would_fire"] = path_ema
-        result["path_a"] = path_ema
+        # ═══ SPOT ALIGNMENT (v13.8 Change 4) ═══
+        _spot_aligned = True
+        try:
+            _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 50)
+            _spot_df = D.add_indicators(_spot_df)
+            if not _spot_df.empty and len(_spot_df) >= 10:
+                _sp_last = _spot_df.iloc[-2]
+                _sp_close = float(_sp_last["close"])
+                _sp_ema9 = float(_sp_last.get("EMA_9", _sp_close))
+                _sp_above = _sp_close > _sp_ema9
+                if option_type == "CE" and not _sp_above:
+                    _spot_aligned = False
+                    if not silent:
+                        logger.info("[ENGINE] CE blocked: spot not aligned"
+                                    + " close=" + str(round(_sp_close, 1))
+                                    + " ema9=" + str(round(_sp_ema9, 1)))
+                    return result
+                if option_type == "PE" and _sp_above:
+                    _spot_aligned = False
+                    if not silent:
+                        logger.info("[ENGINE] PE blocked: spot not aligned"
+                                    + " close=" + str(round(_sp_close, 1))
+                                    + " ema9=" + str(round(_sp_ema9, 1)))
+                    return result
+        except Exception:
+            pass
+        result["spot_aligned"] = _spot_aligned
 
-        # ═══ 1-MIN MOMENTUM (FAST) ═══
-        path_fast = False
-        mom_1m = 0
-        if len(df_1m) >= fast_candles + 3:
-            ref_1m = float(df_1m.iloc[-3 - fast_candles]["close"])
-            mom_1m = round(float(prev_1m["close"]) - ref_1m, 2)
-            path_fast = (mom_1m >= fast_pts
-                         and _curr_green_1m
-                         and rsi_rising
-                         and rsi <= rsi_max)
+        # ═══ FAST PATH (v13.8 Change 1: 2-candle EMA9 binary check) ═══
+        path_fast = (_two_green_above
+                     and rsi_rising
+                     and rsi <= rsi_cap
+                     and other_below_ema)
+        result["path_a"] = path_fast
 
-        # ═══ 3-MIN MOMENTUM (CONFIRMED) ═══
+        # ═══ CONFIRMED PATH (3-min momentum — kept from v13.7) ═══
         path_conf = False
         mom_3m = 0
         try:
@@ -235,90 +299,77 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 path_conf = (mom_3m >= conf_pts
                              and curr_3m_green
                              and rsi_3m_rising
-                             and rsi_3m <= rsi_max)
+                             and rsi_3m <= rsi_cap)
         except Exception:
             pass
-
-        result["momentum_pts"] = max(mom_1m, mom_3m)
-        result["candle_green"] = _curr_green_1m
-        result["path_b"] = path_fast or path_conf
+        result["path_b"] = path_conf
+        result["momentum_pts"] = mom_3m
+        result["momentum_threshold"] = conf_pts
 
         # ═══ FIRE LOGIC ═══
-        if path_fast and path_conf:
-            result["fired"] = True
-            result["entry_mode"] = "CONFIRMED"
-            result["momentum_tf"] = "1m+3m"
-            result["momentum_threshold"] = fast_pts
-            if not silent: logger.info("[ENGINE] " + option_type
-                + " ENTRY [CONFIRMED **] 1m=" + str(mom_1m)
-                + " 3m=" + str(mom_3m)
-                + " rsi=" + str(round(rsi, 1))
-                + " other=" + str(other_move)
-                + " entry=" + str(entry_price))
-        elif path_fast:
+        if path_fast:
             result["fired"] = True
             result["entry_mode"] = "FAST"
-            result["momentum_tf"] = "1m"
-            result["momentum_threshold"] = fast_pts
-            if not silent: logger.info("[ENGINE] " + option_type
-                + " ENTRY [FAST] 1m=" + str(mom_1m) + "/" + str(fast_pts)
-                + " rsi=" + str(round(rsi, 1))
-                + (" RSIup" if rsi_rising else " RSIdn")
-                + " other=" + str(other_move)
-                + " entry=" + str(entry_price))
+            if not silent:
+                logger.info("[ENGINE] " + option_type + " ENTRY [FAST]"
+                            + " 2green_above=✓ rsi=" + str(round(rsi, 1))
+                            + "↑ cap=" + str(rsi_cap)
+                            + " other_below_ema=✓ spot_aligned=✓"
+                            + " entry=" + str(entry_price))
         elif path_conf:
             result["fired"] = True
             result["entry_mode"] = "CONFIRMED"
             result["momentum_tf"] = "3m"
-            result["momentum_threshold"] = conf_pts
-            if not silent: logger.info("[ENGINE] " + option_type
-                + " ENTRY [CONFIRMED *] 3m=" + str(mom_3m) + "/" + str(conf_pts)
-                + " rsi=" + str(round(rsi, 1))
-                + " other=" + str(other_move)
-                + " entry=" + str(entry_price))
+            if not silent:
+                logger.info("[ENGINE] " + option_type + " ENTRY [CONFIRMED]"
+                            + " 3m=" + str(mom_3m) + "/" + str(conf_pts)
+                            + " rsi=" + str(round(rsi, 1))
+                            + " spot_aligned=✓"
+                            + " entry=" + str(entry_price))
         else:
             reasons = []
-            reasons.append("1m=" + str(mom_1m) + "/" + str(fast_pts)
-                           + ("V" if mom_1m >= fast_pts else "X"))
-            reasons.append("3m=" + str(mom_3m) + "/" + str(conf_pts)
-                           + ("V" if mom_3m >= conf_pts else "X"))
-            if not _curr_green_1m:
-                reasons.append("REDX")
+            if not _two_green_above:
+                reasons.append("2G_EMA_X")
             if not rsi_rising:
-                reasons.append("RSIdnX")
-            reasons.append("other=" + str(other_move)
-                           + ("V" if other_falling else "X"))
-            if path_ema:
-                reasons.append("[EMAV]")
-            if not silent: logger.info("[ENGINE] " + option_type + " " + " ".join(reasons))
+                reasons.append("RSI↓")
+            if not other_below_ema and other_token:
+                reasons.append("other_above_ema")
+            if mom_3m < conf_pts:
+                reasons.append("3m=" + str(mom_3m) + "/" + str(conf_pts))
+            if not silent:
+                logger.info("[ENGINE] " + option_type + " " + " ".join(reasons)
+                            + " rsi=" + str(round(rsi, 1))
+                            + "/" + str(rsi_cap)
+                            + " spot=✓")
 
         return result
     except Exception as e:
         logger.error("[ENGINE] check_entry error: " + str(e))
         return result
 
+
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
     """Simple fixed SL. Exit fires on candle close beyond this."""
     return round(entry_price - hard_sl, 2)
+
 
 def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     if state.get("profit_locked"):
         return False
     if daily_pnl >= D.PROFIT_LOCK_PTS:
         state["profit_locked"] = True
-        if state.get("in_trade") and state.get("exit_phase") == 3:
-            state["trail_tightened"] = True
         logger.info("[ENGINE] Profit lock at " + str(round(daily_pnl, 1)) + "pts")
         return True
     return False
 
+
 # ═══════════════════════════════════════════════════════════════
-#  v13.7 EXIT — Priority chain + static profit floors + dynamic trail
+#  v13.8 EXIT — Priority chain + static profit floors + dynamic trail
 # ═══════════════════════════════════════════════════════════════
 
 def manage_exit(state: dict, option_ltp: float, profile: dict,
                 other_token: int = 0) -> list:
-    """v13.7: Priority chain exits. Static profit floors + dynamic trail."""
+    """v13.8: Priority chain. Static profit floors persist to state."""
     if not state.get("in_trade"):
         return []
 
@@ -353,7 +404,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         state["_candle_low"] = option_ltp
         candle_low = option_ltp
 
-    import VRL_CONFIG as CFG
     exit_cfg = CFG.get().get("exit", {})
     candle_sl       = exit_cfg.get("candle_close_sl", 12)
     max_sl          = exit_cfg.get("max_sl", 20)
@@ -395,19 +445,18 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
                 other_falling = not other_curr_green
         except Exception:
             pass
-
     state["other_reversing"] = other_reversing
     state["other_warning"] = other_warning
     state["other_falling"] = other_falling
 
     # ═══ EXIT PRIORITY ORDER ═══
 
-    # 1. EMERGENCY: running below -20
+    # 1. EMERGENCY
     if running <= -max_sl:
         logger.info("[ENGINE] EMERGENCY_SL: running=" + str(running))
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
 
-    # 2. STALE: 5 candles, peak < 3
+    # 2. STALE
     if candles >= stale_candles and peak < stale_peak:
         logger.info("[ENGINE] STALE_ENTRY: " + str(candles) + "c peak=" + str(peak))
         return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
@@ -417,12 +466,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.info("[ENGINE] RSI_BLOWOFF: rsi=" + str(round(rsi, 1)))
         return [{"lot_id": "ALL", "reason": "RSI_BLOWOFF", "price": option_ltp}]
 
-    # 4. OTHER SIDE REVERSED: 2 green + RSI rising, peak >= 6
+    # 4. DIVERGENCE EXIT
     if other_reversing and peak >= 6:
         logger.info("[ENGINE] DIVERGENCE_EXIT: other reversed, peak=" + str(round(peak, 1)))
         return [{"lot_id": "ALL", "reason": "DIVERGENCE_EXIT", "price": option_ltp}]
 
-    # 5. SPIKE CHECK: low touched -12 but close recovered
+    # 5. SPIKE CHECK
     low_touch = candle_low - entry
     if low_touch <= -candle_sl and running > -spike_recovery:
         if other_falling:
@@ -432,12 +481,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
             logger.info("[ENGINE] WEAK_SL: spike + other not falling")
             return [{"lot_id": "ALL", "reason": "WEAK_SL", "price": option_ltp}]
 
-    # 6. CANDLE CLOSE SL: real drop, not spike
+    # 6. CANDLE CLOSE SL
     if running <= -candle_sl:
         logger.info("[ENGINE] CANDLE_SL: running=" + str(running))
         return [{"lot_id": "ALL", "reason": "CANDLE_SL", "price": option_ltp}]
 
-    # 6b. STATIC PROFIT FLOORS (BUG-027: persist floor SL to state)
+    # 6b. STATIC PROFIT FLOORS (BUG-027: persist to state)
     _floors = CFG.get().get("profit_floors", [])
     _best_floor = None
     for _f in _floors:
@@ -449,7 +498,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         _prev_floor = state.get("_static_floor_sl", 0)
         if _floor_sl > _prev_floor:
             state["_static_floor_sl"] = _floor_sl
-            # Also persist to phase1_sl so FORCE_EXIT and /status see it
             if _floor_sl > state.get("phase1_sl", 0):
                 state["phase1_sl"] = _floor_sl
             logger.info("[FLOOR] Peak " + str(round(peak, 1))
@@ -462,7 +510,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
                         + " floor=" + str(_active_floor))
             return [{"lot_id": "ALL", "reason": "PROFIT_FLOOR", "price": option_ltp}]
 
-    # 7. DYNAMIC TRAIL (activates at higher peaks than static floors)
+    # 7. DYNAMIC TRAIL
     if peak >= trail_activate:
         keep = keep_warning if other_warning else keep_normal
         lock_pts = round(peak * keep, 1)
@@ -479,4 +527,3 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
             return [{"lot_id": "ALL", "reason": "TRAIL_FLOOR", "price": option_ltp}]
 
     return []
-

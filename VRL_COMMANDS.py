@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.7
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.8
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -273,10 +273,11 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | FAST 1m +14/4c OR CONFIRMED 3m +20/3c | RSI cap 75\n"
-        + "green + RSI↑ + other falling | No entry after 15:10\n"
+        + " | FAST: 2 green above EMA9 + RSI↑ + spot confirm\n"
+        + "CONFIRMED: 3m +20pts (aggressive: 15pts)\n"
+        + "RSI cap: 78 morning / 72 midday / 75 afternoon\n"
         + "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
-        + "SL -12 close | Emergency -20 | EOD 15:30 | 2 lots fixed\n"
+        + "SL -12 close | EOD 15:30 | No entry 15:10 | 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )

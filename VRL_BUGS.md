@@ -192,6 +192,15 @@
 - **Relock skip reduced from 3 to 2** with new override: force relock if spot drifted >30pts from lock point regardless of momentum.
 - **Full floor ladder**: +5→-6, +10→+2, +20→+12, +30→+22, +40→+32, +50→+42
 
+## v13.8 FINAL: Strategy simplification + stop hunt recovery (April 11, 2026)
+- **Change 1: FAST path simplified** — removed momentum points math. Entry now: 2 green candles closing above EMA9 with RSI rising + other side below EMA9. Binary checks, no thresholds.
+- **Change 2: Time-aware RSI cap** — 78 morning (9:15-10:15), 72 midday (10:15-14:00), 75 afternoon (14:00-15:10). Adapts to market phase. Aggressive mode adds +3.
+- **Change 3: Straddle aggressive mode** — when straddle decays 20%+, system activates aggressive mode: RSI cap +3, CONFIRMED threshold 20→15. Resets daily.
+- **Change 4: Spot alignment** — CE requires spot above EMA9, PE requires spot below EMA9. Prevents option-only manipulation signals.
+- **Change 5: Stop hunt recovery** — cooloff auto-skipped when previous exit was CANDLE_SL and price recovers 5+ pts within 1+ min. Allows re-entry after genuine stop hunts.
+- **Also: last_exit_price now saved** on every exit for stop hunt recovery detection.
+- **Expected impact**: Cleaner entries, fewer false signals, faster re-entry on genuine trends, adaptive to market rhythm.
+
 ---
 
 ## Prevention Rules

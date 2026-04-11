@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.7 Test Suite
- Dual-TF momentum + divergence. Static profit floors. RSI cap 75.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.8 Test Suite
+ FAST EMA9 + CONFIRMED 3m. Time-aware RSI cap. Stop hunt recovery.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.7", D.VERSION == "v13.7", "got " + str(D.VERSION))
+test("VERSION = v13.8", D.VERSION == "v13.8", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -311,28 +311,40 @@ with patch.object(D, 'is_entry_fire_window', return_value=True), \
 #  RSI HARD CAP TESTS
 # ═══════════════════════════════════════════════════════════════
 
-section("ENTRY — RSI HARD CAP (v13.7: raised to 75)")
+section("ENTRY — RSI HARD CAP (v13.8: time-aware)")
 
-# RSI 76 → BLOCKED
-_df_rsi76 = _df_fire.copy()
-_df_rsi76.iloc[-2, _df_rsi76.columns.get_loc("RSI")] = 76.0
-_df_rsi76.iloc[-3, _df_rsi76.columns.get_loc("RSI")] = 70.0
-with patch.object(D, 'get_historical_data', return_value=_df_rsi76):
+# Test time-aware RSI cap function directly
+_cap_m, _ses_m = E._get_rsi_cap(False)
+test("RSI cap function returns tuple", type(_cap_m) == int and _ses_m in ("MORNING","MIDDAY","AFTERNOON"),
+     "cap=" + str(_cap_m) + " ses=" + str(_ses_m))
+
+# Test aggressive mode adds +3
+_cap_a, _ = E._get_rsi_cap(True)
+test("Aggressive mode adds +3 to RSI cap", _cap_a == _cap_m + 3,
+     "normal=" + str(_cap_m) + " aggressive=" + str(_cap_a))
+
+# RSI above current cap → BLOCKED (cap varies by time, test with known value)
+# At test run time, cap is one of 72/75/78. Use cap+1 to guarantee block.
+_current_cap, _ = E._get_rsi_cap(False)
+_df_rsi_blocked = _df_fire.copy()
+_df_rsi_blocked.iloc[-2, _df_rsi_blocked.columns.get_loc("RSI")] = float(_current_cap + 1)
+_df_rsi_blocked.iloc[-3, _df_rsi_blocked.columns.get_loc("RSI")] = float(_current_cap - 5)
+with patch.object(D, 'get_historical_data', return_value=_df_rsi_blocked):
     with patch.object(D, 'add_indicators', side_effect=lambda x: x):
         r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 76 > 75 → BLOCKED", r["fired"] == False,
+        test("RSI " + str(_current_cap+1) + " > cap " + str(_current_cap) + " → BLOCKED",
+             r["fired"] == False, "fired=" + str(r["fired"]))
+
+# RSI below current cap → ALLOWED
+_df_rsi_ok = _df_fire.copy()
+_df_rsi_ok.iloc[-2, _df_rsi_ok.columns.get_loc("RSI")] = float(_current_cap - 1)
+_df_rsi_ok.iloc[-3, _df_rsi_ok.columns.get_loc("RSI")] = float(_current_cap - 7)
+with patch.object(D, 'get_historical_data', return_value=_df_rsi_ok):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 22900, 5)
+        test("RSI " + str(_current_cap-1) + " < cap " + str(_current_cap) + " → can fire",
+             r["fired"] == True,
              "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"]))
-
-# RSI 74 → ALLOWED (v13.7: cap at 75)
-_df_rsi74 = _df_fire.copy()
-_df_rsi74.iloc[-2, _df_rsi74.columns.get_loc("RSI")] = 74.0
-_df_rsi74.iloc[-3, _df_rsi74.columns.get_loc("RSI")] = 68.0
-with patch.object(D, 'get_historical_data', return_value=_df_rsi74):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI 74 < 75 → momentum can fire", r["fired"] == True,
-             "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"])
-             + " ema_gap=" + str(r["ema_gap"]))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -612,12 +624,75 @@ test("VRL_MAIN has phantom clear on startup",
      "missing phantom clear")
 
 
-section("v13.7 — FORCE EXIT RESPECTS FLOOR SL (BUG-027)")
+section("FORCE EXIT RESPECTS FLOOR SL (BUG-027)")
 
 test("VRL_MAIN force exit uses floor SL",
      "_static_floor_sl" in _main_src and "max(" in _main_src.split("FORCE_EXIT")[0][-200:]
      if "FORCE_EXIT" in _main_src else False,
      "force exit may not respect floor")
+
+
+section("v13.8 — STOP HUNT RECOVERY (Change 5)")
+
+# Stop hunt: CANDLE_SL exit + price recovered +5 + 1 min elapsed → allow re-entry
+_sh_state = deepcopy(E.D.DEFAULT_STATE) if hasattr(E.D, 'DEFAULT_STATE') else {}
+_sh_state.update({
+    "last_exit_time": (datetime.now() - timedelta(minutes=1.5)).isoformat(),
+    "last_exit_direction": "CE",
+    "last_exit_reason": "CANDLE_SL",
+    "last_exit_price": 180.0,
+    "last_exit_peak": 5.0,
+    "in_trade": False, "daily_trades": 0, "daily_losses": 0, "paused": False,
+})
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _sh_state, 186.0, {}, "", direction="CE")
+    test("Stop hunt recovery: CANDLE_SL + price>exit+5 + 1min → ALLOWED",
+         ok == True, "ok=" + str(ok) + " reason=" + reason)
+
+# Non-CANDLE_SL exit → normal cooldown applies
+_sh_state2 = deepcopy(_sh_state)
+_sh_state2["last_exit_reason"] = "STALE_ENTRY"
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _sh_state2, 186.0, {}, "", direction="CE")
+    test("Non-CANDLE_SL exit → normal cooldown", ok == False,
+         "ok=" + str(ok) + " reason=" + reason)
+
+# CANDLE_SL but price NOT recovered → cooldown
+_sh_state3 = deepcopy(_sh_state)
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _sh_state3, 183.0, {}, "", direction="CE")
+    test("CANDLE_SL but price not recovered (+3 < +5) → cooldown", ok == False,
+         "ok=" + str(ok) + " reason=" + reason)
+
+
+section("v13.8 — SPOT ALIGNMENT (Change 4)")
+
+test("VRL_ENGINE has spot alignment check",
+     "spot_not_aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read(),
+     "missing spot alignment")
+test("VRL_ENGINE result has spot_aligned field",
+     "spot_aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read())
+
+
+section("v13.8 — STRADDLE AGGRESSIVE MODE (Change 3)")
+
+test("VRL_MAIN has aggressive_mode handling",
+     "aggressive_mode" in _main_src, "missing aggressive_mode")
+test("VRL_MAIN resets aggressive_mode in daily reset",
+     "aggressive_mode" in _main_src.split("_reset_daily")[1][:500] if "_reset_daily" in _main_src else False,
+     "not reset in _reset_daily")
+
+
+section("v13.8 — LAST EXIT PRICE SAVED")
+
+test("VRL_MAIN saves last_exit_price on exit",
+     "last_exit_price" in _main_src, "missing last_exit_price")
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -156,7 +156,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.7</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.8</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -191,7 +191,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v13.7';
+document.getElementById('ver').textContent=d.version||mk.version||'v13.8';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -285,28 +285,23 @@ sh+='<div class="sg">';
 [['CE',ce],['PE',pe]].forEach(function(p){
   var t=p[0],s=p[1],sk=s.strike||mk['locked_'+t.toLowerCase()]||mk.atm||'';
   var fi=s.fired,cc=fi?'fired':'';
-  var mp=parseFloat(s.momentum_pts||0),mt=parseFloat(s.momentum_threshold||14);
-  var m3=0;
-  // 3m momentum: estimate from path_b and momentum data
   var pa2=s.path_a,pb=s.path_b;
-  var eg=parseFloat(s.ema_gap||0);
-  var mpw=Math.min(Math.abs(mp)/mt*100,100);
-  var m3w=pb?100:Math.min(Math.abs(mp)/(mt*1.4)*100,100);
-  var ew=Math.min(Math.abs(eg)/10*100,100);
-  var eo=s.ema_ok,ro=s.rsi_ok;
   var rv=parseFloat(s.rsi||0),rr=s.rsi_rising;
+  var _rcap=parseInt(s.rsi_cap_active||75);
+  var _2ga=s.two_green_above,_obe=s.other_below_ema,_spa=s.spot_aligned;
+  var mp=parseFloat(s.momentum_pts||0),mt=parseFloat(s.momentum_threshold||20);
 
   sh+='<div class="sc '+cc+'">';
   sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2 mono">\u20B9'+(s.ltp||0)+'</span></div>';
 
-  // Momentum paths
-  sh+='<div class="ms"><div class="mt2">Momentum paths</div>';
-  sh+='<div class="mr"><span class="ml f">FAST 1m</span><div class="mb"><div class="mf '+(mp>=mt?'or':mp>0?'or':'re')+'" style="width:'+mpw+'%"></div></div><span class="mv mono">'+Math.round(mp)+'/'+Math.round(mt)+'</span></div>';
-  sh+='<div class="mr"><span class="ml c">CONF 3m</span><div class="mb"><div class="mf '+(pb?'bl':'bl')+'" style="width:'+m3w+'%"></div></div><span class="mv mono">'+(pb?'\u2713':'...')+'</span></div>';
-  sh+='<div class="mr"><span class="ml e">EMA</span><div class="mb"><div class="mf gy" style="width:'+ew+'%"></div></div><span class="mv mono">'+eg.toFixed(1)+'</span></div>';
+  // v13.8: EMA9 strategy section
+  sh+='<div class="ms"><div class="mt2">EMA9 Strategy</div>';
+  sh+='<div class="mr"><span class="ml f">2 Green \u2191EMA9</span><span class="mv" style="margin-left:auto;color:'+(_2ga?'var(--gn2)':'var(--rd)')+'">'+(_2ga?'\u2713':'\u2717')+'</span></div>';
+  sh+='<div class="mr"><span class="ml c">CONF 3m</span><span class="mv mono" style="margin-left:auto;color:'+(pb?'var(--gn2)':'var(--tx3)')+'">'+Math.round(mp)+'/'+Math.round(mt)+(pb?' \u2713':'')+'</span></div>';
+  sh+='<div class="mr"><span class="ml e">Spot Align</span><span class="mv" style="margin-left:auto;color:'+(_spa?'var(--gn2)':'var(--rd)')+'">'+(_spa?'\u2713':'\u2717')+'</span></div>';
   sh+='</div>';
 
-  sh+='<div class="sr"><span class="sk">RSI</span><span class="sv '+(ro?'ok':'fl')+' mono">'+rv.toFixed(1)+' '+(rr?'\u2191':'\u2193')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">RSI (cap '+_rcap+')</span><span class="sv '+(rv<=_rcap&&rr?'ok':'fl')+' mono">'+rv.toFixed(1)+' '+(rr?'\u2191':'\u2193')+'</span></div>';
   sh+='<div class="sr"><span class="sk">CANDLE</span><span class="sv '+(s.candle_green?'ok':'fl')+'">'+(s.candle_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
 
   // Divergence box

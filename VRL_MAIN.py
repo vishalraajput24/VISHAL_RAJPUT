@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.7
-#  Master orchestration. Dual-TF momentum + divergence.
-#  2-lot execution. Static profit floors. RSI cap 75. Entry cutoff 15:10.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.8
+#  Master orchestration. FAST EMA9 + CONFIRMED 3m momentum.
+#  2-lot execution. Time-aware RSI cap. Spot alignment.
+#  Straddle aggressive mode. Stop hunt recovery.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -307,6 +308,7 @@ def _reset_daily(today_str: str):
         state["profit_locked"]         = False
         state["_eod_reported"]         = False
         state["_eod_exited"]           = False
+        state["aggressive_mode"]       = False
         state["paused"]                = False
         state["_bias_done"]            = False
         state["_straddle_done"]        = False
@@ -663,11 +665,13 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY: FAST 1m +14pts/4c OR CONFIRMED 3m +20pts/3c | RSI cap 75\n"
-        "GATES: green + RSI↑ + other side falling | No entry after 15:10\n"
-        "EXIT: candle close -12 | divergence | stale 5c peakstale 5c<3lt;3 | emergency -20 | EOD 15:30\n"
-        "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
-        "COOLDOWN: 5min same dir | 2 lots fixed | Paper mode\n"
+        "ENTRY FAST: 2 green above EMA9 + RSI\u2191 + other below + spot confirm\n"
+        "ENTRY CONF: 3m +20pts momentum + other falling (aggressive: 15pts)\n"
+        "RSI cap: 78 morning / 72 midday / 75 afternoon (+3 aggressive)\n"
+        "EXIT: candle close -12 | divergence | stale 5c peak&lt;3 | EOD 15:30\n"
+        "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"
+        "COOLDOWN: 5min same dir | SKIP on stop hunt recovery\n"
+        "NO ENTRY AFTER 15:10 | 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1095,6 +1099,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_direction"] = direction
             state["last_exit_peak"] = peak
             state["last_exit_reason"] = reason
+            state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
@@ -1836,6 +1841,28 @@ def _strategy_loop(kite):
                 _alert_profit_lock(_pnl_snapshot)
                 _save_state()
 
+            # v13.8 Change 3: Straddle decay aggressive mode
+            _strad_open = getattr(D, "_straddle_open", 0)
+            _strad_capt = getattr(D, "_straddle_captured", False)
+            if (_strad_capt and _strad_open > 0
+                    and not state.get("aggressive_mode")
+                    and now.minute % 5 == 0 and now.second < 5):
+                try:
+                    _strad_curr = D.get_straddle_sum(kite, _locked_ce_strike, expiry) if hasattr(D, "get_straddle_sum") else 0
+                    if _strad_curr > 0:
+                        _decay_pct = (_strad_open - _strad_curr) / _strad_open
+                        if _decay_pct >= 0.20:
+                            with _state_lock:
+                                state["aggressive_mode"] = True
+                            _save_state()
+                            logger.info("[MAIN] Aggressive mode ON — straddle decay "
+                                        + str(round(_decay_pct * 100, 1)) + "%")
+                            _tg_send("⚡ Aggressive mode activated\n"
+                                     "Straddle decay " + str(round(_decay_pct * 100, 0))
+                                     + "% — directional day confirmed")
+                except Exception:
+                    pass
+
             with _state_lock:
                 _eod_done = state.get("_eod_reported")
             # v13.3: Save prev_close continuously from 15:25 onward — avoids missing
@@ -2215,6 +2242,7 @@ def _strategy_loop(kite):
                         expiry_date=expiry,
                         kite=kite,
                         other_token=_other_tok,
+                        state=state,
                     )
                     result["_strike"] = dir_strikes.get(opt_type, atm_strike)
                     # Bonus indicators — info only, never block
