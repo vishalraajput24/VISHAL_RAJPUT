@@ -156,7 +156,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.8</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.9</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -191,7 +191,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v13.8';
+document.getElementById('ver').textContent=d.version||mk.version||'v13.9';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -296,9 +296,10 @@ sh+='<div class="sg">';
 
   // v13.8: EMA9 strategy section
   sh+='<div class="ms"><div class="mt2">EMA9 Strategy</div>';
-  sh+='<div class="mr"><span class="ml f">2 Green \u2191EMA9</span><span class="mv" style="margin-left:auto;color:'+(_2ga?'var(--gn2)':'var(--rd)')+'">'+(_2ga?'\u2713':'\u2717')+'</span></div>';
+  var _bkc=s.breakout_confirmed,_slp=parseFloat(s.spot_slope||0);
+  sh+='<div class="mr"><span class="ml f">2G+Breakout</span><span class="mv" style="margin-left:auto;color:'+(_2ga&&_bkc?'var(--gn2)':'var(--rd)')+'">'+(_2ga?'2G\u2713':'\u2717')+(_bkc?' BK\u2713':' BK\u2717')+'</span></div>';
   sh+='<div class="mr"><span class="ml c">CONF 3m</span><span class="mv mono" style="margin-left:auto;color:'+(pb?'var(--gn2)':'var(--tx3)')+'">'+Math.round(mp)+'/'+Math.round(mt)+(pb?' \u2713':'')+'</span></div>';
-  sh+='<div class="mr"><span class="ml e">Spot Align</span><span class="mv" style="margin-left:auto;color:'+(_spa?'var(--gn2)':'var(--rd)')+'">'+(_spa?'\u2713':'\u2717')+'</span></div>';
+  sh+='<div class="mr"><span class="ml e">Spot</span><span class="mv mono" style="margin-left:auto;color:'+(_spa&&Math.abs(_slp)>=2?'var(--gn2)':'var(--rd)')+'">'+(_spa?'align\u2713':'align\u2717')+' slope '+_slp.toFixed(1)+'</span></div>';
   sh+='</div>';
 
   sh+='<div class="sr"><span class="sk">RSI (cap '+_rcap+')</span><span class="sv '+(rv<=_rcap&&rr?'ok':'fl')+' mono">'+rv.toFixed(1)+' '+(rr?'\u2191':'\u2193')+'</span></div>';

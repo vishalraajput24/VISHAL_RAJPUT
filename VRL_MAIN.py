@@ -665,9 +665,9 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY FAST: 2 green above EMA9 + RSI\u2191 + other below + spot confirm\n"
+        "ENTRY FAST: 2 green above EMA9 + breakout confirm + spot slope\n"
         "ENTRY CONF: 3m +20pts momentum + other falling (aggressive: 15pts)\n"
-        "RSI cap: 78 morning / 72 midday / 75 afternoon (+3 aggressive)\n"
+        "RSI cap: 78 morning / 72 midday / 75 afternoon | Spot slope \u22652\n"
         "EXIT: candle close -12 | divergence | stale 5c peak&lt;3 | EOD 15:30\n"
         "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"
         "COOLDOWN: 5min same dir | SKIP on stop hunt recovery\n"

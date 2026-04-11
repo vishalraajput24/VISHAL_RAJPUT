@@ -1,8 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.8
-#  FAST: 2 green above EMA9 + RSI↑ + spot aligned + other below.
-#  CONFIRMED: 3m momentum backup. Time-aware RSI cap.
-#  Straddle aggressive mode. Stop hunt recovery.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v13.9
+#  FAST: 2 green above EMA9 + breakout confirm + RSI↑ + spot aligned + slope.
+#  CONFIRMED: 3m momentum backup. Time-aware RSI cap. Stop hunt recovery.
 #  Static profit floors + dynamic trail. Entry cutoff 15:10.
 # ═══════════════════════════════════════════════════════════════
 
@@ -145,6 +144,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "other_falling": False, "other_move": 0,
         "spot_aligned": False, "two_green_above": False,
         "other_below_ema": False, "rsi_cap_active": 0,
+        "breakout_confirmed": False, "spot_slope": 0,
         # Legacy compat fields (dashboard reads these)
         "path_a": False, "path_b": False,
         "momentum_pts": 0, "momentum_tf": "",
@@ -190,6 +190,11 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         _prev_above = _prev_ema9 > 0 and float(prev_1m["close"]) > _prev_ema9
         _two_green_above = _curr_green and _prev_green and _curr_above and _prev_above
 
+        # v13.9 Change 1: Option breakout confirmation
+        # Last candle close must exceed previous candle high — genuine breakout
+        _prev_high = float(prev_1m["high"])
+        _breakout_confirmed = entry_price > _prev_high
+
         result.update({
             "entry_price": round(entry_price, 2),
             "ema9": round(ema9, 2), "ema21": round(ema21, 2),
@@ -197,6 +202,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             "rsi_prev": round(rsi_prev, 1), "rsi_rising": rsi_rising,
             "candle_green": _curr_green,
             "two_green_above": _two_green_above,
+            "breakout_confirmed": _breakout_confirmed,
         })
 
         # Entry cutoff at 15:10 IST
@@ -274,8 +280,32 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             pass
         result["spot_aligned"] = _spot_aligned
 
-        # ═══ FAST PATH (v13.8 Change 1: 2-candle EMA9 binary check) ═══
+        # v13.9 Change 2: Spot EMA slope — filter out sideways
+        _spot_slope = 0
+        try:
+            if not _spot_df.empty and len(_spot_df) >= 8:
+                _slope_now = float(_spot_df.iloc[-2].get("EMA_9", 0))
+                _slope_5ago = float(_spot_df.iloc[-7].get("EMA_9", 0))
+                _spot_slope = round(_slope_now - _slope_5ago, 1)
+        except Exception:
+            pass
+        result["spot_slope"] = _spot_slope
+
+        _slope_ok = True
+        if option_type == "CE" and _spot_slope < 2:
+            _slope_ok = False
+            if not silent:
+                logger.info("[ENGINE] CE spot_flat slope=" + str(_spot_slope))
+            return result
+        if option_type == "PE" and _spot_slope > -2:
+            _slope_ok = False
+            if not silent:
+                logger.info("[ENGINE] PE spot_flat slope=" + str(_spot_slope))
+            return result
+
+        # ═══ FAST PATH (v13.9: + breakout confirm + spot slope) ═══
         path_fast = (_two_green_above
+                     and _breakout_confirmed
                      and rsi_rising
                      and rsi <= rsi_cap
                      and other_below_ema)
@@ -312,9 +342,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             result["entry_mode"] = "FAST"
             if not silent:
                 logger.info("[ENGINE] " + option_type + " ENTRY [FAST]"
-                            + " 2green_above=✓ rsi=" + str(round(rsi, 1))
-                            + "↑ cap=" + str(rsi_cap)
-                            + " other_below_ema=✓ spot_aligned=✓"
+                            + " 2green_above=✓ breakout=✓"
+                            + " rsi=" + str(round(rsi, 1)) + "↑/" + str(rsi_cap)
+                            + " slope=" + str(_spot_slope)
                             + " entry=" + str(entry_price))
         elif path_conf:
             result["fired"] = True
@@ -330,6 +360,8 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             reasons = []
             if not _two_green_above:
                 reasons.append("2G_EMA_X")
+            elif not _breakout_confirmed:
+                reasons.append("BREAKOUT_X")
             if not rsi_rising:
                 reasons.append("RSI↓")
             if not other_below_ema and other_token:

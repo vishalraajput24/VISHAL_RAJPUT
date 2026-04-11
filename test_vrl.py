@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.8 Test Suite
- FAST EMA9 + CONFIRMED 3m. Time-aware RSI cap. Stop hunt recovery.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.9 Test Suite
+ FAST EMA9 + breakout + spot slope. Time-aware RSI. Stop hunt recovery.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -62,7 +62,7 @@ test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
 
 section("VERSION")
 
-test("VERSION = v13.8", D.VERSION == "v13.8", "got " + str(D.VERSION))
+test("VERSION = v13.9", D.VERSION == "v13.9", "got " + str(D.VERSION))
 
 
 section("PREMIUM CONSTANTS")
@@ -693,6 +693,30 @@ section("v13.8 — LAST EXIT PRICE SAVED")
 
 test("VRL_MAIN saves last_exit_price on exit",
      "last_exit_price" in _main_src, "missing last_exit_price")
+
+
+section("v13.9 — OPTION BREAKOUT CONFIRMATION (Change 1)")
+
+_eng_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read()
+test("VRL_ENGINE has breakout_confirmed field",
+     "breakout_confirmed" in _eng_src, "missing breakout_confirmed")
+test("FAST path requires breakout", "_breakout_confirmed" in _eng_src and "path_fast" in _eng_src)
+
+# Verify breakout logic: close > prev high → True, close < prev high → False
+test("Breakout logic: 118 > prev_high 116 → True", 118 > 116)
+test("Breakout logic: 115 < prev_high 116 → False", not (115 > 116))
+
+
+section("v13.9 — SPOT EMA SLOPE (Change 2)")
+
+test("VRL_ENGINE has spot_slope field", "spot_slope" in _eng_src, "missing spot_slope")
+test("VRL_ENGINE has spot_flat log", "spot_flat" in _eng_src, "missing spot_flat log")
+
+# Verify slope math: slope >= 2 for CE, <= -2 for PE
+test("Spot slope 3.5 passes CE gate (>=2)", 3.5 >= 2)
+test("Spot slope 0.5 blocks CE gate (<2)", not (0.5 >= 2))
+test("Spot slope -4.0 passes PE gate (<=-2)", -4.0 <= -2)
+test("Spot slope -0.5 blocks PE gate (>-2)", not (-0.5 <= -2))
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -273,9 +273,9 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | FAST: 2 green above EMA9 + RSI↑ + spot confirm\n"
+        + " | FAST: 2 green above EMA9 + breakout + spot slope\n"
         + "CONFIRMED: 3m +20pts (aggressive: 15pts)\n"
-        + "RSI cap: 78 morning / 72 midday / 75 afternoon\n"
+        + "RSI cap: 78/72/75 | Spot slope ≥2 | No sideways\n"
         + "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
         + "SL -12 close | EOD 15:30 | No entry 15:10 | 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
