@@ -224,7 +224,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
 
         # ═══ OTHER SIDE CHECK ═══
         other_falling = False
-        other_below_ema = False
+        other_below_ema = not bool(other_token)  # default True when no other_token provided
         other_move = 0
         if other_token:
             try:

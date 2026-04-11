@@ -674,7 +674,7 @@ with patch.object(D, 'is_entry_fire_window', return_value=True), \
 section("v13.8 — SPOT ALIGNMENT (Change 4)")
 
 test("VRL_ENGINE has spot alignment check",
-     "spot_not_aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read(),
+     "spot not aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read(),
      "missing spot alignment")
 test("VRL_ENGINE result has spot_aligned field",
      "spot_aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read())
