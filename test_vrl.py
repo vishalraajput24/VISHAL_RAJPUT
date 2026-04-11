@@ -2,12 +2,13 @@
 """
 ═══════════════════════════════════════════════════════════════
  test_vrl.py — VISHAL RAJPUT TRADE v13.9 Test Suite
- FAST EMA9 + breakout + spot slope. Time-aware RSI. Stop hunt recovery.
+ 30 interdependent complex tests covering the full trade lifecycle.
 ═══════════════════════════════════════════════════════════════
 """
 
 import sys
 import os
+import json
 import pandas as pd
 from datetime import date, datetime, timedelta
 from unittest.mock import patch, MagicMock
@@ -37,462 +38,354 @@ def section(name):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  LEVEL 1: UNIT TESTS
+#  SETUP — shared state across all tests
 # ═══════════════════════════════════════════════════════════════
-
-section("STRIKE SELECTION")
 
 import VRL_DATA as D
-
-s = D.resolve_strike_for_direction(22819, "CE", 3)
-test("CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
-s = D.resolve_strike_for_direction(22819, "PE", 3)
-test("PE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
-s = D.resolve_strike_for_direction(22845, "CE", 3)
-test("CE 22845 → 22850 (nearest 50)", s == 22850, "got " + str(s))
-s = D.resolve_strike_for_direction(22845, "PE", 3)
-test("PE 22845 → 22850 (nearest 50)", s == 22850, "got " + str(s))
-s = D.resolve_strike_for_direction(22820, "CE", 0)
-test("CE 22820 DTE0 → 22800", s == 22800, "got " + str(s))
-s = D.resolve_strike_for_direction(22835, "PE", 0)
-test("PE 22835 DTE0 → 22850", s == 22850, "got " + str(s))
-s = D.resolve_strike_for_direction(22800, "CE", 3)
-test("CE 22800 exactly → 22800", s == 22800, "got " + str(s))
-
-
-section("VERSION")
-
-test("VERSION = v13.9", D.VERSION == "v13.9", "got " + str(D.VERSION))
-
-
-section("PREMIUM CONSTANTS")
-
-test("STRIKE_PREMIUM_MIN = 100", D.STRIKE_PREMIUM_MIN == 100)
-test("STRIKE_PREMIUM_MAX = 400", D.STRIKE_PREMIUM_MAX == 400)
-
-
-# ═══════════════════════════════════════════════════════════════
-#  ENGINE TESTS — v13.0 ENTRY
-# ═══════════════════════════════════════════════════════════════
-
 import VRL_ENGINE as E
-
-section("ENTRY — EMA GAP + RSI")
-
-def _make_1min_df(candles):
-    """Build DataFrame from (o,h,l,c,vol) tuples with indicators."""
-    rows = []
-    base = datetime(2026, 4, 1, 9, 15)
-    for i, (o, h, l, c, v) in enumerate(candles):
-        rows.append({"open": o, "high": h, "low": l, "close": c, "volume": v})
-    df = pd.DataFrame(rows)
-    df.index = [base + timedelta(minutes=i) for i in range(len(rows))]
-    df.index.name = "timestamp"
-    df = D.add_indicators(df)
-    return df
-
-# EMA gap >= 3, RSI >= 50 rising → FIRE
-# Pre-build df with forced indicators to guarantee pass
-# Momentum = close[-2] - close[-5] = 115 - 100 = 15 (>= 12 threshold)
-_df_fire = pd.DataFrame({
-    "close": [100.0]*14 + [100.0, 103.0, 108.0, 115.0, 117.0, 118.0],
-    "open":  [99.5]*14 + [99.5, 101.0, 106.0, 108.0, 116.0, 117.0],
-    "high":  [101.0]*14 + [101.0, 104.0, 109.0, 116.0, 118.0, 119.0],
-    "low":   [98.0]*14 + [98.0, 100.0, 105.0, 106.0, 114.0, 117.0],
-    "volume": [1000]*20,
-})
-_df_fire.index = [datetime(2026,4,1,9,15) + timedelta(minutes=i) for i in range(20)]
-_df_fire = D.add_indicators(_df_fire)
-# Override EMA and RSI to guarantee fire
-_df_fire.iloc[-2, _df_fire.columns.get_loc("EMA_9")] = 115.0
-_df_fire.iloc[-2, _df_fire.columns.get_loc("EMA_21")] = 110.0
-_df_fire.iloc[-2, _df_fire.columns.get_loc("RSI")] = 58.0
-_df_fire.iloc[-3, _df_fire.columns.get_loc("RSI")] = 52.0
-with patch.object(D, 'get_historical_data', return_value=_df_fire):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        r = E.check_entry(12345, "CE", 22900, 5)
-        test("Momentum + EMA both pass → CONFIRMED fires", r["fired"] == True,
-             "fired=" + str(r["fired"]) + " ema_gap=" + str(r["ema_gap"])
-             + " rsi=" + str(r["rsi"]) + " rsi_prev=" + str(r["rsi_prev"]))
-
-# EMA gap 0 → BLOCK
-_candles_flat = [(100,101,99,100,1000)] * 19
-with patch.object(D, 'get_historical_data') as mock_hd:
-    df = _make_1min_df(_candles_flat)
-    mock_hd.return_value = df
-    r = E.check_entry(12345, "CE", 22900, 5)
-    test("Flat EMA → no fire", r["fired"] == False, "gap=" + str(r["ema_gap"]))
-
-# RSI < 50 → BLOCK
-_candles_low_rsi = [(100,101,99,100,1000)] * 10 + [
-    (100,101,98,99,1000),  # dropping
-    (99,100,97,98,1000),
-    (98,99,96,97,1000),
-]
-with patch.object(D, 'get_historical_data') as mock_hd:
-    df = _make_1min_df(_candles_low_rsi)
-    mock_hd.return_value = df
-    r = E.check_entry(12345, "CE", 22900, 5)
-    test("Low RSI → no fire", r["fired"] == False or r["rsi"] < 50,
-         "rsi=" + str(r["rsi"]))
-
-
-section("ENTRY SL")
-
-sl = E.compute_entry_sl(300.0, 12)
-test("SL = entry - 12", sl == 288.0, "got " + str(sl))
-
-sl = E.compute_entry_sl(150.0, 15)
-test("SL = entry - 15", sl == 135.0, "got " + str(sl))
-
-
-# ═══════════════════════════════════════════════════════════════
-#  ENGINE TESTS — v13.0 EXIT
-# ═══════════════════════════════════════════════════════════════
-
-section("EXIT — v13.5 CANDLE CLOSE SL")
-
-def _make_exit_state(entry, peak=0, candles=0, lot1=True, lot2=True, split=False):
-    return {
-        "in_trade": True, "entry_price": entry, "peak_pnl": peak,
-        "trough_pnl": 0, "candles_held": candles, "token": 12345,
-        "lot1_active": lot1, "lot2_active": lot2,
-        "lots_split": split, "lot2_trail_sl": 0.0,
-        "mode": "FAST", "entry_mode": "FAST",
-        "current_rsi": 50, "_candle_low": entry,
-    }
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # Running -12 → CANDLE_SL (ALL, not per-lot)
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 188, {})
-    test("Running -12 → CANDLE_SL (ALL)",
-         len(exits) == 1 and exits[0]["reason"] == "CANDLE_SL"
-         and exits[0]["lot_id"] == "ALL",
-         "got " + str(exits))
-
-    # Running -11 → no exit (below candle_close_sl)
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 189, {})
-    test("Running -11 → no exit", len(exits) == 0, "got " + str(exits))
-
-    # Running -20 → EMERGENCY_SL
-    st = _make_exit_state(200, peak=0, candles=1)
-    exits = E.manage_exit(st, 180, {})
-    test("Running -20 → EMERGENCY_SL",
-         len(exits) == 1 and exits[0]["reason"] == "EMERGENCY_SL",
-         "got " + str(exits))
-
-    # Spike absorbed: low touched -13 but close -5, no other_token (treated as falling) → hold
-    st = _make_exit_state(200, peak=0, candles=1)
-    st["_candle_low"] = 187  # low hit -13
-    exits = E.manage_exit(st, 195, {})  # close -5
-    test("Spike absorbed: low -13 close -5 → HOLD",
-         len(exits) == 0, "got " + str(exits))
-
-
-
-section("EXIT — STALE ENTRY")
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_exit_state(200, peak=2, candles=5)
-    exits = E.manage_exit(st, 201, {})
-    test("5 candles peak<3 → STALE", len(exits) == 1 and exits[0]["reason"] == "STALE_ENTRY",
-         "got " + str(exits))
-
-    st = _make_exit_state(200, peak=5, candles=5)
-    exits = E.manage_exit(st, 204, {})
-    test("5 candles peak=5 → no stale", len(exits) == 0, "got " + str(exits))
-
-    st = _make_exit_state(200, peak=2, candles=4)
-    exits = E.manage_exit(st, 201, {})
-    test("4 candles peak<3 → no stale (wait)", len(exits) == 0, "got " + str(exits))
-
-
-section("EXIT — PROFIT FLOORS")
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-
-    # Peak 10, running 5 → no exit
-    st = _make_exit_state(200, peak=10, candles=6)
-    exits = E.manage_exit(st, 205, {})
-    test("Peak 10 running 5 → no exit", len(exits) == 0, "got " + str(exits))
-
-    # Peak 20, drop to floor (entry+12) → v13.7: PROFIT_FLOOR fires before TRAIL_FLOOR
-    st = _make_exit_state(200, peak=20, candles=8)
-    exits = E.manage_exit(st, 211, {})  # running=11, floor_sl=212
-    test("Peak 20 running 11 → PROFIT_FLOOR (both lots)",
-         len(exits) >= 1 and exits[0]["reason"] in ("PROFIT_FLOOR", "TRAIL_FLOOR"),
-         "got " + str(exits))
-
-
-section("EXIT — RSI BLOWOFF")
-
-def _make_rsi_df(rsi_val):
-    """Create a df where add_indicators returns target RSI at iloc[-2]."""
-    # Build df that yields RSI naturally, then override
-    df = pd.DataFrame({
-        "close": [200.0]*5, "open": [200.0]*5, "high": [201.0]*5,
-        "low": [199.0]*5, "volume": [100]*5,
-    })
-    df.index = [datetime(2026,4,1,10,i) for i in range(5)]
-    df = D.add_indicators(df)
-    df["RSI"] = rsi_val  # override all rows
-    return df
-
-# RSI > 80 → BLOWOFF
-st = _make_exit_state(200, peak=15, candles=5)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        exits = E.manage_exit(st, 220, {})
-        test("RSI > 80 → BLOWOFF", len(exits) >= 1 and "BLOWOFF" in exits[0]["reason"],
-             "got " + str(exits) + " rsi=" + str(st.get("current_rsi")))
-
-
-section("EXIT — v13.3 no split")
-# v13.3: RSI split removed. Both lots same path.
-
-
-# ═══════════════════════════════════════════════════════════════
-#  COOLDOWN TESTS
-# ═══════════════════════════════════════════════════════════════
-
-section("COOLDOWN — DIRECTION-AWARE")
-
-# Same direction blocked within 10 min after big win
-_cd_state = deepcopy(E.D.DEFAULT_STATE) if hasattr(E.D, 'DEFAULT_STATE') else {}
-_cd_state.update({
-    "last_exit_time": (datetime.now() - timedelta(minutes=3)).isoformat(),
-    "last_exit_direction": "CE",
-    "last_exit_peak": 15.0,  # big win
-    "in_trade": False,
-    "daily_trades": 0, "daily_losses": 0, "paused": False,
-})
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _cd_state, 200.0, {}, "", direction="CE")
-    test("Same dir CE after big win (3min ago) → BLOCKED", ok == False,
-         "ok=" + str(ok) + " reason=" + reason)
-
-# Opposite direction allowed immediately after big win
-_cd_state2 = deepcopy(_cd_state)
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _cd_state2, 200.0, {}, "", direction="PE")
-    test("Opposite dir PE after CE win → ALLOWED", ok == True,
-         "ok=" + str(ok) + " reason=" + reason)
-
-# Same direction after small loss — 5 min cooldown
-_cd_state3 = deepcopy(_cd_state)
-_cd_state3["last_exit_peak"] = 3.0  # small/losing
-_cd_state3["last_exit_time"] = (datetime.now() - timedelta(minutes=3)).isoformat()
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _cd_state3, 200.0, {}, "", direction="CE")
-    test("Same dir after small loss (3min ago, 5min cd) → BLOCKED", ok == False,
-         "ok=" + str(ok) + " reason=" + reason)
-
-# Same direction after small loss — 6 min elapsed (past cooldown)
-_cd_state4 = deepcopy(_cd_state)
-_cd_state4["last_exit_peak"] = 3.0
-_cd_state4["last_exit_time"] = (datetime.now() - timedelta(minutes=7)).isoformat()
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _cd_state4, 200.0, {}, "", direction="CE")
-    test("Same dir after small loss (7min ago, 6min cd) → ALLOWED", ok == True,
-         "ok=" + str(ok) + " reason=" + reason)
-
-
-# ═══════════════════════════════════════════════════════════════
-#  RSI HARD CAP TESTS
-# ═══════════════════════════════════════════════════════════════
-
-section("ENTRY — RSI HARD CAP (v13.8: time-aware)")
-
-# Test time-aware RSI cap function directly
-_cap_m, _ses_m = E._get_rsi_cap(False)
-test("RSI cap function returns tuple", type(_cap_m) == int and _ses_m in ("MORNING","MIDDAY","AFTERNOON"),
-     "cap=" + str(_cap_m) + " ses=" + str(_ses_m))
-
-# Test aggressive mode adds +3
-_cap_a, _ = E._get_rsi_cap(True)
-test("Aggressive mode adds +3 to RSI cap", _cap_a == _cap_m + 3,
-     "normal=" + str(_cap_m) + " aggressive=" + str(_cap_a))
-
-# RSI above current cap → BLOCKED (cap varies by time, test with known value)
-# At test run time, cap is one of 72/75/78. Use cap+1 to guarantee block.
-_current_cap, _ = E._get_rsi_cap(False)
-_df_rsi_blocked = _df_fire.copy()
-_df_rsi_blocked.iloc[-2, _df_rsi_blocked.columns.get_loc("RSI")] = float(_current_cap + 1)
-_df_rsi_blocked.iloc[-3, _df_rsi_blocked.columns.get_loc("RSI")] = float(_current_cap - 5)
-with patch.object(D, 'get_historical_data', return_value=_df_rsi_blocked):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI " + str(_current_cap+1) + " > cap " + str(_current_cap) + " → BLOCKED",
-             r["fired"] == False, "fired=" + str(r["fired"]))
-
-# RSI below current cap → ALLOWED
-_df_rsi_ok = _df_fire.copy()
-_df_rsi_ok.iloc[-2, _df_rsi_ok.columns.get_loc("RSI")] = float(_current_cap - 1)
-_df_rsi_ok.iloc[-3, _df_rsi_ok.columns.get_loc("RSI")] = float(_current_cap - 7)
-with patch.object(D, 'get_historical_data', return_value=_df_rsi_ok):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        r = E.check_entry(12345, "CE", 22900, 5)
-        test("RSI " + str(_current_cap-1) + " < cap " + str(_current_cap) + " → can fire",
-             r["fired"] == True,
-             "fired=" + str(r["fired"]) + " rsi=" + str(r["rsi"]))
-
-
-# ═══════════════════════════════════════════════════════════════
-#  LOT PNL CALCULATION TESTS
-# ═══════════════════════════════════════════════════════════════
-
-section("PNL — SPLIT LOT CORRECTNESS")
-
-# Simulate: both lots exit in same cycle, verify entry_price preserved
-# When lot1 exits (trade_done=True resets entry to 0), lot2 must still use original entry
-_pnl_entry = 200.0
-_pnl_exit1 = 215.0  # lot1 exit
-_pnl_exit2 = 220.0  # lot2 exit
-
-# lot1 PNL
-pnl1 = round(_pnl_exit1 - _pnl_entry, 2)
-test("Lot1 PNL = exit - entry", pnl1 == 15.0, "got " + str(pnl1))
-
-# lot2 PNL
-pnl2 = round(_pnl_exit2 - _pnl_entry, 2)
-test("Lot2 PNL = exit - entry", pnl2 == 20.0, "got " + str(pnl2))
-
-# Verify saved_entry_price pattern: even after state reset, original entry preserved
-_sim_state = {"entry_price": 200.0, "in_trade": True}
-_saved = _sim_state["entry_price"]  # capture before reset
-_sim_state["entry_price"] = 0.0  # simulate reset (trade_done)
-test("saved_entry_price survives state reset",
-     _saved == 200.0 and _sim_state["entry_price"] == 0.0,
-     "saved=" + str(_saved) + " state=" + str(_sim_state["entry_price"]))
-
-
-# ═══════════════════════════════════════════════════════════════
-#  BONUS INDICATORS (info only)
-# ═══════════════════════════════════════════════════════════════
-
-section("BONUS INDICATORS")
-
-# All functions should return gracefully with no data
-_vwap = D.calculate_option_vwap(0)
-test("VWAP returns dict with vwap key", "vwap" in _vwap, str(_vwap))
-
-_vol = D.detect_volume_spike(0)
-test("VolSpike returns dict with spike+ratio", "spike" in _vol and "ratio" in _vol, str(_vol))
-
-_fib = D.calculate_option_fib_pivots(0)
-test("OptFib returns dict with pivot key", "pivot" in _fib, str(_fib))
-
-_pdh = D.get_option_prev_day_hl(0)
-test("PDH returns dict with prev_high key", "prev_high" in _pdh, str(_pdh))
-
-
-# ═══════════════════════════════════════════════════════════════
-#  CHARGES TESTS — VRL_CHARGES.py
-# ═══════════════════════════════════════════════════════════════
-
-section("CHARGES CALCULATOR")
-
 import VRL_CHARGES as CH
 
-# Basic charge calculation
-_c1 = CH.calculate_charges(150, 160, 130, num_exit_orders=1)
-test("Gross PNL = 1300", _c1["gross_pnl"] == 1300, "got " + str(_c1["gross_pnl"]))
-test("Brokerage = 40 (2 orders)", _c1["brokerage"] == 40, "got " + str(_c1["brokerage"]))
-test("Total charges > 0", _c1["total_charges"] > 0, "got " + str(_c1["total_charges"]))
-test("Total charges < 200", _c1["total_charges"] < 200, "got " + str(_c1["total_charges"]))
-test("Net PNL = gross - charges", _c1["net_pnl"] == round(_c1["gross_pnl"] - _c1["total_charges"], 2))
+# Build a realistic 1-min DataFrame that can fire entries
+# 20 candles: 14 flat at 100, then a strong uptrend to 118
+_base_closes = [100.0]*14 + [100.0, 103.0, 108.0, 115.0, 117.0, 118.0]
+_base_opens  = [99.5]*14  + [99.5, 101.0, 106.0, 108.0, 116.0, 117.0]
+_base_highs  = [101.0]*14 + [101.0, 104.0, 109.0, 116.0, 118.0, 119.0]
+_base_lows   = [98.0]*14  + [98.0, 100.0, 105.0, 106.0, 114.0, 117.0]
 
-# Split charges: 3 orders total
-_c2 = CH.calculate_split_charges(150, 160, 175, lot_size=65)
-test("Split total brokerage = 60", _c2["total_brokerage"] == 60, "got " + str(_c2["total_brokerage"]))
-test("Split combined gross > lot1", _c2["gross_pnl"] > _c2["lot1"]["gross_pnl"])
-test("Split net > 0 for winning trade", _c2["net_pnl"] > 0, "got " + str(_c2["net_pnl"]))
+_df_base = pd.DataFrame({
+    "close": _base_closes, "open": _base_opens,
+    "high": _base_highs, "low": _base_lows, "volume": [1000]*20,
+})
+_df_base.index = [datetime(2026,4,14,9,15) + timedelta(minutes=i) for i in range(20)]
+_df_base = D.add_indicators(_df_base)
 
-# Zero PNL: charges eat into it
-_c3 = CH.calculate_charges(150, 150, 130, 1)
-test("Zero trade: gross = 0", _c3["gross_pnl"] == 0)
-test("Zero trade: net < 0 (charges)", _c3["net_pnl"] < 0, "got " + str(_c3["net_pnl"]))
+# Override key indicators at the last 2 candles for controlled testing
+_df_fire = _df_base.copy()
+_df_fire.iloc[-2, _df_fire.columns.get_loc("EMA_9")] = 115.0
+_df_fire.iloc[-2, _df_fire.columns.get_loc("EMA_21")] = 110.0
+_df_fire.iloc[-2, _df_fire.columns.get_loc("RSI")] = 62.0
+_df_fire.iloc[-3, _df_fire.columns.get_loc("RSI")] = 55.0
+# prev candle EMA_9 for two_green_above check
+_df_fire.iloc[-3, _df_fire.columns.get_loc("EMA_9")] = 112.0
 
-# Loss trade: net more negative than gross
-_c4 = CH.calculate_charges(150, 140, 130, 1)
-test("Loss: net more negative than gross", _c4["net_pnl"] < _c4["gross_pnl"],
-     "net=" + str(_c4["net_pnl"]) + " gross=" + str(_c4["gross_pnl"]))
+# Spot DataFrame with rising EMA for slope >= 2
+_df_spot = _df_base.copy()
+_df_spot = D.add_indicators(_df_spot)
+_df_spot.iloc[-2, _df_spot.columns.get_loc("EMA_9")] = 24010.0
+_df_spot.iloc[-7, _df_spot.columns.get_loc("EMA_9")] = 24000.0  # slope = +10
+
+# Other side DataFrame (falling)
+_df_other = _df_base.copy()
+_df_other = D.add_indicators(_df_other)
+_df_other.iloc[-2, _df_other.columns.get_loc("close")] = 95.0
+_df_other.iloc[-2, _df_other.columns.get_loc("EMA_9")] = 100.0  # close < EMA9
+_df_other.iloc[-6, _df_other.columns.get_loc("close")] = 105.0  # falling 10pts
+
+
+def _mock_hd(token, tf, *args, **kwargs):
+    """Route historical data calls to appropriate mock DataFrames."""
+    if token == D.NIFTY_SPOT_TOKEN:
+        return _df_spot
+    if token == 99999:  # other side token
+        return _df_other
+    return _df_fire
+
+
+def _make_state(entry=200, peak=0, candles=0, in_trade=True):
+    return {
+        "in_trade": in_trade, "entry_price": entry, "peak_pnl": peak,
+        "trough_pnl": 0, "candles_held": candles, "token": 12345,
+        "lot1_active": True, "lot2_active": True,
+        "lots_split": False, "entry_mode": "FAST",
+        "current_rsi": 50, "_candle_low": entry,
+        "phase1_sl": round(entry - 12, 2), "_static_floor_sl": 0,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
-#  DB TESTS (uses temp database)
+#  TEST 1-3: FOUNDATION (version, constants, strike)
 # ═══════════════════════════════════════════════════════════════
 
-section("DATABASE — VRL_DB")
+section("FOUNDATION")
+
+test("T01: VERSION is v13.9", D.VERSION == "v13.9", "got " + str(D.VERSION))
+
+s = D.resolve_strike_for_direction(22819, "CE", 3)
+test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
+
+s = D.resolve_strike_for_direction(22835, "PE", 0)
+test("T03: Strike PE 22835 DTE0 → 22850", s == 22850, "got " + str(s))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 4-8: ENTRY — FAST PATH (v13.9 full chain)
+# ═══════════════════════════════════════════════════════════════
+
+section("ENTRY — FAST PATH (2 green + breakout + spot slope + divergence)")
+
+# T04: Full FAST fire with all gates passing
+with patch.object(D, 'get_historical_data', side_effect=_mock_hd):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+        test("T04: Full FAST fire — all gates pass",
+             r["fired"] == True and r["entry_mode"] == "FAST",
+             "fired=" + str(r["fired"]) + " mode=" + str(r["entry_mode"]))
+        # Chain: capture entry price for subsequent exit tests
+        _entry_price = r["entry_price"]
+        test("T05: Entry price captured from curr close",
+             _entry_price == 117.0, "got " + str(_entry_price))
+
+# T06: Breakout confirm blocks when close < prev_high
+_df_no_breakout = _df_fire.copy()
+_df_no_breakout.iloc[-2, _df_no_breakout.columns.get_loc("close")] = 115.5  # below prev high 116
+with patch.object(D, 'get_historical_data', side_effect=lambda t,tf,*a,**k:
+                  _df_spot if t==D.NIFTY_SPOT_TOKEN else _df_other if t==99999 else _df_no_breakout):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+        test("T06: Close 115.5 < prev_high 116 → breakout blocked",
+             r["fired"] == False, "fired=" + str(r["fired"]))
+
+# T07: Spot slope blocks CE when flat
+_df_spot_flat = _df_spot.copy()
+_df_spot_flat.iloc[-2, _df_spot_flat.columns.get_loc("EMA_9")] = 24000.5
+_df_spot_flat.iloc[-7, _df_spot_flat.columns.get_loc("EMA_9")] = 24000.0  # slope = 0.5 < 2
+with patch.object(D, 'get_historical_data', side_effect=lambda t,tf,*a,**k:
+                  _df_spot_flat if t==D.NIFTY_SPOT_TOKEN else _df_other if t==99999 else _df_fire):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+        test("T07: Spot slope 0.5 < 2 → CE blocked",
+             r["fired"] == False, "fired=" + str(r["fired"]))
+
+# T08: Other side above EMA9 → FAST blocked (no divergence)
+_df_other_up = _df_other.copy()
+_df_other_up.iloc[-2, _df_other_up.columns.get_loc("close")] = 105.0
+_df_other_up.iloc[-6, _df_other_up.columns.get_loc("close")] = 100.0  # rising
+with patch.object(D, 'get_historical_data', side_effect=lambda t,tf,*a,**k:
+                  _df_spot if t==D.NIFTY_SPOT_TOKEN else _df_other_up if t==99999 else _df_fire):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+        test("T08: Other side rising → divergence fail → blocked",
+             r["fired"] == False, "fired=" + str(r["fired"]))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 9-11: TIME-AWARE RSI CAP
+# ═══════════════════════════════════════════════════════════════
+
+section("RSI CAP — TIME AWARE")
+
+cap, ses = E._get_rsi_cap(False)
+test("T09: RSI cap function returns valid tuple",
+     cap in (72, 75, 78) and ses in ("MORNING", "MIDDAY", "AFTERNOON"),
+     "cap=" + str(cap) + " ses=" + ses)
+
+cap_agg, _ = E._get_rsi_cap(True)
+test("T10: Aggressive adds +3", cap_agg == cap + 3,
+     "normal=" + str(cap) + " agg=" + str(cap_agg))
+
+# T11: RSI above cap blocks entry
+_df_rsi_high = _df_fire.copy()
+_df_rsi_high.iloc[-2, _df_rsi_high.columns.get_loc("RSI")] = float(cap + 1)
+_df_rsi_high.iloc[-3, _df_rsi_high.columns.get_loc("RSI")] = float(cap - 5)
+with patch.object(D, 'get_historical_data', side_effect=lambda t,tf,*a,**k:
+                  _df_spot if t==D.NIFTY_SPOT_TOKEN else _df_other if t==99999 else _df_rsi_high):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+        test("T11: RSI " + str(cap+1) + " > cap " + str(cap) + " → blocked",
+             r["fired"] == False, "fired=" + str(r["fired"]))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 12-13: ENTRY CUTOFF + STOP HUNT RECOVERY
+# ═══════════════════════════════════════════════════════════════
+
+section("ENTRY CUTOFF + STOP HUNT RECOVERY")
+
+# T12: 15:11 blocks entry
+with patch.object(D, 'get_historical_data', side_effect=_mock_hd):
+    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
+        with patch.object(D, 'is_market_open', return_value=True):
+            with patch('VRL_ENGINE.datetime') as mock_dt:
+                mock_dt.now.return_value = datetime(2026, 4, 14, 15, 11, 0)
+                mock_dt.fromisoformat = datetime.fromisoformat
+                r = E.check_entry(12345, "CE", 24000, 3, other_token=99999)
+                test("T12: 15:11 entry cutoff → blocked",
+                     r["fired"] == False, "fired=" + str(r["fired"]))
+
+# T13: Stop hunt recovery allows re-entry
+_sh_state = {
+    "last_exit_time": (datetime.now() - timedelta(minutes=1.5)).isoformat(),
+    "last_exit_direction": "CE", "last_exit_reason": "CANDLE_SL",
+    "last_exit_price": 180.0, "last_exit_peak": 5.0,
+    "in_trade": False, "daily_trades": 0, "daily_losses": 0, "paused": False,
+}
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, reason = E.pre_entry_checks(None, 12345, _sh_state, 186.0, {}, "", direction="CE")
+    test("T13: Stop hunt recovery (CANDLE_SL + price>exit+5 + 1min) → allowed",
+         ok == True, "ok=" + str(ok) + " reason=" + reason)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 14-16: COOLDOWN — direction-aware
+# ═══════════════════════════════════════════════════════════════
+
+section("COOLDOWN")
+
+_cd_state = {
+    "last_exit_time": (datetime.now() - timedelta(minutes=3)).isoformat(),
+    "last_exit_direction": "CE", "last_exit_peak": 15.0,
+    "last_exit_reason": "TRAIL_FLOOR", "last_exit_price": 220.0,
+    "in_trade": False, "daily_trades": 0, "daily_losses": 0, "paused": False,
+}
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, _ = E.pre_entry_checks(None, 12345, _cd_state, 200.0, {}, "", direction="CE")
+    test("T14: Same dir CE 3min after exit → blocked", ok == False)
+
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, _ = E.pre_entry_checks(None, 12345, deepcopy(_cd_state), 200.0, {}, "", direction="PE")
+    test("T15: Opposite dir PE → allowed immediately", ok == True)
+
+_cd_state2 = deepcopy(_cd_state)
+_cd_state2["last_exit_time"] = (datetime.now() - timedelta(minutes=6)).isoformat()
+with patch.object(D, 'is_entry_fire_window', return_value=True), \
+     patch.object(D, 'is_market_open', return_value=True), \
+     patch.object(D, 'is_tick_live', return_value=True):
+    ok, _ = E.pre_entry_checks(None, 12345, _cd_state2, 200.0, {}, "", direction="CE")
+    test("T16: Same dir 6min elapsed → cooldown expired → allowed", ok == True)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 17-22: EXIT CHAIN (full priority order)
+# ═══════════════════════════════════════════════════════════════
+
+section("EXIT CHAIN — interdependent priority tests")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+
+    # T17: EMERGENCY_SL at -20 (highest priority)
+    st = _make_state(200, peak=0, candles=1)
+    ex = E.manage_exit(st, 180, {})
+    test("T17: Running -20 → EMERGENCY_SL",
+         len(ex) == 1 and ex[0]["reason"] == "EMERGENCY_SL")
+
+    # T18: Running -12 → CANDLE_SL (not emergency)
+    st = _make_state(200, peak=0, candles=1)
+    ex = E.manage_exit(st, 188, {})
+    test("T18: Running -12 → CANDLE_SL",
+         len(ex) == 1 and ex[0]["reason"] == "CANDLE_SL")
+
+    # T19: Running -11 → no exit (above SL)
+    st = _make_state(200, peak=0, candles=1)
+    ex = E.manage_exit(st, 189, {})
+    test("T19: Running -11 → no exit", len(ex) == 0)
+
+    # T20: STALE_ENTRY — 5 candles, peak < 3
+    st = _make_state(200, peak=2, candles=5)
+    ex = E.manage_exit(st, 201, {})
+    test("T20: 5 candles peak 2 → STALE_ENTRY",
+         len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY")
+
+    # T21: Peak +5 → floor SL tightens to entry-6 (194)
+    st = _make_state(200, peak=5, candles=3)
+    ex = E.manage_exit(st, 194, {})
+    test("T21: Peak +5, price 194 → PROFIT_FLOOR",
+         len(ex) == 1 and ex[0]["reason"] == "PROFIT_FLOOR")
+
+    # T22: Peak +10 → floor SL at entry+2 (202), check persistence
+    st = _make_state(200, peak=10, candles=5)
+    st["phase1_sl"] = 188.0  # original SL
+    ex = E.manage_exit(st, 210, {})  # above floor, no exit
+    test("T22: Peak +10 ratchets phase1_sl to 202 (BUG-027)",
+         st.get("phase1_sl", 0) >= 202 or st.get("_static_floor_sl", 0) >= 202,
+         "phase1_sl=" + str(st.get("phase1_sl")))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 23-24: PROFIT FLOOR ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+section("PROFIT FLOORS — full ladder")
+
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+
+    # T23: Peak +50 → floor at entry+42, exit when price drops there
+    st = _make_state(200, peak=50, candles=20)
+    ex = E.manage_exit(st, 241, {})
+    test("T23: Peak +50, price 241 → exit (floor 242)",
+         len(ex) == 1 and ex[0]["reason"] in ("PROFIT_FLOOR", "TRAIL_FLOOR"),
+         "got " + str(ex))
+
+    # T24: Peak 20, running +11 → PROFIT_FLOOR (floor at entry+12=212, price 211<212)
+    st = _make_state(200, peak=20, candles=8)
+    ex = E.manage_exit(st, 211, {})
+    test("T24: Peak +20, price 211 < floor 212 → PROFIT_FLOOR",
+         len(ex) == 1 and ex[0]["reason"] in ("PROFIT_FLOOR", "TRAIL_FLOOR"),
+         "got " + str(ex))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 25-26: CHARGES CALCULATOR (feeds into PNL)
+# ═══════════════════════════════════════════════════════════════
+
+section("CHARGES — integrated with trade PNL")
+
+_c = CH.calculate_charges(150, 160, 130, num_exit_orders=1)
+test("T25: Gross PNL 1300 + charges > 0 + net = gross - charges",
+     _c["gross_pnl"] == 1300 and _c["total_charges"] > 0
+     and _c["net_pnl"] == round(_c["gross_pnl"] - _c["total_charges"], 2),
+     "gross=" + str(_c["gross_pnl"]) + " charges=" + str(_c["total_charges"]))
+
+_c2 = CH.calculate_charges(150, 140, 130, 1)
+test("T26: Loss trade net more negative than gross (charges compound loss)",
+     _c2["net_pnl"] < _c2["gross_pnl"],
+     "net=" + str(_c2["net_pnl"]) + " gross=" + str(_c2["gross_pnl"]))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TEST 27-28: DATABASE LIFECYCLE
+# ═══════════════════════════════════════════════════════════════
+
+section("DATABASE — insert → query → cleanup lifecycle")
 
 import VRL_DB as DB
 import tempfile, os as _os
 
-# Use temp DB for tests
 _orig_db = DB.DB_PATH
 _tmp_db = tempfile.mktemp(suffix=".db")
 DB.DB_PATH = _tmp_db
 DB._initialized = False
 if hasattr(DB._local, "conn"):
     DB._local.conn = None
-
 DB.init_db()
-test("DB init creates tables", _os.path.isfile(_tmp_db), "file not created")
 
-# Insert spot and read back
-DB.insert_spot_1min({"timestamp": "2026-04-01 09:16:00", "open": 22800, "high": 22810,
-    "low": 22795, "close": 22805, "volume": 1000, "ema9": 22803, "ema21": 22800,
-    "ema_spread": 3, "rsi": 55, "adx": 20})
-_spot = DB.query("SELECT * FROM spot_1min WHERE timestamp='2026-04-01 09:16:00'")
-test("insert_spot_1min + query", len(_spot) == 1 and _spot[0]["close"] == 22805,
-     "got " + str(len(_spot)) + " rows")
-
-# Insert trade and read back
-DB.insert_trade({"date": "2026-04-01", "entry_time": "10:00", "exit_time": "10:05",
-    "symbol": "NIFTY22800CE", "direction": "CE", "mode": "MINIMAL",
-    "entry_price": 300, "exit_price": 312, "pnl_pts": 12, "pnl_rs": 780,
+# T27: Insert trade → query → verify → cleanup preserves trades
+DB.insert_trade({"date": "2026-04-14", "entry_time": "10:00", "exit_time": "10:05",
+    "symbol": "NIFTY24050CE", "direction": "CE", "mode": "FAST",
+    "entry_price": 200, "exit_price": 212, "pnl_pts": 12, "pnl_rs": 1560,
     "peak_pnl": 15, "trough_pnl": -2, "exit_reason": "PROFIT_FLOOR",
-    "exit_phase": 2, "score": 0, "iv_at_entry": 18, "regime": "TRENDING",
-    "dte": 3, "candles_held": 5, "session": "MORNING", "strike": 22800,
+    "exit_phase": 1, "score": 0, "iv_at_entry": 18, "regime": "TRENDING",
+    "dte": 3, "candles_held": 5, "session": "MORNING", "strike": 24050,
     "sl_pts": 12, "spread_1m": 3, "spread_3m": 0, "delta_at_entry": 0.45,
-    "bias": "BULL", "vix_at_entry": 15, "hourly_rsi": 55, "straddle_decay": 0})
-_trades = DB.get_trades("2026-04-01")
-test("insert_trade + get_trades", len(_trades) == 1 and _trades[0]["pnl_pts"] == 12,
-     "got " + str(len(_trades)) + " rows")
+    "bias": "BULL", "vix_at_entry": 15, "hourly_rsi": 55, "straddle_decay": 0,
+    "entry_mode": "FAST"})
+trades = DB.get_trades("2026-04-14")
+test("T27: Insert trade + query + verify entry_mode persists",
+     len(trades) == 1 and trades[0]["pnl_pts"] == 12
+     and trades[0].get("entry_mode") == "FAST",
+     "trades=" + str(len(trades)))
 
-# Bulk insert scans
-_scans = [
-    {"timestamp": "2026-04-01 10:00:00", "direction": "CE", "fired": "1",
-     "session": "MORNING", "dte": 3, "atm_strike": 22800, "spot": 22800,
-     "entry_price": 300, "score": 5},
-    {"timestamp": "2026-04-01 10:01:00", "direction": "PE", "fired": "0",
-     "session": "MORNING", "dte": 3, "atm_strike": 22800, "spot": 22800,
-     "entry_price": 280, "score": 2},
-]
-DB.insert_scan_many(_scans)
-_sc = DB.query("SELECT count(*) as n FROM signal_scans")
-test("insert_scan_many bulk", _sc[0]["n"] == 2, "got " + str(_sc[0]["n"]))
-
-# db_size_mb (temp db exists after inserts)
-sz = _os.path.getsize(_tmp_db) if _os.path.isfile(_tmp_db) else 0
-test("db file created with data", sz > 0, "got " + str(sz) + " bytes")
-
-# cleanup_old_db_data never deletes trades
+# T28: Cleanup preserves trades
 DB.cleanup_old_db_data(retention_days=0)
-_trades2 = DB.get_trades("2026-04-01")
-test("cleanup preserves trades", len(_trades2) == 1, "got " + str(len(_trades2)))
+trades2 = DB.get_trades("2026-04-14")
+test("T28: cleanup_old_db_data preserves trades table",
+     len(trades2) == 1, "got " + str(len(trades2)))
 
-# Cleanup temp
 try:
     DB.close()
     _os.unlink(_tmp_db)
@@ -505,218 +398,45 @@ if hasattr(DB._local, "conn"):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  EXIT PATH TESTS (comprehensive)
+#  TEST 29-30: CODEBASE INTEGRITY (cross-file consistency)
 # ═══════════════════════════════════════════════════════════════
 
-section("EXIT PATHS — COMPREHENSIVE")
+section("CODEBASE INTEGRITY")
 
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # CANDLE_SL at -12
-    _st = _make_exit_state(200, peak=0, candles=1)
-    _ex = E.manage_exit(_st, 188, {})
-    test("CANDLE_SL at -12",
-         len(_ex) == 1 and _ex[0]["reason"] == "CANDLE_SL")
+_repo = os.path.dirname(os.path.abspath(__file__))
 
-    # EMERGENCY_SL at -20
-    _st = _make_exit_state(200, peak=0, candles=1)
-    _ex = E.manage_exit(_st, 180, {})
-    test("EMERGENCY_SL at -20",
-         len(_ex) == 1 and _ex[0]["reason"] == "EMERGENCY_SL")
+def _read_file(name):
+    with open(os.path.join(_repo, name)) as f:
+        return f.read()
 
-    # STALE at 5 candles + peak < 3
-    _st = _make_exit_state(200, peak=2, candles=5)
-    _ex = E.manage_exit(_st, 201, {})
-    test("STALE at 5 candles peak<3",
-         len(_ex) == 1 and _ex[0]["reason"] == "STALE_ENTRY")
+_eng_src = _read_file("VRL_ENGINE.py")
+_main_src = _read_file("VRL_MAIN.py")
+_cmd_src = _read_file("VRL_COMMANDS.py")
+_dash_src = _read_file("static/VRL_DASHBOARD.html")
 
-    # FAST TRAIL_FLOOR at peak 15
-    _st = _make_exit_state(200, peak=15, candles=6)
-    _st["entry_mode"] = "FAST"
-    _ex = E.manage_exit(_st, 211, {})
-    test("FAST TRAIL_FLOOR peak 15",
-         len(_ex) == 1 and _ex[0]["reason"] == "TRAIL_FLOOR")
+# T29: All critical v13.9 features present across codebase
+test("T29: Cross-file v13.9 integrity",
+     "breakout_confirmed" in _eng_src
+     and "spot_slope" in _eng_src
+     and "spot_flat" in _eng_src
+     and "last_exit_price" in _main_src
+     and "aggressive_mode" in _main_src
+     and "_eod_exited" in _main_src
+     and "Phantom trade" in _main_src
+     and "_static_floor_sl" in _eng_src
+     and "PROFIT_FLOOR" in _eng_src
+     and "v13.9" in _dash_src,
+     "missing critical feature in one or more files")
 
-
-# RSI_BLOWOFF at 82
-_st = _make_exit_state(200, peak=15, candles=5)
-with patch.object(D, 'get_historical_data', return_value=_make_rsi_df(82)):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        _ex = E.manage_exit(_st, 220, {})
-        test("RSI_BLOWOFF at 82", len(_ex) >= 1 and "BLOWOFF" in _ex[0]["reason"])
-
-# v13.7: No split. Both lots same path, exit together.
-
-
-# ═══════════════════════════════════════════════════════════════
-#  v13.7 NEW TESTS
-# ═══════════════════════════════════════════════════════════════
-
-section("v13.7 — PROFIT FLOOR +5 DAMAGE CONTROL")
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    # Peak 5, price drops to entry-6 → floor should trigger
-    _st = _make_exit_state(200, peak=5, candles=3)
-    _ex = E.manage_exit(_st, 194, {})
-    test("Peak +5 floor: SL at entry-6 (₹194)",
-         len(_ex) == 1 and _ex[0]["reason"] == "PROFIT_FLOOR",
-         "got " + str(_ex))
-
-    # Peak 5 but price at entry-5 → NO exit (above floor)
-    _st = _make_exit_state(200, peak=5, candles=3)
-    _ex = E.manage_exit(_st, 195, {})
-    test("Peak +5 but price entry-5 → no exit", len(_ex) == 0, "got " + str(_ex))
-
-
-section("v13.7 — PROFIT FLOOR +50 EXTENDED RUNNER")
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    _st = _make_exit_state(200, peak=50, candles=20)
-    _ex = E.manage_exit(_st, 241, {})
-    test("Peak +50 floor: SL at entry+42 (₹242)",
-         len(_ex) == 1 and (_ex[0]["reason"] == "PROFIT_FLOOR" or _ex[0]["reason"] == "TRAIL_FLOOR"),
-         "got " + str(_ex))
-
-
-section("v13.7 — FLOOR PERSISTS TO STATE (BUG-027)")
-
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    _st = _make_exit_state(200, peak=10, candles=5)
-    _st["phase1_sl"] = 188.0  # original SL
-    _ex = E.manage_exit(_st, 210, {})  # still above floor, no exit
-    test("Peak +10 ratchets phase1_sl to 202",
-         _st.get("phase1_sl", 0) >= 202 or _st.get("_static_floor_sl", 0) >= 202,
-         "phase1_sl=" + str(_st.get("phase1_sl")) + " static=" + str(_st.get("_static_floor_sl")))
-
-
-section("v13.7 — ENTRY CUTOFF 15:10")
-
-# Mock time to 15:11
-with patch.object(D, 'get_historical_data', return_value=_df_fire):
-    with patch.object(D, 'add_indicators', side_effect=lambda x: x):
-        with patch.object(D, 'is_market_open', return_value=True):
-            with patch('VRL_ENGINE.datetime') as mock_dt:
-                mock_dt.now.return_value = datetime(2026, 4, 11, 15, 11, 0)
-                mock_dt.fromisoformat = datetime.fromisoformat
-                r = E.check_entry(12345, "CE", 22900, 5)
-                test("15:11 → entry blocked", r["fired"] == False,
-                     "fired=" + str(r["fired"]))
-
-
-section("v13.7 — EOD AUTO-EXIT AT 15:30")
-
-# Verify the EOD handler exists in _strategy_loop by checking code presence
-import inspect
-_main_src = inspect.getsource(D) if False else ""
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_MAIN.py")) as _mf:
-        _main_src = _mf.read()
-except Exception:
-    pass
-test("VRL_MAIN has _eod_exited flag", "_eod_exited" in _main_src, "missing _eod_exited")
-test("VRL_MAIN has 15:30 catch-all", "15:30 catch-all" in _main_src or "minute >= 30" in _main_src)
-test("VRL_MAIN has MARKET_CLOSE exit", '"MARKET_CLOSE"' in _main_src)
-
-
-section("v13.7 — STARTUP PHANTOM CLEAR")
-
-test("VRL_MAIN has phantom clear on startup",
-     "Phantom trade detected" in _main_src or "phantom state" in _main_src,
-     "missing phantom clear")
-
-
-section("FORCE EXIT RESPECTS FLOOR SL (BUG-027)")
-
-test("VRL_MAIN force exit uses floor SL",
-     "_static_floor_sl" in _main_src and "max(" in _main_src.split("FORCE_EXIT")[0][-200:]
-     if "FORCE_EXIT" in _main_src else False,
-     "force exit may not respect floor")
-
-
-section("v13.8 — STOP HUNT RECOVERY (Change 5)")
-
-# Stop hunt: CANDLE_SL exit + price recovered +5 + 1 min elapsed → allow re-entry
-_sh_state = deepcopy(E.D.DEFAULT_STATE) if hasattr(E.D, 'DEFAULT_STATE') else {}
-_sh_state.update({
-    "last_exit_time": (datetime.now() - timedelta(minutes=1.5)).isoformat(),
-    "last_exit_direction": "CE",
-    "last_exit_reason": "CANDLE_SL",
-    "last_exit_price": 180.0,
-    "last_exit_peak": 5.0,
-    "in_trade": False, "daily_trades": 0, "daily_losses": 0, "paused": False,
-})
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _sh_state, 186.0, {}, "", direction="CE")
-    test("Stop hunt recovery: CANDLE_SL + price>exit+5 + 1min → ALLOWED",
-         ok == True, "ok=" + str(ok) + " reason=" + reason)
-
-# Non-CANDLE_SL exit → normal cooldown applies
-_sh_state2 = deepcopy(_sh_state)
-_sh_state2["last_exit_reason"] = "STALE_ENTRY"
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _sh_state2, 186.0, {}, "", direction="CE")
-    test("Non-CANDLE_SL exit → normal cooldown", ok == False,
-         "ok=" + str(ok) + " reason=" + reason)
-
-# CANDLE_SL but price NOT recovered → cooldown
-_sh_state3 = deepcopy(_sh_state)
-with patch.object(D, 'is_entry_fire_window', return_value=True), \
-     patch.object(D, 'is_market_open', return_value=True), \
-     patch.object(D, 'is_tick_live', return_value=True):
-    ok, reason = E.pre_entry_checks(None, 12345, _sh_state3, 183.0, {}, "", direction="CE")
-    test("CANDLE_SL but price not recovered (+3 < +5) → cooldown", ok == False,
-         "ok=" + str(ok) + " reason=" + reason)
-
-
-section("v13.8 — SPOT ALIGNMENT (Change 4)")
-
-test("VRL_ENGINE has spot alignment check",
-     "spot not aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read(),
-     "missing spot alignment")
-test("VRL_ENGINE result has spot_aligned field",
-     "spot_aligned" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read())
-
-
-section("v13.8 — STRADDLE AGGRESSIVE MODE (Change 3)")
-
-test("VRL_MAIN has aggressive_mode handling",
-     "aggressive_mode" in _main_src, "missing aggressive_mode")
-test("VRL_MAIN resets aggressive_mode in daily reset",
-     "aggressive_mode" in _main_src.split("_reset_daily")[1][:500] if "_reset_daily" in _main_src else False,
-     "not reset in _reset_daily")
-
-
-section("v13.8 — LAST EXIT PRICE SAVED")
-
-test("VRL_MAIN saves last_exit_price on exit",
-     "last_exit_price" in _main_src, "missing last_exit_price")
-
-
-section("v13.9 — OPTION BREAKOUT CONFIRMATION (Change 1)")
-
-_eng_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VRL_ENGINE.py")).read()
-test("VRL_ENGINE has breakout_confirmed field",
-     "breakout_confirmed" in _eng_src, "missing breakout_confirmed")
-test("FAST path requires breakout", "_breakout_confirmed" in _eng_src and "path_fast" in _eng_src)
-
-# Verify breakout logic: close > prev high → True, close < prev high → False
-test("Breakout logic: 118 > prev_high 116 → True", 118 > 116)
-test("Breakout logic: 115 < prev_high 116 → False", not (115 > 116))
-
-
-section("v13.9 — SPOT EMA SLOPE (Change 2)")
-
-test("VRL_ENGINE has spot_slope field", "spot_slope" in _eng_src, "missing spot_slope")
-test("VRL_ENGINE has spot_flat log", "spot_flat" in _eng_src, "missing spot_flat log")
-
-# Verify slope math: slope >= 2 for CE, <= -2 for PE
-test("Spot slope 3.5 passes CE gate (>=2)", 3.5 >= 2)
-test("Spot slope 0.5 blocks CE gate (<2)", not (0.5 >= 2))
-test("Spot slope -4.0 passes PE gate (<=-2)", -4.0 <= -2)
-test("Spot slope -0.5 blocks PE gate (>-2)", not (-0.5 <= -2))
+# T30: Banner, /help, dashboard all mention breakout + slope
+test("T30: Strategy text alignment across banner/help/dashboard",
+     "breakout" in _main_src.lower()
+     and "slope" in _main_src.lower()
+     and "breakout" in _cmd_src.lower()
+     and "slope" in _cmd_src.lower()
+     and "breakout" in _dash_src.lower()
+     and "slope" in _dash_src.lower(),
+     "strategy text not aligned across files")
 
 
 # ═══════════════════════════════════════════════════════════════

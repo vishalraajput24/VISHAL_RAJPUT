@@ -113,9 +113,13 @@ h2{font-size:16px;margin-bottom:8px}
 </style></head><body><div class="box"><h2>MSG_TITLE</h2><div class="msg">MSG_BODY</div></div></body></html>"""
 
 def _read_dash():
-    if not os.path.isfile(DASH_FILE): return {}
+    if not os.path.isfile(DASH_FILE): return {"version": _D.VERSION}
     try:
-        with open(DASH_FILE) as f: return json.load(f)
+        with open(DASH_FILE) as f:
+            data = json.load(f)
+        # Always inject current VERSION so dashboard shows correct version
+        data["version"] = _D.VERSION
+        return data
     except (json.JSONDecodeError, OSError) as e:
         # Dashboard JSON corrupted or unreadable — return empty so UI degrades gracefully
         try:
