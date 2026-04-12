@@ -1787,8 +1787,8 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
                 msgs.append("\U0001f534 <b>" + sd["msg"] + "</b>")
         except Exception:
             pass
-    # 4. Hourly RSI (every hour)
-    if (now.minute == 0 and now.second < 35
+    # 4. Hourly RSI (every hour — only during market hours)
+    if (is_market_open() and now.minute == 0 and now.second < 35
             and (_t.time() - state.get("_hourly_rsi_ts", 0)) > 3000):
         try:
             hr = check_hourly_rsi(kite)
