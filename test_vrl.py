@@ -68,9 +68,10 @@ _df_fire.iloc[-3, _df_fire.columns.get_loc("RSI")] = 55.0
 # prev candle EMA_9 for two_green_above check
 _df_fire.iloc[-3, _df_fire.columns.get_loc("EMA_9")] = 112.0
 
-# Spot DataFrame with rising EMA for slope >= 2
+# Spot DataFrame with rising EMA for slope >= 2 AND close above EMA9
 _df_spot = _df_base.copy()
 _df_spot = D.add_indicators(_df_spot)
+_df_spot.iloc[-2, _df_spot.columns.get_loc("close")] = 24020.0  # close above EMA9
 _df_spot.iloc[-2, _df_spot.columns.get_loc("EMA_9")] = 24010.0
 _df_spot.iloc[-7, _df_spot.columns.get_loc("EMA_9")] = 24000.0  # slope = +10
 
@@ -414,8 +415,8 @@ _main_src = _read_file("VRL_MAIN.py")
 _cmd_src = _read_file("VRL_COMMANDS.py")
 _dash_src = _read_file("static/VRL_DASHBOARD.html")
 
-# T29: All critical v13.9 features present across codebase
-test("T29: Cross-file v13.9 integrity",
+# T29: All critical features present across codebase
+test("T29: Cross-file feature integrity",
      "breakout_confirmed" in _eng_src
      and "spot_slope" in _eng_src
      and "spot_flat" in _eng_src
@@ -425,7 +426,7 @@ test("T29: Cross-file v13.9 integrity",
      and "Phantom trade" in _main_src
      and "_static_floor_sl" in _eng_src
      and "PROFIT_FLOOR" in _eng_src
-     and "v13.9" in _dash_src,
+     and D.VERSION in _dash_src,
      "missing critical feature in one or more files")
 
 # T30: Banner, /help, dashboard all mention breakout + slope
