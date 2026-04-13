@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.10
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v13.11
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -293,9 +293,30 @@ def _cmd_status(args):
 
     if not st.get("in_trade"):
         last_scan = st.get("_last_scan", {})
+        # BUG-030: Read warmup state from dashboard JSON (written by VRL_MAIN)
+        _warmup_line = ""
+        try:
+            import json as _j
+            import os as _os
+            _dash_path = _os.path.join(D.STATE_DIR, "vrl_dashboard.json")
+            if _os.path.isfile(_dash_path):
+                with open(_dash_path) as _df:
+                    _d = _j.load(_df)
+                _mk = _d.get("market", {})
+                if _mk.get("market_open") and not _mk.get("indicators_warm", True):
+                    _wp = _mk.get("warmup_progress", 0)
+                    _wn = _mk.get("warmup_needed", 14)
+                    _we = _mk.get("warmup_eta", "—")
+                    _warmup_line = ("🟡 WARMUP (" + str(_wp) + "/" + str(_wn) + " candles)\n"
+                                    "ETA       : " + _we + "\n"
+                                    "Trades blocked until indicators stable\n"
+                                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+        except Exception:
+            pass
         _tg_send(
             "📊 <b>STATUS — NO TRADE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + _warmup_line +
             "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
             "Losses : " + str(st.get("daily_losses", 0)) + "/" + str(D.MAX_DAILY_LOSSES) + "\n"
             "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"

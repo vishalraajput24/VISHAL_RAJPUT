@@ -212,6 +212,17 @@
 - **Lesson:** Never assume child processes see file changes — must explicitly restart or hot-reload. Defense in depth: 4 independent layers means even if 3 fail, the 4th catches it.
 - **File:** crontab, VRL_MAIN.py, VRL_DATA.py, VRL_PRECHECK.py (new)
 
+## BUG-030: Dashboard appears dead during indicator warmup period
+- **Date:** April 13, 2026
+- **Root cause:** During the 9:15-10:00 IST warmup window (14 candles of 3-min data needed for reliable RSI/EMA), the strategy loop skips signal scanning and `_build_signal()` returned an empty dict. The dashboard rendered blank signal cards with no status indicator. User could not distinguish between "bot dead" and "bot correctly waiting for indicators to stabilize".
+- **Fix (3 layers of visibility):**
+  1. **Dashboard JSON**: Added `_warmup_info()` helper + `_warmup_signal()` placeholder in VRL_MAIN. During warmup, CE and PE signal blocks are populated with `status="WARMUP"`, `warmup_progress`, `warmup_needed`, `warmup_eta`, and a `message` field. Market block also gets `warmup_progress/needed/eta` for the header.
+  2. **Dashboard HTML**: Signal render function detects `status==='WARMUP'` and renders a dedicated amber card with an hourglass icon, progress bar (`warmup_progress / warmup_needed`), ETA text ("Trading resumes HH:MM"), and a gentle `wmpulse` opacity animation to show it's alive. The WARMUP header tag also pulses (`wmtag`) with a tooltip.
+  3. **Telegram `/status`**: Reads `vrl_dashboard.json` and if market_open + !indicators_warm, prepends a warmup block: `🟡 WARMUP (X/14 candles) | ETA: HH:MM | Trades blocked until indicators stable`.
+  - Plus: `[MAIN] Warmup progress: X/14 candles (ETA: HH:MM)` logged once per minute to live log.
+- **Lesson:** Silent waiting states in UI look identical to failure states. Always communicate what the system is doing, even when it's intentionally idle.
+- **File:** VRL_MAIN.py, static/VRL_DASHBOARD.html, VRL_COMMANDS.py
+
 ---
 
 ## Prevention Rules

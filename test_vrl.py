@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.10 Test Suite
- 33 interdependent complex tests covering full trade lifecycle + robustness.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.11 Test Suite
+ 35 interdependent complex tests: lifecycle + robustness + warmup visibility.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -108,7 +108,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v13.10", D.VERSION == "v13.10", "got " + str(D.VERSION))
+test("T01: VERSION is v13.11", D.VERSION == "v13.11", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
@@ -474,6 +474,33 @@ if os.path.isfile(_precheck_path):
          "missing one of 4 checks")
 else:
     test("T33: VRL_PRECHECK.py exists", False, "file not found")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v13.11 — BUG-030 WARMUP STATE VISIBILITY
+# ═══════════════════════════════════════════════════════════════
+
+section("v13.11 — BUG-030 WARMUP VISIBILITY")
+
+# T34: VRL_MAIN has _warmup_info helper + _warmup_signal + warmup logging
+test("T34: Warmup helpers + logging in VRL_MAIN",
+     "_warmup_info" in _main_src
+     and "_warmup_signal" in _main_src
+     and "Warmup progress:" in _main_src
+     and "warmup_progress" in _main_src
+     and "warmup_eta" in _main_src
+     and "_last_warmup_log" in _main_src,
+     "missing warmup helpers or logging")
+
+# T35: Dashboard HTML has WARMUP card render path + /status has warmup line
+test("T35: Dashboard + /status show warmup state",
+     "status==='WARMUP'" in _dash_src
+     and "wmpulse" in _dash_src
+     and "wmtag" in _dash_src
+     and "warmup_progress" in _dash_src
+     and "WARMUP (" in _cmd_src
+     and "Trades blocked until" in _cmd_src,
+     "dashboard/commands missing warmup rendering")
 
 
 # ═══════════════════════════════════════════════════════════════

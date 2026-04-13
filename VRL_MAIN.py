@@ -1,9 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.10
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.11
 #  Master orchestration. FAST EMA9 + CONFIRMED 3m + breakout + spot slope.
 #  2-lot execution. Time-aware RSI cap. Spot alignment.
 #  Straddle aggressive mode. Stop hunt recovery.
 #  v13.10: Auto token refresh + WebSocket auto-heal + pre-market health check.
+#  v13.11: Warmup state visible in dashboard, /status, logs.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -1379,6 +1380,64 @@ def _update_dashboard_ltp():
         pass
 
 
+# ═══════════════════════════════════════════════════════════════
+#  WARMUP HELPER (BUG-030)
+#  14 candles of 3-min data needed = ~42 minutes from market open
+#  Warm at 9:57 (9:15 + 42min). Relaxed to 9:45 on DTE >= 2.
+# ═══════════════════════════════════════════════════════════════
+
+def _warmup_info(now, dte):
+    """Returns (is_warm, candles_done, candles_needed, eta_hhmm)."""
+    needed = 14
+    is_warm = now.hour >= 10 or (now.hour == 9 and now.minute >= 45 and dte >= 2)
+    # Minutes elapsed since market open at 9:15
+    if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+        done = 0
+    else:
+        elapsed = (now.hour - 9) * 60 + (now.minute - 15)
+        done = max(0, min(needed, elapsed // 3))
+    # ETA: warm at 9:57 (or 9:45 on DTE≥2), whichever applies
+    warm_hour = 9
+    warm_min = 45 if dte >= 2 else 57
+    if warm_hour < 10:
+        eta = "{:02d}:{:02d}".format(warm_hour, warm_min)
+    else:
+        eta = "10:00"
+    return is_warm, int(done), needed, eta
+
+
+def _warmup_signal(opt_type, strike, progress, needed, eta):
+    """Build a signal block with WARMUP status for the dashboard."""
+    return {
+        "status": "WARMUP",
+        "warmup_progress": progress,
+        "warmup_needed": needed,
+        "warmup_eta": eta,
+        "message": "Indicators warming up — trades blocked until stable",
+        "strike": strike,
+        "ltp": 0,
+        "ema9": 0, "ema21": 0, "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
+        "ema_ok": False, "rsi_ok": False,
+        "candle_green": False, "gap_widening": False,
+        "fired": False, "verdict": "WARMUP " + str(progress) + "/" + str(needed),
+        "path_a": False, "path_b": False,
+        "momentum_pts": 0, "momentum_threshold": 0, "momentum_tf": "",
+        "rsi_rising": False, "spot_confirms": False, "spot_move": 0,
+        "other_falling": False, "other_move": 0,
+        "two_green_above": False, "other_below_ema": False,
+        "breakout_confirmed": False, "spot_slope": 0,
+        "rsi_cap_active": 0, "spot_aligned": False,
+        "entry_mode": "",
+        "vwap": 0, "above_vwap": False, "vwap_dist": 0,
+        "fib_nearest": "", "fib_distance": 0, "fib_pivot": 0,
+        "fib_R1": 0, "fib_R2": 0, "fib_R3": 0,
+        "fib_S1": 0, "fib_S2": 0, "fib_S3": 0,
+        "vol_spike": False, "vol_ratio": 0,
+        "pdh_break": False, "pdl_break": False,
+        "prev_high": 0, "prev_low": 0,
+    }
+
+
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
@@ -1488,8 +1547,14 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "other_move": _other_move,
             }
 
-        ce_signal = _build_signal("CE", all_results.get("CE"))
-        pe_signal = _build_signal("PE", all_results.get("PE"))
+        # BUG-030: compute warmup state and use WARMUP placeholder during warmup
+        _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
+        if not _is_warm and D.is_market_open():
+            ce_signal = _warmup_signal("CE", dir_strikes.get("CE", atm_strike), _w_done, _w_need, _w_eta)
+            pe_signal = _warmup_signal("PE", dir_strikes.get("PE", atm_strike), _w_done, _w_need, _w_eta)
+        else:
+            ce_signal = _build_signal("CE", all_results.get("CE"))
+            pe_signal = _build_signal("PE", all_results.get("PE"))
 
         # Flatten bonus dict into signal for dashboard consumption
         for _sig in (ce_signal, pe_signal):
@@ -1707,7 +1772,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "fib_pivots": D.get_fib_pivots() if hasattr(D, "get_fib_pivots") else {},
                 "expiry": expiry.isoformat() if expiry else "",
                 "market_open": D.is_market_open(),
-                "indicators_warm": now.hour >= 10 or (now.hour == 9 and now.minute >= 45 and dte >= 2),
+                "indicators_warm": _is_warm,
+                "warmup_progress": _w_done,
+                "warmup_needed": _w_need,
+                "warmup_eta": _w_eta,
             },
             "ce": ce_signal,
             "pe": pe_signal,
@@ -1821,6 +1889,19 @@ def _strategy_loop(kite):
 
             # v13.1: Auto-heal stale WebSocket (re-auth + reconnect)
             D.check_and_reconnect()
+
+            # BUG-030: Log warmup progress once per minute during warmup
+            try:
+                _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
+                if D.is_market_open() and not _wm_warm:
+                    _wm_key = now.strftime("%H:%M")
+                    if state.get("_last_warmup_log") != _wm_key:
+                        state["_last_warmup_log"] = _wm_key
+                        logger.info("[MAIN] Warmup progress: " + str(_wm_done)
+                                    + "/" + str(_wm_need)
+                                    + " candles (ETA: " + _wm_eta + ")")
+            except Exception:
+                pass
 
             # v12.15: Warning system
             try:

@@ -37,6 +37,8 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 .ver{font-size:9px;color:#fff;font-weight:800;background:var(--or-grad);padding:3px 12px;border-radius:20px;box-shadow:var(--sh-or)}
 .ldot{width:10px;height:10px;border-radius:50%;background:var(--gn);animation:lp 2s infinite;box-shadow:0 0 0 3px rgba(16,185,129,0.15)}
 @keyframes lp{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,0.15)}50%{box-shadow:0 0 0 6px rgba(16,185,129,0.08)}}
+@keyframes wmpulse{0%,100%{opacity:1}50%{opacity:0.6}}
+@keyframes wmtag{0%,100%{opacity:1}50%{opacity:0.55}}
 .tags{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
 .tag{padding:4px 12px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:0.3px}
 .tp{background:var(--bl-bg);color:var(--bl);border:1px solid var(--bl-bd)}
@@ -47,7 +49,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 .tbull{color:var(--gn2);background:var(--gn-bg);border:1px solid var(--gn-bd)}
 .tbear{color:var(--rd2);background:var(--rd-bg);border:1px solid var(--rd-bd)}
 .tpu{color:var(--pu);background:var(--pu-bg);border:1px solid rgba(139,92,246,0.2)}
-.tw{background:var(--yl-bg);color:#b45309;border:1px solid rgba(245,158,11,0.2)}
+.tw{background:var(--yl-bg);color:#b45309;border:1px solid rgba(245,158,11,0.2);animation:wmtag 2s ease-in-out infinite;title:"Indicators warming up"}
 
 .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 12px 0}
 .stat{background:var(--white);border-radius:18px;padding:16px 12px;text-align:center;border:1px solid var(--bd);box-shadow:var(--sh);overflow:hidden}
@@ -156,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.10</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.11</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -191,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v13.10';
+document.getElementById('ver').textContent=d.version||mk.version||'v13.11';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -199,7 +201,7 @@ tg+='<span class="tag tk">CE '+(mk.locked_ce||mk.atm||0)+' · PE '+(mk.locked_pe
 if(mk.vix>0)tg+='<span class="tag tv">VIX '+mk.vix+'</span>';
 if(mk.bias)tg+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
 if(mk.regime){tg+='<span class="tag '+regC(mk.regime)+'">'+esc(mk.regime)+'</span>';}
-if(mk.market_open&&!mk.indicators_warm)tg+='<span class="tag tw">WARMUP</span>';
+if(mk.market_open&&!mk.indicators_warm){var _wtxt='Indicators warming up';if(mk.warmup_progress!=null)_wtxt+=' ('+mk.warmup_progress+'/'+mk.warmup_needed+' candles, ETA '+(mk.warmup_eta||'—')+')';tg+='<span class="tag tw" title="'+_wtxt+'">WARMUP</span>';}
 document.getElementById('tags').innerHTML=tg;
 
 // BUG-025: include floating open PNL in day total
@@ -284,6 +286,23 @@ if(cd&&cd.remaining>0)sh+='<div class="cb">\u23F3 COOLDOWN '+Math.ceil(cd.remain
 sh+='<div class="sg">';
 [['CE',ce],['PE',pe]].forEach(function(p){
   var t=p[0],s=p[1],sk=s.strike||mk['locked_'+t.toLowerCase()]||mk.atm||'';
+  // BUG-030: WARMUP card during indicator warmup period
+  if(s.status==='WARMUP'){
+    var _wp=parseInt(s.warmup_progress||0),_wn=parseInt(s.warmup_needed||14);
+    var _we=s.warmup_eta||'—';
+    var _pct=Math.min(Math.round((_wp/_wn)*100),100);
+    sh+='<div class="sc warmup" style="border-color:#fed7aa;box-shadow:0 0 0 3px rgba(249,115,22,0.08)">';
+    sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2" style="color:var(--or2);font-size:11px">WARMUP</span></div>';
+    sh+='<div style="padding:18px 14px;text-align:center;animation:wmpulse 2s ease-in-out infinite">';
+    sh+='<div style="font-size:36px;line-height:1">\u231B</div>';
+    sh+='<div style="font-size:12px;font-weight:700;color:var(--tx2);margin-top:8px">Indicator warmup in progress</div>';
+    sh+='<div style="font-size:10px;color:var(--tx3);margin-top:4px">Trades blocked until stable</div>';
+    sh+='<div style="margin:14px 8px 6px"><div style="height:8px;border-radius:4px;background:var(--bg2);overflow:hidden"><div style="height:100%;background:var(--or-grad);width:'+_pct+'%;transition:width 0.6s"></div></div></div>';
+    sh+='<div class="mono" style="font-size:10px;font-weight:700;color:var(--or2)">'+_wp+'/'+_wn+' candles</div>';
+    sh+='<div style="font-size:10px;color:var(--tx3);margin-top:4px">Trading resumes '+_we+'</div>';
+    sh+='</div></div>';
+    return;
+  }
   var fi=s.fired,cc=fi?'fired':'';
   var pa2=s.path_a,pb=s.path_b;
   var rv=parseFloat(s.rsi||0),rr=s.rsi_rising;
