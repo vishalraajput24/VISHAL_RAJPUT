@@ -151,17 +151,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "rsi_15m": 0, "confidence_15m": "NORMAL",
         "regime": "", "cooldown_ok": False,
         "reject_reason": "",
-        # Legacy compat fields (downstream code reads these — keep at defaults)
-        "ema9": 0, "ema21": 0, "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
-        "ema_ok": False, "rsi_ok": False, "candle_green": False,
-        "gap_widening": False, "rsi_rising": False,
-        "other_falling": False, "other_move": 0,
-        "spot_aligned": False, "two_green_above": False,
-        "other_below_ema": False, "rsi_cap_active": 0,
-        "breakout_confirmed": False, "spot_slope": 0,
-        "path_a": False, "path_b": False,
-        "momentum_pts": 0, "momentum_tf": "", "momentum_threshold": 0,
-        "spike_ratio": 0, "spot_confirms": False, "spot_move": 0,
+        # Minimal back-compat (non-strategy display fields)
+        "ema9": 0, "ema21": 0, "rsi": 0,
+        "candle_green": False,
     }
     if state is None:
         state = {}
