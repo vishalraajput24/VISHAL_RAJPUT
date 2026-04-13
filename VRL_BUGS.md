@@ -201,6 +201,17 @@
 - **Also: last_exit_price now saved** on every exit for stop hunt recovery detection.
 - **Expected impact**: Cleaner entries, fewer false signals, faster re-entry on genuine trends, adaptive to market rhythm.
 
+## BUG-029: Stale WebSocket at market open due to token refresh without process restart
+- **Date:** April 13, 2026
+- **Root cause:** 8 AM cron runs VRL_AUTH.py successfully and writes a fresh access_token.json to disk. BUT vrl-main was already running from the previous session with yesterday's token cached in memory. It never re-reads the file. WebSocket keeps trying with the dead token → stale ticks for 2+ hours at market open until the user manually restarts vrl-main.
+- **Fix (4 layers of protection):**
+  1. **Crontab**: AUTH now chains `&& sudo /bin/systemctl restart vrl-main` so the process always restarts with the fresh token. Single passwordless sudoers rule already in place.
+  2. **VRL_MAIN startup token check**: Before calling `get_kite()`, main() explicitly reads access_token.json, compares date to today, logs a loud warning + sends a Telegram alert if stale. `get_kite()` then auto-refreshes. Self-heals even if cron fails.
+  3. **WS auto-heal tightened (VRL_DATA.check_and_reconnect)**: stale threshold 5min→3min, rate limit 5min→10min, new `set_autoheal_callback()` hook lets VRL_MAIN register a Telegram alert when auto-heal fires. Catches WebSocket death mid-session.
+  4. **VRL_PRECHECK.py at 9:10 IST**: standalone script runs 4 checks (service alive, token fresh, Kite API responds, dashboard.json fresh). Fires a Telegram alert 5 min before market open so operator has time to intervene. Auto-heals service + token if broken.
+- **Lesson:** Never assume child processes see file changes — must explicitly restart or hot-reload. Defense in depth: 4 independent layers means even if 3 fail, the 4th catches it.
+- **File:** crontab, VRL_MAIN.py, VRL_DATA.py, VRL_PRECHECK.py (new)
+
 ---
 
 ## Prevention Rules

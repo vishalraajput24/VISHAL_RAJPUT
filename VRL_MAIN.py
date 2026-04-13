@@ -1,8 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.8
-#  Master orchestration. FAST EMA9 + CONFIRMED 3m momentum.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.10
+#  Master orchestration. FAST EMA9 + CONFIRMED 3m + breakout + spot slope.
 #  2-lot execution. Time-aware RSI cap. Spot alignment.
 #  Straddle aggressive mode. Stop hunt recovery.
+#  v13.10: Auto token refresh + WebSocket auto-heal + pre-market health check.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -668,6 +669,7 @@ def _alert_bot_started():
         "ENTRY FAST: 2 green above EMA9 + breakout confirm + spot slope\n"
         "ENTRY CONF: 3m +20pts momentum + other falling (aggressive: 15pts)\n"
         "RSI cap: 78 morning / 72 midday / 75 afternoon | Spot slope \u22652\n"
+        "Auto token refresh + WS auto-heal + pre-market health check\n"
         "EXIT: candle close -12 | divergence | stale 5c peak&lt;3 | EOD 15:30\n"
         "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"
         "COOLDOWN: 5min same dir | SKIP on stop hunt recovery\n"
@@ -2485,9 +2487,37 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    # BUG-029 Task 2: Explicit token freshness check on startup
+    # get_kite() already auto-refreshes but we want loud logging + Telegram alert
+    try:
+        import json as _j
+        from datetime import date as _dt_date
+        _tok_path = D.TOKEN_FILE_PATH
+        _tok_data = {}
+        if os.path.isfile(_tok_path):
+            with open(_tok_path) as _tf:
+                _tok_data = _j.load(_tf)
+        _tok_date = _tok_data.get("date", "")
+        _today = _dt_date.today().isoformat()
+        if _tok_date != _today:
+            logger.warning("[MAIN] Token is from " + str(_tok_date or "MISSING")
+                           + ", not today (" + _today + ") — forcing fresh auth")
+            _tg_send("\u26a0\ufe0f Stale token detected on startup, auto-refreshing\n"
+                     "Old: " + str(_tok_date or "MISSING") + " → New: " + _today)
+        else:
+            logger.info("[MAIN] Token freshness check: OK (" + _today + ")")
+    except Exception as _te:
+        logger.warning("[MAIN] Token freshness check error: " + str(_te))
+
     kite = get_kite()
     _kite = kite
     D.init(kite)
+
+    # v13.10: Register WS auto-heal Telegram callback
+    try:
+        D.set_autoheal_callback(_tg_send)
+    except Exception:
+        pass
 
     # Fetch account info at startup
     try:

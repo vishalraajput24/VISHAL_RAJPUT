@@ -20,7 +20,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v13.9"
+VERSION  = "v13.10"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -553,26 +553,37 @@ def is_tick_live(token) -> bool:
 
 
 _last_reconnect_attempt = 0
+_ws_autoheal_callback = None  # v13.10: optional Telegram alert hook
+
+def set_autoheal_callback(fn):
+    """Register a callback invoked on WS auto-heal events (e.g. Telegram alert)."""
+    global _ws_autoheal_callback
+    _ws_autoheal_callback = fn
 
 def check_and_reconnect():
     """
-    v13.1: Auto-heal stale WebSocket. If spot tick is 5+ min stale during
-    market hours, re-authenticate Kite and restart WebSocket.
+    v13.10 (BUG-029): Auto-heal stale WebSocket. If spot tick is 3+ min stale during
+    market hours, re-authenticate Kite and restart WebSocket. Rate limited to 1 per 10min.
     Called from strategy loop every cycle.
     """
     global _last_reconnect_attempt, _kite, _ticker
     if not is_market_open():
         return
-    # Check if spot tick is stale
+    # Check if spot tick is stale (v13.10: tightened from 5min to 3min)
     with _tick_lock:
         spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
-    if spot_entry and (time.time() - spot_entry["ts"]) < 300:
-        return  # tick is fresh (< 5 min), no action needed
-    # Don't retry more than once per 5 minutes
-    if time.time() - _last_reconnect_attempt < 300:
+    if spot_entry and (time.time() - spot_entry["ts"]) < 180:
+        return  # tick is fresh (< 3 min), no action needed
+    # v13.10: rate limit 1 auto-heal per 10 minutes to prevent loops
+    if time.time() - _last_reconnect_attempt < 600:
         return
     _last_reconnect_attempt = time.time()
-    logger.warning("[DATA] Spot tick stale 5+ min — attempting re-auth + WS reconnect")
+    logger.warning("[DATA] Spot tick stale 3+ min — attempting re-auth + WS reconnect")
+    try:
+        if _ws_autoheal_callback:
+            _ws_autoheal_callback("\u26a0\ufe0f WebSocket auto-healing after stale tick (3min+)")
+    except Exception:
+        pass
     try:
         from VRL_AUTH import get_kite
         new_kite = get_kite()

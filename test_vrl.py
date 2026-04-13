@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.9 Test Suite
- 30 interdependent complex tests covering the full trade lifecycle.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.10 Test Suite
+ 33 interdependent complex tests covering full trade lifecycle + robustness.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -108,7 +108,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v13.9", D.VERSION == "v13.9", "got " + str(D.VERSION))
+test("T01: VERSION is v13.10", D.VERSION == "v13.10", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
@@ -437,6 +437,43 @@ test("T30: Strategy text alignment across banner/help/dashboard",
      and "breakout" in _dash_src.lower()
      and "slope" in _dash_src.lower(),
      "strategy text not aligned across files")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v13.10 — BUG-029 AUTO TOKEN REFRESH + WS AUTO-HEAL + PRE-MARKET
+# ═══════════════════════════════════════════════════════════════
+
+section("v13.10 — BUG-029 ROBUSTNESS")
+
+# T31: VRL_MAIN startup has explicit token date check + Telegram alert
+test("T31: Startup token freshness check with TG alert",
+     "Token freshness check" in _main_src
+     and "Stale token detected on startup" in _main_src
+     and "TOKEN_FILE_PATH" in _main_src,
+     "missing startup token check")
+
+# T32: VRL_DATA WS auto-heal uses 3min threshold + 10min rate limit + callback
+_data_src = _read_file("VRL_DATA.py")
+test("T32: WS auto-heal tightened to 3min + 10min rate limit + callback",
+     "< 180" in _data_src
+     and "< 600" in _data_src
+     and "set_autoheal_callback" in _data_src
+     and "_ws_autoheal_callback" in _data_src,
+     "WS auto-heal not upgraded")
+
+# T33: VRL_PRECHECK.py exists with all 4 checks
+_precheck_path = os.path.join(_repo, "VRL_PRECHECK.py")
+if os.path.isfile(_precheck_path):
+    _pc_src = _read_file("VRL_PRECHECK.py")
+    test("T33: VRL_PRECHECK.py has all 4 health checks",
+         "check_service_alive" in _pc_src
+         and "check_token_fresh" in _pc_src
+         and "check_kite_api" in _pc_src
+         and "check_websocket_fresh" in _pc_src
+         and "PRECHECK" in _pc_src,
+         "missing one of 4 checks")
+else:
+    test("T33: VRL_PRECHECK.py exists", False, "file not found")
 
 
 # ═══════════════════════════════════════════════════════════════
