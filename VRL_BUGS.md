@@ -241,6 +241,14 @@
 - **Lesson:** When refactoring strategy logic, audit ALL downstream consumers — alerts, dashboards, logs, reports — not just the engine. Template drift is silent and accumulates.
 - **File:** VRL_MAIN.py
 
+## v13.9.1 TUNING: Slope gate reduced lag (mid-session hotfix)
+- **Date:** April 13, 2026
+- **Change:** Slope lookback 5→3 candles, threshold 2→1.5 (both CE and PE), min dataframe length 8→6.
+- **Rationale:** April 13 expiry day live data showed 3 trades peaking at 0.0/+9.6/+0.8 because entries fired 10-15 minutes AFTER the move started. At 09:48, 3-candle slope was +4.5 (would have fired); 5-candle slope was only +2.1 (barely passed old gate). By the time old gate confirmed, the move was exhausted.
+- **Risk:** May increase false positives on chop days. Paper mode only.
+- **Validation window:** Remaining April 13 session + next 4 trading days.
+- **File:** VRL_ENGINE.py slope block
+
 ---
 
 ## Prevention Rules

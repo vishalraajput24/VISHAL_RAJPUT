@@ -109,7 +109,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v13.12", D.VERSION == "v13.12", "got " + str(D.VERSION))
+test("T01: VERSION is v13.9.1", D.VERSION == "v13.9.1", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))

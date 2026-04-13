@@ -694,7 +694,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "ENTRY FAST: 2 green above EMA9 + breakout confirm + spot slope\n"
         "ENTRY CONF: 3m +20pts momentum + other falling (aggressive: 15pts)\n"
-        "RSI cap: 78 morning / 72 midday / 75 afternoon | Spot slope \u22652\n"
+        "RSI cap: 78 morning / 72 midday / 75 afternoon | Slope 3c/1.5\n"
         "Auto token refresh + WS auto-heal + pre-market health check\n"
         "EXIT: candle close -12 | divergence | stale 5c peak&lt;3 | EOD 15:30\n"
         "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"

@@ -280,27 +280,28 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             pass
         result["spot_aligned"] = _spot_aligned
 
-        # v13.9 Change 2: Spot EMA slope — filter out sideways
+        # v13.9.1 tuning: 3-candle slope window (was 5), threshold 1.5 (was 2)
+        # Based on April 13 expiry day analysis showing 10-15min entry lag
         _spot_slope = 0
         try:
-            if not _spot_df.empty and len(_spot_df) >= 8:
+            if not _spot_df.empty and len(_spot_df) >= 6:
                 _slope_now = float(_spot_df.iloc[-2].get("EMA_9", 0))
-                _slope_5ago = float(_spot_df.iloc[-7].get("EMA_9", 0))
-                _spot_slope = round(_slope_now - _slope_5ago, 1)
+                _slope_3ago = float(_spot_df.iloc[-5].get("EMA_9", 0))
+                _spot_slope = round(_slope_now - _slope_3ago, 1)
         except Exception:
             pass
         result["spot_slope"] = _spot_slope
 
         _slope_ok = True
-        if option_type == "CE" and _spot_slope < 2:
+        if option_type == "CE" and _spot_slope < 1.5:
             _slope_ok = False
             if not silent:
-                logger.info("[ENGINE] CE spot_flat slope=" + str(_spot_slope))
+                logger.info("[ENGINE] CE spot_flat slope=" + str(_spot_slope) + " window=3c")
             return result
-        if option_type == "PE" and _spot_slope > -2:
+        if option_type == "PE" and _spot_slope > -1.5:
             _slope_ok = False
             if not silent:
-                logger.info("[ENGINE] PE spot_flat slope=" + str(_spot_slope))
+                logger.info("[ENGINE] PE spot_flat slope=" + str(_spot_slope) + " window=3c")
             return result
 
         # ═══ FAST PATH (v13.9: + breakout confirm + spot slope) ═══
