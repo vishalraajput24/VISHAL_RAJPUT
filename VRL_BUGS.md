@@ -223,6 +223,24 @@
 - **Lesson:** Silent waiting states in UI look identical to failure states. Always communicate what the system is doing, even when it's intentionally idle.
 - **File:** VRL_MAIN.py, static/VRL_DASHBOARD.html, VRL_COMMANDS.py
 
+## BUG-031: Telegram alert templates contain stale pre-v13.9 logic
+- **Date:** April 13, 2026
+- **Symptoms (from live session):**
+  1. Double-sign momentum display: `"+-10.55pts"` (manual `"+"` concat wrapped a negative value)
+  2. `SPOT ❌` shown when entry gates actually passed (template read stale `spot_confirms` field)
+  3. `⚠️ AGAINST TREND — Spot moving opposite` on valid PE entry where `spot_slope=-7.4` was correctly aligned
+  4. Telegram 400 error: `"can't parse entities: Unsupported start tag 'html' at byte offset 2529"` on long error messages containing raw HTML
+  5. `ALIGN_PNL: state=-27.5 dashboard=-13.8` — state counted 2-lot exit as `pnl × 2` while dashboard read per-trade points from CSV
+- **Root cause:** Alert templates and `state.daily_pnl` accumulator were never updated through v13.5 → v13.9 refactors. Templates still read old `spot_confirms` / `spot_move` fields; `pnl_lots = pnl × (qty / lot_size)` doubled the value for 2-lot exits.
+- **Fix:**
+  1. Entry alert template rewritten to use `spot_slope` + `spot_aligned` (v13.9 fields). Removed `AGAINST TREND`. Shows `Gates: 2green above EMA9 ✓ | breakout ✓ | RSI↑ X/Y` + `Spot: ↓ slope -7.4 ✓` using `format(_slope, "+.1f")` — no manual sign concat.
+  2. Exit alert `_confirm_exit` reads `state.spot_slope` stored at entry time, displays `RSI↑ | Spot ↓ slope -7.4`.
+  3. State now stores `spot_aligned`, `spot_slope`, `breakout_confirmed`, `two_green_above` at entry time for exit-time reference.
+  4. Added `_tg_safe()` helper + HTML sanitizer regex in `_tg_send_sync` — escapes unknown `<tag>` while preserving Telegram-allowed tags `<b>, <i>, <u>, <s>, <code>, <pre>, <a>`. Error messages with raw `<html>` now render safely.
+  5. `state.daily_pnl` now accumulates `pnl` (points per trade), not `pnl × lot_multiplier`. Matches dashboard (which reads from CSV log).
+- **Lesson:** When refactoring strategy logic, audit ALL downstream consumers — alerts, dashboards, logs, reports — not just the engine. Template drift is silent and accumulates.
+- **File:** VRL_MAIN.py
+
 ---
 
 ## Prevention Rules

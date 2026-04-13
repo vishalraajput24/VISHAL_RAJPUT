@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.11
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.12
 #  Master orchestration. FAST EMA9 + CONFIRMED 3m + breakout + spot slope.
 #  2-lot execution. Time-aware RSI cap. Spot alignment.
 #  Straddle aggressive mode. Stop hunt recovery.
@@ -557,6 +557,19 @@ _tg_timestamps = _deque(maxlen=20)
 _TG_FLOOD_LIMIT = 5
 _TG_FLOOD_WINDOW = 10  # seconds
 
+def _tg_safe(s) -> str:
+    """BUG-031: Escape <, >, & in dynamic content for Telegram HTML mode.
+    Apply only to user/API-supplied strings, NOT to template literals."""
+    if s is None:
+        return ""
+    try:
+        return (str(s).replace("&", "&amp;")
+                     .replace("<", "&lt;")
+                     .replace(">", "&gt;"))
+    except Exception:
+        return ""
+
+
 def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
     """Blocking send with flood control — max 5 msgs per 10s."""
     if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
@@ -574,10 +587,22 @@ def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> b
 
     cid = chat_id or D.TELEGRAM_CHAT_ID
     url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
+    # BUG-031: sanitize unknown HTML tags in HTML mode to prevent parse errors.
+    # Telegram allows <b>, <i>, <u>, <s>, <code>, <pre>, <a href>. Everything
+    # else (like stray <html> from an error trace) causes a 400.
+    _safe_text = text
+    if parse_mode == "HTML":
+        try:
+            import re as _re
+            _safe_text = _re.sub(
+                r"<(?!/?(b|i|u|s|code|pre|a)(\s|>|/))",
+                "&lt;", text)
+        except Exception:
+            _safe_text = text
     try:
         resp = requests.post(url, json={
             "chat_id"              : cid,
-            "text"                 : text,
+            "text"                 : _safe_text,
             "parse_mode"           : parse_mode,
             "disable_notification" : False,
         }, timeout=10)
@@ -876,6 +901,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["rsi_rising"]         = entry_result.get("rsi_rising", False)
         state["spot_confirms"]      = entry_result.get("spot_confirms", False)
         state["spot_move"]          = entry_result.get("spot_move", 0)
+        # BUG-031: capture v13.9 spot fields so exit alert can reference them
+        state["spot_aligned"]       = entry_result.get("spot_aligned", False)
+        state["spot_slope"]         = entry_result.get("spot_slope", 0)
+        state["breakout_confirmed"] = entry_result.get("breakout_confirmed", False)
+        state["two_green_above"]    = entry_result.get("two_green_above", False)
         _bonus_data = entry_result.get("bonus", {})
         state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
         state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
@@ -933,23 +963,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
     except Exception:
         _bonus_line = ""
-    _emode = entry_result.get("entry_mode", "MOMENTUM")
-    _mom_pts = entry_result.get("momentum_pts", 0)
-    _sr = entry_result.get("spike_ratio", 0)
-    _quality = "spike ⚡" if _sr > 0.6 else "steady"
+    # BUG-031 (v13.12): v13.9-aligned entry detail. No double-sign, no SPOT❌,
+    # no AGAINST TREND (if entry fired, all gates passed by definition).
+    _emode = entry_result.get("entry_mode", "FAST")
+    _rsi_val = round(entry_result.get("rsi", 0), 1)
     _rsi_tag = "RSI↑" if entry_result.get("rsi_rising") else "RSI↓"
-    _spot_tag = "SPOT✅" if entry_result.get("spot_confirms") else "SPOT❌"
-    _spot_mv = entry_result.get("spot_move", 0)
-    _confirm_line = "Confirm: " + _rsi_tag + " | " + _spot_tag + " (" + ("+" if _spot_mv >= 0 else "") + str(_spot_mv) + "pts)\n"
-    if not entry_result.get("spot_confirms"):
-        _confirm_line += "⚠️ AGAINST TREND — Spot moving opposite\n"
-    # v13.3: loud warning when entering against spot direction
-    if not entry_result.get("spot_confirms"):
-        _confirm_line += "⚠️ AGAINST TREND — Spot moving opposite\n"
-    if _emode == "CONFIRMED":
-        _detail = "Mom +" + str(_mom_pts) + "pts/3c (3min) (" + _quality + ") + EMA " + str(round(entry_result.get("ema_gap", 0), 1)) + " 🔥\n" + _confirm_line
+    _rsi_cap = entry_result.get("rsi_cap_active", 75)
+    _slope = float(entry_result.get("spot_slope", 0))
+    # Slope arrow: positive slope for CE (spot rising), negative for PE (spot falling)
+    _slope_arrow = "↑" if _slope > 0 else ("↓" if _slope < 0 else "→")
+    _slope_line = "Spot: " + _slope_arrow + " slope " + format(_slope, "+.1f") + " ✓"
+    _gate_line = ""
+    if _emode == "FAST":
+        _gate_line = "Gates: 2green above EMA9 ✓ | breakout ✓ | " + _rsi_tag + " " + str(_rsi_val) + "/" + str(_rsi_cap) + "\n"
     else:
-        _detail = "Mom: +" + str(_mom_pts) + "pts/3c (3min) | " + _quality + " | RSI " + str(round(entry_result.get("rsi", 0), 0)) + " | HL ✓\n" + _confirm_line
+        _mom_pts = entry_result.get("momentum_pts", 0)
+        _gate_line = "Gates: 3m mom " + format(_mom_pts, "+.1f") + "pts ✓ | " + _rsi_tag + " " + str(_rsi_val) + "/" + str(_rsi_cap) + "\n"
+    _detail = _gate_line + _slope_line + "\n"
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1028,6 +1058,12 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _exit_strike = state.get("strike", 0)
         _entry_rsi_rising = state.get("rsi_rising", False)
         _entry_spot_confirms = state.get("spot_confirms", False)
+        # BUG-031: read v13.9 spot fields stored at entry
+        _entry_spot_slope = float(state.get("spot_slope", 0))
+        _entry_slope_arrow = "↑" if _entry_spot_slope > 0 else ("↓" if _entry_spot_slope < 0 else "→")
+        _entry_confirm = (("RSI↑" if _entry_rsi_rising else "RSI↓") + " | Spot "
+                          + _entry_slope_arrow + " slope "
+                          + format(_entry_spot_slope, "+.1f"))
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
@@ -1083,7 +1119,9 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     # Check if trade is fully closed
     trade_done = not state.get("lot1_active") and not state.get("lot2_active")
 
-    pnl_lots = pnl * (exit_qty / D.LOT_SIZE)
+    # BUG-031: daily_pnl tracks POINTS per trade (matches dashboard/CSV).
+    # Previous bug: used pnl * (qty/lot_size) which doubled the value for 2-lot exits.
+    pnl_lots = pnl  # points per trade — one value per closed trade, matches trade log
 
     # Log EVERY lot exit (not just trade_done)
     _log_trade(state, actual_exit, reason, candles, saved_entry=entry,
@@ -1144,7 +1182,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
                    "charges_pts": 0}
         if pnl >= 0:
-            _confirm_exit = ("RSI↑" if _entry_rsi_rising else "RSI↓") + " " + ("SPOT✅" if _entry_spot_confirms else "SPOT❌")
+            _confirm_exit = _entry_confirm
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "✅ <b>" + _sym_short + "  +" + str(round(pnl, 1)) + "pts</b>\n"
@@ -1167,7 +1205,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         else:
             _cd_min = _cd_cfg.get("after_loss", 5)
             _fast_sl = "⚡ FAST SL — " + str(candles) + " candle exit\n" if reason == "HARD_SL" and candles <= 1 else ""
-            _confirm_exit_l = ("RSI↑" if _entry_rsi_rising else "RSI↓") + " " + ("SPOT✅" if _entry_spot_confirms else "SPOT❌")
+            _confirm_exit_l = _entry_confirm
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"

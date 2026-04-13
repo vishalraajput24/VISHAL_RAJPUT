@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v13.11 Test Suite
- 35 interdependent complex tests: lifecycle + robustness + warmup visibility.
+ test_vrl.py — VISHAL RAJPUT TRADE v13.12 Test Suite
+ 40 interdependent tests: lifecycle + robustness + warmup + template alignment.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -109,7 +109,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v13.11", D.VERSION == "v13.11", "got " + str(D.VERSION))
+test("T01: VERSION is v13.12", D.VERSION == "v13.12", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
@@ -502,6 +502,64 @@ test("T35: Dashboard + /status show warmup state",
      and "WARMUP (" in _cmd_src
      and "Trades blocked until" in _cmd_src,
      "dashboard/commands missing warmup rendering")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v13.12 — BUG-031 TELEGRAM TEMPLATE ALIGNMENT
+# ═══════════════════════════════════════════════════════════════
+
+section("v13.12 — BUG-031 TEMPLATE ALIGNMENT")
+
+# T36: No AGAINST TREND / SPOT❌ in VRL_MAIN templates (removed in BUG-031)
+# AGAINST TREND strings should NOT appear in runtime templates; only in BUG docs
+_main_runtime = _main_src
+# Find the entry alert block and verify it no longer has AGAINST TREND in template lines
+_against_in_templates = (
+    'AGAINST TREND — Spot moving' in _main_runtime
+    or 'SPOT❌' in _main_runtime
+    or '"SPOT✅' in _main_runtime
+)
+test("T36: No AGAINST TREND / SPOT❌ in runtime templates",
+     not _against_in_templates,
+     "stale strings still present")
+
+# T37: Entry template references spot_slope, _tg_safe exists, HTML sanitizer exists
+test("T37: Entry template uses spot_slope + _tg_safe + HTML sanitizer",
+     "spot_slope" in _main_runtime
+     and "def _tg_safe" in _main_runtime
+     and "|pre|a" in _main_runtime,
+     "new template fields missing")
+
+# T38: Double-sign formatting fixed — use :+.1f / format(x, '+.1f') not string concat
+# Check that the old "+" + str(_spot_mv) pattern is gone
+_bad_sign_patterns = [
+    '("+" if _spot_mv >= 0',
+    '"+" + str(_mom_pts)',
+]
+_found_bad = [p for p in _bad_sign_patterns if p in _main_runtime]
+test("T38: No manual sign concat in templates",
+     len(_found_bad) == 0,
+     "found bad patterns: " + str(_found_bad))
+
+# T39: state.daily_pnl uses pnl (points) not pnl * qty/lot_size
+# Verify the fix comment is present and the double-count bug pattern is gone
+test("T39: daily_pnl tracks points per trade, not lot-multiplied",
+     "pnl_lots = pnl  # points per trade" in _main_runtime
+     and "pnl * (exit_qty / D.LOT_SIZE)" not in _main_runtime.split("# BUG-031")[1] if "# BUG-031" in _main_runtime else False,
+     "daily_pnl still using lot multiplier")
+
+# T40: HTML sanitizer regex rejects unknown tags but keeps allowed ones
+import re as _test_re
+_allowed_pattern = r"<(?!/?(b|i|u|s|code|pre|a)(\s|>|/))"
+_sample_bad = "Error: <html>body</html>"
+_sample_good = "<b>OK</b> <i>italic</i>"
+_cleaned_bad = _test_re.sub(_allowed_pattern, "&lt;", _sample_bad)
+_cleaned_good = _test_re.sub(_allowed_pattern, "&lt;", _sample_good)
+test("T40: HTML sanitizer escapes <html> but keeps <b>/<i>",
+     "&lt;html" in _cleaned_bad
+     and "<b>" in _cleaned_good
+     and "<i>" in _cleaned_good,
+     "sanitizer regex broken")
 
 
 # ═══════════════════════════════════════════════════════════════
