@@ -1,10 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v13.12
-#  Master orchestration. FAST EMA9 + CONFIRMED 3m + breakout + spot slope.
-#  2-lot execution. Time-aware RSI cap. Spot alignment.
-#  Straddle aggressive mode. Stop hunt recovery.
-#  v13.10: Auto token refresh + WebSocket auto-heal + pre-market health check.
-#  v13.11: Warmup state visible in dashboard, /status, logs.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v14.0
+#  Master orchestration. 3-min RSI 40-55 + ADX≥15 + body≥20% + TRENDING regime.
+#  2-lot execution. Profit floors. EOD auto-exit. Auto token refresh.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -692,14 +689,12 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY FAST: 2 green above EMA9 + breakout confirm + spot slope\n"
-        "ENTRY CONF: 3m +20pts momentum + other falling (aggressive: 15pts)\n"
-        "RSI cap: 78 morning / 72 midday / 75 afternoon | Slope 3c/1.5\n"
+        "ENTRY: 3-min RSI 40-55 + ADX\u226515 + body\u226520% + TRENDING regime\n"
+        "CONFIDENCE: 15-min RSI alignment (CE:30-50, PE:50-70) HIGH/NORMAL label\n"
         "Auto token refresh + WS auto-heal + pre-market health check\n"
-        "EXIT: candle close -12 | divergence | stale 5c peak&lt;3 | EOD 15:30\n"
+        "EXIT: candle close -12 | stale 5c | divergence | EOD 15:30\n"
         "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"
-        "COOLDOWN: 5min same dir | SKIP on stop hunt recovery\n"
-        "NO ENTRY AFTER 15:10 | 2 lots fixed\n"
+        "COOLDOWN: 5min same direction | 2 lots fixed | no entry after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -896,6 +891,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_3m_confirmed"]      = False
         state["_candle_low"]        = actual_price
         state["_last_milestone"]    = 0
+        # v14.0: capture 3-min entry context for exit alert
+        state["rsi_3m_entry"]       = entry_result.get("rsi_3m", 0)
+        state["adx_3m_entry"]       = entry_result.get("adx_3m", 0)
+        state["regime_entry"]       = entry_result.get("regime", "")
+        state["confidence_15m"]     = entry_result.get("confidence_15m", "NORMAL")
         state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
         state["spike_ratio"]        = entry_result.get("spike_ratio", 0)
         state["rsi_rising"]         = entry_result.get("rsi_rising", False)
@@ -963,23 +963,19 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
     except Exception:
         _bonus_line = ""
-    # BUG-031 (v13.12): v13.9-aligned entry detail. No double-sign, no SPOT❌,
-    # no AGAINST TREND (if entry fired, all gates passed by definition).
-    _emode = entry_result.get("entry_mode", "FAST")
-    _rsi_val = round(entry_result.get("rsi", 0), 1)
-    _rsi_tag = "RSI↑" if entry_result.get("rsi_rising") else "RSI↓"
-    _rsi_cap = entry_result.get("rsi_cap_active", 75)
-    _slope = float(entry_result.get("spot_slope", 0))
-    # Slope arrow: positive slope for CE (spot rising), negative for PE (spot falling)
-    _slope_arrow = "↑" if _slope > 0 else ("↓" if _slope < 0 else "→")
-    _slope_line = "Spot: " + _slope_arrow + " slope " + format(_slope, "+.1f") + " ✓"
-    _gate_line = ""
-    if _emode == "FAST":
-        _gate_line = "Gates: 2green above EMA9 ✓ | breakout ✓ | " + _rsi_tag + " " + str(_rsi_val) + "/" + str(_rsi_cap) + "\n"
-    else:
-        _mom_pts = entry_result.get("momentum_pts", 0)
-        _gate_line = "Gates: 3m mom " + format(_mom_pts, "+.1f") + "pts ✓ | " + _rsi_tag + " " + str(_rsi_val) + "/" + str(_rsi_cap) + "\n"
-    _detail = _gate_line + _slope_line + "\n"
+    # v14.0: 3-min strategy entry detail
+    _emode = entry_result.get("entry_mode", "3MIN")
+    _r3 = round(entry_result.get("rsi_3m", 0), 1)
+    _adx = entry_result.get("adx_3m", 0)
+    _body = round(entry_result.get("body_pct_3m", 0), 0)
+    _regime = entry_result.get("regime", "")
+    _conf = entry_result.get("confidence_15m", "NORMAL")
+    _r15 = round(entry_result.get("rsi_15m", 0), 1)
+    _gate_line = ("Gates: RSI3m " + str(_r3) + " (40-55) ✓ | ADX " + str(_adx)
+                  + " ≥15 ✓ | Body " + str(int(_body)) + "% ≥20 ✓\n")
+    _regime_line = "Regime: " + str(_regime) + " ✓\n"
+    _conf_line = "15m RSI: " + str(_r15) + " — Confidence: " + _conf + "\n"
+    _detail = _gate_line + _regime_line + _conf_line
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1058,12 +1054,13 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _exit_strike = state.get("strike", 0)
         _entry_rsi_rising = state.get("rsi_rising", False)
         _entry_spot_confirms = state.get("spot_confirms", False)
-        # BUG-031: read v13.9 spot fields stored at entry
-        _entry_spot_slope = float(state.get("spot_slope", 0))
-        _entry_slope_arrow = "↑" if _entry_spot_slope > 0 else ("↓" if _entry_spot_slope < 0 else "→")
-        _entry_confirm = (("RSI↑" if _entry_rsi_rising else "RSI↓") + " | Spot "
-                          + _entry_slope_arrow + " slope "
-                          + format(_entry_spot_slope, "+.1f"))
+        # v14.0: entry confirmation = 3m fields stored at entry
+        _entry_r3 = round(state.get("rsi_3m_entry", state.get("rsi", 0)), 1)
+        _entry_adx_e = state.get("adx_3m_entry", 0)
+        _entry_regime_e = state.get("regime_entry", "")
+        _entry_conf = ("3MIN | RSI3m " + str(_entry_r3)
+                       + " | ADX " + str(_entry_adx_e)
+                       + " | " + str(_entry_regime_e))
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
@@ -1182,7 +1179,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
                    "charges_pts": 0}
         if pnl >= 0:
-            _confirm_exit = _entry_confirm
+            _confirm_exit = _entry_conf
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "✅ <b>" + _sym_short + "  +" + str(round(pnl, 1)) + "pts</b>\n"
@@ -1205,7 +1202,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         else:
             _cd_min = _cd_cfg.get("after_loss", 5)
             _fast_sl = "⚡ FAST SL — " + str(candles) + " candle exit\n" if reason == "HARD_SL" and candles <= 1 else ""
-            _confirm_exit_l = _entry_confirm
+            _confirm_exit_l = _entry_conf
             _tg_send(
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"
@@ -1508,81 +1505,67 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         straddle_open = getattr(D, "_straddle_open", 0)
         straddle_captured = getattr(D, "_straddle_captured", False)
 
-        # ── Build CE/PE signal blocks ──
+        # ── Build CE/PE signal blocks (v14.0: 3-min strategy fields) ──
         def _build_signal(opt_type, result):
             if not result:
                 return {
-                    "ema9": 0, "ema21": 0, "ema_gap": 0, "ema_ok": False,
-                    "rsi": 0, "rsi_prev": 0, "rsi_ok": False,
-                    "candle_green": False, "gap_widening": False,
-                    "fired": False, "verdict": "NO DATA",
-                    "ltp": 0,
+                    "rsi_3m": 0, "adx_3m": 0, "body_pct_3m": 0,
+                    "rsi_15m": 0, "confidence_15m": "NORMAL",
+                    "regime": "", "fired": False, "verdict": "NO DATA",
+                    "ltp": 0, "entry_mode": "",
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
 
-            # v13.5: Verdict from dual-timeframe momentum + divergence gate
-            ema_gap = result.get("ema_gap", 0)
-            rsi_val = result.get("rsi", 0)
-            ema_ok = result.get("ema_ok", False)
-            rsi_ok = result.get("rsi_ok", False)
+            _fired = result.get("fired", False)
+            _mode = result.get("entry_mode", "")
+            _r3 = result.get("rsi_3m", 0)
+            _adx = result.get("adx_3m", 0)
+            _body = result.get("body_pct_3m", 0)
+            _regime = result.get("regime", "")
+            _reject = result.get("reject_reason", "")
 
-            if result.get("fired"):
-                _em = result.get("entry_mode", "EMA")
-                verdict = "FIRED [" + _em + "]"
-            elif not ema_ok and not rsi_ok:
-                verdict = "EMA " + str(ema_gap) + " RSI " + str(rsi_val)
-            elif not ema_ok:
-                verdict = "EMA " + str(ema_gap) + " (need 3+)"
-            elif not rsi_ok:
-                if rsi_val < 50:
-                    verdict = "RSI " + str(rsi_val) + " (need 50+)"
-                else:
-                    verdict = "RSI " + str(rsi_val) + " not rising"
+            # Verdict from v14.0 gates
+            if _fired:
+                verdict = "FIRED [" + _mode + "]"
+            elif _reject:
+                verdict = _reject
+            elif not (40 <= _r3 <= 55):
+                verdict = "RSI " + str(_r3) + " not in 40-55"
+            elif _adx < 15:
+                verdict = "ADX " + str(_adx) + " < 15"
+            elif _body < 20:
+                verdict = "Body " + str(_body) + "% < 20"
+            elif _regime not in ("TRENDING", "TRENDING_STRONG"):
+                verdict = "Regime " + str(_regime or "—")
             else:
                 verdict = "READY"
 
-            # v13.5: verdict based on 1m/3m momentum + divergence
-            _mom = result.get("momentum_pts", 0)
-            _mode = result.get("entry_mode", "")
-            _mom_tf = result.get("momentum_tf", "")
-            _other_falling = result.get("other_falling", False)
-            _other_move = result.get("other_move", 0)
-            _fired = result.get("fired", False)
-            if _fired:
-                verdict = "FIRED [" + _mode + " " + _mom_tf + "]"
-            elif not _other_falling and result.get("other_move", 0) != 0:
-                verdict = "OTHER UP (" + str(_other_move) + "pts) — divergence fail"
-            elif _mom < 14:
-                verdict = "SCANNING (1m " + str(_mom) + "/14)"
-            else:
-                verdict = "Waiting confirmation"
             return {
-                "ema9": result.get("ema9", 0),
-                "ema21": result.get("ema21", 0),
-                "ema_gap": round(ema_gap, 1),
-                "ema_ok": ema_ok,
-                "candle_green": result.get("candle_green", False),
-                "gap_widening": result.get("gap_widening", False),
-                "rsi": round(rsi_val, 1),
-                "rsi_prev": result.get("rsi_prev", 0),
-                "rsi_ok": rsi_ok,
+                # v14.0 primary fields
+                "rsi_3m": round(_r3, 1),
+                "adx_3m": _adx,
+                "body_pct_3m": _body,
+                "rsi_15m": result.get("rsi_15m", 0),
+                "confidence_15m": result.get("confidence_15m", "NORMAL"),
+                "regime": _regime,
+                "reject_reason": _reject,
                 "fired": _fired,
                 "verdict": verdict,
+                "entry_mode": _mode,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
-                "entry_mode": _mode,
-                "momentum_tf": _mom_tf,
-                "momentum_pts": _mom,
-                "momentum_threshold": result.get("momentum_threshold", 14),
-                "path_a": result.get("path_a", False),
-                "path_b": result.get("path_b", False),
-                "spike_ratio": result.get("spike_ratio", 0),
-                "rsi_rising": result.get("rsi_rising", False),
-                "spot_confirms": result.get("spot_confirms", False),
-                "spot_move": result.get("spot_move", 0),
-                "other_falling": _other_falling,
-                "other_move": _other_move,
+                # Legacy compat (kept zero/false to avoid undefined errors)
+                "rsi": round(_r3, 1),
+                "ema9": result.get("ema9", 0),
+                "ema21": result.get("ema21", 0),
+                "candle_green": result.get("candle_green", False),
+                "rsi_rising": False, "ema_ok": False, "rsi_ok": False,
+                "gap_widening": False, "ema_gap": 0,
+                "path_a": False, "path_b": False,
+                "momentum_pts": 0, "momentum_tf": "", "momentum_threshold": 0,
+                "spot_confirms": False, "spot_move": 0,
+                "other_falling": False, "other_move": 0,
             }
 
         # BUG-030: compute warmup state and use WARMUP placeholder during warmup

@@ -241,6 +241,24 @@
 - **Lesson:** When refactoring strategy logic, audit ALL downstream consumers — alerts, dashboards, logs, reports — not just the engine. Template drift is silent and accumulates.
 - **File:** VRL_MAIN.py
 
+## v14.0 REBUILD: 3-min primary strategy, 1-min logic scrapped
+- **Date:** April 13, 2026 (night deployment)
+- **Motivation:** April 13 live session showed ~-66pts on 11 trades / 27% WR with v13.9.1 slope tuning. Data mining of ~724 signal_scans showed 1-min RSI 50-70 bucket (old entry zone) had 4-16% WR, while 3-min RSI 40-55 bucket had ~57% WR and 15-min RSI alignment bucket had ~62% WR. Two AI reviews confirmed pattern but flagged sample size (N=10-21 in one day).
+- **Risk accepted:** Single-day validation. Possible regression to 40-50% WR on normal days. Zero-trade days possible on strong trends. 6 weeks of v13.x refinement scrapped.
+- **Architecture:** 6 entry conditions (down from 14 in v13.9.x):
+  1. 3-min RSI in [40, 55]
+  2. 3-min ADX ≥ 15 (computed inline from OHLC)
+  3. 3-min candle body ≥ 20% of range
+  4. Spot regime ∈ {TRENDING, TRENDING_STRONG} (via `D.compute_spot_regime()`)
+  5. Cooldown 5min same direction
+  6. Time < 15:10 IST
+- **Removed:** FAST 1-min path, CONFIRMED 3-min momentum, breakout confirmation, spot EMA slope, spot alignment, time-aware RSI cap, straddle aggressive mode RSI bump, momentum points math, all 1-min entry logic.
+- **Kept:** Exit priority chain, profit floors (+5/+10/+20/+30/+40/+50), candle-close SL -12, EMERGENCY_SL -20, STALE_ENTRY 5c, DIVERGENCE_EXIT, EOD auto-exit at 15:30, 2 lots fixed, profit floor persistence (BUG-027), startup phantom clear (BUG-028), token auto-refresh (BUG-029), warmup visibility (BUG-030).
+- **15-min RSI:** Used as confidence label (HIGH/NORMAL) per user preference, NOT a gate.
+- **Kill switch:** After 50 trades across 10 trading days, if avg_loss > avg_win × 1.5, abandon architecture.
+- **Next review:** April 24, 2026 with 10 days of real data.
+- **File:** VRL_ENGINE.py (rewrite), config.yaml, VRL_MAIN.py templates+state, VRL_COMMANDS.py, static/VRL_DASHBOARD.html, test_vrl.py
+
 ## v13.9.1 TUNING: Slope gate reduced lag (mid-session hotfix)
 - **Date:** April 13, 2026
 - **Change:** Slope lookback 5→3 candles, threshold 2→1.5 (both CE and PE), min dataframe length 8→6.

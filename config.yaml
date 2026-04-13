@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v13.7 — Central Configuration
-#  Dual-TF momentum + divergence, static profit floors
+#  VISHAL RAJPUT TRADE v14.0 — Central Configuration
+#  3-min RSI 40-55 + ADX≥15 + body≥20% + TRENDING regime
 # ═══════════════════════════════════════════════════════════════
 
-version: "v13.7"
+version: "v14.0"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -20,43 +20,27 @@ lots:
   size: 65
 
 cooldown:
-  after_divergence: 0
-  after_trail: 3
-  after_candle_sl: 8
-  after_stale: 3
-  after_blowoff: 5
-  after_emergency: 10
-  opposite_always: 0
+  same_direction: 5
 
-entry:
-  # 1-min primary (fast)
-  fast_momentum_pts: 14
-  fast_momentum_candles: 4
-  # 3-min secondary (confirmed)
-  confirmed_momentum_pts: 20
-  confirmed_momentum_candles: 3
-  # Common
-  rsi_max: 75
-  ema_gap_min: 3              # info only
+entry_3min:
+  rsi_min: 40
+  rsi_max: 55
+  adx_min: 15
+  body_pct_min: 20
+  allowed_regimes: ["TRENDING", "TRENDING_STRONG"]
 
 exit:
-  candle_close_sl: 12         # exit only on candle CLOSE below -12
-  max_sl: 20                  # absolute emergency
-  spike_recovery: 8           # if low hits -12 but close > -8, hold
+  candle_close_sl: 12
+  max_sl: 20
+  spike_recovery: 8
   stale_candles: 5
   stale_peak_min: 3
 
 profit_trail:
-  # FAST entry (1-min only)
-  fast_activate_at: 15
-  fast_keep_normal: 0.75      # other falling → keep 75%
-  fast_keep_warning: 0.85     # other 1 green → keep 85%
-  # CONFIRMED entry (3-min agrees)
-  confirmed_activate_at: 20
-  confirmed_keep_normal: 0.65  # wider — let runners run
-  confirmed_keep_warning: 0.80
-  # Common
-  min_lock: 2                  # never below +2 once trail active
+  activate_at: 15
+  keep_normal: 0.75
+  keep_warning: 0.85
+  min_lock: 2
 
 rsi_exit:
   blowoff: 80

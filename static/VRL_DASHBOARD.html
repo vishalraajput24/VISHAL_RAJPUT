@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v13.9.1</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v14.0</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -193,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v13.9.1';
+document.getElementById('ver').textContent=d.version||mk.version||'v14.0';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -304,44 +304,40 @@ sh+='<div class="sg">';
     return;
   }
   var fi=s.fired,cc=fi?'fired':'';
-  var pa2=s.path_a,pb=s.path_b;
-  var rv=parseFloat(s.rsi||0),rr=s.rsi_rising;
-  var _rcap=parseInt(s.rsi_cap_active||75);
-  var _2ga=s.two_green_above,_obe=s.other_below_ema,_spa=s.spot_aligned;
-  var mp=parseFloat(s.momentum_pts||0),mt=parseFloat(s.momentum_threshold||20);
+  // v14.0: 3-min strategy display
+  var _r3=parseFloat(s.rsi_3m||s.rsi||0);
+  var _adx=parseFloat(s.adx_3m||0);
+  var _body=parseFloat(s.body_pct_3m||0);
+  var _regime=s.regime||(mk.regime||'');
+  var _r15=parseFloat(s.rsi_15m||0);
+  var _conf=s.confidence_15m||'NORMAL';
+  var _rzone=(_r3>=40&&_r3<=55);
+  var _adxok=(_adx>=15);
+  var _bodyok=(_body>=20);
+  var _regok=(_regime==='TRENDING'||_regime==='TRENDING_STRONG');
 
   sh+='<div class="sc '+cc+'">';
   sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2 mono">\u20B9'+(s.ltp||0)+'</span></div>';
 
-  // v13.8: EMA9 strategy section
-  sh+='<div class="ms"><div class="mt2">EMA9 Strategy</div>';
-  var _bkc=s.breakout_confirmed,_slp=parseFloat(s.spot_slope||0);
-  sh+='<div class="mr"><span class="ml f">2G+Breakout</span><span class="mv" style="margin-left:auto;color:'+(_2ga&&_bkc?'var(--gn2)':'var(--rd)')+'">'+(_2ga?'2G\u2713':'\u2717')+(_bkc?' BK\u2713':' BK\u2717')+'</span></div>';
-  sh+='<div class="mr"><span class="ml c">CONF 3m</span><span class="mv mono" style="margin-left:auto;color:'+(pb?'var(--gn2)':'var(--tx3)')+'">'+Math.round(mp)+'/'+Math.round(mt)+(pb?' \u2713':'')+'</span></div>';
-  sh+='<div class="mr"><span class="ml e">Spot</span><span class="mv mono" style="margin-left:auto;color:'+(_spa&&Math.abs(_slp)>=2?'var(--gn2)':'var(--rd)')+'">'+(_spa?'align\u2713':'align\u2717')+' slope '+_slp.toFixed(1)+'</span></div>';
+  sh+='<div class="ms"><div class="mt2">3-min Strategy</div>';
+  sh+='<div class="mr"><span class="ml f">RSI 3m</span><span class="mv mono" style="margin-left:auto;color:'+(_rzone?'var(--gn2)':'var(--rd)')+'">'+_r3.toFixed(1)+' / 40-55 '+(_rzone?'\u2713':'\u2717')+'</span></div>';
+  sh+='<div class="mr"><span class="ml c">ADX 3m</span><span class="mv mono" style="margin-left:auto;color:'+(_adxok?'var(--gn2)':'var(--rd)')+'">'+_adx.toFixed(0)+' / 15 '+(_adxok?'\u2713':'\u2717')+'</span></div>';
+  sh+='<div class="mr"><span class="ml e">Body</span><span class="mv mono" style="margin-left:auto;color:'+(_bodyok?'var(--gn2)':'var(--rd)')+'">'+_body.toFixed(0)+'% / 20% '+(_bodyok?'\u2713':'\u2717')+'</span></div>';
   sh+='</div>';
 
-  sh+='<div class="sr"><span class="sk">RSI (cap '+_rcap+')</span><span class="sv '+(rv<=_rcap&&rr?'ok':'fl')+' mono">'+rv.toFixed(1)+' '+(rr?'\u2191':'\u2193')+'</span></div>';
-  sh+='<div class="sr"><span class="sk">CANDLE</span><span class="sv '+(s.candle_green?'ok':'fl')+'">'+(s.candle_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
-
-  // Divergence box
-  var of=s.other_falling,om=parseFloat(s.other_move||0);
-  var otherDir=t==='CE'?'PE':'CE';
-  if(of!==undefined){
-    sh+='<div class="db '+(of?'dok':'dbd')+'">Other: '+otherDir+' '+(of?'\u2193 falling \u2713':'\u2191 rising \u2717')+' ('+Math.round(om)+'pts)</div>';
-  }
-
-  sh+='<div class="sr"><span class="sk">RSI\u2191</span><span class="sv '+(rr?'ok':'fl')+'">'+(rr?'YES \u2713':'NO \u2717')+'</span></div>';
-  var sc2=s.spot_confirms,sm=parseFloat(s.spot_move||0);
-  sh+='<div class="sr"><span class="sk">SPOT</span><span class="sv '+(sc2?'ok':'fl')+' mono">'+(sm>0?'+':'')+Math.round(sm)+'pts'+(sc2?' \u2713':'')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Regime</span><span class="sv '+(_regok?'ok':'fl')+'">'+esc(_regime||'—')+(_regok?' \u2713':' \u2717')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">15m RSI</span><span class="sv mono">'+_r15.toFixed(1)+'</span></div>';
+  var _confColor=_conf==='HIGH'?'var(--gn2)':_conf==='UNKNOWN'?'var(--tx3)':'var(--tx2)';
+  var _confBg=_conf==='HIGH'?'var(--gn-bg)':'var(--bg2)';
+  sh+='<div class="sr"><span class="sk">Confidence</span><span class="sv" style="color:'+_confColor+';background:'+_confBg+';padding:2px 8px;border-radius:8px;font-size:9px;font-weight:800">'+esc(_conf)+'</span></div>';
 
   // Verdict
-  var vc='vw',vt=s.verdict||'NO DATA';
-  if(fi){vc='vf';vt='FIRED \u2192 '+( s.entry_mode||'ENTER');}
+  var vc='vw',vt='WAIT';
+  if(fi){vc='vf';vt='FIRED \u2192 '+(s.entry_mode||'3MIN');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
-  else if(mp>0&&mp<mt){vc='vc';vt='BUILDING \u00B7 '+Math.round(mp)+'/'+Math.round(mt)+'pts';}
-  else if(eo&&ro){vc='vr';vt='READY';}
-  sh+='<div class="vd '+vc+'">'+esc(vt)+'</div></div>';
+  else if(s.reject_reason){vt=esc(s.reject_reason);}
+  else if(_rzone&&_adxok&&_bodyok&&_regok){vc='vr';vt='READY';}
+  sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
 });
 sh+='</div>';
 document.getElementById('p-sig').innerHTML=sh;
