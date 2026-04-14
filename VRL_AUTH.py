@@ -157,6 +157,12 @@ def _tg_alert(msg):
 
 if __name__ == "__main__":
     print("[AUTH] Cron login starting — " + date.today().isoformat())
+    # Skip on weekends / NSE holidays — no Telegram alert on holidays
+    if hasattr(D, "is_trading_day") and not D.is_trading_day():
+        print("[AUTH] " + date.today().isoformat()
+              + " is not a trading day — skipping login")
+        import sys as _sys
+        _sys.exit(0)
     # Delete stale token if > 1 day old
     saved = _read_token()
     if saved.get("date") and saved.get("date") != date.today().isoformat():

@@ -633,9 +633,39 @@ def get_vix() -> float:
             logger.debug("[DATA] VIX quote fallback failed: " + str(e))
     return 0.0
 
+# ═══════════════════════════════════════════════════════════════
+#  TRADING HOLIDAYS (NSE 2026) — add new ones here
+#  Format: "YYYY-MM-DD" strings. Check local date, not UTC.
+# ═══════════════════════════════════════════════════════════════
+TRADING_HOLIDAYS = {
+    "2026-01-26",  # Republic Day
+    "2026-02-19",  # Mahashivratri
+    "2026-03-05",  # Holi
+    "2026-03-27",  # Eid-ul-Fitr
+    "2026-04-03",  # Good Friday
+    "2026-04-14",  # Ambedkar Jayanti / Dr B R Ambedkar Jayanti
+    "2026-05-01",  # Maharashtra Day
+    "2026-05-27",  # Bakri Eid
+    "2026-08-15",  # Independence Day
+    "2026-08-27",  # Ganesh Chaturthi
+    "2026-10-02",  # Gandhi Jayanti
+    "2026-10-21",  # Diwali Laxmi Pujan (Muhurat special session)
+    "2026-11-05",  # Guru Nanak Jayanti
+    "2026-12-25",  # Christmas
+}
+
+def is_trading_day(now: datetime = None) -> bool:
+    """True only on weekdays that are NOT NSE holidays."""
+    if now is None:
+        now = now_ist()
+    if now.weekday() >= 5:
+        return False
+    return now.strftime("%Y-%m-%d") not in TRADING_HOLIDAYS
+
+
 def is_market_open() -> bool:
     now = now_ist()
-    if now.weekday() >= 5:
+    if not is_trading_day(now):
         return False
     start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
     end   = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MIN, second=0, microsecond=0)
@@ -1760,6 +1790,9 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
     import time as _t
     msgs = []
     upd = {}
+    # Skip all warnings on weekends and NSE holidays — no Telegram spam
+    if not is_trading_day(now):
+        return msgs, upd
     # 1. Daily bias 9:20
     if now.hour == 9 and 20 <= now.minute <= 22 and not state.get("_bias_done"):
         try:

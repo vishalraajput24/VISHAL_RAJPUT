@@ -125,6 +125,12 @@ def main():
     print("[PRECHECK] " + now.isoformat())
     print("─" * 60)
 
+    # Skip precheck on weekends / NSE holidays — no Telegram spam
+    if not D.is_trading_day():
+        print("[PRECHECK] " + now.strftime("%Y-%m-%d")
+              + " is not a trading day (weekend/holiday) — skipping")
+        sys.exit(0)
+
     results = []
     failures = []
 
