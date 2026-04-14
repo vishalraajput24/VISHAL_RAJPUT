@@ -7,6 +7,7 @@ version: "v14.0"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
+# ── Instrument ─────────────────────────────────────────────────
 instrument:
   name: NIFTY
   exchange_nfo: NFO
@@ -19,9 +20,7 @@ lots:
   count: 2
   size: 65
 
-cooldown:
-  same_direction: 5
-
+# ── Strategy ───────────────────────────────────────────────────
 entry_3min:
   rsi_min: 40
   rsi_max: 55
@@ -29,12 +28,23 @@ entry_3min:
   body_pct_min: 20
   allowed_regimes: ["TRENDING", "TRENDING_STRONG"]
 
+cooldown:
+  same_direction: 5            # minutes — opposite always immediate
+
 exit:
-  candle_close_sl: 12
-  max_sl: 20
-  spike_recovery: 8
+  candle_close_sl: 12          # close-based SL (CANDLE_SL)
+  max_sl: 20                   # absolute emergency (EMERGENCY_SL)
+  spike_recovery: 8            # SPIKE_ABSORBED tolerance
   stale_candles: 5
   stale_peak_min: 3
+
+profit_floors:
+  - { peak: 5,  lock: -6 }     # damage control
+  - { peak: 10, lock: 2 }      # breakeven+
+  - { peak: 20, lock: 12 }
+  - { peak: 30, lock: 22 }
+  - { peak: 40, lock: 32 }
+  - { peak: 50, lock: 42 }
 
 profit_trail:
   activate_at: 15
@@ -45,14 +55,7 @@ profit_trail:
 rsi_exit:
   blowoff: 80
 
-profit_floors:
-  - { peak: 5,  lock: -6 }
-  - { peak: 10, lock: 2 }
-  - { peak: 20, lock: 12 }
-  - { peak: 30, lock: 22 }
-  - { peak: 40, lock: 32 }
-  - { peak: 50, lock: 42 }
-
+# ── Strike selection ───────────────────────────────────────────
 strike:
   step_normal: 50
   step_dte0: 50
@@ -61,21 +64,15 @@ strike:
   lock_shift: 150
   gap_relock_threshold: 200
 
+# ── Risk ───────────────────────────────────────────────────────
 risk:
-  sl_multiplier: 2.0
-  sl_max: 25
-  sl_dte0: 15
-  sl_candles: 5
-  max_hold_dte0: 5
-  stale_entry_candles: 3
-  stale_entry_peak: 3.0
   max_daily_trades: 999
   max_daily_losses: 999
   profit_lock_pts: 150
   reentry_cooldown_min: 5
-  risk_free_rate: 0.065
   max_positions: 1
 
+# ── Market hours (IST) ─────────────────────────────────────────
 market_hours:
   open_hour: 9
   open_min: 15
@@ -86,33 +83,7 @@ market_hours:
   entry_cutoff_hour: 15
   entry_cutoff_min: 10
 
-expiry:
-  consol_candles: 5
-  consol_range: 15
-  breakout_min: 10
-  trail_pct: 20
-  start_hour: 9
-  start_min: 45
-  cutoff_hour: 15
-  cutoff_min: 0
-  fib_proximity: 20
-
-dte0:
-  enabled: true
-  skip_3min_gate: true
-  spike_mode: true
-  spike_pct: 10
-  spike_candles: 2
-
-zones:
-  file: ~/state/vrl_zones.json
-  enabled: true
-
-ml:
-  enabled: false
-  model_path: ~/state/ml_model.pkl
-  score_weight: 0.5
-
+# ── Data collection (untouched per refactor scope) ────────────
 lab:
   collection_hours: [10, 11, 12, 13, 14]
   collection_window_start: 40
@@ -125,6 +96,7 @@ logs:
   error_retention_days: 90
   backup_count: 30
 
+# ── Telegram + Web ─────────────────────────────────────────────
 notifications:
   telegram: true
   trade_alerts: true
@@ -135,193 +107,6 @@ web:
   port: 8080
   auth: false
 
-dte_profiles:
-  "6+":
-    body_pct_min: 30
-    rsi_low: 42
-    rsi_high: 72
-    rsi_1m_low: 30
-    rsi_1m_high: 60
-    max_gap_ema: 15
-    volume_ratio_min: 1.5
-    delta_min: 0.35
-    delta_max: 0.65
-    conv_sl_pts: 20
-    conv_breakeven_pts: 15
-    conv_trail_tf: 5minute
-    conv_tighten_tf: 3minute
-    conv_rsi_tighten: 76
-    peak_drawdown_pct: 40
-    peak_drawdown_min: 80
-    rsi_exhaustion_min: 76
-    rsi_exhaustion_pnl: 12
-    gamma_rider_rsi_drop: 65
-    gamma_rider_min_pnl: 8
-    score_conv_min: 4
-    conviction_allowed: true
-  "3-5":
-    body_pct_min: 30
-    rsi_low: 42
-    rsi_high: 72
-    rsi_1m_low: 30
-    rsi_1m_high: 60
-    max_gap_ema: 13
-    volume_ratio_min: 1.5
-    delta_min: 0.35
-    delta_max: 0.65
-    conv_sl_pts: 18
-    conv_breakeven_pts: 14
-    conv_trail_tf: 5minute
-    conv_tighten_tf: 3minute
-    conv_rsi_tighten: 75
-    peak_drawdown_pct: 40
-    peak_drawdown_min: 80
-    rsi_exhaustion_min: 76
-    rsi_exhaustion_pnl: 12
-    gamma_rider_rsi_drop: 65
-    gamma_rider_min_pnl: 8
-    score_conv_min: 4
-    conviction_allowed: true
-  "2":
-    body_pct_min: 30
-    rsi_low: 42
-    rsi_high: 72
-    rsi_1m_low: 30
-    rsi_1m_high: 60
-    max_gap_ema: 12
-    volume_ratio_min: 1.5
-    delta_min: 0.35
-    delta_max: 0.65
-    conv_sl_pts: 15
-    conv_breakeven_pts: 12
-    conv_trail_tf: 3minute
-    conv_tighten_tf: 1minute
-    conv_rsi_tighten: 74
-    peak_drawdown_pct: 38
-    peak_drawdown_min: 70
-    rsi_exhaustion_min: 75
-    rsi_exhaustion_pnl: 10
-    gamma_rider_rsi_drop: 64
-    gamma_rider_min_pnl: 8
-    score_conv_min: 4
-    conviction_allowed: true
-  "1":
-    body_pct_min: 30
-    rsi_low: 42
-    rsi_high: 72
-    rsi_1m_low: 30
-    rsi_1m_high: 60
-    max_gap_ema: 12
-    volume_ratio_min: 1.5
-    delta_min: 0.35
-    delta_max: 0.65
-    conv_sl_pts: 12
-    conv_breakeven_pts: 10
-    conv_trail_tf: 3minute
-    conv_tighten_tf: 1minute
-    conv_rsi_tighten: 72
-    peak_drawdown_pct: 35
-    peak_drawdown_min: 60
-    rsi_exhaustion_min: 74
-    rsi_exhaustion_pnl: 8
-    gamma_rider_rsi_drop: 63
-    gamma_rider_min_pnl: 6
-    score_conv_min: 4
-    conviction_allowed: true
-  "0":
-    body_pct_min: 30
-    rsi_low: 42
-    rsi_high: 72
-    rsi_1m_low: 30
-    rsi_1m_high: 70
-    max_gap_ema: 15
-    volume_ratio_min: 1.5
-    delta_min: 0.30
-    delta_max: 0.70
-    conv_sl_pts: 15
-    conv_breakeven_pts: 10
-    conv_trail_tf: 1minute
-    conv_tighten_tf: 1minute
-    conv_rsi_tighten: 70
-    peak_drawdown_pct: 30
-    peak_drawdown_min: 40
-    rsi_exhaustion_min: 72
-    rsi_exhaustion_pnl: 6
-    gamma_rider_rsi_drop: 60
-    gamma_rider_min_pnl: 5
-    score_conv_min: 4
-    conviction_allowed: true
-
-prediction_table:
-  TRENDING_STRONG:
-    OPEN: 35
-    MORNING: 32
-    AFTERNOON: 28
-    LATE: 42
-  TRENDING:
-    OPEN: 25
-    MORNING: 22
-    AFTERNOON: 20
-    LATE: 30
-  NEUTRAL:
-    OPEN: 8
-    MORNING: 7
-    AFTERNOON: 7
-    LATE: 6
-  CHOPPY:
-    OPEN: 4
-    MORNING: 4
-    AFTERNOON: 4
-    LATE: 4
-  UNKNOWN:
-    OPEN: 8
-    MORNING: 7
-    AFTERNOON: 7
-    LATE: 6
-
-strategy:
-  lookback:
-    1m: 50
-    3m: 60
-    5m: 10
-  rsi:
-    1m_low: 30
-    1m_high_normal: 60
-    1m_high_strong: 70
-    1m_high_dte0: 70
-    3m_low: 42
-    3m_high: 72
-  adx:
-    choppy_bypass: 15
-    multi_tf_bonus: 25
-  spread:
-    ce_min: 0
-    pe_min: 0
-    ce_min_dte0: 0
-    pe_min_dte0: 0
-  strike:
-    step: 100
-    step_expiry: 50
-    premium_min: 100
-    premium_min_dte0: 50
-    premium_max: 400
-  scoring:
-    session_min:
-      OPEN: 4
-      MORNING: 4
-      AFTERNOON: 4
-      LATE: 5
-    excellence_bypass: 5
-    loss_streak_gate: 4
-  3min_gate:
-    min_conditions: 2
-    body_pct_min: 30
-
 websocket:
   reconnect_delay: 5
   tick_stale_secs: 8
-
-regime:
-  trending_strong: 12
-  trending: 5
-  neutral: 2

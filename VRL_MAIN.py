@@ -53,42 +53,20 @@ _kite = None
 _state_lock = threading.Lock()
 
 DEFAULT_STATE = {
+    # ── Position ───────────────────────────────────────────
     "in_trade"           : False,
     "symbol"             : "",
     "token"              : None,
     "direction"          : "",
-    "entry_price"        : 0.0,
-    "entry_time"         : "",
-    "exit_phase"         : 1,
-    "phase1_sl"          : 0.0,
-    "phase2_sl"          : 0.0,
-    "qty"                : D.LOT_SIZE,
-    "trail_tightened"    : False,
-    "profit_locked"      : False,
-    "consecutive_losses" : 0,
-    "daily_trades"       : 0,
-    "daily_losses"       : 0,
-    "daily_pnl"          : 0.0,
-    "peak_pnl"           : 0.0,
-    "mode"               : "",
-    "iv_at_entry"        : 0.0,
-    "score_at_entry"     : 0,
-    "regime_at_entry"    : "",
-    "dte_at_entry"       : 0,
-    "last_exit_time"     : "",
-    "last_exit_direction": "",
-    "last_exit_peak"     : 0.0,
-    "_last_trail_candle" : "",
     "strike"             : 0,
     "expiry"             : "",
-    "paused"             : False,
-    "force_exit"         : False,
-    "candles_held"       : 0,
+    "entry_price"        : 0.0,
+    "entry_time"         : "",
+    "qty"                : D.LOT_SIZE,
+    "lot_count"          : 2,
     "lot1_active"        : True,
     "lot2_active"        : True,
     "lots_split"         : False,
-    "lot_count"          : 2,
-    "lot2_trail_sl"      : 0.0,
     "lot1_exit_price"    : 0.0,
     "lot1_exit_pnl"      : 0.0,
     "lot1_exit_reason"   : "",
@@ -96,55 +74,63 @@ DEFAULT_STATE = {
     "lot2_exit_price"    : 0.0,
     "lot2_exit_pnl"      : 0.0,
     "lot2_exit_reason"   : "",
-    "entry_mode"         : "",
-    "momentum_pts"       : 0.0,
-    "_sl_order_id"       : "",
-    "_3m_confirmed"      : False,
-    "_candle_low"        : 0.0,
-    "_last_candle_min"   : "",
-    "other_token"        : 0,
-    "other_falling"      : False,
-    "other_warning"      : False,
-    "other_reversing"    : False,
-    "other_move"         : 0,
-    "current_keep"       : 0.0,
-    "current_lock"       : 0.0,
-    "momentum_tf"        : "",
-    "_sl_order_id_lot1"  : "",
-    "_sl_order_id_lot2"  : "",
-    "_sl_trigger_lot1"   : 0,
-    "_sl_trigger_lot2"   : 0,
-    "_last_scan_minute"  : "",
-    "_last_scan_key"     : "",
-    "_sl_trigger_at_exchange": 0,
-    "_last_milestone"    : 0,
-    "current_rsi"        : 0.0,
+    # ── Exit state ─────────────────────────────────────────
+    "exit_phase"         : 1,
+    "phase1_sl"          : 0.0,
+    "phase2_sl"          : 0.0,
+    "_static_floor_sl"   : 0.0,
     "current_floor"      : 0.0,
-    "floor_10_alerted"   : False,
-    "floor_20_alerted"   : False,
-    "floor_30_alerted"   : False,
-    "split_alerted"      : False,
-    "_last_1min_candle"  : "",
-    "_eod_reported"      : False,
-    "_last_candle_held_min": "",
-    "_rsi_was_overbought": False,
-    "_last_scan"         : {},
+    "current_rsi"        : 0.0,
+    "_candle_low"        : 0.0,
+    "_last_milestone"    : 0,
+    "peak_pnl"           : 0.0,
+    "trough_pnl"         : 0.0,
+    "candles_held"       : 0,
+    "force_exit"         : False,
     "_exit_failed"       : False,
+    # ── v14.0 entry context (captured at entry, displayed at exit) ──
+    "entry_mode"         : "",
+    "rsi_3m_entry"       : 0.0,
+    "adx_3m_entry"       : 0.0,
+    "regime_entry"       : "",
+    "confidence_15m"     : "NORMAL",
+    "score_at_entry"     : 0,
+    "other_token"        : 0,
+    # ── Last exit memory (cooldown + stop-hunt detection) ─
+    "last_exit_time"     : "",
+    "last_exit_direction": "",
+    "last_exit_peak"     : 0.0,
+    "last_exit_reason"   : "",
+    "last_exit_price"    : 0.0,
+    # ── Daily counters ─────────────────────────────────────
+    "daily_trades"       : 0,
+    "daily_losses"       : 0,
+    "daily_pnl"          : 0.0,
+    "consecutive_losses" : 0,
+    "profit_locked"      : False,
+    # ── Bot control ────────────────────────────────────────
+    "paused"             : False,
     "_circuit_breaker"   : False,
     "_error_count"       : 0,
-    "_last_milestone"    : 0,
-    "trough_pnl"         : 0.0,
-    "session_at_entry"   : "",
-    "spread_1m_at_entry" : 0.0,
-    "spread_3m_at_entry" : 0.0,
-    "delta_at_entry"     : 0.0,
-    "sl_pts_at_entry"    : 0.0,
+    # ── Daily reset flags ──────────────────────────────────
+    "_eod_reported"      : False,
+    "_eod_exited"        : False,
     "_bias_done"         : False,
     "_straddle_done"     : False,
     "_hourly_rsi_ts"     : 0,
     "_vix_warned"        : False,
     "_straddle_alerted"  : False,
+    "aggressive_mode"    : False,
+    # ── Loop bookkeeping ───────────────────────────────────
+    "_last_1min_candle"  : "",
+    "_last_dash_scan_min": "",
+    "_last_warmup_log"   : "",
+    "_last_scan"         : {},
+    "_relock_skip_count" : 0,
     "prev_close"         : 0.0,
+    # ── Exchange order tracking (live mode) ────────────────
+    "_sl_order_id"       : "",
+    "_sl_trigger_at_exchange": 0,
 }
 
 state   = deepcopy(DEFAULT_STATE)
@@ -198,9 +184,8 @@ def _reset_strike_lock():
 
 def _save_state():
     try:
-        persist_fields = D.STATE_PERSIST_FIELDS + ["_rsi_was_overbought"]
         with _state_lock:
-            subset = {k: state.get(k) for k in persist_fields}
+            subset = {k: state.get(k) for k in D.STATE_PERSIST_FIELDS}
         tmp    = D.STATE_FILE_PATH + ".tmp"
         with open(tmp, "w") as f:
             json.dump(subset, f, indent=2, default=str)
@@ -834,6 +819,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
+    # v14.0: extract the OTHER side token for manage_exit divergence check
+    _other_token_entry = 0
+    try:
+        if option_type == "CE" and _pe_info_v15:
+            _other_token_entry = _pe_info_v15.get("token", 0)
+        elif option_type == "PE" and _ce_info_v15:
+            _other_token_entry = _ce_info_v15.get("token", 0)
+    except Exception:
+        pass
+
     with _state_lock:
         state["in_trade"]           = True
         state["symbol"]             = symbol
@@ -841,82 +836,34 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["direction"]          = option_type
         state["entry_price"]        = actual_price
         state["entry_time"]         = datetime.now().strftime("%H:%M:%S")
-        state["exit_phase"]         = 1
-        state["phase1_sl"]          = phase1_sl
+        state["strike"]             = entry_result.get("_strike", D.resolve_atm_strike(
+            D.get_ltp(D.NIFTY_SPOT_TOKEN), D.get_active_strike_step(dte)))
+        state["expiry"]             = expiry.isoformat() if expiry else ""
         state["qty"]                = actual_qty
         state["lot_count"]          = lot_count
         state["lot1_active"]        = True
         state["lot2_active"]        = True
         state["lots_split"]         = False
-        state["lot2_trail_sl"]      = 0.0
-        state["trail_tightened"]    = False
-        state["peak_pnl"]           = 0.0
-        state["mode"]               = "MINIMAL"
-        state["score_at_entry"]     = 0
-        state["iv_at_entry"]        = 0
-        state["regime_at_entry"]    = ""
-        state["dte_at_entry"]       = dte
-        state["strike"]             = entry_result.get("_strike", D.resolve_atm_strike(
-            D.get_ltp(D.NIFTY_SPOT_TOKEN), D.get_active_strike_step(dte)))
-        state["expiry"]             = expiry.isoformat() if expiry else ""
-        state["candles_held"]       = 0
-        state["_last_trail_candle"] = ""
-        state["_rsi_was_overbought"] = False
-        state["daily_trades"]      += 1
-        state["trough_pnl"]         = 0.0
-        state["session_at_entry"]   = session
-        state["spread_1m_at_entry"] = round(entry_result.get("ema_gap", 0), 2)
-        state["spread_3m_at_entry"] = 0.0
-        state["delta_at_entry"]     = 0.0
-        state["sl_pts_at_entry"]    = hard_sl
-        state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
+        # Exit state
+        state["exit_phase"]         = 1
+        state["phase1_sl"]          = phase1_sl
+        state["_static_floor_sl"]   = 0
         state["current_floor"]      = phase1_sl
-        state["entry_slippage"]     = _entry_slippage
-        state["signal_price"]       = entry_price
-        state["entry_mode"]         = entry_result.get("entry_mode", "FAST")
-        state["momentum_tf"]        = entry_result.get("momentum_tf", "")
-        state["other_falling"]      = bool(entry_result.get("other_falling"))
-        state["other_move"]         = entry_result.get("other_move", 0)
-        # v13.5: store the OTHER side token for manage_exit divergence check
-        _sym_curr = symbol.upper()
-        _other_token_entry = 0
-        try:
-            if option_type == "CE" and _pe_info_v15:
-                _other_token_entry = _pe_info_v15.get("token", 0)
-            elif option_type == "PE" and _ce_info_v15:
-                _other_token_entry = _ce_info_v15.get("token", 0)
-        except Exception:
-            pass
-        state["other_token"]        = _other_token_entry
-        state["_3m_confirmed"]      = False
+        state["peak_pnl"]           = 0.0
+        state["trough_pnl"]         = 0.0
+        state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
         state["_last_milestone"]    = 0
-        # v14.0: capture 3-min entry context for exit alert
+        state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
+        # v14.0 entry context
+        state["entry_mode"]         = entry_result.get("entry_mode", "3MIN")
         state["rsi_3m_entry"]       = entry_result.get("rsi_3m", 0)
         state["adx_3m_entry"]       = entry_result.get("adx_3m", 0)
         state["regime_entry"]       = entry_result.get("regime", "")
         state["confidence_15m"]     = entry_result.get("confidence_15m", "NORMAL")
-        state["momentum_pts"]       = entry_result.get("momentum_pts", 0)
-        state["spike_ratio"]        = entry_result.get("spike_ratio", 0)
-        state["rsi_rising"]         = entry_result.get("rsi_rising", False)
-        state["spot_confirms"]      = entry_result.get("spot_confirms", False)
-        state["spot_move"]          = entry_result.get("spot_move", 0)
-        # BUG-031: capture v13.9 spot fields so exit alert can reference them
-        state["spot_aligned"]       = entry_result.get("spot_aligned", False)
-        state["spot_slope"]         = entry_result.get("spot_slope", 0)
-        state["breakout_confirmed"] = entry_result.get("breakout_confirmed", False)
-        state["two_green_above"]    = entry_result.get("two_green_above", False)
-        _bonus_data = entry_result.get("bonus", {})
-        state["bonus_vwap"]         = _bonus_data.get("above_vwap", False)
-        state["bonus_fib_level"]    = _bonus_data.get("fib_nearest", "")
-        state["bonus_fib_dist"]     = _bonus_data.get("fib_distance", 0)
-        state["bonus_vol_spike"]    = _bonus_data.get("vol_spike", False)
-        state["bonus_vol_ratio"]    = _bonus_data.get("vol_ratio", 0)
-        state["bonus_pdh_break"]    = _bonus_data.get("pdh_break", False)
-        state["floor_10_alerted"]   = False
-        state["floor_20_alerted"]   = False
-        state["floor_30_alerted"]   = False
-        state["split_alerted"]      = False
+        state["other_token"]        = _other_token_entry
+        # Counters
+        state["daily_trades"]      += 1
 
     _save_state()
 
@@ -1052,15 +999,14 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
-        _entry_rsi_rising = state.get("rsi_rising", False)
-        _entry_spot_confirms = state.get("spot_confirms", False)
-        # v14.0: entry confirmation = 3m fields stored at entry
-        _entry_r3 = round(state.get("rsi_3m_entry", state.get("rsi", 0)), 1)
-        _entry_adx_e = state.get("adx_3m_entry", 0)
+        # v14.0: entry confirmation = 3m fields captured at entry
+        _entry_r3 = round(float(state.get("rsi_3m_entry", 0)), 1)
+        _entry_adx_e = float(state.get("adx_3m_entry", 0))
         _entry_regime_e = state.get("regime_entry", "")
-        _entry_conf = ("3MIN | RSI3m " + str(_entry_r3)
+        _entry_mode_e = state.get("entry_mode", "3MIN")
+        _entry_conf = (_entry_mode_e + " | RSI3m " + str(_entry_r3)
                        + " | ADX " + str(_entry_adx_e)
-                       + " | " + str(_entry_regime_e))
+                       + " | " + str(_entry_regime_e or "—"))
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
@@ -1143,19 +1089,16 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "in_trade": False, "symbol": "", "token": None,
                 "direction": "", "entry_price": 0.0, "entry_time": "",
                 "exit_phase": 1, "phase1_sl": 0.0, "phase2_sl": 0.0,
-                "peak_pnl": 0.0, "trough_pnl": 0.0, "mode": "",
+                "_static_floor_sl": 0.0, "current_floor": 0.0,
+                "peak_pnl": 0.0, "trough_pnl": 0.0,
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
-                "lot2_trail_sl": 0.0,
                 "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
                 "lot1_exit_reason": "", "lot1_exit_time": "",
                 "lot2_exit_price": 0.0, "lot2_exit_pnl": 0.0,
                 "lot2_exit_reason": "",
                 "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
-                "_sl_order_id_lot1": "", "_sl_order_id_lot2": "",
-                "_sl_trigger_lot1": 0, "_sl_trigger_lot2": 0,
-                "floor_10_alerted": False, "floor_20_alerted": False,
-                "floor_30_alerted": False, "split_alerted": False,
+                "entry_mode": "",
             })
         if old_token:
             D.unsubscribe_tokens([old_token])

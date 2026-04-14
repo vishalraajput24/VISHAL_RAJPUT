@@ -152,31 +152,31 @@ WS_RECONNECT_DELAY = CFG.ws_reconnect_delay()
 TICK_STALE_SECS    = CFG.ws_tick_stale_secs()
 
 STATE_PERSIST_FIELDS = [
-    "in_trade", "symbol", "token", "direction",
-    "entry_price", "entry_time", "exit_phase",
-    "phase1_sl", "phase2_sl",
-    "qty", "trail_tightened", "profit_locked",
-    "consecutive_losses", "daily_trades",
-    "daily_losses", "daily_pnl", "peak_pnl",
-    "mode", "iv_at_entry", "score_at_entry",
-    "regime_at_entry", "last_exit_time",
-    "last_exit_direction", "last_exit_peak",
-    "prev_close",
-    "candles_held",
-    "_last_trail_candle",
+    # Position
+    "in_trade", "symbol", "token", "direction", "strike", "expiry",
+    "entry_price", "entry_time", "qty",
+    "lot1_active", "lot2_active", "lots_split", "lot_count",
+    # Exit
+    "exit_phase", "phase1_sl", "phase2_sl", "_static_floor_sl",
+    "peak_pnl", "trough_pnl", "candles_held",
+    # v14.0 entry context (for exit alert + restart resume)
+    "entry_mode", "rsi_3m_entry", "adx_3m_entry", "regime_entry",
+    "confidence_15m", "score_at_entry", "other_token",
+    # Last exit memory
+    "last_exit_time", "last_exit_direction", "last_exit_peak",
+    "last_exit_reason", "last_exit_price",
+    # Daily
+    "daily_trades", "daily_losses", "daily_pnl",
+    "consecutive_losses", "profit_locked",
+    # Bot control
+    "paused", "prev_close", "aggressive_mode",
 ]
 
 # ── Prediction table + DTE profiles — read from config.yaml ──
-def _build_prediction_table() -> dict:
-    pred = CFG.get().get("prediction_table", {})
-    table = {}
-    for regime, sessions in pred.items():
-        for session, value in sessions.items():
-            table[(regime, session)] = value
-    return table
-
-PREDICTION_TABLE = _build_prediction_table()
-DTE_PROFILES     = CFG.get()["dte_profiles"]
+# v14.0: prediction table + DTE profiles removed (dead v12 code).
+# Stubs kept so legacy callers don't crash.
+PREDICTION_TABLE = {}
+DTE_PROFILES     = {}
 
 def get_dte_profile(dte: int) -> dict:
     return CFG.dte_profile(dte)
