@@ -2012,11 +2012,26 @@ def _strategy_loop(kite):
                     _mex_other_tok = state.get("other_token", 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # v15.0: Update exchange SL-M trigger to current EMA9-low band
+                    # v15.0: Peak milestone alerts + exchange SL-M band update
                     if state.get("in_trade"):
+                        _peak = state.get("peak_pnl", 0)
+                        _last_ms = state.get("_last_milestone", 0)
+                        _cur_el = round(float(state.get("current_ema9_low", 0)), 1)
+                        _entry_px = state.get("entry_price", 0)
+                        # Fire milestone alert once per threshold crossed
+                        for _m in [5, 10, 15, 20, 30, 40, 50]:
+                            if _peak >= _m and _last_ms < _m:
+                                with _state_lock:
+                                    state["_last_milestone"] = _m
+                                _dist = round(option_ltp - _cur_el, 1) if _cur_el > 0 else 0
+                                _tg_send("📈 <b>+" + str(_m) + "pts</b>"
+                                         + " | Trail: EMA9-low ₹" + str(_cur_el)
+                                         + " (" + str(_dist) + "pts away)")
+                                break
+                        # Update exchange SL-M trigger to current EMA9-low
                         try:
                             from VRL_TRADE import modify_sl_order
-                            _new_trigger = round(float(state.get("current_ema9_low", 0)), 1)
+                            _new_trigger = _cur_el
                             _sid = state.get("_sl_order_id", "")
                             _cur = state.get("_sl_trigger_at_exchange", 0)
                             if _sid and _new_trigger > _cur:
