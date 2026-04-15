@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v15.0 Test Suite
- 25 focused tests for Dual EMA9 Band Breakout strategy.
+ test_vrl.py — VISHAL RAJPUT TRADE v15.1 Test Suite
+ 28 focused tests: Dual EMA9 Band Breakout + BE+2 lock.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -90,7 +90,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v15.0", D.VERSION == "v15.0", "got " + str(D.VERSION))
+test("T01: VERSION is v15.1", D.VERSION == "v15.1", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
@@ -326,6 +326,38 @@ test("T24: Engine contains v15.0 band strategy keywords",
 test("T25: config.yaml has no entry_3min / profit_floors / rsi_exit",
      "entry_3min:" not in _cfg_src and "profit_floors:" not in _cfg_src
      and "rsi_exit:" not in _cfg_src)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v15.1 — BREAKEVEN+2 LOCK TESTS
+# ═══════════════════════════════════════════════════════════════
+
+section("v15.1 — BREAKEVEN+2 LOCK")
+
+# T26: Peak >= 10 arms BE+2 at entry+2, no exit while price above it
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=10, candles=3)
+    ex = E.manage_exit(st, 108, {})  # ltp 108, BE level = 102, no exit
+    test("T26: peak 10 arms be2_active=True at entry+2 (102), no exit at ltp 108",
+         st.get("be2_active") == True and st.get("be2_level") == 102 and len(ex) == 0,
+         "be2_active=" + str(st.get("be2_active")) + " be2_level=" + str(st.get("be2_level")))
+
+# T27: Price drops to BE+2 level → BREAKEVEN_LOCK fires at entry+2
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=12, candles=4)
+    ex = E.manage_exit(st, 101.5, {})  # ltp 101.5 <= 102 → exit
+    test("T27: peak 12, ltp 101.5 <= 102 → BREAKEVEN_LOCK at 102",
+         len(ex) == 1 and ex[0]["reason"] == "BREAKEVEN_LOCK"
+         and ex[0]["price"] == 102,
+         "got " + str(ex))
+
+# T28: Peak < 10 → BE+2 stays dormant (no premature exit)
+with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=8, candles=2)
+    ex = E.manage_exit(st, 101, {})  # peak only 8, ltp 101 — BE+2 not armed
+    test("T28: peak 8 < 10 → be2_active=False, no BREAKEVEN_LOCK exit",
+         st.get("be2_active") == False and len(ex) == 0,
+         "be2_active=" + str(st.get("be2_active")) + " ex=" + str(ex))
 
 
 # ═══════════════════════════════════════════════════════════════

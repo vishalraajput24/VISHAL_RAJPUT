@@ -406,7 +406,8 @@ _OPT_3M_FIELDS = [
     "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte", "session_block", "iv_vs_open",
     "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap",
-    "volume_ratio", "iv_pct", "delta", "gamma", "theta", "vega",
+    "volume_ratio", "ema9_high", "ema9_low",   # v15.0 bands
+    "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
 

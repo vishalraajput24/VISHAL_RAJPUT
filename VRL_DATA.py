@@ -20,7 +20,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v15.0"
+VERSION  = "v15.1"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -162,6 +162,8 @@ STATE_PERSIST_FIELDS = [
     "entry_band_position", "entry_body_pct",
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
     "score_at_entry", "other_token",
+    # v15.1 BE+2 lock
+    "be2_active", "be2_level",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",

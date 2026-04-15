@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.0
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.1
 #  Master orchestration. Dual EMA9 Band Breakout strategy.
 #  Entry: option 3m close > EMA9-of-highs (fresh) + green + body ≥ 30%
-#  Exit: 4-rule chain. Primary stop = EMA9-of-lows close break.
+#  Exit: 5-rule chain. BE+2 lock after peak ≥ 10. Primary stop = EMA9-low close break.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -80,6 +80,9 @@ DEFAULT_STATE = {
     "current_ema9_high"  : 0.0,
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
+    # v15.1 BE+2 lock
+    "be2_active"         : False,
+    "be2_level"          : 0.0,
     "score_at_entry"     : 0,
     "other_token"        : 0,
     # ── Last exit memory (cooldown) ────────────────────────
@@ -912,9 +915,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
     _body = int(round(float(entry_result.get("body_pct", 0)), 0))
     _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
+    _be2_level = round(actual_price + 2, 1)
     _detail = ("Close " + str(_close) + " &gt; EMA9-high " + str(_ema9h) + "\n"
                + "Body " + str(_body) + "% green \u2713\n"
-               + "Stop: EMA9-low " + str(_ema9l) + " (" + str(_dist_to_stop) + "pts away)\n")
+               + "Stop: EMA9-low " + str(_ema9l) + " (" + str(_dist_to_stop) + "pts away)\n"
+               + "BE+2 lock: activates after peak +10 \u2192 SL locks at \u20B9"
+               + str(_be2_level) + "\n")
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1603,11 +1609,18 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "pnl": running,
                 "peak": round(st.get("peak_pnl", 0), 1),
                 "candles": st.get("candles_held", 0),
-                "lots_split": st.get("lots_split", False),
-                "current_rsi": round(st.get("current_rsi", 0), 1),
-                "current_floor": round(st.get("current_floor", 0), 2),
-                "current_giveback": st.get("current_giveback", 8),
                 "strike": st.get("strike", 0),
+                "entry_mode": st.get("entry_mode", ""),
+                # v15.0 band trail
+                "current_ema9_high": round(st.get("current_ema9_high", 0), 2),
+                "current_ema9_low":  round(st.get("current_ema9_low", 0), 2),
+                # v15.1 BE+2 lock
+                "be2_active": bool(st.get("be2_active", False)),
+                "be2_level":  round(st.get("be2_level", 0), 2),
+                # Legacy compat
+                "lots_split": False,
+                "current_rsi": round(st.get("current_rsi", 0), 1),
+                "current_floor": round(st.get("current_ema9_low", 0), 2),
                 "lot1": lot1,
                 "lot2": lot2,
             }

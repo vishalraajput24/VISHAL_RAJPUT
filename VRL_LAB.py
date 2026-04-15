@@ -28,6 +28,7 @@ FIELDNAMES_3M = [
     "spot_ref", "atm_distance", "dte",
     "session_block", "iv_vs_open",
     "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap", "volume_ratio",
+    "ema9_high", "ema9_low",   # v15.0: dual EMA9 bands for band-breakout strategy
     "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
@@ -582,10 +583,12 @@ def collect_option_3min(kite, spot_ltp: float):
             df.set_index("timestamp", inplace=True)
             df = D.add_indicators(df)
             indic = _compute_indicators(df, -2)
-            # Add ema21 + ema_spread
+            # Add ema21 + ema_spread + v15.0 bands
             _row3 = df.iloc[-2]
             indic["ema21"] = round(float(_row3.get("EMA_21", _row3["close"])), 2)
             indic["ema_spread"] = round(float(_row3.get("EMA_9", _row3["close"])) - float(_row3.get("EMA_21", _row3["close"])), 2)
+            indic["ema9_high"] = round(float(_row3.get("ema9_high", _row3["high"])), 2)
+            indic["ema9_low"]  = round(float(_row3.get("ema9_low", _row3["low"])), 2)
             # Inline ADX calculation (D.add_indicators doesn't compute ADX)
             try:
                 import numpy as _np
@@ -645,6 +648,8 @@ def collect_option_3min(kite, spot_ltp: float):
             "ema_spread"   : indic.get("ema_spread", 0),
             "ema9_gap"     : indic.get("ema9_gap", 0),
             "volume_ratio" : indic.get("volume_ratio", 1),
+            "ema9_high"    : indic.get("ema9_high", 0),
+            "ema9_low"     : indic.get("ema9_low", 0),
             "iv_pct"       : greeks.get("iv_pct", 0),
             "delta"        : greeks.get("delta",  0),
             "gamma"        : greeks.get("gamma",  0),

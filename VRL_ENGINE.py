@@ -1,11 +1,15 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.0
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.1
 #  Dual EMA9 Band Breakout — pure option-level price action.
 #
 #  ENTRY: option 3-min close > EMA9-of-highs (fresh breakout: prev was at
 #         or below) + green candle + body ≥ 30% of range.
-#  EXIT: 4-rule priority chain. Primary stop = EMA9-of-lows close break.
-#        No fixed SL. No profit floors. The band IS the trail.
+#  EXIT: 5-rule priority chain.
+#    1. EMERGENCY_SL    pnl ≤ -20
+#    2. EOD_EXIT        15:30 IST
+#    3. STALE_ENTRY     5 candles + peak < 3
+#    4. BREAKEVEN_LOCK  after peak ≥ 10, lock at entry+2 (v15.1)
+#    5. EMA9_LOW_BREAK  last 3m close < ema9_low (primary trail)
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -284,6 +288,8 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     stale_candles = exit_cfg.get("stale_candles", 5)
     stale_peak_max = exit_cfg.get("stale_peak_max", 3)
     eod_time = exit_cfg.get("eod_exit_time", "15:30")
+    be2_peak_threshold = exit_cfg.get("breakeven_lock_peak_threshold", 10)
+    be2_offset = exit_cfg.get("breakeven_lock_offset", 2)
 
     # ── RULE 1: EMERGENCY catastrophic ──
     if pnl <= emergency_sl:
@@ -304,7 +310,21 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.info("[ENGINE] STALE_ENTRY " + str(candles) + "c peak=" + str(peak))
         return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
 
-    # ── RULE 4: EMA9_LOW_BREAK — the dynamic trailing stop ──
+    # ── RULE 4: BREAKEVEN_LOCK — once peak crosses threshold, lock entry+offset ──
+    # Prevents profit giveback on trades that peaked meaningfully but band lags.
+    if peak >= be2_peak_threshold:
+        be2_level = round(entry + be2_offset, 2)
+        state["be2_active"] = True
+        state["be2_level"] = be2_level
+        if option_ltp <= be2_level:
+            logger.info("[ENGINE] BREAKEVEN_LOCK hit: peak=" + str(round(peak, 1))
+                        + " ltp=" + str(round(option_ltp, 2))
+                        + " <= lock=" + str(be2_level))
+            return [{"lot_id": "ALL", "reason": "BREAKEVEN_LOCK", "price": be2_level}]
+    else:
+        state["be2_active"] = False
+
+    # ── RULE 5: EMA9_LOW_BREAK — the dynamic trailing stop ──
     token = state.get("token")
     try:
         opt_3m = D.get_option_3min(token, lookback=5)
