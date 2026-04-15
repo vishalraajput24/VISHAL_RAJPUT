@@ -188,6 +188,24 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         result["ema21"] = round(float(last_3m.get("EMA_21", 0)), 2)
         result["candle_green"] = entry_price > float(last_3m["open"])
 
+        # ── 15-min RSI confidence (computed EARLY so dashboard always shows it) ──
+        # Not a gate — label only. Fetched before gate checks so blocked
+        # signals still display a meaningful 15m RSI value.
+        try:
+            df_15m = D.get_historical_data(token, "15minute", 10)
+            df_15m = D.add_indicators(df_15m)
+            if df_15m is not None and not df_15m.empty and len(df_15m) >= 2:
+                rsi_15m = float(df_15m.iloc[-2].get("RSI", 0))
+                result["rsi_15m"] = round(rsi_15m, 1)
+                if option_type == "CE" and 30 <= rsi_15m <= 50:
+                    result["confidence_15m"] = "HIGH"
+                elif option_type == "PE" and 50 <= rsi_15m <= 70:
+                    result["confidence_15m"] = "HIGH"
+                else:
+                    result["confidence_15m"] = "NORMAL"
+        except Exception:
+            result["confidence_15m"] = "UNKNOWN"
+
         # ── 2. RSI 40-55 zone ──
         if not (rsi_min <= rsi_3m <= rsi_max):
             result["reject_reason"] = "rsi_out_of_zone_" + str(round(rsi_3m, 0))
@@ -250,21 +268,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                     logger.info("[ENGINE] " + option_type + " entry cutoff 15:10")
                 return result
 
-        # ── 8. 15-min RSI confidence label (NOT a gate) ──
-        try:
-            df_15m = D.get_historical_data(token, "15minute", 10)
-            df_15m = D.add_indicators(df_15m)
-            if df_15m is not None and not df_15m.empty and len(df_15m) >= 2:
-                rsi_15m = float(df_15m.iloc[-2].get("RSI", 0))
-                result["rsi_15m"] = round(rsi_15m, 1)
-                if option_type == "CE" and 30 <= rsi_15m <= 50:
-                    result["confidence_15m"] = "HIGH"
-                elif option_type == "PE" and 50 <= rsi_15m <= 70:
-                    result["confidence_15m"] = "HIGH"
-                else:
-                    result["confidence_15m"] = "NORMAL"
-        except Exception:
-            result["confidence_15m"] = "UNKNOWN"
+        # ── 8. 15-min RSI confidence label — already computed above, no-op ──
 
         # ═══ ALL CHECKS PASSED — FIRE ═══
         result["fired"] = True
