@@ -175,7 +175,16 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
         failures.append("CHECK11_ERR: " + str(e))
 
     # CHECK 12: Exit reason is in the known set
-    valid_reasons = ("HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL", "RSI_BLOWOFF", "RSI_SPIKE", "STALE_ENTRY", "EOD_EXIT", "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "ATR_TRAIL", "CIRCUIT_BREAKER_EXIT", "SCOUT_SL", "CANDLE_SL", "EMERGENCY_SL", "DIVERGENCE_EXIT", "WEAK_SL")
+    valid_reasons = (
+        # v15.0 primary exits
+        "EMA9_LOW_BREAK", "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
+        # legacy/safety/manual
+        "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
+        # historical (kept for back-compat with old trade log rows)
+        "HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL",
+        "RSI_BLOWOFF", "RSI_SPIKE", "ATR_TRAIL", "SCOUT_SL",
+        "CANDLE_SL", "DIVERGENCE_EXIT", "WEAK_SL",
+    )
     if exit_reason not in valid_reasons:
         failures.append("EXIT_REASON: unknown=" + str(exit_reason))
 

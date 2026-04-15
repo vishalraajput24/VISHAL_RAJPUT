@@ -922,8 +922,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
         + _detail + _slip_line +
-        "SL ₹" + str(round(phase1_sl, 1)) + " (-" + str(hard_sl) + "pts)\n"
-        + _bonus_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -2014,27 +2012,11 @@ def _strategy_loop(kite):
                     _mex_other_tok = state.get("other_token", 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # ── TRAILING FLOOR MILESTONES + EXCHANGE SL UPDATE ──
+                    # v15.0: Update exchange SL-M trigger to current EMA9-low band
                     if state.get("in_trade"):
-                        _peak = state.get("peak_pnl", 0)
-                        _floor = state.get("current_floor", 0)
-                        _last_ms = state.get("_last_milestone", 0)
-                        _entry_px = state.get("entry_price", 0)
-                        for _m in [10, 15, 20, 25, 30, 40, 50]:
-                            if _peak >= _m and _last_ms < _m:
-                                # Use same giveback logic as manage_exit
-                                _gb = 6 if _m >= 30 else 7 if _m >= 20 else 8
-                                _locked = _m - _gb
-                                state["_last_milestone"] = _m
-                                _tg_send("🟢 +" + str(_m) + "pts — SL → ₹"
-                                         + str(round(_entry_px + _locked, 1))
-                                         + " 🔒 (+" + str(_locked) + " locked, "
-                                         + str(_gb) + "pt trail)")
-                                break
-                        # v13.5: Update single exchange SL-M trigger when floor locks higher
                         try:
                             from VRL_TRADE import modify_sl_order
-                            _new_trigger = round(_floor, 1)
+                            _new_trigger = round(float(state.get("current_ema9_low", 0)), 1)
                             _sid = state.get("_sl_order_id", "")
                             _cur = state.get("_sl_trigger_at_exchange", 0)
                             if _sid and _new_trigger > _cur:
