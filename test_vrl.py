@@ -44,11 +44,12 @@ import VRL_ENGINE as E
 #  FIXTURE BUILDERS
 # ═══════════════════════════════════════════════════════════════
 
-def _make_opt_3m(n=20, ema9_high=100.0, ema9_low=95.0,
+def _make_opt_3m(n=20, ema9_high=100.0, ema9_low=91.0,
                  last_close=102.0, last_open=98.0,
                  last_high=103.0, last_low=97.5,
                  prev_close=99.0, prev_ema9_high=100.0):
-    """Build a 3-min option DataFrame with controlled last + prev rows."""
+    """Build a 3-min option DataFrame with controlled last + prev rows.
+    Default band width = 9 (satisfies v15.2 min_band_width_pts=8)."""
     rows = []
     for i in range(n - 2):
         rows.append({"open": 97.0, "high": 99.0, "low": 96.0, "close": 98.0, "volume": 1000})
@@ -220,11 +221,12 @@ with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
 
 
 # T15: EMA9_LOW_BREAK — close below ema9_low triggers exit
+# Use peak=4 so BE+2 (threshold 5) stays dormant and doesn't mask the band check
 _df_break = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
                          ema9_high=100.0, ema9_low=95.5)
 with patch.object(D, 'get_historical_data', return_value=_df_break), \
      patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    st = _make_state(entry=100, peak=5, candles=3)
+    st = _make_state(entry=100, peak=4, candles=3)
     ex = E.manage_exit(st, 94, {})
     test("T15: close 94 < ema9_low 95.5 → EMA9_LOW_BREAK",
          len(ex) == 1 and ex[0]["reason"] == "EMA9_LOW_BREAK",
@@ -241,11 +243,12 @@ with patch.object(D, 'get_historical_data', return_value=_df_hold), \
          len(ex) == 0, "got " + str(ex))
 
 # T17: Same candle doesn't trigger repeat exit (ts dedup)
+# Use peak=4 to keep BE+2 dormant and isolate the band-check dedup logic
 _df_dup = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
                        ema9_high=100.0, ema9_low=95.5)
 with patch.object(D, 'get_historical_data', return_value=_df_dup), \
      patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    st = _make_state(entry=100, peak=5, candles=3)
+    st = _make_state(entry=100, peak=4, candles=3)
     st["last_band_check_ts"] = str(_df_dup.iloc[-2].name)  # pretend we already saw this bar
     ex = E.manage_exit(st, 94, {})
     test("T17: same-candle ts dedup → no repeat EMA9_LOW_BREAK",
