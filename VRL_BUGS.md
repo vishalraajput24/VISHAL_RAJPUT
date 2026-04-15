@@ -241,6 +241,25 @@
 - **Lesson:** When refactoring strategy logic, audit ALL downstream consumers — alerts, dashboards, logs, reports — not just the engine. Template drift is silent and accumulates.
 - **File:** VRL_MAIN.py
 
+## v15.0 REBUILD: Dual EMA9 Band Breakout — single dynamic exit system
+- **Date:** April 15, 2026 (deployed evening after market close)
+- **Strategy:** Buy option (CE or PE) whose 3-min candle just broke ABOVE its own EMA9-of-HIGHS with green body ≥30% (fresh breakout — prev candle was at or below EMA9-high). Single exit: close BELOW EMA9-of-LOWS.
+- **Removed:** 3-min RSI 40-55 gate, ADX filter, spot regime, 15-min RSI confidence, straddle aggressive, spot slope, spot alignment, time-of-day RSI cap, profit floor ladder (+5/+10/+20/+30/+40/+50), fixed CANDLE_SL -12, divergence exit, RSI blowoff, stop hunt recovery, lot splitting.
+- **Kept:** EMERGENCY_SL at -20pts (catastrophic), STALE exit (5 candles / peak < 3), EOD auto-exit at 15:30, 5min cooldown same direction, 2 lots fixed, 9:45-15:10 entry window.
+- **Exit chain (4 rules, first match wins):**
+  1. `EMERGENCY_SL` → pnl ≤ -20
+  2. `EOD_EXIT` → time ≥ 15:30
+  3. `STALE_ENTRY` → 5 candles held AND peak < 3
+  4. `EMA9_LOW_BREAK` → last closed 3m candle close < ema9_low (primary dynamic trail)
+- **Rationale:** User identified that broker's dual EMA9 (high/low bands) cleanly signals option premium direction. Band IS the trailing stop — no fixed floors, no warning band tightening, no ratchet logic. Pure option-level price action.
+- **DB migration:** idempotent `ALTER TABLE` in `init_db()` adds `ema9_high`, `ema9_low` to `option_3min` and `signal_scans`. Adds `entry_ema9_high`, `entry_ema9_low`, `exit_ema9_high`, `exit_ema9_low`, `entry_band_position`, `exit_band_position`, `entry_body_pct` to `trades`. Historical rows get default 0; new rows populated via `add_indicators()`.
+- **Config changes:** removed `entry_3min`, `profit_floors`, `profit_trail`, `rsi_exit`, old `exit` block. Added `entry_ema9_band` + `exit_ema9_band` sections.
+- **State schema:** simplified — removed `rsi_3m_entry`, `adx_3m_entry`, `regime_entry`, `confidence_15m`, `_static_floor_sl`. Added `entry_ema9_high`, `entry_ema9_low`, `entry_band_position`, `entry_body_pct`, `current_ema9_high`, `current_ema9_low`, `last_band_check_ts`.
+- **Tests:** 25 focused tests rewritten for v15.0 — entry gates (5), cooldown (2), exit chain (4), band dedup (1), state+config (4), integrity (3).
+- **Kill switch:** 50 trades / 10 days, abandon if avg_loss > avg_win × 1.5.
+- **Next review:** April 28, 2026.
+- **File:** VRL_ENGINE.py (full rewrite), VRL_DATA.py (add_ema9_bands + get_option_3min), VRL_MAIN.py (state + alerts + _build_signal), config.yaml (rewrite), VRL_CONFIG.py (accessors), VRL_DB.py (migrations), static/VRL_DASHBOARD.html (band cards), VRL_COMMANDS.py (/help), test_vrl.py (rewrite)
+
 ## v14.0 REBUILD: 3-min primary strategy, 1-min logic scrapped
 - **Date:** April 13, 2026 (night deployment)
 - **Motivation:** April 13 live session showed ~-66pts on 11 trades / 27% WR with v13.9.1 slope tuning. Data mining of ~724 signal_scans showed 1-min RSI 50-70 bucket (old entry zone) had 4-16% WR, while 3-min RSI 40-55 bucket had ~57% WR and 15-min RSI alignment bucket had ~62% WR. Two AI reviews confirmed pattern but flagged sample size (N=10-21 in one day).

@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v14.0
-#  Master orchestration. 3-min RSI 40-55 + ADX≥15 + body≥20% + TRENDING regime.
-#  2-lot execution. Profit floors. EOD auto-exit. Auto token refresh.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.0
+#  Master orchestration. Dual EMA9 Band Breakout strategy.
+#  Entry: option 3m close > EMA9-of-highs (fresh) + green + body ≥ 30%
+#  Exit: 4-rule chain. Primary stop = EMA9-of-lows close break.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -64,44 +65,28 @@ DEFAULT_STATE = {
     "entry_time"         : "",
     "qty"                : D.LOT_SIZE,
     "lot_count"          : 2,
-    "lot1_active"        : True,
-    "lot2_active"        : True,
-    "lots_split"         : False,
-    "lot1_exit_price"    : 0.0,
-    "lot1_exit_pnl"      : 0.0,
-    "lot1_exit_reason"   : "",
-    "lot1_exit_time"     : "",
-    "lot2_exit_price"    : 0.0,
-    "lot2_exit_pnl"      : 0.0,
-    "lot2_exit_reason"   : "",
-    # ── Exit state ─────────────────────────────────────────
-    "exit_phase"         : 1,
-    "phase1_sl"          : 0.0,
-    "phase2_sl"          : 0.0,
-    "_static_floor_sl"   : 0.0,
-    "current_floor"      : 0.0,
-    "current_rsi"        : 0.0,
-    "_candle_low"        : 0.0,
-    "_last_milestone"    : 0,
+    # ── Exit state (v15.0: band-based trailing, no fixed floors) ──
     "peak_pnl"           : 0.0,
     "trough_pnl"         : 0.0,
     "candles_held"       : 0,
     "force_exit"         : False,
     "_exit_failed"       : False,
-    # ── v14.0 entry context (captured at entry, displayed at exit) ──
+    # ── v15.0 entry context (captured at entry, displayed at exit) ──
     "entry_mode"         : "",
-    "rsi_3m_entry"       : 0.0,
-    "adx_3m_entry"       : 0.0,
-    "regime_entry"       : "",
-    "confidence_15m"     : "NORMAL",
+    "entry_ema9_high"    : 0.0,
+    "entry_ema9_low"     : 0.0,
+    "entry_band_position": "",
+    "entry_body_pct"     : 0.0,
+    "current_ema9_high"  : 0.0,
+    "current_ema9_low"   : 0.0,
+    "last_band_check_ts" : "",
     "score_at_entry"     : 0,
     "other_token"        : 0,
-    # ── Last exit memory (cooldown + stop-hunt detection) ─
+    # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
     "last_exit_peak"     : 0.0,
     "last_exit_reason"   : "",
-    "last_exit_price"    : 0.0,
     # ── Daily counters ─────────────────────────────────────
     "daily_trades"       : 0,
     "daily_losses"       : 0,
@@ -120,7 +105,6 @@ DEFAULT_STATE = {
     "_hourly_rsi_ts"     : 0,
     "_vix_warned"        : False,
     "_straddle_alerted"  : False,
-    "aggressive_mode"    : False,
     # ── Loop bookkeeping ───────────────────────────────────
     "_last_1min_candle"  : "",
     "_last_dash_scan_min": "",
@@ -128,9 +112,19 @@ DEFAULT_STATE = {
     "_last_scan"         : {},
     "_relock_skip_count" : 0,
     "prev_close"         : 0.0,
-    # ── Exchange order tracking (live mode) ────────────────
+    # ── Exchange order tracking (live mode — legacy compat) ──
     "_sl_order_id"       : "",
     "_sl_trigger_at_exchange": 0,
+    "phase1_sl"          : 0.0,   # legacy: VRL_TRADE may still use for SL-M
+    "exit_phase"         : 1,     # legacy
+    "lot1_active"        : True,  # legacy (always True in v15.0)
+    "lot2_active"        : True,  # legacy (always True in v15.0)
+    "lots_split"         : False, # legacy (always False in v15.0)
+    "current_floor"      : 0.0,   # legacy (used for dashboard trail display)
+    "current_rsi"        : 0.0,   # legacy
+    "_candle_low"        : 0.0,   # legacy
+    "_last_milestone"    : 0,     # legacy
+    "_static_floor_sl"   : 0.0,   # legacy
 }
 
 state   = deepcopy(DEFAULT_STATE)
@@ -674,12 +668,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY: 3-min RSI 40-55 + ADX\u226515 + body\u226520% + TRENDING regime\n"
-        "CONFIDENCE: 15-min RSI alignment (CE:30-50, PE:50-70) HIGH/NORMAL label\n"
-        "Auto token refresh + WS auto-heal + pre-market health check\n"
-        "EXIT: candle close -12 | stale 5c | divergence | EOD 15:30\n"
-        "FLOORS: +5\u2192-6 | +10\u2192+2 | +20\u2192+12 | +30\u2192+22 | +40\u2192+32 | +50\u2192+42\n"
-        "COOLDOWN: 5min same direction | 2 lots fixed | no entry after 15:10\n"
+        "ENTRY: option 3m close &gt; EMA9-high (fresh) + green + body \u226530%\n"
+        "EXIT: EMA9-low close break (band IS the trail)\n"
+        "SAFETY: emergency -20 | stale 5c peak&lt;3 | EOD 15:30\n"
+        "COOLDOWN: 5min same direction | 2 lots fixed | 9:45-15:10 window\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -854,13 +846,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
         state["_last_milestone"]    = 0
-        state["current_rsi"]        = round(entry_result.get("rsi", 0), 1)
-        # v14.0 entry context
-        state["entry_mode"]         = entry_result.get("entry_mode", "3MIN")
-        state["rsi_3m_entry"]       = entry_result.get("rsi_3m", 0)
-        state["adx_3m_entry"]       = entry_result.get("adx_3m", 0)
-        state["regime_entry"]       = entry_result.get("regime", "")
-        state["confidence_15m"]     = entry_result.get("confidence_15m", "NORMAL")
+        state["current_rsi"]        = 0
+        # v15.0 entry context — band values at entry
+        state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
+        state["entry_ema9_high"]    = round(float(entry_result.get("ema9_high", 0)), 2)
+        state["entry_ema9_low"]     = round(float(entry_result.get("ema9_low", 0)), 2)
+        state["entry_band_position"] = entry_result.get("band_position", "ABOVE")
+        state["entry_body_pct"]     = round(float(entry_result.get("body_pct", 0)), 1)
+        state["current_ema9_high"]  = round(float(entry_result.get("ema9_high", 0)), 2)
+        state["current_ema9_low"]   = round(float(entry_result.get("ema9_low", 0)), 2)
+        state["last_band_check_ts"] = ""
         state["other_token"]        = _other_token_entry
         # Counters
         state["daily_trades"]      += 1
@@ -910,19 +905,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
     except Exception:
         _bonus_line = ""
-    # v14.0: 3-min strategy entry detail
-    _emode = entry_result.get("entry_mode", "3MIN")
-    _r3 = round(entry_result.get("rsi_3m", 0), 1)
-    _adx = entry_result.get("adx_3m", 0)
-    _body = round(entry_result.get("body_pct_3m", 0), 0)
-    _regime = entry_result.get("regime", "")
-    _conf = entry_result.get("confidence_15m", "NORMAL")
-    _r15 = round(entry_result.get("rsi_15m", 0), 1)
-    _gate_line = ("Gates: RSI3m " + str(_r3) + " (40-55) ✓ | ADX " + str(_adx)
-                  + " ≥15 ✓ | Body " + str(int(_body)) + "% ≥20 ✓\n")
-    _regime_line = "Regime: " + str(_regime) + " ✓\n"
-    _conf_line = "15m RSI: " + str(_r15) + " — Confidence: " + _conf + "\n"
-    _detail = _gate_line + _regime_line + _conf_line
+    # v15.0: EMA9 Band Breakout entry detail
+    _emode = entry_result.get("entry_mode", "EMA9_BREAKOUT")
+    _close = round(float(entry_result.get("close", actual_price)), 1)
+    _ema9h = round(float(entry_result.get("ema9_high", 0)), 1)
+    _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
+    _body = int(round(float(entry_result.get("body_pct", 0)), 0))
+    _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
+    _detail = ("Close " + str(_close) + " &gt; EMA9-high " + str(_ema9h) + "\n"
+               + "Body " + str(_body) + "% green \u2713\n"
+               + "Stop: EMA9-low " + str(_ema9l) + " (" + str(_dist_to_stop) + "pts away)\n")
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
@@ -999,14 +991,13 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
-        # v14.0: entry confirmation = 3m fields captured at entry
-        _entry_r3 = round(float(state.get("rsi_3m_entry", 0)), 1)
-        _entry_adx_e = float(state.get("adx_3m_entry", 0))
-        _entry_regime_e = state.get("regime_entry", "")
-        _entry_mode_e = state.get("entry_mode", "3MIN")
-        _entry_conf = (_entry_mode_e + " | RSI3m " + str(_entry_r3)
-                       + " | ADX " + str(_entry_adx_e)
-                       + " | " + str(_entry_regime_e or "—"))
+        # v15.0: entry confirmation = band position at entry
+        _entry_eh = round(float(state.get("entry_ema9_high", 0)), 1)
+        _entry_el = round(float(state.get("entry_ema9_low", 0)), 1)
+        _entry_body = int(round(float(state.get("entry_body_pct", 0)), 0))
+        _entry_mode_e = state.get("entry_mode", "EMA9_BREAKOUT")
+        _entry_conf = (_entry_mode_e + " | entry close &gt; EMA9h "
+                       + str(_entry_eh) + " | body " + str(_entry_body) + "%")
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
@@ -1452,49 +1443,49 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         straddle_open = getattr(D, "_straddle_open", 0)
         straddle_captured = getattr(D, "_straddle_captured", False)
 
-        # ── Build CE/PE signal blocks (v14.0: 3-min strategy fields) ──
+        # ── Build CE/PE signal blocks (v15.0: Dual EMA9 Band fields) ──
         def _build_signal(opt_type, result):
             if not result:
                 return {
-                    "rsi_3m": 0, "adx_3m": 0, "body_pct_3m": 0,
-                    "rsi_15m": 0, "confidence_15m": "NORMAL",
-                    "regime": "", "fired": False, "verdict": "NO DATA",
-                    "ltp": 0, "entry_mode": "",
+                    "close": 0, "ema9_high": 0, "ema9_low": 0,
+                    "band_position": "", "body_pct": 0,
+                    "candle_green": False, "fired": False,
+                    "verdict": "NO DATA", "ltp": 0, "entry_mode": "",
                     "strike": dir_strikes.get(opt_type, atm_strike),
                 }
-
             _fired = result.get("fired", False)
             _mode = result.get("entry_mode", "")
-            _r3 = result.get("rsi_3m", 0)
-            _adx = result.get("adx_3m", 0)
-            _body = result.get("body_pct_3m", 0)
-            _regime = result.get("regime", "")
+            _close = float(result.get("close", result.get("entry_price", 0)))
+            _eh = float(result.get("ema9_high", 0))
+            _el = float(result.get("ema9_low", 0))
+            _body = float(result.get("body_pct", 0))
+            _green = result.get("candle_green", False)
+            _pos = result.get("band_position", "")
             _reject = result.get("reject_reason", "")
 
-            # Verdict from v14.0 gates
+            # Verdict
             if _fired:
                 verdict = "FIRED [" + _mode + "]"
             elif _reject:
                 verdict = _reject
-            elif not (40 <= _r3 <= 55):
-                verdict = "RSI " + str(_r3) + " not in 40-55"
-            elif _adx < 15:
-                verdict = "ADX " + str(_adx) + " < 15"
-            elif _body < 20:
-                verdict = "Body " + str(_body) + "% < 20"
-            elif _regime not in ("TRENDING", "TRENDING_STRONG"):
-                verdict = "Regime " + str(_regime or "—")
-            else:
+            elif _pos == "ABOVE" and _green and _body >= 30:
                 verdict = "READY"
+            elif _pos == "ABOVE":
+                verdict = "above band, waiting body/green"
+            elif _pos == "IN":
+                verdict = "inside band"
+            else:
+                verdict = "below band"
 
             return {
-                # v14.0 primary fields
-                "rsi_3m": round(_r3, 1),
-                "adx_3m": _adx,
-                "body_pct_3m": _body,
-                "rsi_15m": result.get("rsi_15m", 0),
-                "confidence_15m": result.get("confidence_15m", "NORMAL"),
-                "regime": _regime,
+                # v15.0 primary fields
+                "close": round(_close, 2),
+                "ema9_high": round(_eh, 2),
+                "ema9_low": round(_el, 2),
+                "gap_from_ema9h": round(_close - _eh, 2),
+                "band_position": _pos,
+                "body_pct": round(_body, 1),
+                "candle_green": _green,
                 "reject_reason": _reject,
                 "fired": _fired,
                 "verdict": verdict,
@@ -1502,17 +1493,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
-                # Legacy compat (kept zero/false to avoid undefined errors)
-                "rsi": round(_r3, 1),
-                "ema9": result.get("ema9", 0),
-                "ema21": result.get("ema21", 0),
-                "candle_green": result.get("candle_green", False),
-                "rsi_rising": False, "ema_ok": False, "rsi_ok": False,
-                "gap_widening": False, "ema_gap": 0,
-                "path_a": False, "path_b": False,
-                "momentum_pts": 0, "momentum_tf": "", "momentum_threshold": 0,
-                "spot_confirms": False, "spot_move": 0,
-                "other_falling": False, "other_move": 0,
+                # Legacy compat
+                "rsi": 0, "ema9": round(_eh, 2), "ema21": 0,
             }
 
         # BUG-030: compute warmup state and use WARMUP placeholder during warmup

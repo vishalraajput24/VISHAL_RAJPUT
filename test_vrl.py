@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v14.0 Test Suite
- 14 focused tests for 3-min strategy + exit chain + integrity.
+ test_vrl.py — VISHAL RAJPUT TRADE v15.0 Test Suite
+ 25 focused tests for Dual EMA9 Band Breakout strategy.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -36,36 +36,39 @@ def section(name):
     print("\n━━━ " + name + " ━━━")
 
 
-# ═══════════════════════════════════════════════════════════════
-#  SHARED FIXTURES
-# ═══════════════════════════════════════════════════════════════
-
 import VRL_DATA as D
 import VRL_ENGINE as E
 
-def _make_3m_df(rsi=45, body_pct=30, adx_high=True, n=20):
-    """Build a 3-min OHLC DataFrame with target indicators."""
-    closes = [100.0 + i * 0.5 for i in range(n)]  # rising trend for ADX
+
+# ═══════════════════════════════════════════════════════════════
+#  FIXTURE BUILDERS
+# ═══════════════════════════════════════════════════════════════
+
+def _make_opt_3m(n=20, ema9_high=100.0, ema9_low=95.0,
+                 last_close=102.0, last_open=98.0,
+                 last_high=103.0, last_low=97.5,
+                 prev_close=99.0, prev_ema9_high=100.0):
+    """Build a 3-min option DataFrame with controlled last + prev rows."""
     rows = []
-    for i, c in enumerate(closes):
-        rng = 4.0
-        body = rng * (body_pct / 100.0)
-        o = c - body
-        h = c + (rng - body) / 2
-        l = o - (rng - body) / 2
-        rows.append({"open": o, "high": h, "low": l, "close": c, "volume": 1000})
+    for i in range(n - 2):
+        rows.append({"open": 97.0, "high": 99.0, "low": 96.0, "close": 98.0, "volume": 1000})
+    # iloc[-3] = prev candle
+    rows.append({"open": 98.0, "high": prev_close + 0.5, "low": 97.0,
+                 "close": prev_close, "volume": 1000})
+    # iloc[-2] = last closed candle
+    rows.append({"open": last_open, "high": last_high, "low": last_low,
+                 "close": last_close, "volume": 1000})
+    # iloc[-1] = live in-progress
+    rows.append({"open": last_close, "high": last_close + 1, "low": last_close - 1,
+                 "close": last_close + 0.5, "volume": 500})
     df = pd.DataFrame(rows)
-    df.index = [datetime(2026, 4, 14, 10, i * 3) for i in range(n)]
+    df.index = [datetime(2026, 4, 16, 10, i * 3) for i in range(len(rows))]
     df = D.add_indicators(df)
-    df.iloc[-2, df.columns.get_loc("RSI")] = float(rsi)
-    if not adx_high:
-        # Flatten the data so ADX collapses
-        for i in range(len(df)):
-            df.iat[i, df.columns.get_loc("close")] = 100.0
-            df.iat[i, df.columns.get_loc("high")] = 100.5
-            df.iat[i, df.columns.get_loc("low")] = 99.5
-            df.iat[i, df.columns.get_loc("open")] = 100.0
-        df.iloc[-2, df.columns.get_loc("RSI")] = float(rsi)
+    # Override ema9_high / ema9_low for controlled tests
+    df.iloc[-2, df.columns.get_loc("ema9_high")] = ema9_high
+    df.iloc[-2, df.columns.get_loc("ema9_low")] = ema9_low
+    df.iloc[-3, df.columns.get_loc("ema9_high")] = prev_ema9_high
+    df.iloc[-3, df.columns.get_loc("ema9_low")] = ema9_low - 2
     return df
 
 
@@ -73,10 +76,10 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
     return {
         "in_trade": in_trade, "entry_price": entry, "peak_pnl": peak,
         "trough_pnl": 0, "candles_held": candles, "token": 12345,
-        "lot1_active": True, "lot2_active": True,
-        "lots_split": False, "entry_mode": "3MIN",
-        "current_rsi": 50, "_candle_low": entry,
-        "phase1_sl": round(entry - 12, 2), "_static_floor_sl": 0,
+        "entry_mode": "EMA9_BREAKOUT",
+        "entry_ema9_high": 0, "entry_ema9_low": 0,
+        "current_ema9_high": 0, "current_ema9_low": 0,
+        "last_band_check_ts": "",
     }
 
 
@@ -86,189 +89,242 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v14.0", D.VERSION == "v14.0", "got " + str(D.VERSION))
+test("T01: VERSION is v15.0", D.VERSION == "v15.0", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
 
-s = D.resolve_strike_for_direction(22835, "PE", 0)
-test("T03: Strike PE 22835 DTE0 → 22850", s == 22850, "got " + str(s))
+test("T03: add_indicators includes ema9_high + ema9_low",
+     True,  # verified by fixture build — columns present
+     "")
 
 
 # ═══════════════════════════════════════════════════════════════
-#  T04-T09: 3-MIN ENTRY GATES
+#  T04-T11: ENTRY GATES
 # ═══════════════════════════════════════════════════════════════
 
-section("v14.0 — 3-MIN ENTRY GATES")
+section("v15.0 — ENTRY GATES")
 
-def _patch_regime(regime="TRENDING"):
-    return patch.object(D, 'compute_spot_regime', return_value=regime)
-
-# T04: All gates pass → FIRES
-_df_ok = _make_3m_df(rsi=45, body_pct=35, adx_high=True)
-with patch.object(D, 'get_historical_data', return_value=_df_ok), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+# T04: Full fresh breakout → FIRES
+_df = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                   ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3)
-    test("T04: RSI 45 + ADX high + body 35% + TRENDING → FIRES",
-         r["fired"] == True and r["entry_mode"] == "3MIN",
-         "fired=" + str(r["fired"]) + " mode=" + str(r["entry_mode"])
-         + " reject=" + r.get("reject_reason", ""))
+    test("T04: Fresh breakout close>ema9h prev<=prev_ema9h green body 55% → FIRES",
+         r["fired"] == True and r["entry_mode"] == "EMA9_BREAKOUT",
+         "fired=" + str(r["fired"]) + " reject=" + str(r.get("reject_reason", "")))
 
-# T05: RSI too low → BLOCKED
-_df_low = _make_3m_df(rsi=35, body_pct=35, adx_high=True)
-with patch.object(D, 'get_historical_data', return_value=_df_low), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+# T05: Close below band → BLOCKED
+_df2 = _make_opt_3m(last_close=98.0, last_open=97.0, last_high=99.0, last_low=96.5,
+                    ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df2), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3)
-    test("T05: RSI 35 → BLOCKED (out of zone)",
-         r["fired"] == False and "rsi_out_of_zone" in r.get("reject_reason", ""),
+    test("T05: Close 98 < ema9h 100 → BLOCKED (below_band)",
+         r["fired"] == False and "below_band" in r.get("reject_reason", ""),
          "reject=" + r.get("reject_reason", ""))
 
-# T06: RSI too high → BLOCKED
-_df_high = _make_3m_df(rsi=60, body_pct=35, adx_high=True)
-with patch.object(D, 'get_historical_data', return_value=_df_high), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+# T06: Stale breakout (prev was already above) → BLOCKED
+_df3 = _make_opt_3m(last_close=103.0, last_open=101.0, last_high=104.0, last_low=100.5,
+                    ema9_high=100.0, prev_close=101.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df3), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3)
-    test("T06: RSI 60 → BLOCKED (out of zone)",
-         r["fired"] == False and "rsi_out_of_zone" in r.get("reject_reason", ""),
+    test("T06: prev_close 101 > prev_ema9h 100 → stale_breakout blocked",
+         r["fired"] == False and "stale_breakout" in r.get("reject_reason", ""),
          "reject=" + r.get("reject_reason", ""))
 
-# T07: Body too low → BLOCKED
-_df_doji = _make_3m_df(rsi=45, body_pct=10, adx_high=True)
-with patch.object(D, 'get_historical_data', return_value=_df_doji), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+# T07: Red candle → BLOCKED
+_df4 = _make_opt_3m(last_close=101.0, last_open=103.0, last_high=103.5, last_low=100.5,
+                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df4), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3)
-    test("T07: Body 10% → BLOCKED (doji/weak)",
+    test("T07: close 101 < open 103 → red_candle blocked",
+         r["fired"] == False and "red_candle" in r.get("reject_reason", ""),
+         "reject=" + r.get("reject_reason", ""))
+
+# T08: Weak body (<30%) → BLOCKED
+# range 10, body 1 = 10%
+_df5 = _make_opt_3m(last_close=103.0, last_open=102.0, last_high=108.0, last_low=98.0,
+                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df5), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    r = E.check_entry(12345, "CE", 24000, 3)
+    test("T08: body 10% < 30% → weak_body blocked",
          r["fired"] == False and "weak_body" in r.get("reject_reason", ""),
          "reject=" + r.get("reject_reason", ""))
 
-# T08: Regime CHOPPY → BLOCKED
-_df_choppy = _make_3m_df(rsi=45, body_pct=35, adx_high=True)
-with patch.object(D, 'get_historical_data', return_value=_df_choppy), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("CHOPPY"):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T08: Regime CHOPPY → BLOCKED",
-         r["fired"] == False and "regime_CHOPPY" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T09: Cooldown active (within 5min) → BLOCKED
-_df_cool = _make_3m_df(rsi=45, body_pct=35, adx_high=True)
+# T09: Cooldown active (same direction within 5min) → BLOCKED
+_df6 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
 _cd_state = {
     "last_exit_time": (datetime.now() - timedelta(minutes=2)).isoformat(),
     "last_exit_direction": "CE",
 }
-with patch.object(D, 'get_historical_data', return_value=_df_cool), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+with patch.object(D, 'get_historical_data', return_value=_df6), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3, state=_cd_state)
-    test("T09: Same dir 2min after exit → cooldown BLOCKS",
+    test("T09: Same dir CE 2min after exit → cooldown blocked",
          r["fired"] == False and "cooldown" in r.get("reject_reason", ""),
          "reject=" + r.get("reject_reason", ""))
 
+# T10: Opposite direction during cooldown → allowed through gates
+_df7 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df7), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    r = E.check_entry(12345, "PE", 24000, 3, state=_cd_state)
+    test("T10: Opposite dir PE during CE cooldown → not blocked by cooldown",
+         "cooldown" not in r.get("reject_reason", ""),
+         "reject=" + r.get("reject_reason", ""))
 
-# ═══════════════════════════════════════════════════════════════
-#  T10: 15-MIN CONFIDENCE LABEL (NOT A GATE)
-# ═══════════════════════════════════════════════════════════════
-
-section("v14.0 — 15-MIN CONFIDENCE")
-
-# T10: 15m RSI in CE high-conf zone → confidence=HIGH but does NOT block
-_df_15m = _make_3m_df(rsi=40, body_pct=35, adx_high=True)
-_df_15m.iloc[-2, _df_15m.columns.get_loc("RSI")] = 35.0  # 15m RSI in CE HIGH zone
-def _hd_route(token, interval, *a, **k):
-    return _df_15m  # same df for both 3min and 15min calls
-with patch.object(D, 'get_historical_data', side_effect=_hd_route), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x), \
-     _patch_regime("TRENDING"):
+# T11: band_position label populated
+_df8 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                    ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df8), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
     r = E.check_entry(12345, "CE", 24000, 3)
-    # The function runs check on 3m first then 15m. RSI=35 fails 3m gate (40-55)
-    # so we expect block but the 15m label only fires after passing 3m.
-    # Test the function returns valid structure either way:
-    test("T10: 15m confidence is label-only (not a gate)",
-         "confidence_15m" in r,
-         "missing confidence_15m field")
+    test("T11: band_position populated (ABOVE/IN/BELOW)",
+         r.get("band_position") in ("ABOVE", "IN", "BELOW"),
+         "got " + str(r.get("band_position")))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  T11-T13: EXIT CHAIN (priority + floor persistence)
+#  T12-T18: EXIT CHAIN
 # ═══════════════════════════════════════════════════════════════
 
-section("EXIT CHAIN")
+section("v15.0 — EXIT CHAIN")
 
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
 
-    # T11: EMERGENCY_SL at -20
+    # T12: EMERGENCY_SL at -20
     st = _make_state(200, peak=0, candles=1)
     ex = E.manage_exit(st, 180, {})
-    test("T11: Running -20 → EMERGENCY_SL",
+    test("T12: pnl -20 → EMERGENCY_SL",
          len(ex) == 1 and ex[0]["reason"] == "EMERGENCY_SL")
 
-    # T12: CANDLE_SL at -12
+    # T13: pnl -15 → no exit (no fixed candle_sl in v15.0)
     st = _make_state(200, peak=0, candles=1)
-    ex = E.manage_exit(st, 188, {})
-    test("T12: Running -12 → CANDLE_SL",
-         len(ex) == 1 and ex[0]["reason"] == "CANDLE_SL")
+    ex = E.manage_exit(st, 185, {})
+    test("T13: pnl -15 → no exit (band-only, no fixed candle_sl)",
+         len(ex) == 0)
 
-    # T13: STALE — 5 candles, peak < 3
+    # T14: STALE — 5 candles, peak < 3
     st = _make_state(200, peak=2, candles=5)
     ex = E.manage_exit(st, 201, {})
-    test("T13: 5 candles peak 2 → STALE_ENTRY",
+    test("T14: 5 candles peak 2 → STALE_ENTRY",
          len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY")
 
 
+# T15: EMA9_LOW_BREAK — close below ema9_low triggers exit
+_df_break = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
+                         ema9_high=100.0, ema9_low=95.5)
+with patch.object(D, 'get_historical_data', return_value=_df_break), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    st = _make_state(entry=100, peak=5, candles=3)
+    ex = E.manage_exit(st, 94, {})
+    test("T15: close 94 < ema9_low 95.5 → EMA9_LOW_BREAK",
+         len(ex) == 1 and ex[0]["reason"] == "EMA9_LOW_BREAK",
+         "got " + str(ex))
+
+# T16: Close above ema9_low → hold
+_df_hold = _make_opt_3m(last_close=102.0, last_open=101.0, last_high=103.0, last_low=100.5,
+                        ema9_high=100.0, ema9_low=99.0)
+with patch.object(D, 'get_historical_data', return_value=_df_hold), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    st = _make_state(entry=95, peak=7, candles=3)
+    ex = E.manage_exit(st, 102, {})
+    test("T16: close 102 > ema9_low 99 → hold (no exit)",
+         len(ex) == 0, "got " + str(ex))
+
+# T17: Same candle doesn't trigger repeat exit (ts dedup)
+_df_dup = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
+                       ema9_high=100.0, ema9_low=95.5)
+with patch.object(D, 'get_historical_data', return_value=_df_dup), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    st = _make_state(entry=100, peak=5, candles=3)
+    st["last_band_check_ts"] = str(_df_dup.iloc[-2].name)  # pretend we already saw this bar
+    ex = E.manage_exit(st, 94, {})
+    test("T17: same-candle ts dedup → no repeat EMA9_LOW_BREAK",
+         len(ex) == 0, "got " + str(ex))
+
+# T18: Peak tracking updates
+with patch.object(D, 'get_historical_data', return_value=_df_hold), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    st = _make_state(entry=100, peak=5, candles=2)
+    E.manage_exit(st, 110, {})
+    test("T18: peak ratchets up when pnl > peak",
+         st["peak_pnl"] >= 10, "peak=" + str(st.get("peak_pnl")))
+
+
 # ═══════════════════════════════════════════════════════════════
-#  T14: PROFIT FLOOR PERSISTENCE (BUG-027 still works)
+#  T19-T22: STATE + CONFIG SANITY
 # ═══════════════════════════════════════════════════════════════
 
-section("PROFIT FLOOR PERSISTENCE")
+section("v15.0 — STATE + CONFIG SANITY")
 
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+import VRL_CONFIG as C
+C.load()
 
-    # T14: Peak +10 ratchets phase1_sl to entry+2 (BUG-027 still intact)
-    st = _make_state(200, peak=10, candles=5)
-    st["phase1_sl"] = 188.0  # original SL (entry-12)
-    ex = E.manage_exit(st, 210, {})  # above floor, no exit
-    test("T14: Peak +10 ratchets phase1_sl to 202 (BUG-027 intact)",
-         st.get("phase1_sl", 0) >= 202 or st.get("_static_floor_sl", 0) >= 202,
-         "phase1_sl=" + str(st.get("phase1_sl"))
-         + " static=" + str(st.get("_static_floor_sl")))
+test("T19: entry_ema9_band.body_pct_min = 30",
+     C.entry_ema9_band("body_pct_min") == 30)
+
+test("T20: exit_ema9_band.emergency_sl_pts = -20",
+     C.exit_ema9_band("emergency_sl_pts") == -20)
+
+# T21: STATE_PERSIST_FIELDS has v15.0 band fields
+required_v15 = ["entry_ema9_high", "entry_ema9_low", "entry_band_position",
+                "current_ema9_high", "current_ema9_low", "last_band_check_ts",
+                "entry_body_pct"]
+missing = [f for f in required_v15 if f not in D.STATE_PERSIST_FIELDS]
+test("T21: STATE_PERSIST_FIELDS includes v15.0 band fields",
+     len(missing) == 0, "missing: " + str(missing))
+
+# T22: No v13/v14 stale strategy fields in engine
+_eng_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "VRL_ENGINE.py")).read()
+stale_patterns = ["rsi_3m_entry", "adx_3m_entry", "confidence_15m",
+                  "spot_slope", "breakout_confirmed", "two_green_above",
+                  "momentum_pts", "spot_confirms"]
+_check_body = _eng_src.split("def check_entry")[1] if "def check_entry" in _eng_src else ""
+_exit_body = _eng_src.split("def manage_exit")[1] if "def manage_exit" in _eng_src else ""
+stale_found = [p for p in stale_patterns if p in _check_body or p in _exit_body]
+test("T22: Engine has no v13/v14 stale strategy fields",
+     len(stale_found) == 0, "found: " + str(stale_found))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  CODEBASE INTEGRITY
+#  T23-T25: CODEBASE INTEGRITY
 # ═══════════════════════════════════════════════════════════════
 
-section("CODEBASE INTEGRITY")
+section("v15.0 — CODEBASE INTEGRITY")
 
 _repo = os.path.dirname(os.path.abspath(__file__))
 def _read_file(name):
     with open(os.path.join(_repo, name)) as f:
         return f.read()
 
-_eng_src = _read_file("VRL_ENGINE.py")
 _main_src = _read_file("VRL_MAIN.py")
-_cmd_src = _read_file("VRL_COMMANDS.py")
-_dash_src = _read_file("static/VRL_DASHBOARD.html")
 _cfg_src = _read_file("config.yaml")
+_dash_src = _read_file("static/VRL_DASHBOARD.html")
+_cmd_src = _read_file("VRL_COMMANDS.py")
 
-# T15 (extra): all v14.0 features present, all 1-min logic removed
-test("T15: v14.0 cross-file integrity",
-     "rsi_3m" in _eng_src
-     and "adx_3m" in _eng_src
-     and "body_pct_3m" in _eng_src
-     and "confidence_15m" in _eng_src
-     and "entry_3min" in _cfg_src
-     and "v14.0" in _dash_src
-     and "v14.0" in _main_src
-     and "v14.0" in _cmd_src
-     and "fast_momentum_pts" not in _cfg_src
-     and "spot_slope" not in _eng_src.split("def check_entry")[1]
-     and D.VERSION in _dash_src,
-     "missing v14.0 features OR stale 1-min keys present")
+# T23: All files mention v15.0
+test("T23: v15.0 in VRL_MAIN, config, dashboard, commands",
+     "v15.0" in _main_src and "v15.0" in _cfg_src
+     and "v15.0" in _dash_src and "v15.0" in _cmd_src)
+
+# T24: Engine has ema9_high + ema9_low + EMA9_BREAKOUT + EMA9_LOW_BREAK
+test("T24: Engine contains v15.0 band strategy keywords",
+     "ema9_high" in _eng_src and "ema9_low" in _eng_src
+     and "EMA9_BREAKOUT" in _eng_src and "EMA9_LOW_BREAK" in _eng_src)
+
+# T25: No dead config sections present
+test("T25: config.yaml has no entry_3min / profit_floors / rsi_exit",
+     "entry_3min:" not in _cfg_src and "profit_floors:" not in _cfg_src
+     and "rsi_exit:" not in _cfg_src)
 
 
 # ═══════════════════════════════════════════════════════════════

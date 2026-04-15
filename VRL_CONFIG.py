@@ -49,9 +49,9 @@ def load(path: str = None) -> dict:
 
 
 def _validate(cfg: dict):
-    """Validate v14.0 required sections."""
-    required = ["mode", "instrument", "lots", "entry_3min", "exit",
-                "profit_floors", "strike", "risk", "market_hours"]
+    """Validate v15.0 required sections."""
+    required = ["mode", "instrument", "lots", "entry_ema9_band", "exit_ema9_band",
+                "strike", "risk", "market_hours"]
     for sec in required:
         if sec not in cfg:
             raise ConfigError("Missing required config section: " + sec)
@@ -63,10 +63,14 @@ def _validate(cfg: dict):
             raise ConfigError("instrument." + k + " is required")
     if not isinstance(inst["lot_size"], int) or inst["lot_size"] <= 0:
         raise ConfigError("instrument.lot_size must be a positive integer")
-    e3 = cfg["entry_3min"]
-    for k in ("rsi_min", "rsi_max", "adx_min", "body_pct_min", "allowed_regimes"):
-        if k not in e3:
-            raise ConfigError("entry_3min." + k + " is required")
+    eb = cfg["entry_ema9_band"]
+    for k in ("body_pct_min", "cooldown_minutes", "warmup_until", "cutoff_after"):
+        if k not in eb:
+            raise ConfigError("entry_ema9_band." + k + " is required")
+    xb = cfg["exit_ema9_band"]
+    for k in ("emergency_sl_pts", "stale_candles", "stale_peak_max", "eod_exit_time"):
+        if k not in xb:
+            raise ConfigError("exit_ema9_band." + k + " is required")
 
 
 # ── Accessors ────────────────────────────────────────────────
@@ -107,35 +111,34 @@ def vix_token() -> int:
     return get()["instrument"].get("vix_token", 264969)
 
 
-# ── Strategy v14.0 ──
+# ── Strategy v15.0 ──
 
-def entry_3min(key: str, default=None):
-    return _deep_get(get(), "entry_3min", key, default=default)
+def entry_ema9_band(key: str, default=None):
+    return _deep_get(get(), "entry_ema9_band", key, default=default)
+
+
+def exit_ema9_band(key: str, default=None):
+    return _deep_get(get(), "exit_ema9_band", key, default=default)
 
 
 def cooldown(key: str, default=None):
     return _deep_get(get(), "cooldown", key, default=default)
 
 
-def exit_cfg(key: str, default=None):
-    return _deep_get(get(), "exit", key, default=default)
+# Legacy compat stubs (return safe defaults)
+def entry_3min(key: str, default=None):
+    return default
 
+def exit_cfg(key: str, default=None):
+    return default
 
 def rsi_exit_cfg(key: str, default=None):
-    return _deep_get(get(), "rsi_exit", key, default=default)
-
+    return default
 
 def profit_trail(key: str, default=None):
-    return _deep_get(get(), "profit_trail", key, default=default)
-
+    return default
 
 def profit_floors() -> list:
-    """Returns list of {peak: X, lock: Y}."""
-    raw = get().get("profit_floors", [])
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, dict):
-        return [{"peak": int(k), "lock": v} for k, v in raw.items()]
     return []
 
 

@@ -302,6 +302,28 @@ def init_db():
             except Exception:
                 pass
 
+        # v15.0: EMA9 band columns for option_3min, signal_scans, trades
+        for _tbl, _col, _typ in [
+            ("option_3min",  "ema9_high",       "REAL DEFAULT 0"),
+            ("option_3min",  "ema9_low",        "REAL DEFAULT 0"),
+            ("signal_scans", "ema9_high",       "REAL DEFAULT 0"),
+            ("signal_scans", "ema9_low",        "REAL DEFAULT 0"),
+            ("signal_scans", "band_position",   "TEXT DEFAULT ''"),
+            ("signal_scans", "body_pct",        "REAL DEFAULT 0"),
+            ("trades",       "entry_ema9_high", "REAL DEFAULT 0"),
+            ("trades",       "entry_ema9_low",  "REAL DEFAULT 0"),
+            ("trades",       "exit_ema9_high",  "REAL DEFAULT 0"),
+            ("trades",       "exit_ema9_low",   "REAL DEFAULT 0"),
+            ("trades",       "entry_band_position", "TEXT DEFAULT ''"),
+            ("trades",       "exit_band_position",  "TEXT DEFAULT ''"),
+            ("trades",       "entry_body_pct",  "REAL DEFAULT 0"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
+                logger.info(f"[DB] v15.0: added {_tbl}.{_col}")
+            except Exception:
+                pass  # column already exists
+
         conn.commit()
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)

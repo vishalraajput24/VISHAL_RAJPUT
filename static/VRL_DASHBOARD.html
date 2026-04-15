@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v14.0</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v15.0</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -193,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v14.0';
+document.getElementById('ver').textContent=d.version||mk.version||'v15.0';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -264,17 +264,15 @@ if(pos.in_trade){
   // v13.7: RSI bar — cap at 75, color red when > 70
   var rp=Math.min(Math.max((rsi/75)*100,0),100);
   var _rsiClr=rsi>70?'linear-gradient(90deg,var(--or),var(--rd))':'linear-gradient(90deg,var(--gn),var(--yl),var(--or))';
-  pa+='<div class="rb"><div class="rl"><span>RSI '+Math.round(rsi)+' \u2192 cap 75</span><span>'+Math.round(rp)+'%</span></div>';
-  pa+='<div class="rt"><div class="rf" style="width:'+rp+'%;background:'+_rsiClr+'"></div></div></div>';
-  // Floors
-  var floors=[5,10,20,30,40,50];
-  pa+='<div class="fls">';
-  floors.forEach(function(f,i){
-    var hit=pk>=f;
-    if(i>0)pa+='<div class="fln '+(pk>=floors[i-1]&&hit?'h':'')+'"></div>';
-    pa+='<div class="fd '+(hit?'h':'n')+'">+'+f+'</div>';
-  });
-  pa+='</div>';
+  // v15.0: Dynamic EMA9-low trailing stop display
+  var _cur_el=parseFloat(pos.current_ema9_low||0);
+  var _cur_eh=parseFloat(pos.current_ema9_high||0);
+  var _dist_stop=_cur_el>0?(ltp-_cur_el):0;
+  pa+='<div class="rb"><div class="rl"><span>Stop: EMA9-low \u20B9'+_cur_el.toFixed(1)+' ('+(_dist_stop>=0?'+':'')+_dist_stop.toFixed(1)+'pts)</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
+  // Visual band: show price between ema9_low and ema9_high
+  var _band_range=Math.max(1,_cur_eh-_cur_el);
+  var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
+  pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
   pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span>'+(em?'<span>Mode: <b>'+em+'</b></span>':'')+'</div>';
   pa+='</div>';
 }
@@ -304,39 +302,41 @@ sh+='<div class="sg">';
     return;
   }
   var fi=s.fired,cc=fi?'fired':'';
-  // v14.0: 3-min strategy display
-  var _r3=parseFloat(s.rsi_3m||s.rsi||0);
-  var _adx=parseFloat(s.adx_3m||0);
-  var _body=parseFloat(s.body_pct_3m||0);
-  var _regime=s.regime||(mk.regime||'');
-  var _r15=parseFloat(s.rsi_15m||0);
-  var _conf=s.confidence_15m||'NORMAL';
-  var _rzone=(_r3>=40&&_r3<=55);
-  var _adxok=(_adx>=15);
-  var _bodyok=(_body>=20);
-  var _regok=(_regime==='TRENDING'||_regime==='TRENDING_STRONG');
+  // v15.0: Dual EMA9 Band Breakout display
+  var _close=parseFloat(s.close||s.ltp||0);
+  var _eh=parseFloat(s.ema9_high||0);
+  var _el=parseFloat(s.ema9_low||0);
+  var _gap=parseFloat(s.gap_from_ema9h||(_close-_eh));
+  var _body=parseFloat(s.body_pct||0);
+  var _green=s.candle_green;
+  var _pos=s.band_position||'';
+  var _bodyok=(_body>=30);
+
+  // Band position visual
+  var _posColor='var(--tx3)',_posLabel='—',_posBg='var(--bg2)';
+  if(_pos==='ABOVE'){_posColor='var(--gn2)';_posLabel='ABOVE BAND ✓';_posBg='var(--gn-bg)';}
+  else if(_pos==='IN'){_posColor='var(--yl)';_posLabel='IN BAND ⚠';_posBg='var(--yl-bg)';}
+  else if(_pos==='BELOW'){_posColor='var(--rd)';_posLabel='BELOW BAND ✗';_posBg='var(--rd-bg)';}
 
   sh+='<div class="sc '+cc+'">';
   sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2 mono">\u20B9'+(s.ltp||0)+'</span></div>';
 
-  sh+='<div class="ms"><div class="mt2">3-min Strategy</div>';
-  sh+='<div class="mr"><span class="ml f">RSI 3m</span><span class="mv mono" style="margin-left:auto;color:'+(_rzone?'var(--gn2)':'var(--rd)')+'">'+_r3.toFixed(1)+' / 40-55 '+(_rzone?'\u2713':'\u2717')+'</span></div>';
-  sh+='<div class="mr"><span class="ml c">ADX 3m</span><span class="mv mono" style="margin-left:auto;color:'+(_adxok?'var(--gn2)':'var(--rd)')+'">'+_adx.toFixed(0)+' / 15 '+(_adxok?'\u2713':'\u2717')+'</span></div>';
-  sh+='<div class="mr"><span class="ml e">Body</span><span class="mv mono" style="margin-left:auto;color:'+(_bodyok?'var(--gn2)':'var(--rd)')+'">'+_body.toFixed(0)+'% / 20% '+(_bodyok?'\u2713':'\u2717')+'</span></div>';
+  sh+='<div class="ms"><div class="mt2">EMA9 Band</div>';
+  sh+='<div class="mr"><span class="ml f" style="color:var(--rd)">EMA9-high</span><span class="mv mono" style="margin-left:auto">\u20B9'+_eh.toFixed(1)+'</span></div>';
+  sh+='<div class="mr"><span class="ml c">Close</span><span class="mv mono" style="margin-left:auto;color:'+(_pos==='ABOVE'?'var(--gn2)':'var(--tx2)')+'">\u20B9'+_close.toFixed(1)+' ('+(_gap>=0?'+':'')+_gap.toFixed(1)+')</span></div>';
+  sh+='<div class="mr"><span class="ml e" style="color:var(--bl)">EMA9-low</span><span class="mv mono" style="margin-left:auto">\u20B9'+_el.toFixed(1)+'</span></div>';
   sh+='</div>';
 
-  sh+='<div class="sr"><span class="sk">Regime</span><span class="sv '+(_regok?'ok':'fl')+'">'+esc(_regime||'—')+(_regok?' \u2713':' \u2717')+'</span></div>';
-  sh+='<div class="sr"><span class="sk">15m RSI</span><span class="sv mono">'+_r15.toFixed(1)+'</span></div>';
-  var _confColor=_conf==='HIGH'?'var(--gn2)':_conf==='UNKNOWN'?'var(--tx3)':'var(--tx2)';
-  var _confBg=_conf==='HIGH'?'var(--gn-bg)':'var(--bg2)';
-  sh+='<div class="sr"><span class="sk">Confidence</span><span class="sv" style="color:'+_confColor+';background:'+_confBg+';padding:2px 8px;border-radius:8px;font-size:9px;font-weight:800">'+esc(_conf)+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Body</span><span class="sv '+(_bodyok?'ok':'fl')+' mono">'+_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (&lt;30%)')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
   // Verdict
   var vc='vw',vt='WAIT';
-  if(fi){vc='vf';vt='FIRED \u2192 '+(s.entry_mode||'3MIN');}
+  if(fi){vc='vf';vt='FIRED \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
   else if(s.reject_reason){vt=esc(s.reject_reason);}
-  else if(_rzone&&_adxok&&_bodyok&&_regok){vc='vr';vt='READY';}
+  else if(_pos==='ABOVE'&&_green&&_bodyok){vc='vr';vt='READY';}
   sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
 });
 sh+='</div>';

@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v14.0
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v15.0
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -273,9 +273,9 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | 3-min RSI 40-55 + ADX≥15 + body≥20%\n"
-        + "Regime: TRENDING / TRENDING_STRONG only\n"
-        + "15-min RSI confidence: HIGH/NORMAL (display only)\n"
+        + " | EMA9 Band Breakout (3-min option candles)\n"
+        + "Entry: close > EMA9-high (fresh) + green + body ≥ 30%\n"
+        + "Exit: EMA9-low close break (dynamic trailing stop)\n"
         + "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
         + "SL -12 close | EOD 15:30 | No entry 15:10 | 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

@@ -20,7 +20,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v14.0"
+VERSION  = "v15.0"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -154,22 +154,24 @@ TICK_STALE_SECS    = CFG.ws_tick_stale_secs()
 STATE_PERSIST_FIELDS = [
     # Position
     "in_trade", "symbol", "token", "direction", "strike", "expiry",
-    "entry_price", "entry_time", "qty",
-    "lot1_active", "lot2_active", "lots_split", "lot_count",
-    # Exit
-    "exit_phase", "phase1_sl", "phase2_sl", "_static_floor_sl",
+    "entry_price", "entry_time", "qty", "lot_count",
+    # Exit state (v15.0: band-based)
     "peak_pnl", "trough_pnl", "candles_held",
-    # v14.0 entry context (for exit alert + restart resume)
-    "entry_mode", "rsi_3m_entry", "adx_3m_entry", "regime_entry",
-    "confidence_15m", "score_at_entry", "other_token",
+    # v15.0 entry context + band trail
+    "entry_mode", "entry_ema9_high", "entry_ema9_low",
+    "entry_band_position", "entry_body_pct",
+    "current_ema9_high", "current_ema9_low", "last_band_check_ts",
+    "score_at_entry", "other_token",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
-    "last_exit_reason", "last_exit_price",
+    "last_exit_reason",
     # Daily
     "daily_trades", "daily_losses", "daily_pnl",
     "consecutive_losses", "profit_locked",
     # Bot control
-    "paused", "prev_close", "aggressive_mode",
+    "paused", "prev_close",
+    # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
+    "phase1_sl", "exit_phase", "lot1_active", "lot2_active", "lots_split",
 ]
 
 # ── Prediction table + DTE profiles — read from config.yaml ──
@@ -798,7 +800,21 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     avg_loss = loss.ewm(com=13, adjust=False).mean()
     rs       = avg_gain / avg_loss.replace(0, float("nan"))
     df["RSI"] = (100 - (100 / (1 + rs))).fillna(50)
+    # v15.0: EMA9 bands of high and low — for option band-breakout strategy
+    df["ema9_high"] = df["high"].ewm(span=9, adjust=False).mean().round(2)
+    df["ema9_low"]  = df["low"].ewm(span=9, adjust=False).mean().round(2)
     return df
+
+
+def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
+    """v15.0: Fetch option 3-min OHLC + EMA9 bands. Returns DataFrame with
+    columns: open, high, low, close, volume, EMA_9, EMA_21, RSI, ema9_high, ema9_low.
+    The last row (iloc[-1]) is the live in-progress candle. iloc[-2] is the
+    last CLOSED candle. iloc[-3] is the candle before that."""
+    df = get_historical_data(token, "3minute", lookback)
+    if df.empty:
+        return df
+    return add_indicators(df)
 
 
 # ═══════════════════════════════════════════════════════════════

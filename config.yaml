@@ -1,9 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v14.0 — Central Configuration
-#  3-min RSI 40-55 + ADX≥15 + body≥20% + TRENDING regime
+#  VISHAL RAJPUT TRADE v15.0 — Central Configuration
+#  Dual EMA9 Band Breakout — pure option-level price action.
+#  Entry: option 3m close > EMA9-of-highs (fresh) + green + body ≥ 30%
+#  Exit:  EMA9-of-lows close break (single dynamic stop)
 # ═══════════════════════════════════════════════════════════════
 
-version: "v14.0"
+version: "v15.0"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -20,40 +22,22 @@ lots:
   count: 2
   size: 65
 
-# ── Strategy ───────────────────────────────────────────────────
-entry_3min:
-  rsi_min: 40
-  rsi_max: 55
-  adx_min: 15
-  body_pct_min: 20
-  allowed_regimes: ["TRENDING", "TRENDING_STRONG"]
+# ── v15.0 Entry: Dual EMA9 Band Breakout ──────────────────────
+entry_ema9_band:
+  body_pct_min: 30
+  cooldown_minutes: 5
+  warmup_until: "09:45"
+  cutoff_after: "15:10"
+
+# ── v15.0 Exit: single dynamic system ─────────────────────────
+exit_ema9_band:
+  emergency_sl_pts: -20
+  stale_candles: 5
+  stale_peak_max: 3
+  eod_exit_time: "15:30"
 
 cooldown:
-  same_direction: 5            # minutes — opposite always immediate
-
-exit:
-  candle_close_sl: 12          # close-based SL (CANDLE_SL)
-  max_sl: 20                   # absolute emergency (EMERGENCY_SL)
-  spike_recovery: 8            # SPIKE_ABSORBED tolerance
-  stale_candles: 5
-  stale_peak_min: 3
-
-profit_floors:
-  - { peak: 5,  lock: -6 }     # damage control
-  - { peak: 10, lock: 2 }      # breakeven+
-  - { peak: 20, lock: 12 }
-  - { peak: 30, lock: 22 }
-  - { peak: 40, lock: 32 }
-  - { peak: 50, lock: 42 }
-
-profit_trail:
-  activate_at: 15
-  keep_normal: 0.75
-  keep_warning: 0.85
-  min_lock: 2
-
-rsi_exit:
-  blowoff: 80
+  same_direction: 5            # legacy compat (also read from entry_ema9_band)
 
 # ── Strike selection ───────────────────────────────────────────
 strike:
