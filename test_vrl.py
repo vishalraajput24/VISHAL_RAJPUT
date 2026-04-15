@@ -312,10 +312,11 @@ _cfg_src = _read_file("config.yaml")
 _dash_src = _read_file("static/VRL_DASHBOARD.html")
 _cmd_src = _read_file("VRL_COMMANDS.py")
 
-# T23: All files mention v15.0
-test("T23: v15.0 in VRL_MAIN, config, dashboard, commands",
-     "v15.0" in _main_src and "v15.0" in _cfg_src
-     and "v15.0" in _dash_src and "v15.0" in _cmd_src)
+# T23: All files mention current version
+_v = D.VERSION
+test("T23: " + _v + " in VRL_MAIN, config, dashboard, commands",
+     _v in _main_src and _v in _cfg_src
+     and _v in _dash_src and _v in _cmd_src)
 
 # T24: Engine has ema9_high + ema9_low + EMA9_BREAKOUT + EMA9_LOW_BREAK
 test("T24: Engine contains v15.0 band strategy keywords",
