@@ -62,7 +62,8 @@ def _make_opt_3m(n=20, ema9_high=100.0, ema9_low=95.0,
     rows.append({"open": last_close, "high": last_close + 1, "low": last_close - 1,
                  "close": last_close + 0.5, "volume": 500})
     df = pd.DataFrame(rows)
-    df.index = [datetime(2026, 4, 16, 10, i * 3) for i in range(len(rows))]
+    _base = datetime(2026, 4, 16, 10, 0)
+    df.index = [_base + timedelta(minutes=i * 3) for i in range(len(rows))]
     df = D.add_indicators(df)
     # Override ema9_high / ema9_low for controlled tests
     df.iloc[-2, df.columns.get_loc("ema9_high")] = ema9_high
