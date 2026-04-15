@@ -1,8 +1,8 @@
 #!/home/vishalraajput24/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
- test_vrl.py — VISHAL RAJPUT TRADE v15.1 Test Suite
- 28 focused tests: Dual EMA9 Band Breakout + BE+2 lock.
+ test_vrl.py — VISHAL RAJPUT TRADE v15.2 Test Suite
+ 31 focused tests: Band Breakout + BE+2 (peak≥5) + narrow band filter.
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -90,7 +90,7 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
 
 section("FOUNDATION")
 
-test("T01: VERSION is v15.1", D.VERSION == "v15.1", "got " + str(D.VERSION))
+test("T01: VERSION is v15.2", D.VERSION == "v15.2", "got " + str(D.VERSION))
 
 s = D.resolve_strike_for_direction(22819, "CE", 3)
 test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
@@ -330,35 +330,63 @@ test("T25: config.yaml has no entry_3min / profit_floors / rsi_exit",
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v15.1 — BREAKEVEN+2 LOCK TESTS
+#  v15.2 — BREAKEVEN+2 LOCK (peak ≥ 5) + NARROW BAND FILTER
 # ═══════════════════════════════════════════════════════════════
 
-section("v15.1 — BREAKEVEN+2 LOCK")
+section("v15.2 — BREAKEVEN+2 LOCK (peak≥5)")
 
-# T26: Peak >= 10 arms BE+2 at entry+2, no exit while price above it
+# T26: Peak >= 5 arms BE+2 at entry+2, no exit while price above it
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=10, candles=3)
+    st = _make_state(entry=100, peak=5, candles=2)
     ex = E.manage_exit(st, 108, {})  # ltp 108, BE level = 102, no exit
-    test("T26: peak 10 arms be2_active=True at entry+2 (102), no exit at ltp 108",
+    test("T26: peak 5 arms be2_active=True at entry+2 (102), no exit at ltp 108",
          st.get("be2_active") == True and st.get("be2_level") == 102 and len(ex) == 0,
          "be2_active=" + str(st.get("be2_active")) + " be2_level=" + str(st.get("be2_level")))
 
 # T27: Price drops to BE+2 level → BREAKEVEN_LOCK fires at entry+2
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=12, candles=4)
+    st = _make_state(entry=100, peak=7, candles=3)
     ex = E.manage_exit(st, 101.5, {})  # ltp 101.5 <= 102 → exit
-    test("T27: peak 12, ltp 101.5 <= 102 → BREAKEVEN_LOCK at 102",
+    test("T27: peak 7, ltp 101.5 <= 102 → BREAKEVEN_LOCK at 102",
          len(ex) == 1 and ex[0]["reason"] == "BREAKEVEN_LOCK"
          and ex[0]["price"] == 102,
          "got " + str(ex))
 
-# T28: Peak < 10 → BE+2 stays dormant (no premature exit)
+# T28: Peak < 5 → BE+2 stays dormant (no premature exit)
 with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=8, candles=2)
-    ex = E.manage_exit(st, 101, {})  # peak only 8, ltp 101 — BE+2 not armed
-    test("T28: peak 8 < 10 → be2_active=False, no BREAKEVEN_LOCK exit",
+    st = _make_state(entry=100, peak=3, candles=2)
+    ex = E.manage_exit(st, 101, {})  # peak only 3, ltp 101 — BE+2 not armed
+    test("T28: peak 3 < 5 → be2_active=False, no BREAKEVEN_LOCK exit",
          st.get("be2_active") == False and len(ex) == 0,
          "be2_active=" + str(st.get("be2_active")) + " ex=" + str(ex))
+
+
+section("v15.2 — NARROW BAND CHOP FILTER")
+
+# T29: Narrow band (<8 pts) blocks otherwise valid entry
+_df_narrow = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                          ema9_high=100.0, ema9_low=95.0,  # width = 5
+                          prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df_narrow), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    r = E.check_entry(12345, "CE", 24000, 3)
+    test("T29: band_width 5 < 8 → narrow_band blocked",
+         r["fired"] == False and "narrow_band" in r.get("reject_reason", ""),
+         "reject=" + r.get("reject_reason", ""))
+
+# T30: Wide band (>=8 pts) + all other gates → FIRES
+_df_wide = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
+                        ema9_high=100.0, ema9_low=91.0,  # width = 9
+                        prev_close=99.0, prev_ema9_high=100.0)
+with patch.object(D, 'get_historical_data', return_value=_df_wide), \
+     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+    r = E.check_entry(12345, "CE", 24000, 3)
+    test("T30: band_width 9 >= 8 → FIRES",
+         r["fired"] == True,
+         "fired=" + str(r["fired"]) + " reject=" + r.get("reject_reason", ""))
+
+# T31: result dict exposes band_width field
+test("T31: result dict includes band_width", "band_width" in r, str(list(r.keys())[:10]))
 
 
 # ═══════════════════════════════════════════════════════════════

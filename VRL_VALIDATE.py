@@ -110,9 +110,15 @@ def validate_entry(state, entry_result, kite=None):
         if not state.get("_sl_order_id"):
             failures.append("EXCHANGE_SL: no SL order placed (live mode)")
 
-    # CHECK 6: Entry mode is valid (v13.3: entry_mode is the source of truth)
+    # CHECK 6: Entry mode is valid (v15.x: EMA9_BREAKOUT is the only live mode)
     mode = state.get("entry_mode", "") or state.get("mode", "")
-    valid_modes = ("FAST", "CONFIRMED", "MOMENTUM", "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION")
+    valid_modes = (
+        # v15.x primary
+        "EMA9_BREAKOUT",
+        # historical (kept so old trade log replay doesn't fail)
+        "FAST", "CONFIRMED", "MOMENTUM", "3MIN",
+        "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION",
+    )
     if mode and mode not in valid_modes:
         failures.append("ENTRY_MODE: invalid mode=" + str(mode))
 
@@ -176,9 +182,10 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
 
     # CHECK 12: Exit reason is in the known set
     valid_reasons = (
-        # v15.0 primary exits
-        "EMA9_LOW_BREAK", "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
-        # legacy/safety/manual
+        # v15.2 primary exits
+        "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "EMERGENCY_SL",
+        "STALE_ENTRY", "EOD_EXIT",
+        # safety / manual
         "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
         # historical (kept for back-compat with old trade log rows)
         "HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL",

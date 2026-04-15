@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v15.1</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v15.2</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -193,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v15.1';
+document.getElementById('ver').textContent=d.version||mk.version||'v15.2';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -319,6 +319,8 @@ sh+='<div class="sg">';
   var _green=s.candle_green;
   var _pos=s.band_position||'';
   var _bodyok=(_body>=30);
+  var _width=parseFloat(s.band_width||(_eh-_el));
+  var _widthok=(_width>=8);
 
   // Band position visual
   var _posColor='var(--tx3)',_posLabel='—',_posBg='var(--bg2)';
@@ -336,6 +338,7 @@ sh+='<div class="sg">';
   sh+='</div>';
 
   sh+='<div class="sr"><span class="sk">Body</span><span class="sv '+(_bodyok?'ok':'fl')+' mono">'+_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (&lt;30%)')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Band width</span><span class="sv mono" style="color:'+(_widthok?'var(--gn2)':'var(--yl)')+';font-weight:800">'+_width.toFixed(1)+'pts '+(_widthok?'\u2713':'\u26A0')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
@@ -344,7 +347,7 @@ sh+='<div class="sg">';
   if(fi){vc='vf';vt='FIRED \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
   else if(s.reject_reason){vt=esc(s.reject_reason);}
-  else if(_pos==='ABOVE'&&_green&&_bodyok){vc='vr';vt='READY';}
+  else if(_pos==='ABOVE'&&_green&&_bodyok&&_widthok){vc='vr';vt='READY';}
   sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
 });
 sh+='</div>';

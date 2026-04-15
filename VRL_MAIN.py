@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.1
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.2
 #  Master orchestration. Dual EMA9 Band Breakout strategy.
-#  Entry: option 3m close > EMA9-of-highs (fresh) + green + body ≥ 30%
-#  Exit: 5-rule chain. BE+2 lock after peak ≥ 10. Primary stop = EMA9-low close break.
+#  Entry: close > EMA9-high (fresh) + green + body ≥ 30% + band width ≥ 8
+#  Exit: 5-rule chain. BE+2 lock after peak ≥ 5. Primary stop = EMA9-low close break.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -671,10 +671,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "ENTRY: option 3m close &gt; EMA9-high (fresh) + green + body \u226530%\n"
-        "EXIT: EMA9-low close break (band IS the trail)\n"
-        "SAFETY: emergency -20 | stale 5c peak&lt;3 | EOD 15:30\n"
-        "COOLDOWN: 5min same direction | 2 lots fixed | 9:45-15:10 window\n"
+        "v15.2 EMA9 Band Breakout (3-min option candles)\n"
+        "ENTRY: close &gt; EMA9-high (fresh) + green + body \u226530% + band width \u22658pts\n"
+        "EXIT: EMA9-low close break | BE+2 after peak \u22655 | Emergency -20 | Stale 5c | EOD 15:30\n"
+        "2 lots fixed | No entry before 9:45 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -916,10 +916,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _body = int(round(float(entry_result.get("body_pct", 0)), 0))
     _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
     _be2_level = round(actual_price + 2, 1)
+    _ema9_width = round(_ema9h - _ema9l, 1) if _ema9h and _ema9l else 0
     _detail = ("Close " + str(_close) + " &gt; EMA9-high " + str(_ema9h) + "\n"
                + "Body " + str(_body) + "% green \u2713\n"
+               + "Band width: " + str(_ema9_width) + "pts \u2713\n"
                + "Stop: EMA9-low " + str(_ema9l) + " (" + str(_dist_to_stop) + "pts away)\n"
-               + "BE+2 lock: activates after peak +10 \u2192 SL locks at \u20B9"
+               + "BE+2 lock: activates after peak +5 \u2192 SL locks at \u20B9"
                + str(_be2_level) + "\n")
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1468,10 +1470,13 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _reject = result.get("reject_reason", "")
 
             # Verdict
+            _width = float(result.get("band_width", 0))
             if _fired:
                 verdict = "FIRED [" + _mode + "]"
             elif _reject:
                 verdict = _reject
+            elif _width > 0 and _width < 8:
+                verdict = "narrow_band " + str(round(_width, 1)) + "pts (chop)"
             elif _pos == "ABOVE" and _green and _body >= 30:
                 verdict = "READY"
             elif _pos == "ABOVE":
@@ -1482,10 +1487,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = "below band"
 
             return {
-                # v15.0 primary fields
+                # v15.x primary fields
                 "close": round(_close, 2),
                 "ema9_high": round(_eh, 2),
                 "ema9_low": round(_el, 2),
+                "band_width": round(_eh - _el, 2),
                 "gap_from_ema9h": round(_close - _eh, 2),
                 "band_position": _pos,
                 "body_pct": round(_body, 1),

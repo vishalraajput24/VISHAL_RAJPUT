@@ -1,14 +1,20 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.1
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.2
 #  Dual EMA9 Band Breakout — pure option-level price action.
 #
-#  ENTRY: option 3-min close > EMA9-of-highs (fresh breakout: prev was at
-#         or below) + green candle + body ≥ 30% of range.
-#  EXIT: 5-rule priority chain.
+#  ENTRY (6 gates, all must pass):
+#    1. Time window 9:45 – 15:10 IST
+#    2. Cooldown 5min same direction
+#    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
+#    4. Green candle
+#    5. Body ≥ 30% of range
+#    6. Band width ≥ 8 pts (v15.2: chop filter)
+#
+#  EXIT (5-rule priority chain):
 #    1. EMERGENCY_SL    pnl ≤ -20
 #    2. EOD_EXIT        15:30 IST
 #    3. STALE_ENTRY     5 candles + peak < 3
-#    4. BREAKEVEN_LOCK  after peak ≥ 10, lock at entry+2 (v15.1)
+#    4. BREAKEVEN_LOCK  after peak ≥ 5, lock at entry+2 (v15.2)
 #    5. EMA9_LOW_BREAK  last 3m close < ema9_low (primary trail)
 # ═══════════════════════════════════════════════════════════════
 
@@ -106,6 +112,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "close": 0, "open": 0, "high": 0, "low": 0,
         "prev_close": 0, "prev_ema9_high": 0,
         "candle_green": False, "body_pct": 0,
+        "band_width": 0,
         "cooldown_ok": False, "reject_reason": "",
         "band_position": "",
     }
@@ -117,6 +124,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         cd_min = cfg.get("cooldown_minutes", 5)
         warmup_until = cfg.get("warmup_until", "09:45")
         cutoff_after = cfg.get("cutoff_after", "15:10")
+        min_band_width = cfg.get("min_band_width_pts", 8)
 
         # ── Fetch 3-min option data ──
         opt_3m = D.get_option_3min(token, lookback=15)
@@ -144,6 +152,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         else:
             band_position = "IN"
 
+        # v15.2: band width (for chop filter + dashboard display)
+        band_width = round(ema9_high - ema9_low, 2)
+
         result.update({
             "entry_price": round(close, 2),
             "ema9_high": round(ema9_high, 2),
@@ -155,6 +166,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             "prev_close": round(prev_close, 2),
             "prev_ema9_high": round(prev_ema9_high, 2),
             "band_position": band_position,
+            "band_width": band_width,
         })
 
         # ── GATE 1: Time window 9:45 — 15:10 ──
@@ -222,6 +234,14 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                             + "% < " + str(body_min) + "%")
             return result
 
+        # ── GATE 6 (v15.2): Narrow band chop filter ──
+        if band_width < min_band_width:
+            result["reject_reason"] = "narrow_band_" + str(round(band_width, 1)) + "pts"
+            if not silent:
+                logger.info("[ENGINE] " + option_type + " NARROW_BAND width="
+                            + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
+            return result
+
         # ═══ ALL GATES PASSED — FIRE ═══
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
@@ -230,6 +250,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                         + " close=" + str(round(close, 1))
                         + " ema9h=" + str(round(ema9_high, 1))
                         + " ema9l=" + str(round(ema9_low, 1))
+                        + " width=" + str(round(band_width, 1))
                         + " body=" + str(int(body_pct)) + "% green=Y"
                         + " prev_close=" + str(round(prev_close, 1))
                         + "<=prev_ema9h" + str(round(prev_ema9_high, 1)))
@@ -288,7 +309,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     stale_candles = exit_cfg.get("stale_candles", 5)
     stale_peak_max = exit_cfg.get("stale_peak_max", 3)
     eod_time = exit_cfg.get("eod_exit_time", "15:30")
-    be2_peak_threshold = exit_cfg.get("breakeven_lock_peak_threshold", 10)
+    be2_peak_threshold = exit_cfg.get("breakeven_lock_peak_threshold", 5)
     be2_offset = exit_cfg.get("breakeven_lock_offset", 2)
 
     # ── RULE 1: EMERGENCY catastrophic ──

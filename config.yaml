@@ -1,11 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v15.1 — Central Configuration
-#  Dual EMA9 Band Breakout + BE+2 lock after peak ≥ 10
-#  Entry: option 3m close > EMA9-of-highs (fresh) + green + body ≥ 30%
-#  Exit:  BREAKEVEN_LOCK (peak≥10) | EMA9-of-lows close break
+#  VISHAL RAJPUT TRADE v15.2 — Central Configuration
+#  Dual EMA9 Band Breakout + BE+2 lock after peak ≥ 5 + narrow band filter
+#  Entry: close > EMA9-high (fresh) + green + body ≥ 30% + band width ≥ 8
+#  Exit:  BREAKEVEN_LOCK (peak≥5) | EMA9-low close break
 # ═══════════════════════════════════════════════════════════════
 
-version: "v15.1"
+version: "v15.2"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 
@@ -28,6 +28,7 @@ entry_ema9_band:
   cooldown_minutes: 5
   warmup_until: "09:45"
   cutoff_after: "15:10"
+  min_band_width_pts: 8        # v15.2: chop filter — block entry if ema9 band narrower than 8pts
 
 # ── v15.1 Exit: dynamic system + breakeven lock ─────────────
 exit_ema9_band:
@@ -35,8 +36,8 @@ exit_ema9_band:
   stale_candles: 5
   stale_peak_max: 3
   eod_exit_time: "15:30"
-  breakeven_lock_peak_threshold: 10   # v15.1: lock activates when peak >= 10 pts
-  breakeven_lock_offset: 2            # v15.1: SL locks at entry + 2
+  breakeven_lock_peak_threshold: 5    # v15.2: lock activates when peak >= 5 pts
+  breakeven_lock_offset: 2            # v15.2: SL locks at entry + 2
 
 cooldown:
   same_direction: 5            # legacy compat (also read from entry_ema9_band)
