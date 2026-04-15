@@ -15,7 +15,7 @@ import threading
 import time
 import zipfile
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 # ── Bootstrap dirs first ────────────────────────────────────────
 import VRL_DATA as D
@@ -1359,28 +1359,32 @@ def _update_dashboard_ltp():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  WARMUP HELPER (BUG-030)
-#  14 candles of 3-min data needed = ~42 minutes from market open
-#  Warm at 9:57 (9:15 + 42min). Relaxed to 9:45 on DTE >= 2.
+#  WARMUP HELPER (v14.0: data-driven, pre-warmed from previous day)
+#  Queries actual 3-min spot history. Kite API returns multi-day
+#  candles so at 9:16 we already have yesterday's full session.
+#  If len(3m spot df) >= 14, we're warm → entries unblocked at 9:31.
 # ═══════════════════════════════════════════════════════════════
 
 def _warmup_info(now, dte):
-    """Returns (is_warm, candles_done, candles_needed, eta_hhmm)."""
+    """Returns (is_warm, candles_done, candles_needed, eta_hhmm).
+    v14.0: reads actual historical candle count, not wall-clock time."""
     needed = 14
-    is_warm = now.hour >= 10 or (now.hour == 9 and now.minute >= 45 and dte >= 2)
-    # Minutes elapsed since market open at 9:15
-    if now.hour < 9 or (now.hour == 9 and now.minute < 15):
-        done = 0
+    done = 0
+    try:
+        df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
+        if df is not None and not df.empty:
+            done = min(needed, len(df))
+    except Exception:
+        pass
+    is_warm = done >= needed
+    # ETA: if not warm, estimate when natural 3-min accumulation will finish
+    if is_warm:
+        eta = "ready"
     else:
-        elapsed = (now.hour - 9) * 60 + (now.minute - 15)
-        done = max(0, min(needed, elapsed // 3))
-    # ETA: warm at 9:57 (or 9:45 on DTE≥2), whichever applies
-    warm_hour = 9
-    warm_min = 45 if dte >= 2 else 57
-    if warm_hour < 10:
-        eta = "{:02d}:{:02d}".format(warm_hour, warm_min)
-    else:
-        eta = "10:00"
+        remaining_candles = needed - done
+        remaining_min = remaining_candles * 3
+        target = now + timedelta(minutes=remaining_min)
+        eta = target.strftime("%H:%M")
     return is_warm, int(done), needed, eta
 
 
@@ -2716,6 +2720,20 @@ def main():
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
     time.sleep(2)
+
+    # v14.0: Pre-warm 3-min indicators from previous trading day.
+    # Kite historical_data returns multi-day candles, so at 9:15 we
+    # already have yesterday's session (or Friday if Monday, auto-
+    # skipping weekends/holidays). Entries unblock at 9:31 immediately.
+    try:
+        _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
+        if _pw is not None and not _pw.empty:
+            logger.info("[MAIN] Pre-warm: " + str(len(_pw))
+                        + " 3-min spot candles loaded from history")
+        else:
+            logger.warning("[MAIN] Pre-warm: no historical 3-min data returned")
+    except Exception as _pwe:
+        logger.warning("[MAIN] Pre-warm failed: " + str(_pwe))
 
     # v12.11: Calculate spot gap on startup
     try:
