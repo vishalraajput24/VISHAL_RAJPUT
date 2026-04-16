@@ -128,7 +128,12 @@ def _append_csv(path: str, fields: list, row: dict):
                 w.writeheader()
             w.writerow(row)
     except Exception as e:
-        logger.debug("[SHADOW_1MIN] CSV write error " + path + ": " + str(e))
+        # BUG-S v15.2.5 Batch 6: upgraded from DEBUG to WARNING. A CSV
+        # write failure means we're losing shadow A/B data for the
+        # April 28 review — silent at DEBUG level was masking real
+        # disk-space / permission issues.
+        logger.warning("[SHADOW_1MIN] CSV write error " + path + ": "
+                       + type(e).__name__ + " " + str(e))
 
 
 # ── Indicator layer — 1-min EMA9 band ────────────────────────
