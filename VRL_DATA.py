@@ -181,6 +181,9 @@ STATE_PERSIST_FIELDS = [
     "consecutive_losses", "profit_locked",
     # Bot control
     "paused", "prev_close",
+    # v15.2.5 BUG-A: persist _exit_failed so a crash mid-manual-resolution
+    # doesn't silently clear the block on restart
+    "_exit_failed",
     # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
     "phase1_sl", "exit_phase", "lot1_active", "lot2_active", "lots_split",
 ]

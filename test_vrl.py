@@ -778,6 +778,37 @@ test("46. test_alert_toggle_on_off",
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Section 8e — v15.2.5 BUG-A exit failure safety rail
+# ═══════════════════════════════════════════════════════════════
+
+section("v15.2.5 BUG-A — EXIT FAILURE BLOCK")
+
+# 47. _exit_failed is now persisted across restart — must appear in
+#     STATE_PERSIST_FIELDS so _save_state() writes it to disk.
+test("47. test_exit_failed_persisted_across_restart",
+     "_exit_failed" in D.STATE_PERSIST_FIELDS,
+     "missing from STATE_PERSIST_FIELDS")
+
+# 48. Critical exit alert text names /reset_exit so the operator knows
+#     how to clear the block after manually flattening the position.
+_main_src_bug_a = open(os.path.join(_repo, "VRL_MAIN.py")).read()
+_has_alert = ("/reset_exit" in _main_src_bug_a
+              and "MANUAL" in _main_src_bug_a.upper()
+              and "_alert_exit_critical" in _main_src_bug_a)
+test("48. test_critical_alert_names_reset_exit",
+     _has_alert,
+     "alert must reference /reset_exit + MANUAL + define _alert_exit_critical")
+
+# 49. /reset_exit command exists and clears the flag.
+_cmd_src_bug_a = open(os.path.join(_repo, "VRL_COMMANDS.py")).read()
+test("49. test_reset_exit_command_clears_flag",
+     'def _cmd_reset_exit' in _cmd_src_bug_a
+     and 'state["_exit_failed"] = False' in _cmd_src_bug_a
+     and '"/reset_exit"' in _cmd_src_bug_a,
+     "/reset_exit missing or does not clear _exit_failed")
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Section 9 — Silent 1-min shadow strategy (Part 4, 3 tests)
 # ═══════════════════════════════════════════════════════════════
 

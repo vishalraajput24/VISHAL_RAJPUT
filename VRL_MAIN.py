@@ -777,12 +777,23 @@ def _alert_profit_lock(daily_pnl: float):
         "New entries still open but protected mode on."
     )
 
-def _alert_exit_critical(symbol: str, qty: int):
+def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
+    """v15.2.5 BUG-A: richer CRITICAL alert — names the blocked trade,
+    tells the operator exactly which Telegram command clears the lock
+    once Kite shows the position is flat. All further exit attempts
+    are suppressed until /reset_exit is received."""
+    _reason_line = ("Reason : " + str(reason) + "\n") if reason else ""
     _tg_send(
         "🚨 <b>CRITICAL: EXIT FAILED</b>\n"
         "Symbol : " + symbol + "  Qty: " + str(qty) + "\n"
-        "MANUAL EXIT REQUIRED NOW\n"
-        "Open Kite app immediately."
+        + _reason_line +
+        "Both LIMIT + MARKET exit attempts failed at the broker.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "1. Open Kite app and close this position manually NOW.\n"
+        "2. Once flat on the broker side, send <b>/reset_exit</b> here\n"
+        "   to re-enable automatic exits.\n"
+        "Until then, all exit attempts are blocked to prevent duplicate\n"
+        "orders or incorrect state."
     )
 
 def _alert_error(message: str):
@@ -1122,7 +1133,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     if not fill["ok"] and fill.get("error") == "EXIT_FAILED_MANUAL_REQUIRED":
         with _state_lock:
             state["_exit_failed"] = True
-        _alert_exit_critical(symbol, exit_qty)
+        _save_state()   # v15.2.5 BUG-A: persist the block across crashes
+        _alert_exit_critical(symbol, exit_qty, reason=reason)
         return
 
     actual_exit = fill["fill_price"] if fill["ok"] else exit_price
