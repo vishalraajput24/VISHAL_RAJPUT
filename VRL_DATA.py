@@ -171,6 +171,8 @@ STATE_PERSIST_FIELDS = [
     "peak_history", "last_peak_candle_ts", "current_velocity",
     # v15.2.5 BUG-J sentinel: one-shot peak_history backfill on startup
     "_peak_history_backfilled",
+    # v15.2.5 BUG-V sentinel: daily lab cleanup date guard
+    "_last_cleanup_date",
     # v15.2.5 pre-entry alert toggle + rate-limit history
     "pre_entry_alerts_enabled", "alert_history",
     # v15.1 BE+2 lock

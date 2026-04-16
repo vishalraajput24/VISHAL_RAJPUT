@@ -96,6 +96,8 @@ DEFAULT_STATE = {
     "current_velocity"   : 0.0,
     # BUG-J: one-shot flag so backfill runs only once per trade
     "_peak_history_backfilled": False,
+    # BUG-V: date sentinel for "run lab cleanup once per trading day"
+    "_last_cleanup_date" : "",
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
     "alert_history"      : {},   # key -> ISO timestamp
@@ -2162,6 +2164,40 @@ def _strategy_loop(kite):
                                     "pnl": _live_pnl, "wr": _live_wr})
                 except Exception as _se:
                     logger.warning("[SHADOW] EOD summary: " + str(_se))
+
+            # ── BUG-V v15.2.5 Batch 6: daily lab cleanup at 15:45+ IST ──
+            # Previously cleanup ran only at bot startup. A process that
+            # stays up for a week accumulates 7 days of option_3min /
+            # signal_scans growth with no trim. Run once per trading day
+            # after market close (15:45+) so it can't compete with live
+            # trading I/O. Gated by state._last_cleanup_date so we don't
+            # repeat on every loop after 15:45.
+            try:
+                if now.hour == 15 and now.minute >= 45:
+                    _today_iso = date.today().isoformat()
+                    _need_cleanup = False
+                    with _state_lock:
+                        if state.get("_last_cleanup_date") != _today_iso:
+                            state["_last_cleanup_date"] = _today_iso
+                            _need_cleanup = True
+                    if _need_cleanup:
+                        logger.info("[MAIN] Running daily lab cleanup at "
+                                    + now.strftime("%H:%M"))
+                        try:
+                            D.cleanup_old_lab_data()
+                        except Exception as _ce:
+                            logger.warning("[MAIN] Lab cleanup error: "
+                                           + str(_ce))
+                        try:
+                            import VRL_DB as _DB_clean
+                            _DB_clean.cleanup_old_db_data()
+                        except Exception as _dce:
+                            logger.warning("[MAIN] DB cleanup error: "
+                                           + str(_dce))
+                        _save_state()
+            except Exception as _ce_outer:
+                logger.debug("[MAIN] Daily cleanup dispatch: "
+                             + str(_ce_outer))
 
             with _state_lock:
                 _force = state.get("force_exit")
