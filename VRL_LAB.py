@@ -1747,6 +1747,166 @@ def collect_spot_daily(kite):
         logger.debug("[LAB] Spot daily: " + str(e))
 
 
+def _startup_backfill(kite):
+    """v15.2.5 BUG-I: mid-day restart warmup.
+
+    When the bot restarts after market open, today's option_3min /
+    option_1min tables have a hole from 09:15 up to the restart
+    moment — because LAB was down. The live engine doesn't care
+    (check_entry fetches fresh history on every tick), but
+    dashboards, audits and daily reports read from the DB and see
+    a ragged session.
+
+    Gate: only backfills when today's in-memory indicator buffer is
+    effectively empty — i.e. today has <5 option_3min DB rows. If
+    the restart was before 09:15 or after 15:30 we also skip.
+
+    Backfill pulls the last ~60 candles per interval for the current
+    ATM CE+PE, runs D.add_indicators() so ema9_high/low/RSI are
+    populated, and inserts into the DB. Greeks/IV columns are left
+    at defaults — a cold restart cannot reconstruct them after the
+    fact; only live ticks give IV_vs_open + theta decay signal.
+    """
+    try:
+        today = date.today()
+        # Out-of-session restart → nothing useful to backfill
+        now = datetime.now()
+        mod = now.hour * 60 + now.minute
+        if mod < 9 * 60 + 15 or mod > 15 * 60 + 30:
+            logger.info("[LAB] Startup backfill skipped — outside session hours")
+            return
+        # Gate: today's buffer empty?
+        try:
+            rows = DB.query(
+                "SELECT COUNT(*) AS n FROM option_3min "
+                "WHERE date(timestamp) = ?", (today.isoformat(),))
+            n_today = int(rows[0]["n"]) if rows else 0
+        except Exception:
+            n_today = 0
+        if n_today >= 5:
+            logger.info("[LAB] Startup backfill skipped — "
+                        + str(n_today) + " option_3min rows already "
+                        "present for " + today.isoformat())
+            return
+
+        # Resolve current ATM + tokens
+        spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        if spot_ltp <= 0:
+            logger.warning("[LAB] Startup backfill aborted — no spot LTP yet")
+            return
+        expiry = D.get_nearest_expiry(kite)
+        if expiry is None:
+            logger.warning("[LAB] Startup backfill aborted — no expiry")
+            return
+        atm = D.resolve_atm_strike(spot_ltp)
+        tokens = D.get_option_tokens(kite, atm, expiry) or {}
+        if not tokens:
+            logger.warning("[LAB] Startup backfill aborted — ATM tokens unresolved")
+            return
+
+        n_3m = 0
+        n_1m = 0
+        # Today 00:00 onwards — Kite returns only market-hours bars
+        today_start = datetime.combine(today, datetime.min.time())
+        for opt_type, info in tokens.items():
+            token = int(info.get("token") or 0)
+            if not token:
+                continue
+            # ── 3-min backfill ────────────────────────────────────
+            c3 = _fetch_candles_with_warmup(
+                kite, token, today_start, now, "3minute", 60)
+            if c3:
+                try:
+                    df3 = pd.DataFrame(c3)
+                    df3.rename(columns={"date": "timestamp"}, inplace=True)
+                    df3.set_index("timestamp", inplace=True)
+                    df3 = D.add_indicators(df3)
+                    rows3 = []
+                    for ts, r in df3.iterrows():
+                        ts_str = (ts.strftime("%Y-%m-%d %H:%M:%S")
+                                  if hasattr(ts, "strftime") else str(ts))
+                        if ts_str[:10] != today.isoformat():
+                            continue
+                        rows3.append({
+                            "timestamp"    : ts_str,
+                            "strike"       : atm, "type": opt_type,
+                            "open"         : round(float(r["open"]),  2),
+                            "high"         : round(float(r["high"]),  2),
+                            "low"          : round(float(r["low"]),   2),
+                            "close"        : round(float(r["close"]), 2),
+                            "volume"       : int(r.get("volume", 0) or 0),
+                            "spot_ref"     : round(spot_ltp, 2),
+                            "atm_distance" : round(abs(spot_ltp - atm), 0),
+                            "dte"          : D.calculate_dte(expiry),
+                            "session_block": D.get_session_block(
+                                ts.hour if hasattr(ts, "hour") else 10,
+                                ts.minute if hasattr(ts, "minute") else 0),
+                            "body_pct"     : 0,
+                            "rsi"          : round(float(r.get("RSI", 50)), 1),
+                            "ema9"         : round(float(r.get("EMA_9", r["close"])), 2),
+                            "ema21"        : round(float(r.get("EMA_21", r["close"])), 2),
+                            "ema_spread"   : 0,
+                            "ema9_high"    : round(float(r.get("ema9_high", r["high"])), 2),
+                            "ema9_low"     : round(float(r.get("ema9_low",  r["low"])),  2),
+                        })
+                    if rows3:
+                        try:
+                            DB.insert_option_3min_many(rows3)
+                            n_3m += len(rows3)
+                        except Exception as _de:
+                            logger.debug("[LAB] 3m backfill DB insert: " + str(_de))
+                except Exception as _e3:
+                    logger.debug("[LAB] 3m backfill parse err: " + str(_e3))
+
+            # ── 1-min backfill ────────────────────────────────────
+            c1 = _fetch_candles_with_warmup(
+                kite, token, today_start, now, "minute", 60)
+            if c1:
+                try:
+                    df1 = pd.DataFrame(c1)
+                    df1.rename(columns={"date": "timestamp"}, inplace=True)
+                    df1.set_index("timestamp", inplace=True)
+                    df1 = D.add_indicators(df1)
+                    rows1 = []
+                    for ts, r in df1.iterrows():
+                        ts_str = (ts.strftime("%Y-%m-%d %H:%M:%S")
+                                  if hasattr(ts, "strftime") else str(ts))
+                        if ts_str[:10] != today.isoformat():
+                            continue
+                        rows1.append({
+                            "timestamp"    : ts_str,
+                            "strike"       : atm, "type": opt_type,
+                            "open"         : round(float(r["open"]),  2),
+                            "high"         : round(float(r["high"]),  2),
+                            "low"          : round(float(r["low"]),   2),
+                            "close"        : round(float(r["close"]), 2),
+                            "volume"       : int(r.get("volume", 0) or 0),
+                            "spot_ref"     : round(spot_ltp, 2),
+                            "atm_distance" : round(abs(spot_ltp - atm), 0),
+                            "dte"          : D.calculate_dte(expiry),
+                            "session_block": D.get_session_block(
+                                ts.hour if hasattr(ts, "hour") else 10,
+                                ts.minute if hasattr(ts, "minute") else 0),
+                            "body_pct"     : 0,
+                            "rsi"          : round(float(r.get("RSI", 50)), 1),
+                            "ema9"         : round(float(r.get("EMA_9", r["close"])), 2),
+                            "ema9_gap"     : 0,
+                        })
+                    if rows1:
+                        try:
+                            DB.insert_option_1min_many(rows1)
+                            n_1m += len(rows1)
+                        except Exception as _de:
+                            logger.debug("[LAB] 1m backfill DB insert: " + str(_de))
+                except Exception as _e1:
+                    logger.debug("[LAB] 1m backfill parse err: " + str(_e1))
+
+        logger.info("[LAB] Startup backfill: " + str(n_3m) + " 3m + "
+                    + str(n_1m) + " 1m rows written for ATM=" + str(atm))
+    except Exception as e:
+        logger.warning("[LAB] Startup backfill top-level error: " + str(e))
+
+
 def start_lab(kite):
     """
     Entry point. Call after kite auth in VRL_MAIN.py.
@@ -1764,8 +1924,14 @@ def start_lab(kite):
     except Exception as e:
         logger.warning("[LAB] SQLite init error: " + str(e))
 
+    # v15.2.5 BUG-I: mid-day restart backfill, gated on empty buffer
+    try:
+        _startup_backfill(kite)
+    except Exception as _be:
+        logger.warning("[LAB] Startup backfill skipped on outer error: " + str(_be))
+
     def _start():
-        logger.info("[LAB] Starting — skipping backfill, direct to collection")
+        logger.info("[LAB] Starting — collection loop")
         _lab_loop()
 
     thread = threading.Thread(target=_start, name="LabCollector", daemon=True)
