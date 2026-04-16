@@ -318,7 +318,19 @@ def detect_pre_entry_signals(all_results: dict, state: dict,
         for code, cfg_key, fn in detectors:
             if not bool(types_on.get(cfg_key, True)):
                 continue
-            sig = fn(side, strike, r, df)
+            # BUG-P v15.2.5 Batch 6: isolate each detector. Individual
+            # detectors already have internal try/except but a future
+            # refactor might forget one, and an unhandled exception
+            # would abort the outer loop — killing every later detector
+            # for BOTH sides this tick. Wrap here too so the blast
+            # radius is exactly one (detector, side) pair.
+            try:
+                sig = fn(side, strike, r, df)
+            except Exception as _fe:
+                logger.warning("[ALERTS] detector " + code + " (" + side
+                               + " " + str(strike) + ") raised: "
+                               + type(_fe).__name__ + " " + str(_fe))
+                continue
             if not sig:
                 continue
             key = _key(strike, side, code)
