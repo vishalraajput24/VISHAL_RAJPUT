@@ -2038,19 +2038,35 @@ def _strategy_loop(kite):
 
             with _state_lock:
                 _eod_done = state.get("_eod_reported")
-            # v13.3: Save prev_close continuously from 15:25 onward — avoids missing
-            # the 30-second EOD window if the loop is slow.
+            # v13.3: Save prev_close continuously from 15:25 onward — avoids
+            # missing the 30-second EOD window if the loop is slow.
+            # BUG-H Batch 4: surface which source (WS vs REST) actually saved
+            # the value so operators can diagnose WebSocket stale-tick issues
+            # from the log without needing a broker replay.
             if now.hour == 15 and now.minute >= 25:
                 try:
+                    _saved_via = ""
                     _safe_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                    if _safe_spot <= 0 and kite is not None:
+                    if _safe_spot > 0:
+                        _saved_via = "WS"
+                    elif kite is not None:
                         try:
                             q = kite.ltp(["NSE:NIFTY 50"])
                             _safe_spot = float(list(q.values())[0]["last_price"])
-                        except Exception:
-                            pass
+                            _saved_via = "REST"
+                        except Exception as _re25:
+                            logger.debug("[MAIN] 15:25+ REST fallback failed: "
+                                         + str(_re25))
                     if _safe_spot > 0:
                         with _state_lock:
+                            # Only log once per source transition to avoid
+                            # spamming the 5-minute-long save window.
+                            prev_src = state.get("_prev_close_src", "")
+                            if prev_src != _saved_via:
+                                logger.info("[MAIN] prev_close source: " + _saved_via
+                                            + " @ " + now.strftime("%H:%M:%S")
+                                            + " (spot=" + str(round(_safe_spot, 1)) + ")")
+                                state["_prev_close_src"] = _saved_via
                             state["prev_close"] = round(_safe_spot, 1)
                 except Exception:
                     pass
@@ -2073,7 +2089,22 @@ def _strategy_loop(kite):
                         state["prev_close"] = round(_eod_spot, 1)
                         logger.info("[MAIN] prev_close saved: " + str(state["prev_close"]))
                     else:
+                        # BUG-H Batch 4: Telegram on total EOD save failure.
+                        # Without prev_close, tomorrow's gap-relock guard
+                        # can't fire — operators need to know tonight so
+                        # they can manually set state.prev_close or force
+                        # a relock at the 9:15 open.
                         logger.warning("[MAIN] prev_close NOT saved — both WS and REST returned 0")
+                        try:
+                            _tg_send(
+                                "⚠️ <b>EOD prev_close SAVE FAILED</b>\n"
+                                "Both WebSocket and REST ltp() returned 0 at 15:35.\n"
+                                "Tomorrow's gap-relock guard will be disabled.\n"
+                                "Manual fix option: set state.prev_close via restart"
+                                " + /status, or force relock after 9:15 open."
+                            )
+                        except Exception:
+                            pass
                 _save_state()
                 try:
                     _generate_eod_report()
