@@ -228,8 +228,13 @@ def _scan_side(option_type: str, token: int, atm_strike: int,
 
         # Gate 2: cooldown same direction
         cd_min = CFG.entry_ema9_band("cooldown_minutes", 5)
-        le_ts = shadow_state.get("last_exit_time")
-        le_dir = shadow_state.get("last_exit_direction", "")
+        # BUG-N v15.2.5 Batch 5: snapshot cooldown-relevant fields under _lock.
+        # _manage() mutates last_exit_time + last_exit_direction at the end
+        # of every shadow trade; without the lock, a scan running during
+        # that write could see a half-updated pair.
+        with _lock:
+            le_ts  = shadow_state.get("last_exit_time")
+            le_dir = shadow_state.get("last_exit_direction", "")
         if le_ts and le_dir == option_type:
             try:
                 elapsed = (now - datetime.fromisoformat(le_ts)).total_seconds() / 60
@@ -372,7 +377,11 @@ def tick(kite, spot_ltp: float, atm_strike: int, expiry,
         tokens = {}
 
     # Path 1: already in a shadow trade → manage exit only.
-    if shadow_state.get("in_trade"):
+    # BUG-N: in_trade gate under _lock so we don't race with _manage()
+    # clearing the flag on exit, or tick() itself entering on Path 2.
+    with _lock:
+        _in_trade = shadow_state.get("in_trade")
+    if _in_trade:
         _manage(tokens, now)
         return
 
@@ -423,8 +432,13 @@ def tick(kite, spot_ltp: float, atm_strike: int, expiry,
 
 def _manage(tokens: dict, now: datetime):
     """Exit-side bookkeeping for an open shadow position."""
-    direction = shadow_state.get("direction", "")
-    tok = shadow_state.get("token") or (tokens.get(direction) or {}).get("token")
+    # BUG-N: snapshot direction + token under _lock so they're mutually
+    # consistent. A partial read could marry an old direction with a
+    # new token when a CE→PE rotation happens across ticks.
+    with _lock:
+        direction = shadow_state.get("direction", "")
+        _state_tok = shadow_state.get("token")
+    tok = _state_tok or (tokens.get(direction) or {}).get("token")
     if not tok:
         return
     reason, price, peak, candles = _check_exit(now, int(tok))
