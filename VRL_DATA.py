@@ -20,7 +20,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v15.2"
+VERSION  = "v15.2.5"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -166,6 +166,8 @@ STATE_PERSIST_FIELDS = [
     "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+    # v15.2.5 velocity stall tracking
+    "peak_history", "last_peak_candle_ts", "current_velocity",
     # v15.1 BE+2 lock
     "be2_active", "be2_level",
     # Last exit memory

@@ -3,7 +3,7 @@
 #  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display + BE+2 (peak≥10)
 # ═══════════════════════════════════════════════════════════════
 
-version: "v15.2"
+version: "v15.2.5"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
@@ -58,6 +58,13 @@ exit:
     eod_exit_time: "15:30"
     breakeven_lock_peak_threshold: 10
     breakeven_lock_offset: 2
+    # v15.2.5: VELOCITY_STALL — exit when peak stops growing for N consecutive
+    # 3-min candles. Catches momentum death BEFORE price reversal, unlike BE+2
+    # which only fires after a pullback that reaches entry+offset. Observation
+    # period April 17-28 to calibrate consecutive count and min-peak floor.
+    velocity_stall_enabled: true
+    velocity_stall_consecutive: 2      # 2 consecutive no-growth candles -> exit
+    velocity_stall_min_peak: 3         # ignore stalls below this peak
 
 # ── Strike selection ───────────────────────────────────────────
 strike:

@@ -439,9 +439,9 @@ test("25. test_banner_no_old_floors",
      len(_leaks) == 0,
      "leaks=" + str(_leaks))
 
-# 26. VRL_DATA.VERSION matches config.yaml
-test("26. test_version_is_v15_2",
-     D.VERSION == "v15.2" and 'version: "v15.2"' in _cfg_src,
+# 26. VRL_DATA.VERSION is a v15.2.x string AND matches config.yaml prefix
+test("26. test_version_is_v15_2_family",
+     D.VERSION.startswith("v15.2") and ('version: "' + D.VERSION + '"') in _cfg_src,
      "VERSION=" + str(D.VERSION))
 
 # 27. Config uses nested entry:/exit: structure and has BE+2=10
@@ -464,6 +464,94 @@ _alive = [k for k in _dead if k in _cfg_src]
 test("28. test_deleted_config_keys_absent",
      len(_alive) == 0,
      "still present: " + str(_alive))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 8b — v15.2.5 VELOCITY_STALL exit + DB persistence + scan labels
+# ═══════════════════════════════════════════════════════════════
+
+section("v15.2.5 — VELOCITY_STALL + DB PERSISTENCE + SCAN LABELS")
+
+
+def _vs_state(peak_history, peak=None, entry=100, candles=4):
+    """Build a state ready for VELOCITY_STALL evaluation. Sets
+    last_peak_candle_ts so the in-function update won't append another
+    value (tests drive peak_history manually)."""
+    peak_val = peak if peak is not None else (max(peak_history) if peak_history else 0)
+    return {
+        "in_trade": True, "entry_price": entry,
+        "peak_pnl": peak_val, "trough_pnl": 0,
+        "candles_held": candles, "token": 12345,
+        "peak_history": list(peak_history),
+        "last_peak_candle_ts": "already_seen",
+        "last_band_check_ts": "already_seen",
+    }
+
+
+# 32. VELOCITY_STALL fires after 2 consecutive no-growth candles with peak>=3
+_ph_stalled = [5, 8, 12, 12, 12]   # 2 consecutive no-growth at 12, peak=12
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _vs_state(_ph_stalled, peak=12.0, candles=5)
+    ex = E.manage_exit(st, entry := 112.0, {})
+test("32. test_velocity_stall_exits",
+     len(ex) == 1 and ex[0]["reason"] == "VELOCITY_STALL",
+     "got " + str(ex))
+
+# 33. Only 1 stall at the end → no exit. [5,10,15,15,18] shows growth on last
+_ph_one_stall = [5, 10, 15, 15, 18]
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _vs_state(_ph_one_stall, peak=18.0, candles=5)
+    ex = E.manage_exit(st, 118.0, {})
+test("33. test_velocity_stall_needs_2_consecutive",
+     len(ex) == 0,
+     "got " + str(ex))
+
+# 34. Stall at tiny peaks is ignored (peak < vs_min_peak=3)
+_ph_tiny = [0, 0, 1, 1, 1]
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _vs_state(_ph_tiny, peak=1.0, candles=4)
+    ex = E.manage_exit(st, 101.0, {})
+test("34. test_velocity_stall_ignores_tiny_peaks",
+     len(ex) == 0,
+     "got " + str(ex))
+
+# 35. Healthy growth → no exit. Each candle adds peak → no stall
+_ph_growing = [5, 8, 11, 14, 17]
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _vs_state(_ph_growing, peak=17.0, candles=5)
+    ex = E.manage_exit(st, 117.0, {})
+test("35. test_velocity_still_alive",
+     len(ex) == 0,
+     "got " + str(ex))
+
+# 36. Trade DB write path includes all 15 v15.2 columns (DB _TRADE_FIELDS)
+import VRL_DB as _VDB
+_required_trade_cols = [
+    "entry_ema9_high", "entry_ema9_low",
+    "exit_ema9_high", "exit_ema9_low",
+    "entry_band_position", "exit_band_position",
+    "entry_body_pct",
+    "entry_straddle_delta", "entry_straddle_threshold",
+    "entry_straddle_period", "entry_atm_strike", "entry_band_width",
+    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+]
+_missing_trade = [c for c in _required_trade_cols if c not in _VDB._TRADE_FIELDS]
+test("36. test_trade_db_all_fields_populated",
+     len(_missing_trade) == 0,
+     "missing from _TRADE_FIELDS: " + str(_missing_trade))
+
+# 37. signal_scans reject_reason comes from engine result.reject_reason
+#     directly — no more fake "EMA_0_RSI_0_RED_SHRINK" v14 labels.
+import re as _re
+_lab_src = open(os.path.join(_repo, "VRL_LAB.py")).read()
+_has_old_recon = bool(_re.search(
+    r'reasons\.append\(\s*"EMA_"', _lab_src))
+_uses_engine_reason = ('result.get("reject_reason"' in _lab_src
+                       or 'result.get(\'reject_reason\'' in _lab_src)
+test("37. test_signal_scan_reject_reason_matches_engine",
+     (not _has_old_recon) and _uses_engine_reason,
+     "old_recon=" + str(_has_old_recon)
+     + " uses_engine_reason=" + str(_uses_engine_reason))
 
 
 # ═══════════════════════════════════════════════════════════════

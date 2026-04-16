@@ -290,6 +290,23 @@ if(pos.in_trade){
     var _vbg=_evb==='CONFLUENCE'?'var(--gn-bg)':'var(--or-bg)';
     pa+='<div style="margin-top:6px;padding:6px 10px;border-radius:8px;background:'+_vbg+';color:'+_vwc+';font-size:9px;text-align:center;font-weight:700">VWAP '+esc(_evb)+'</div>';
   }
+  // v15.2.5 velocity indicator — smoothed 3-candle growth rate + sparkline
+  var _vel=parseFloat(pos.current_velocity||0);
+  var _ph=(pos.peak_history||[]);
+  var _vel_clr=_vel>0?'var(--gn2)':(_vel<0?'var(--rd)':'var(--yl)');
+  var _vel_lbl=_vel>0?'\u2713':(_vel<0?'stalled':'0 (warning)');
+  var _spark='';
+  if(_ph.length){
+    var _min=Math.min.apply(null,_ph),_max=Math.max.apply(null,_ph),_rng=Math.max(1,_max-_min);
+    _ph.forEach(function(p){
+      var _h=Math.max(4,Math.round(((p-_min)/_rng)*20)+4);
+      _spark+='<span style="display:inline-block;width:8px;height:'+_h+'px;margin:0 1px;background:'+_vel_clr+';vertical-align:bottom;border-radius:1px"></span>';
+    });
+  }
+  pa+='<div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:var(--bg2);font-size:10px;display:flex;justify-content:space-between;align-items:center">'
+    + '<span>Velocity: <b style="color:'+_vel_clr+'">'+(_vel>=0?'+':'')+_vel.toFixed(2)+' pts/candle '+_vel_lbl+'</b></span>'
+    + '<span style="line-height:24px">'+_spark+'</span>'
+    + '</div>';
   pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span>'+(em?'<span>Mode: <b>'+em+'</b></span>':'')+'</div>';
   pa+='</div>';
 }

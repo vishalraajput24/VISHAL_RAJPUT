@@ -89,6 +89,10 @@ DEFAULT_STATE = {
     "entry_spot_vwap"          : 0.0,
     "entry_spot_vs_vwap"       : 0.0,
     "entry_vwap_bonus"         : "",
+    # v15.2.5 velocity stall tracking (per 3-min candle)
+    "peak_history"       : [],
+    "last_peak_candle_ts": "",
+    "current_velocity"   : 0.0,
     # v15.1 BE+2 lock
     "be2_active"         : False,
     "be2_level"          : 0.0,
@@ -366,6 +370,14 @@ TRADE_FIELDNAMES = [
     "qty_exited",
     "entry_mode", "momentum_pts",
     "rsi_rising", "spot_confirms", "spot_move",
+    # v15.2.5: v15.2 entry/exit context columns (were writing 0 / '' before)
+    "entry_ema9_high", "entry_ema9_low",
+    "exit_ema9_high", "exit_ema9_low",
+    "entry_band_position", "exit_band_position",
+    "entry_body_pct",
+    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
+    "entry_atm_strike", "entry_band_width",
+    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
 ]
 
 def _cleanup_trade_log():
@@ -389,6 +401,24 @@ def _cleanup_trade_log():
         logger.info("[MAIN] Trade log cleaned: " + str(len(good_rows)) + " valid rows kept")
     except Exception as e:
         logger.warning("[MAIN] Trade log cleanup error: " + str(e))
+
+def _compute_exit_band_position(exit_price: float,
+                                current_ema9_high, current_ema9_low) -> str:
+    """v15.2.5: where was price vs the band when we exited? ABOVE / IN / BELOW."""
+    try:
+        px = float(exit_price or 0)
+        eh = float(current_ema9_high or 0)
+        el = float(current_ema9_low  or 0)
+        if eh <= 0 and el <= 0:
+            return ""
+        if px > eh:
+            return "ABOVE"
+        if px < el:
+            return "BELOW"
+        return "IN"
+    except Exception:
+        return ""
+
 
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
                candles_held: int = 0, saved_entry: float = None,
@@ -449,6 +479,28 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "momentum_tf": st.get("momentum_tf", ""),
         "other_falling": 1 if st.get("other_falling") else 0,
         "other_move": round(st.get("other_move", 0), 2),
+        # v15.2.5 fix: persist v15.2 entry/exit context so the trades table
+        # stops writing zeros / empty strings. All values are captured in
+        # state at entry (see VRL_MAIN strategy loop) + refreshed via
+        # manage_exit(); the exit-time band is whatever was last seen.
+        "entry_ema9_high":     round(float(st.get("entry_ema9_high", 0) or 0), 2),
+        "entry_ema9_low":      round(float(st.get("entry_ema9_low",  0) or 0), 2),
+        "exit_ema9_high":      round(float(st.get("current_ema9_high", 0) or 0), 2),
+        "exit_ema9_low":       round(float(st.get("current_ema9_low",  0) or 0), 2),
+        "entry_band_position": st.get("entry_band_position", "") or "",
+        "exit_band_position":  _compute_exit_band_position(
+                                    exit_price,
+                                    st.get("current_ema9_high", 0),
+                                    st.get("current_ema9_low", 0)),
+        "entry_body_pct":      round(float(st.get("entry_body_pct", 0) or 0), 1),
+        "entry_straddle_delta":     round(float(st.get("entry_straddle_delta", 0) or 0), 2),
+        "entry_straddle_threshold": round(float(st.get("entry_straddle_threshold", 0) or 0), 2),
+        "entry_straddle_period":    st.get("entry_straddle_period", "") or "",
+        "entry_atm_strike":    int(st.get("entry_atm_strike", 0) or 0),
+        "entry_band_width":    round(float(st.get("entry_band_width", 0) or 0), 2),
+        "entry_spot_vwap":     round(float(st.get("entry_spot_vwap", 0) or 0), 2),
+        "entry_spot_vs_vwap":  round(float(st.get("entry_spot_vs_vwap", 0) or 0), 2),
+        "entry_vwap_bonus":    st.get("entry_vwap_bonus", "") or "",
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -1151,10 +1203,20 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         # v15.2 exit alert — 5 data lines, spec-aligned (no confirm-at-entry line)
         _gross_sign = "+" if _ch["gross_pnl"] >= 0 else "-"
         _net_sign   = "+" if _ch["net_pnl"]   >= 0 else "-"
+        # v15.2.5: if exit was VELOCITY_STALL, prepend the peak-history context
+        # that explains WHY we bailed (momentum died before price reversed).
+        _extra_line = ""
+        if reason == "VELOCITY_STALL":
+            _ph = state.get("peak_history") or []
+            _vel = state.get("current_velocity", 0)
+            _extra_line = ("Last 4 peaks: " + str(_ph[-4:] if _ph else [])
+                           + " | velocity=" + "{:+.2f}".format(float(_vel))
+                           + "\nVelocity died — exited before reversal\n")
         _tg_send(
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>" + _sym_short + "</b>  " + "{:+.1f}".format(pnl) + "pts\n"
             + reason + " | Peak +" + "{:.1f}".format(peak) + " | " + str(candles) + "min\n"
+            + _extra_line +
             "Entry " + str(round(entry, 1)) + " -> Exit " + str(round(actual_exit, 1)) + "\n"
             "Gross: " + _gross_sign + "\u20B9" + "{:,}".format(abs(int(_ch["gross_pnl"])))
             + " | Charges: -\u20B9" + "{:,}".format(int(_ch["total_charges"]))
@@ -1625,6 +1687,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "entry_spot_vwap":          st.get("entry_spot_vwap", 0),
                 "entry_spot_vs_vwap":       st.get("entry_spot_vs_vwap", 0),
                 "entry_vwap_bonus":         st.get("entry_vwap_bonus", ""),
+                # v15.2.5 velocity stall telemetry (sparkline + number)
+                "peak_history":             (st.get("peak_history") or [])[-4:],
+                "current_velocity":         round(float(st.get("current_velocity", 0) or 0), 2),
                 # Legacy compat
                 "lots_split": False,
                 "current_rsi": round(st.get("current_rsi", 0), 1),

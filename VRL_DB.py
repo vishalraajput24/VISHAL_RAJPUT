@@ -517,6 +517,16 @@ _TRADE_FIELDS = [
     "qty_exited",
     "entry_mode", "momentum_pts",
     "rsi_rising", "spot_confirms", "spot_move",
+    # v15.2.5: v15.2 entry/exit context columns — were in the schema via
+    # idempotent ALTER TABLE migrations but missing from the INSERT path.
+    # That's why every column read back as 0 / ''.
+    "entry_ema9_high", "entry_ema9_low",
+    "exit_ema9_high", "exit_ema9_low",
+    "entry_band_position", "exit_band_position",
+    "entry_body_pct",
+    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
+    "entry_atm_strike", "entry_band_width",
+    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
 ]
 
 def insert_trade(row):

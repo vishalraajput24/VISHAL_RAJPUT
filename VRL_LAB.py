@@ -328,20 +328,16 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 kite        = kite,
                 silent=True)
 
-            # v13.1: Determine reject reason from v13 result keys
-            if result.get("fired"):
-                reject = ""
-            else:
-                reasons = []
-                if not result.get("ema_ok"):
-                    reasons.append("EMA_" + str(result.get("ema_gap", 0)))
-                if not result.get("rsi_ok"):
-                    reasons.append("RSI_" + str(result.get("rsi", 0)))
-                if not result.get("candle_green"):
-                    reasons.append("RED")
-                if not result.get("gap_widening"):
-                    reasons.append("SHRINK")
-                reject = "_".join(reasons) if reasons else "BLOCKED"
+            # v15.2.5: reject_reason comes DIRECTLY from the engine's result
+            # dict. Previously this block reconstructed reasons from v13 keys
+            # (ema_ok / rsi_ok / gap_widening) that v15.x no longer sets,
+            # which is how "EMA_0_RSI_0_RED_SHRINK" kept showing up in the
+            # signal_scans log long after the engine moved on. The v15.x
+            # engine already labels rejects precisely (red_candle,
+            # weak_body_X, straddle_bleed_X_need_Y_in_Z, already_above_band,
+            # below_band, narrow_band_X, cooldown_Xmin, etc.) so we just
+            # pass that string through.
+            reject = "" if result.get("fired") else str(result.get("reject_reason", "") or "BLOCKED")
 
             rows.append({
                 "timestamp"      : ts_str,

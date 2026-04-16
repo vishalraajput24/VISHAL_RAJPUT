@@ -34,6 +34,8 @@ VALID_EXIT_REASONS = (
     # v15.2 primary exits
     "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
     "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
+    # v15.2.5: velocity-based primary exit (catches momentum death)
+    "VELOCITY_STALL",
     # safety / manual
     "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
     # historical (kept for back-compat with old trade log rows)

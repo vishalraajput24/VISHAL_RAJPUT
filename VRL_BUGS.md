@@ -2,6 +2,42 @@
 
 > Reference for future debugging. Never encounter the same bug twice.
 
+## v15.2.5: Velocity-based exit + trade DB persistence + signal scan labels
+
+- **Date:** April 16, 2026 evening (after market close)
+- **Trigger:** April 16 live trade PE 24150 entered 12:24 @ ₹200.2,
+  peaked **+18.4pts** (₹218.65), exited **+2.0pts** via `BREAKEVEN_LOCK`.
+  Giveback of **16.4 pts** in 2–3 candles. BE+2 is too tight for trending moves.
+- **Fix (new exit):** `VELOCITY_STALL`. Engine appends `peak_pnl` to
+  `state.peak_history` once per closed 3-min candle (deduped by candle ts).
+  If last 2 per-candle deltas are both ≤ 0 and peak ≥ 3, exit with
+  `VELOCITY_STALL`. Runs **before** `EMA9_LOW_BREAK` and `BREAKEVEN_LOCK`.
+- **Exit priority (v15.2.5):**
+  1. EMERGENCY_SL (pnl ≤ -20)
+  2. EOD_EXIT (time ≥ 15:30)
+  3. STALE_ENTRY (5c + peak < 3)
+  4. VELOCITY_STALL (2 consecutive no-growth candles, peak ≥ 3) **NEW**
+  5. EMA9_LOW_BREAK (3m close < ema9_low)
+  6. BREAKEVEN_LOCK (peak ≥ 10, ltp ≤ entry + 2) **moved last**
+- **DB persistence fix:** `_TRADE_FIELDS` + `TRADE_FIELDNAMES` missing
+  15 v15.2 context cols. Columns existed via idempotent ALTER TABLE
+  migrations but the INSERT list skipped them → every trade row read
+  back as `0` / `''`. `_log_trade()` now populates them from state.
+- **Signal scan labels fix:** `VRL_LAB.collect_signal_scans()` rebuilt
+  `reject_reason` from v13/v14 keys (`ema_ok`, `rsi_ok`, `gap_widening`)
+  the v15.x engine never sets. That's how `EMA_0_RSI_0_RED_SHRINK`
+  appeared in 605 of 608 April 16 scans. Replaced with
+  `result.get("reject_reason", "")`.
+- **Config:** `exit.ema9_band.velocity_stall_enabled: true`,
+  `velocity_stall_consecutive: 2`, `velocity_stall_min_peak: 3`.
+- **Dashboard:** position card gains velocity row + 4-bar sparkline.
+- **Telegram:** VELOCITY_STALL exits prepend `Last 4 peaks: [...]` +
+  `Velocity died — exited before reversal`.
+- **Tests:** 6 new (38/38 total green).
+- **Risk:** untested live, may exit too early on slow-grind trends.
+  Observation window April 17–28. Threshold + consecutive count to be
+  tuned on real data.
+
 ---
 
 ## BUG-001: PNL shows ₹0 for split lot exits
