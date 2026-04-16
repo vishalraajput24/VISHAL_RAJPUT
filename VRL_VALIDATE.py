@@ -355,27 +355,32 @@ def manual_validate(state):
     except Exception as e:
         checks.append(("CSV", False, str(e)))
 
-    # 3. DB == CSV
+    # 3. DB == CSV (TODAY only — historical drift from pre-DB days is
+    #    not a bug we can fix retroactively).
     try:
-        db_total  = -1
-        csv_total = -1
+        today_iso = date.today().isoformat()
+        db_today  = -1
+        csv_today = -1
         if os.path.isfile(_DB_PATH):
             conn = sqlite3.connect(_DB_PATH, timeout=5)
             try:
-                db_total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+                db_today = conn.execute(
+                    "SELECT COUNT(*) FROM trades WHERE date=?",
+                    (today_iso,)).fetchone()[0]
             finally:
                 conn.close()
         if os.path.isfile(_CSV_PATH):
             with open(_CSV_PATH) as f:
-                csv_total = sum(1 for _ in csv.DictReader(f))
-        if db_total < 0 or csv_total < 0:
-            checks.append(("DB = CSV", False,
-                           "db=" + str(db_total) + " csv=" + str(csv_total)))
+                csv_today = sum(1 for r in csv.DictReader(f)
+                                if r.get("date") == today_iso)
+        if db_today < 0 or csv_today < 0:
+            checks.append(("DB = CSV (today)", False,
+                           "db=" + str(db_today) + " csv=" + str(csv_today)))
         else:
-            checks.append(("DB = CSV", db_total == csv_total,
-                           "db=" + str(db_total) + " csv=" + str(csv_total)))
+            checks.append(("DB = CSV (today)", db_today == csv_today,
+                           "db=" + str(db_today) + " csv=" + str(csv_today)))
     except Exception as e:
-        checks.append(("DB = CSV", False, str(e)))
+        checks.append(("DB = CSV (today)", False, str(e)))
 
     # 4. State sanity
     try:
@@ -385,11 +390,15 @@ def manual_validate(state):
     except Exception as e:
         checks.append(("State", False, str(e)))
 
-    # 5. WebSocket tick freshness
+    # 5. WebSocket tick freshness — market-aware. A stale tick at
+    #    23:00 IST is normal, not a fault.
     try:
         ws_ok = D.is_tick_live(D.NIFTY_SPOT_TOKEN)
-        checks.append(("WebSocket", ws_ok,
-                       "connected" if ws_ok else "stale or closed"))
+        if not ws_ok and not D.is_market_open():
+            checks.append(("WebSocket", True, "idle (market closed)"))
+        else:
+            checks.append(("WebSocket", ws_ok,
+                           "connected" if ws_ok else "stale or closed"))
     except Exception as e:
         checks.append(("WebSocket", False, str(e)))
 
@@ -419,11 +428,16 @@ def manual_validate(state):
     except Exception as e:
         checks.append(("Dashboard", False, str(e)))
 
-    # 8. Spot LTP available
+    # 8. Spot LTP available — market-aware. Zero LTP at 11pm is
+    #    expected (WebSocket idle); treat as PASS with "market closed".
     try:
         spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        checks.append(("Spot LTP", spot_ltp > 0,
-                       str(round(spot_ltp, 1)) if spot_ltp > 0 else "0"))
+        if spot_ltp > 0:
+            checks.append(("Spot LTP", True, str(round(spot_ltp, 1))))
+        elif not D.is_market_open():
+            checks.append(("Spot LTP", True, "0 (market closed)"))
+        else:
+            checks.append(("Spot LTP", False, "0 — market open but no tick"))
     except Exception as e:
         checks.append(("Spot LTP", False, str(e)))
 

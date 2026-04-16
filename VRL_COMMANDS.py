@@ -1297,11 +1297,29 @@ def _cmd_validate(args):
 
 
 def _cmd_pivot(args):
-    """Show fib pivot levels + nearest level to current spot."""
+    """Show fib pivot levels + nearest level to current spot.
+    Self-heals: on empty cache, tries to compute fresh pivots from the
+    historical-data endpoint (works even at night) before giving up.
+    No more misleading 'Run /restart' hint."""
     try:
         pivots = D.get_fib_pivots()
         if not pivots:
-            _tg_send("No pivot data. Run /restart to recalculate.")
+            # Try a live compute — works any time Kite historical_data does,
+            # i.e. also at night (prev close is always yesterday's session).
+            try:
+                fresh = (D.calculate_fib_pivots()
+                         if hasattr(D, "calculate_fib_pivots") else None)
+                if fresh:
+                    pivots = fresh
+            except Exception as _e:
+                logger.debug("[PIVOT] recompute err: " + str(_e))
+        if not pivots:
+            _tg_send(
+                "\U0001F4D0 <b>PIVOT DATA UNAVAILABLE</b>\n"
+                "Previous session's H/L/C not cached and the live compute\n"
+                "didn't return data. This is normal if Kite's historical_data\n"
+                "is rate-limited right now. Will self-heal on the next\n"
+                "daily rollover at 9:15 IST.")
             return
         spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         nearest = D.get_nearest_fib_level(spot)
