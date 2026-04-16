@@ -1349,12 +1349,16 @@ def _execute_exit(kite, option_ltp: float, reason: str,
 # ═══════════════════════════════════════════════════════════════
 
 def _is_new_1min_candle(now: datetime) -> bool:
-    # Wait at least 30 seconds into the new minute so the closed candle
-    # is fully available from the broker. Window stays open for the
-    # remaining 29 seconds so a brief loop hiccup can't skip a minute.
+    # BUG-R v15.2.5 Batch 6: bumped from 30 → 35 seconds. Kite's
+    # historical_data endpoint occasionally reports the closed 1-min
+    # candle without the final trade(s) until ~32–34 seconds past the
+    # boundary, which caused rare stale-close reads. 35s gives a
+    # 5-second broker-side safety margin. Window still stays open for
+    # the remaining 24 seconds so a brief loop hiccup can't skip a
+    # minute.
     key = now.strftime("%Y%m%d%H%M")
     with _state_lock:
-        if state.get("_last_1min_candle") != key and now.second >= 30:
+        if state.get("_last_1min_candle") != key and now.second >= 35:
             state["_last_1min_candle"] = key
             return True
     return False
