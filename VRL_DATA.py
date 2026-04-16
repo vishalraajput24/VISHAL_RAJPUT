@@ -859,16 +859,27 @@ def get_atm_straddle(timestamp=None, atm_strike: int = 0) -> float:
             return None
 
         def _closest(df, ts):
+            """Pick the last close at-or-before ts. v15.2.3: tz-safe.
+            Kite returns a tz-AWARE (IST) DatetimeIndex; callers pass a
+            tz-NAIVE wall-clock datetime. Normalize both sides to naive
+            so pandas doesn't raise TypeError on the comparison."""
             if ts is None:
-                # live → use last closed candle (iloc[-2] when in-progress exists)
                 idx = -2 if len(df) >= 2 else -1
                 return float(df.iloc[idx]["close"])
             try:
-                snapped = df.index[df.index <= ts]
-                if len(snapped) == 0:
+                df_idx = df.index
+                # Strip tz from the DataFrame index if present
+                if getattr(df_idx, "tz", None) is not None:
+                    df_idx = df_idx.tz_localize(None)
+                # Strip tz from ts if present
+                if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
+                    ts = ts.replace(tzinfo=None)
+                mask_pos = [i for i, t in enumerate(df_idx) if t <= ts]
+                if not mask_pos:
                     return None
-                return float(df.loc[snapped[-1]]["close"])
-            except Exception:
+                return float(df.iloc[mask_pos[-1]]["close"])
+            except Exception as _e:
+                logger.debug("[STRADDLE] _closest err: " + str(_e))
                 return None
 
         ce_close = _closest(ce_df, timestamp)
@@ -883,21 +894,47 @@ def get_atm_straddle(timestamp=None, atm_strike: int = 0) -> float:
 
 def get_straddle_delta(atm_strike: int, lookback_minutes: int = 15) -> float:
     """Straddle expansion = straddle(now) - straddle(now - lookback_minutes).
-    `atm_strike` is the active ATM strike. `lookback_minutes` snaps back 15 min
-    (5 x 3-min candles) by default. Returns None if either side is missing —
-    the caller must treat that as a reject (straddle_data_unavailable)."""
+
+    v15.2.3 changes:
+    - Timezone-safe lookup (see `_closest` in get_atm_straddle).
+    - Graceful fallback: if the strict lookback is unavailable (data gap,
+      ATM just shifted, weekend boundary), try progressively shorter
+      lookbacks [15, 12, 9, 6] before giving up.
+    - INFO-level diagnostic log so 100%-NA failures are visible without
+      redeploy (the old code returned None with no trace).
+    """
     if not atm_strike:
         return None
     now_dt = now_ist().replace(tzinfo=None)
-    current = get_atm_straddle(None, atm_strike)       # None = use last CLOSED candle
-    prior_dt = now_dt - timedelta(minutes=int(lookback_minutes))
-    # Snap to 3-min boundary (00, 03, 06, ...)
-    prior_dt = prior_dt.replace(
-        minute=(prior_dt.minute // 3) * 3, second=0, microsecond=0)
-    prior = get_atm_straddle(prior_dt, atm_strike)
-    if current is None or prior is None:
+    current = get_atm_straddle(None, atm_strike)
+    if current is None:
+        logger.info("[STRADDLE] atm=" + str(atm_strike)
+                    + " current=NA → delta=None")
         return None
-    return round(current - prior, 2)
+
+    tried = []
+    for lb in (int(lookback_minutes), 12, 9, 6):
+        if lb <= 0 or lb in tried:
+            continue
+        tried.append(lb)
+        prior_dt = now_dt - timedelta(minutes=lb)
+        # Snap back to the 3-min boundary that line up with option_3min rows.
+        prior_dt = prior_dt.replace(
+            minute=(prior_dt.minute // 3) * 3, second=0, microsecond=0)
+        prior = get_atm_straddle(prior_dt, atm_strike)
+        if prior is not None:
+            delta = round(current - prior, 2)
+            logger.info("[STRADDLE] atm=" + str(atm_strike)
+                        + " now=" + str(round(current, 1))
+                        + " @-" + str(lb) + "min=" + str(round(prior, 1))
+                        + " Δ=" + "{:+.1f}".format(delta)
+                        + " prior_ts=" + prior_dt.strftime("%H:%M"))
+            return delta
+
+    logger.info("[STRADDLE] atm=" + str(atm_strike)
+                + " current=" + str(round(current, 1))
+                + " prior NA for lookbacks=" + str(tried) + " → delta=None")
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════
