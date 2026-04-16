@@ -14,6 +14,20 @@ import logging
 from datetime import datetime
 
 import VRL_DATA as D
+import VRL_CONFIG as CFG
+
+
+def _verify_timeout(kind: str, default: int) -> int:
+    """BUG-Q v15.2.5 Batch 6: pull verify_order_fill timeouts from
+    config.yaml -> trade.verify_timeout_{entry,exit}. Falls back to
+    the historical hardcoded value if config lacks the key."""
+    try:
+        v = (CFG.get().get("trade") or {}).get("verify_timeout_" + kind)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    return default
 
 try:
     from kiteconnect.exceptions import (
@@ -110,7 +124,8 @@ def place_entry(kite, symbol: str, token: int,
         logger.info("[TRADE] LIMIT ENTRY placed: " + str(order_id)
                     + " limit=" + str(limit_price))
 
-        fill_price, fill_qty = verify_order_fill(kite, order_id, timeout_secs=8)
+        fill_price, fill_qty = verify_order_fill(
+            kite, order_id, timeout_secs=_verify_timeout("entry", 8))
 
         if fill_qty == 0:
             try:
@@ -205,7 +220,8 @@ def place_exit(kite, symbol: str, token: int,
                 logger.info("[TRADE] LIMIT EXIT placed: " + str(order_id)
                             + " limit=" + str(limit_price))
 
-                fill_price, fill_qty = verify_order_fill(kite, order_id, timeout_secs=5)
+                fill_price, fill_qty = verify_order_fill(
+                    kite, order_id, timeout_secs=_verify_timeout("exit", 5))
 
                 if fill_qty > 0:
                     slippage = round(exit_price_ref - fill_price, 2)

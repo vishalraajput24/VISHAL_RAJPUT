@@ -8,6 +8,13 @@ bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
 
+# ── v15.2.5 BUG-Q: verify_order_fill timeouts (seconds) ─────────
+# Previously hardcoded in VRL_TRADE.place_entry / place_exit.
+# Tune these without a code edit if Kite latency changes.
+trade:
+  verify_timeout_entry: 8    # LIMIT entry fill wait
+  verify_timeout_exit:  5    # LIMIT exit fill wait before MARKET fallback
+
 # ── Instrument ─────────────────────────────────────────────────
 instrument:
   name: NIFTY
