@@ -2387,11 +2387,17 @@ def _strategy_loop(kite):
                 # Runs after live scan on every 1-min boundary. Independent
                 # state, independent cooldown, never touches live state,
                 # never places orders, never alerts during the day.
+                # v15.2.2: heartbeat log proves the call site is reached
+                # before we delegate, and exc_info=True surfaces any error.
                 try:
+                    logger.info("[SHADOW_1MIN] call_site reached at "
+                                + now.strftime("%H:%M:%S")
+                                + " spot=" + str(spot_ltp))
                     from VRL_ENGINE import shadow_scan_1min
                     shadow_scan_1min(spot_ltp)
                 except Exception as _shade:
-                    logger.debug("[SHADOW_1MIN] tick: " + str(_shade))
+                    logger.warning("[SHADOW_1MIN] call_site error: "
+                                   + str(_shade), exc_info=True)
 
                 # Write dashboard + cache args for post-exit refresh
                 global _last_dash_args

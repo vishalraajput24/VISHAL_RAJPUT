@@ -501,19 +501,33 @@ def shadow_scan_1min(spot_ltp):
 
     Resolves ATM strike + nearest expiry internally using VRL_DATA helpers.
     Any exception is caught and logged — this must never kill the main loop.
+
+    v15.2.2: defensive logging — every early-return now leaves a trace so
+    silent failures (no shadow CSVs, no SHADOW log lines) are diagnosable
+    without re-deploying. All logs at INFO so they survive the standard
+    logger level filter.
     """
+    _t = datetime.now().strftime("%H:%M:%S")
+    logger.info("[SHADOW_1MIN] scan_called spot=" + str(spot_ltp) + " at " + _t)
     try:
         if not spot_ltp or float(spot_ltp) <= 0:
+            logger.info("[SHADOW_1MIN] skip: bad spot_ltp=" + str(spot_ltp))
             return
         atm = D.resolve_atm_strike(float(spot_ltp))
+        if not atm:
+            logger.info("[SHADOW_1MIN] skip: no atm_strike for spot=" + str(spot_ltp))
+            return
         expiry = None
         try:
             expiry = D.get_nearest_expiry()
-        except Exception:
-            expiry = None
-        if not atm or expiry is None:
-            # Can't scan without both — skip silently, next minute will retry.
+        except Exception as _ee:
+            logger.info("[SHADOW_1MIN] skip: expiry resolve raised: " + str(_ee))
             return
+        if expiry is None:
+            logger.info("[SHADOW_1MIN] skip: expiry is None (kite not initialised?)")
+            return
+        logger.info("[SHADOW_1MIN] dispatch tick atm=" + str(atm)
+                    + " expiry=" + str(expiry))
         _SHADOW.tick(None, float(spot_ltp), int(atm), expiry)
     except Exception as e:
-        logger.warning("[SHADOW_1MIN] scan error: " + str(e))
+        logger.warning("[SHADOW_1MIN] scan error: " + str(e), exc_info=True)
