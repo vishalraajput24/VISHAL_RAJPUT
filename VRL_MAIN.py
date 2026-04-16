@@ -629,16 +629,29 @@ def _tg_safe(s) -> str:
         return ""
 
 
-def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
-    """Blocking send with flood control — max 5 msgs per 10s."""
+def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None,
+                  priority: str = "normal") -> bool:
+    """Blocking send with flood control — max 5 msgs per 10s.
+
+    BUG-U v15.2.5 Batch 6: `priority="critical"` bypasses flood
+    control entirely. Use for CRITICAL alerts that MUST reach the
+    operator during a burst (exit failure, shutdown-with-open-trade,
+    DB corruption) even if the loop has already queued 5 messages
+    in the last 10 seconds. Critical sends still count toward the
+    sliding window so a second non-critical call right after won't
+    get an immediate free pass."""
     if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
         return False
 
-    # Flood control — prevent Telegram 429 rate limit
+    is_critical = (str(priority).lower() == "critical")
+
+    # Flood control — prevent Telegram 429 rate limit.
+    # CRITICAL messages bypass the wait (BUG-U) but still append to
+    # the timestamp queue so bookkeeping stays accurate.
     now_ts = time.time()
     while _tg_timestamps and now_ts - _tg_timestamps[0] > _TG_FLOOD_WINDOW:
         _tg_timestamps.popleft()
-    if len(_tg_timestamps) >= _TG_FLOOD_LIMIT:
+    if not is_critical and len(_tg_timestamps) >= _TG_FLOOD_LIMIT:
         wait = _TG_FLOOD_WINDOW - (now_ts - _tg_timestamps[0])
         if wait > 0:
             time.sleep(min(wait, _TG_FLOOD_WINDOW))
@@ -673,11 +686,13 @@ def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None) -> b
         logger.error("[TG] send error: " + type(e).__name__)
         return False
 
-def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None) -> bool:
-    """Non-blocking send — fires in background thread so strategy loop never waits."""
+def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
+             priority: str = "normal") -> bool:
+    """Non-blocking send — fires in background thread so strategy loop never waits.
+    BUG-U: `priority` passed through to _tg_send_sync for CRITICAL bypass."""
     t = threading.Thread(
         target=_tg_send_sync,
-        args=(text, parse_mode, chat_id),
+        args=(text, parse_mode, chat_id, priority),
         daemon=True
     )
     t.start()
@@ -795,7 +810,8 @@ def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
         "2. Once flat on the broker side, send <b>/reset_exit</b> here\n"
         "   to re-enable automatic exits.\n"
         "Until then, all exit attempts are blocked to prevent duplicate\n"
-        "orders or incorrect state."
+        "orders or incorrect state.",
+        priority="critical",   # BUG-U: bypass flood control
     )
 
 def _alert_error(message: str):
@@ -2115,7 +2131,8 @@ def _strategy_loop(kite):
                                 "Both WebSocket and REST ltp() returned 0 at 15:35.\n"
                                 "Tomorrow's gap-relock guard will be disabled.\n"
                                 "Manual fix option: set state.prev_close via restart"
-                                " + /status, or force relock after 9:15 open."
+                                " + /status, or force relock after 9:15 open.",
+                                priority="critical",   # BUG-U: bypass flood
                             )
                         except Exception:
                             pass
@@ -2754,7 +2771,8 @@ def _shutdown(signum, frame):
             _tg_send_sync(
                 "⚠️ VRL SHUTDOWN with open position: " + _sym
                 + " entry=" + str(_entry)
-                + " peak=" + str(_pk)
+                + " peak=" + str(_pk),
+                priority="critical",   # BUG-U: bypass flood on shutdown
             )
         except Exception as _tge:
             # Shutdown path: network may already be down. Swallow —
