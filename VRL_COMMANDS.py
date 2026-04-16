@@ -259,8 +259,8 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DATA</b>\n"
         "/files     — browse folders\n"
-        "/download  — strategy data (trade log + DB + config + state)\n"
-        "/download_all — full day zip (or /download_all YYYY-MM-DD)\n"
+        "/download           — full day zip (or /download YYYY-MM-DD)\n"
+        "/download_strategy  — 4-file shortcut (trade log + DB + config + state)\n"
         "/health    — system health check\n"
         "/validate  — 10 system alignment checks\n"
         "/livecheck — last 50 log lines\n"
@@ -881,8 +881,9 @@ def _cmd_score(args):
     _tg_send(msg)
 
 def _cmd_files(args):  _send_file_browser()
-def _cmd_download(args):
-    """Smart download — 4 key files only.
+def _cmd_download_strategy(args):
+    """Smart download — 4 key files only (trade log + DB + config + state).
+    Accessible via /download_strategy.
 
     BUG-DL2 v15.2.5: replaced the four hardcoded paths with canonical
     constants from VRL_DATA so the zip actually picks up the file the
@@ -890,6 +891,10 @@ def _cmd_download(args):
     ~/state/vrl_live_state.json pointed at a path that hasn't existed
     since BUG-015; the real file is under D.STATE_FILE_PATH
     (~/VISHAL_RAJPUT/state/vrl_live_state.json).
+
+    BUG-DL1 v15.2.5: renamed from _cmd_download. /download now delivers
+    the full-day zip (previous /download_all behavior) — the semantics
+    operators expected all along.
     """
     import zipfile as _zf
     import os as _os
@@ -926,8 +931,16 @@ def _cmd_download(args):
         _tg_send("Download error: " + str(e))
 
 
-def _cmd_download_all(args):
-    """Full download — all logs for a date."""
+def _cmd_download(args):
+    """Full day zip — all logs + data + state for a date.
+    /download             → today
+    /download 2026-04-16  → specific day
+
+    BUG-DL1 v15.2.5: this replaces the old /download (now
+    /download_strategy) because operators uniformly treated this
+    as "give me today's full data". The 4-file shortcut is still
+    available via /download_strategy for the old muscle memory.
+    """
     target = None
     if isinstance(args, list):
         args = " ".join(args)
@@ -938,9 +951,19 @@ def _cmd_download_all(args):
         elif len(arg) == 10 and arg[4] == "-" and arg[7] == "-":
             target = arg
         else:
-            _tg_send("Usage: /download_all or /download_all 2026-04-01")
+            _tg_send("Usage: /download or /download 2026-04-16")
             return
     _send_today_download(target)
+
+
+def _cmd_download_all(args):
+    """DEPRECATED alias for /download. Still registered so existing
+    operator muscle memory works. BUG-DL1 v15.2.5."""
+    try:
+        logger.warning("[DOWNLOAD] /download_all is DEPRECATED — use /download")
+    except Exception:
+        pass
+    _cmd_download(args)
 
 def _cmd_health(args):
     import os as _os
@@ -1587,8 +1610,9 @@ _DISPATCH = {
     "/account"     : _cmd_account,
     "/trades"      : _cmd_trades,
     "/files"       : _cmd_files,
-    "/download"    : _cmd_download,
-    "/download_all": _cmd_download_all,
+    "/download"         : _cmd_download,
+    "/download_strategy": _cmd_download_strategy,
+    "/download_all"     : _cmd_download_all,   # BUG-DL1: deprecated alias
     "/health"      : _cmd_health,
     "/pause"       : _cmd_pause,
     "/reset_exit"  : _cmd_reset_exit,
