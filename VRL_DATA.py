@@ -307,6 +307,48 @@ def setup_dated_logger(name: str, log_dir: str, level=logging.DEBUG) -> logging.
     return lg
 
 
+def audit_log_paths() -> dict:
+    """v15.2.5 BUG-DL3: one-shot report of which log directories exist.
+
+    Called once from VRL_MAIN startup. Does NOT create anything —
+    just inspects disk state so the operator can see at a glance
+    whether a category has ever been populated. Returns a dict
+    mapping category name to {path, exists, file_count}. Also
+    logs INFO lines for present dirs and WARNING lines for missing
+    ones.
+    """
+    categories = {
+        "live":   LIVE_LOG_DIR,
+        "lab":    LAB_LOG_DIR,
+        "auth":   AUTH_LOG_DIR,
+        "web":    WEB_LOG_DIR,
+        "health": HEALTH_LOG_DIR,
+        "zones":  ZONES_LOG_DIR,
+        "ml":     ML_LOG_DIR,
+        "errors": ERROR_LOG_DIR,
+        "flow":   FLOW_LOG_DIR,
+    }
+    result = {}
+    for cat, path in categories.items():
+        exists = os.path.isdir(path)
+        try:
+            n_files = (
+                len([f for f in os.listdir(path)
+                     if os.path.isfile(os.path.join(path, f))])
+                if exists else 0)
+        except Exception:
+            n_files = -1
+        result[cat] = {"path": path, "exists": exists, "file_count": n_files}
+        if exists:
+            logger.info("[LOGPATH] " + cat + ": " + path
+                        + " (" + str(n_files) + " files)")
+        else:
+            logger.warning("[LOGPATH] " + cat + ": " + path
+                           + " MISSING — no logs will zip under this "
+                           "category until it's created")
+    return result
+
+
 def collect_logs_for_date(target_date: str = None) -> list:
     """
     Collect all log/data files for a given date (YYYY-MM-DD format).

@@ -2910,6 +2910,14 @@ def main():
     except Exception as e:
         logger.warning("[MAIN] Lab cleanup failed: " + str(e))
 
+    # BUG-DL3 v15.2.5: log directory audit — one INFO line per category
+    # present, one WARNING per missing dir. Helps the operator see at a
+    # glance what `/download` will actually find on disk.
+    try:
+        D.audit_log_paths()
+    except Exception as _ae:
+        logger.debug("[MAIN] audit_log_paths error: " + str(_ae))
+
     # Wire Telegram commands module
     VRL_COMMANDS.setup(
         state_ref=state, lock_ref=_state_lock,
