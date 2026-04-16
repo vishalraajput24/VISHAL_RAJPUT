@@ -600,7 +600,7 @@ def _cmd_edge(args):
                 except Exception: pass
 
             pnl      = round(ltp_t-entry,1) if ltp_t>0 else 0
-            rs_str   = ("+₹" if pnl>=0 else "₹")+str(round(pnl*D.LOT_SIZE))
+            rs_str   = ("+₹" if pnl>=0 else "₹")+str(round(pnl*D.get_lot_size()))
             peak     = st.get("peak_pnl",0)
             phase    = st.get("exit_phase",1)
             sl_val   = st.get("phase1_sl",0) if phase==1 else st.get("phase2_sl",0)
@@ -744,7 +744,7 @@ def _cmd_pnl(args):
     for _t in _today_trades:
         _g = float(_t.get("gross_pnl_rs", 0))
         if _g == 0:
-            _g = float(_t.get("pnl_pts", 0)) * float(_t.get("qty_exited", D.LOT_SIZE * 2))
+            _g = float(_t.get("pnl_pts", 0)) * float(_t.get("qty_exited", D.get_lot_size() * 2))
         _total_gross += _g
         _total_charges += float(_t.get("total_charges", 0))
     _total_net = round(_total_gross - _total_charges, 2)
@@ -952,7 +952,7 @@ def _cmd_health(args):
         "In trade   : " + str(state.get("in_trade", False)) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Disk free  : " + str(disk_free_mb) + " MB\n"
-        "Lot size   : " + str(D.LOT_SIZE) + " (from broker)\n"
+        "Lot size   : " + str(D.get_lot_size()) + " (from broker)\n"
         "Mode       : " + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE") + "\n"
         "Version    : " + D.VERSION
     )
@@ -1048,7 +1048,7 @@ def _cmd_reset_exit(args):
             state["exit_phase"] = 1
             state["phase1_sl"] = 0.0
             state["phase2_sl"] = 0.0
-            state["qty"] = D.LOT_SIZE
+            state["qty"] = D.get_lot_size()
             state["trail_tightened"] = False
             state["peak_pnl"] = 0.0
             state["mode"] = ""
@@ -1501,7 +1501,7 @@ def _cmd_slippage(args):
     avg_e = round(sum(_e_slips) / len(_e_slips), 2) if _e_slips else 0
     avg_x = round(sum(_x_slips) / len(_x_slips), 2) if _x_slips else 0
     total = round(sum(_e_slips) + sum(_x_slips), 2)
-    cost = int(total * D.LOT_SIZE * 2)
+    cost = int(total * D.get_lot_size() * 2)
     n = len(rows)
 
     _tg_send(

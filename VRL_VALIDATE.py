@@ -122,7 +122,7 @@ def validate_entry(state, entry_result, kite=None):
     # CHECK 4: Qty is correct (lots × lot_size)
     try:
         lot_count    = CFG.get().get("lots", {}).get("count", 2)
-        lot_size     = CFG.get().get("lots", {}).get("size", D.LOT_SIZE)
+        lot_size     = CFG.get().get("lots", {}).get("size", D.get_lot_size())
         expected_qty = lot_count * lot_size
         actual_qty   = int(state.get("qty", 0) or 0)
         # Allow partial fills in live mode (smaller is OK, larger is not)

@@ -83,7 +83,7 @@ def pre_entry_checks(kite, token: int, state: dict,
         try:
             from VRL_TRADE import get_margin_available
             avail = get_margin_available(kite)
-            if avail > 0 and avail < option_ltp * D.LOT_SIZE * 1.2:
+            if avail > 0 and avail < option_ltp * D.get_lot_size() * 1.2:
                 return False, "Insufficient margin"
         except Exception:
             pass

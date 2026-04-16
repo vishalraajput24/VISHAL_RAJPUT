@@ -63,7 +63,7 @@ DEFAULT_STATE = {
     "expiry"             : "",
     "entry_price"        : 0.0,
     "entry_time"         : "",
-    "qty"                : D.LOT_SIZE,
+    "qty"                : D.get_lot_size(),
     "lot_count"          : 2,
     # ── Exit state (v15.0: band-based trailing, no fixed floors) ──
     "peak_pnl"           : 0.0,
@@ -438,7 +438,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     is_new  = not os.path.isfile(D.TRADE_LOG_PATH)
     entry   = saved_entry if saved_entry is not None else st.get("entry_price", 0)
     pnl_pts = round(exit_price - entry, 2)
-    _lot_qty = qty if qty > 0 else D.LOT_SIZE
+    _lot_qty = qty if qty > 0 else D.get_lot_size()
     pnl_rs  = round(pnl_pts * _lot_qty, 2)
 
     row = {
@@ -594,7 +594,7 @@ def _mode_tag() -> str:
     return "📄 PAPER" if D.PAPER_MODE else "💰 LIVE"
 
 def _rs(pts: float) -> str:
-    rupees = round(pts * D.LOT_SIZE, 0)
+    rupees = round(pts * D.get_lot_size(), 0)
     sign   = "+" if rupees >= 0 else ""
     return sign + "₹" + str(int(rupees))
 
@@ -766,7 +766,7 @@ def _alert_bot_started():
             "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
             "Account: " + str(D.get_account_info().get("name", "")) + "\n"
             "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
-            "Lots: 2 × " + str(D.LOT_SIZE) + " = " + str(D.LOT_SIZE * 2) + " qty\n"
+            "Lots: 2 × " + str(D.get_lot_size()) + " = " + str(D.get_lot_size() * 2) + " qty\n"
             "Stop: dynamic EMA9-low close break (trail) | Emergency -20pts\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Every order uses REAL money.\n"
@@ -880,7 +880,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     import VRL_CONFIG as CFG
     lot_count = CFG.get().get("lots", {}).get("count", 2)
-    total_qty = D.LOT_SIZE * lot_count
+    total_qty = D.get_lot_size() * lot_count
 
     fill = place_entry(kite, symbol, token, option_type,
                        total_qty, entry_price)
@@ -981,7 +981,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     try:
         from VRL_TRADE import place_sl_order
         _cfg_lots    = CFG.get().get("lots", {})
-        _lot_size    = _cfg_lots.get("size", D.LOT_SIZE)
+        _lot_size    = _cfg_lots.get("size", D.get_lot_size())
         _lot_count   = _cfg_lots.get("count", 2)
         _candle_sl   = CFG.get().get("exit", {}).get("candle_close_sl", 12)
         _sl_price    = round(actual_price - _candle_sl, 2)
@@ -1124,9 +1124,9 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 
     # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
-        exit_qty = state.get("qty", D.LOT_SIZE * 2)
+        exit_qty = state.get("qty", D.get_lot_size() * 2)
     else:
-        exit_qty = D.LOT_SIZE
+        exit_qty = D.get_lot_size()
 
     # v13.5: Cancel the single exchange SL-M order
     try:
@@ -1224,7 +1224,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _day_wins   = _day_trades - _day_losses
         _sym_short  = _short_sym(symbol, direction, _exit_strike)
         _pnl_sign   = "+" if pnl >= 0 else ""
-        _day_rs     = int(_day_pnl * D.LOT_SIZE)
+        _day_rs     = int(_day_pnl * D.get_lot_size())
         import VRL_CONFIG as _CFG_exit
         _cd_cfg     = _CFG_exit.get().get("cooldown", {})
         # Calculate charges for Telegram
@@ -1233,8 +1233,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _ch = CHARGES.calculate_charges(entry, actual_exit,
                       exit_qty, _num_eo)
         except Exception:
-            _ch = {"gross_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
-                   "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
+            _ch = {"gross_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
+                   "total_charges": 0, "net_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
                    "charges_pts": 0}
         # v15.2 exit alert — 5 data lines, spec-aligned (no confirm-at-entry line)
         _gross_sign = "+" if _ch["gross_pnl"] >= 0 else "-"
@@ -1268,9 +1268,9 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         remaining = "LOT2" if state.get("lot2_active") else "LOT1"
         _sym_short_p = _short_sym(symbol, direction, _exit_strike)
         try:
-            _ch_p = CHARGES.calculate_lot_charges(entry, actual_exit, D.LOT_SIZE)
+            _ch_p = CHARGES.calculate_lot_charges(entry, actual_exit, D.get_lot_size())
         except Exception:
-            _ch_p = {"net_pnl": pnl * D.LOT_SIZE, "total_charges": 0}
+            _ch_p = {"net_pnl": pnl * D.get_lot_size(), "total_charges": 0}
         _tg_send(
             "💰 <b>" + lot_id + " " + _sym_short_p + "</b> "
             + ("+" if pnl >= 0 else "") + str(round(pnl, 1)) + "pts\n"
