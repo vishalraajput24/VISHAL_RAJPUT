@@ -92,7 +92,14 @@ def _startup_integrity_check(conn):
     """Run PRAGMA quick_check once at startup. If the DB is corrupt,
     _report_db_error triggers the Telegram alert before the bot even
     starts scanning. Non-fatal: we let init_db continue so trading
-    (which doesn't need the DB) still works."""
+    (which doesn't need the DB) still works.
+
+    BUG-T v15.2.5 Batch 6: on a successful check we also clear
+    _db_corruption_alerted so that IF the DB gets corrupted again
+    later and then manually repaired, a FRESH corruption event will
+    re-alert. Without this reset, one corruption alert per session
+    was the cap — future events silent."""
+    global _db_corruption_alerted
     try:
         row = conn.execute("PRAGMA quick_check").fetchone()
         result = (row[0] if row else "unknown") or "unknown"
@@ -103,6 +110,13 @@ def _startup_integrity_check(conn):
             )
         else:
             logger.info("[DB] Startup integrity check: ok")
+            # BUG-T: reset the one-shot alert flag on a clean check.
+            with _db_alert_lock:
+                if _db_corruption_alerted:
+                    logger.info("[DB] Corruption alert flag cleared — "
+                                "integrity_check passed, future corruption "
+                                "events will re-alert")
+                _db_corruption_alerted = False
     except Exception as e:
         _report_db_error("startup integrity", e)
 
