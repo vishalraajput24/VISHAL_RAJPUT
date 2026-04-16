@@ -212,17 +212,66 @@ def _send_today_download(target_date: str = None):
             categories[cat] = categories.get(cat, 0) + 1
         cat_summary = " | ".join(k + ":" + str(v) for k, v in sorted(categories.items()))
 
-        _tg_send_file(
-            zip_path,
-            caption="📦 VRL Logs — " + target_date
-                    + "\n" + str(file_count) + " files | "
-                    + str(size_mb) + " MB"
-                    + "\n" + cat_summary
-        )
+        # BUG-DL4 v15.2.5: Telegram bot upload cap is 50MB. If the zip
+        # exceeds the soft 45MB threshold (5MB headroom for multipart
+        # overhead), don't attempt the send — put it behind the local
+        # web server and reply with the URL. Preserves the zip on disk
+        # in all paths so SSH retrieval stays possible.
+        _TG_SIZE_LIMIT_MB = 45
+        caption = ("📦 VRL Logs — " + target_date
+                   + "\n" + str(file_count) + " files | "
+                   + str(size_mb) + " MB"
+                   + "\n" + cat_summary)
+
+        if size_mb > _TG_SIZE_LIMIT_MB:
+            # Stage under STATE_DIR if it isn't already — create_daily_zip
+            # already writes there, so just name the link.
+            _link_hint = "http://" + str(globals().get("_WEB_IP", "localhost")) + ":8080"
+            logger.warning("[DOWNLOAD] zip " + os.path.basename(zip_path)
+                           + " is " + str(size_mb) + "MB > "
+                           + str(_TG_SIZE_LIMIT_MB) + "MB Telegram cap — "
+                           "skipping send, file preserved at " + zip_path)
+            _tg_send(
+                "⚠️ <b>DOWNLOAD TOO LARGE FOR TELEGRAM</b>\n"
+                "Date : " + target_date + "\n"
+                "Size : " + str(size_mb) + " MB (cap " + str(_TG_SIZE_LIMIT_MB) + " MB)\n"
+                "Files: " + str(file_count) + "\n"
+                + cat_summary + "\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Local path: <code>" + zip_path + "</code>\n"
+                "Fetch via SSH or browse " + _link_hint + " /files."
+            )
+            # Do NOT unlink — operator needs the file on disk to pull.
+            return
+
+        _ok = False
         try:
-            os.remove(zip_path)
-        except Exception:
-            pass
+            _ok = bool(_tg_send_file(zip_path, caption=caption))
+        except Exception as _se:
+            logger.error("[DOWNLOAD] Telegram file send raised: "
+                         + type(_se).__name__ + " " + str(_se))
+            _ok = False
+
+        if _ok:
+            logger.info("[DOWNLOAD] sent " + os.path.basename(zip_path)
+                        + " (" + str(size_mb) + "MB, "
+                        + str(file_count) + " entries)")
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+        else:
+            # BUG-DL4: keep zip on disk on failure + report local path.
+            logger.warning("[DOWNLOAD] Telegram send failed — zip "
+                           "preserved for SSH retrieval: " + zip_path)
+            _tg_send(
+                "⚠️ <b>DOWNLOAD DELIVERY FAILED</b>\n"
+                "Date : " + target_date + "\n"
+                "Size : " + str(size_mb) + " MB\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "File kept on disk for SSH pull:\n"
+                "<code>" + zip_path + "</code>"
+            )
     except Exception as e:
         _tg_send("Download error: " + str(e))
 
