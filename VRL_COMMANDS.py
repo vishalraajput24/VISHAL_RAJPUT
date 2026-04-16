@@ -272,12 +272,11 @@ def _cmd_help(args):
         "/restart   — restart bot\n"
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + ("📄 PAPER" if D.PAPER_MODE else "💰 LIVE")
-        + " | EMA9 Band Breakout (3-min option candles)\n"
-        + "Entry: close > EMA9-high (fresh) + green + body ≥ 30%\n"
-        + "Exit: EMA9-low close break (dynamic trailing stop)\n"
-        + "FLOORS: +5→-6 | +10→+2 | +20→+12 | +30→+22 | +40→+32 | +50→+42\n"
-        + "SL -12 close | EOD 15:30 | No entry 15:10 | 2 lots fixed\n"
+        + ("PAPER" if D.PAPER_MODE else "LIVE")
+        + " | v15.2 EMA9 Band Breakout (3-min)\n"
+        + "Entry: close > EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
+        + "Exit: EMA9-low break | BE+2 peak 10 | Emergency -20 | Stale 5c | EOD 15:30\n"
+        + "2 lots fixed | No entry 9:15-9:45 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
@@ -346,45 +345,38 @@ def _cmd_status(args):
     peak    = st.get("peak_pnl", 0)
     phase   = st.get("exit_phase", 1)
 
-    # BUG-018: Compute active SL incorporating profit floors
-    sl_val  = st.get("phase1_sl", st.get("current_floor", 0))
-    if sl_val <= 0:
-        sl_val = round(entry - 12, 2)  # fallback to hard SL
-    # Ratchet up to highest applicable profit floor
-    try:
-        import VRL_CONFIG as _CFG_sl
-        _floors = _CFG_sl.get().get("profit_floors", [
-            {"peak": 5, "lock": -6}, {"peak": 10, "lock": 2},
-            {"peak": 20, "lock": 12}, {"peak": 30, "lock": 22},
-            {"peak": 40, "lock": 32}, {"peak": 50, "lock": 42},
-        ])
-        for _f in _floors:
-            if peak >= _f.get("peak", 0):
-                _candidate = round(entry + _f.get("lock", 0), 2)
-                if _candidate > sl_val:
-                    sl_val = _candidate
-    except Exception:
-        pass
+    # v15.2: live SL = current EMA9-low (dynamic trailing stop)
+    # Falls back to entry-12 if band hasn't been computed yet.
+    sl_val = st.get("current_ema9_low", 0)
+    if not sl_val or sl_val <= 0:
+        sl_val = round(entry - 12, 2)
+    # If BE+2 is armed, the lock floor takes priority
+    if st.get("be2_active") and st.get("be2_level", 0) > sl_val:
+        sl_val = st.get("be2_level")
     sl_dist = round(ltp - sl_val, 1) if ltp > 0 and sl_val > 0 else "—"
-    md_level = "—"
-    if peak > 20 and pnl > 0:
-        md_level = round(entry + peak - 8, 2)
 
+    _be2_line = ""
+    if st.get("be2_active"):
+        _be2_line = "BE+2   : 🔒 ACTIVE @ ₹" + str(round(st.get("be2_level", 0), 1)) + "\n"
+    else:
+        _need = 10 - peak
+        if _need < 0:
+            _need = 0
+        _be2_line = ("BE+2   : INACTIVE (peak +" + str(round(peak, 1))
+                     + ", need +10)\n")
     _tg_send(
         "📊 <b>STATUS — IN TRADE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Time   : " + _now_str() + "\n"
         "Symbol : " + st.get("symbol", "") + "\n"
-        "Mode   : " + st.get("mode", "") + "  Score: " + str(st.get("score_at_entry", "—")) + "/7\n"
-        "Phase  : " + str(phase) + "\n"
+        "Mode   : " + str(st.get("entry_mode", "EMA9_BREAKOUT")) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Entry  : " + str(round(entry, 2)) + "\n"
         "LTP    : " + str(round(ltp, 2)) + "\n"
         "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + _rs(pnl) + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
-        "SL     : " + str(round(sl_val, 2)) + "  (" + str(sl_dist) + "pts away)\n"
-        "Tight  : " + str(st.get("trail_tightened", False)) + "\n"
-        "RSI OB : " + str(st.get("_rsi_was_overbought", False)) + "\n"
+        "Stop   : ₹" + str(round(sl_val, 2)) + "  (" + str(sl_dist) + "pts away)\n"
+        + _be2_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
         "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"

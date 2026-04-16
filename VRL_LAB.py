@@ -65,6 +65,12 @@ FIELDNAMES_SCAN = [
     "near_fib_level", "fib_distance",
     # v12.15: Blocked trade analysis (forward fill at EOD)
     "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
+    # v15.0: EMA9 band columns
+    "ema9_high", "ema9_low", "band_position", "body_pct",
+    # v15.2: tiered straddle filter + VWAP bonus context per scan
+    "straddle_delta", "straddle_threshold", "straddle_period",
+    "atm_strike_used", "band_width",
+    "spot_vwap", "spot_vs_vwap", "vwap_bonus",
 ]
 
 # ─── SESSION STATE ────────────────────────────────────────────
@@ -371,6 +377,19 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "near_fib_level"    : "",
                 "fib_distance"      : 0,
                 "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
+                # v15.0 + v15.2 — pull from check_entry result if present
+                "ema9_high"          : result.get("ema9_high", 0),
+                "ema9_low"           : result.get("ema9_low", 0),
+                "band_position"      : result.get("band_position", ""),
+                "body_pct"           : result.get("body_pct", 0),
+                "straddle_delta"     : result.get("straddle_delta") or 0,
+                "straddle_threshold" : result.get("straddle_threshold", 0),
+                "straddle_period"    : result.get("straddle_period", ""),
+                "atm_strike_used"    : result.get("atm_strike_used", 0),
+                "band_width"         : result.get("band_width", 0),
+                "spot_vwap"          : result.get("spot_vwap", 0),
+                "spot_vs_vwap"       : result.get("spot_vs_vwap", 0),
+                "vwap_bonus"         : result.get("vwap_bonus", ""),
             })
 
             try:

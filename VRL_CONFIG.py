@@ -49,8 +49,8 @@ def load(path: str = None) -> dict:
 
 
 def _validate(cfg: dict):
-    """Validate v15.0 required sections."""
-    required = ["mode", "instrument", "lots", "entry_ema9_band", "exit_ema9_band",
+    """Validate v15.2 required sections (nested entry: / exit: format)."""
+    required = ["mode", "instrument", "lots", "entry", "exit",
                 "strike", "risk", "market_hours"]
     for sec in required:
         if sec not in cfg:
@@ -63,14 +63,16 @@ def _validate(cfg: dict):
             raise ConfigError("instrument." + k + " is required")
     if not isinstance(inst["lot_size"], int) or inst["lot_size"] <= 0:
         raise ConfigError("instrument.lot_size must be a positive integer")
-    eb = cfg["entry_ema9_band"]
-    for k in ("body_pct_min", "cooldown_minutes", "warmup_until", "cutoff_after"):
+    eb = (cfg.get("entry") or {}).get("ema9_band") or {}
+    for k in ("body_pct_min", "warmup_until", "cutoff_after"):
         if k not in eb:
-            raise ConfigError("entry_ema9_band." + k + " is required")
-    xb = cfg["exit_ema9_band"]
+            raise ConfigError("entry.ema9_band." + k + " is required")
+    if "cooldown_minutes_same_dir" not in eb and "cooldown_minutes" not in eb:
+        raise ConfigError("entry.ema9_band.cooldown_minutes_same_dir is required")
+    xb = (cfg.get("exit") or {}).get("ema9_band") or {}
     for k in ("emergency_sl_pts", "stale_candles", "stale_peak_max", "eod_exit_time"):
         if k not in xb:
-            raise ConfigError("exit_ema9_band." + k + " is required")
+            raise ConfigError("exit.ema9_band." + k + " is required")
 
 
 # ── Accessors ────────────────────────────────────────────────
@@ -111,14 +113,39 @@ def vix_token() -> int:
     return get()["instrument"].get("vix_token", 264969)
 
 
-# ── Strategy v15.0 ──
+# ── Strategy v15.2 (nested entry: / exit: / filters: paths) ──
 
 def entry_ema9_band(key: str, default=None):
-    return _deep_get(get(), "entry_ema9_band", key, default=default)
+    """Read entry.ema9_band.<key>. Special-case cooldown_minutes so callers
+    that still ask for the old name pick up the new `cooldown_minutes_same_dir`."""
+    eb = (get().get("entry") or {}).get("ema9_band") or {}
+    if key == "cooldown_minutes":
+        if "cooldown_minutes_same_dir" in eb:
+            return eb["cooldown_minutes_same_dir"]
+    if key in eb:
+        return eb[key]
+    return default
 
 
 def exit_ema9_band(key: str, default=None):
-    return _deep_get(get(), "exit_ema9_band", key, default=default)
+    xb = (get().get("exit") or {}).get("ema9_band") or {}
+    return xb.get(key, default)
+
+
+def straddle_filter(key: str, default=None):
+    """Read entry.filters.straddle_expansion.<key>."""
+    sf = ((get().get("entry") or {}).get("filters") or {}).get("straddle_expansion") or {}
+    return sf.get(key, default)
+
+
+def straddle_thresholds() -> dict:
+    """Full thresholds dict (opening / midday / closing)."""
+    return straddle_filter("thresholds", {}) or {}
+
+
+def vwap_bonus(key: str, default=None):
+    vb = ((get().get("entry") or {}).get("filters") or {}).get("vwap_bonus") or {}
+    return vb.get(key, default)
 
 
 def cooldown(key: str, default=None):

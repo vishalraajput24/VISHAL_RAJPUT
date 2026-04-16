@@ -201,6 +201,8 @@ tg+='<span class="tag tk">CE '+(mk.locked_ce||mk.atm||0)+' · PE '+(mk.locked_pe
 if(mk.vix>0)tg+='<span class="tag tv">VIX '+mk.vix+'</span>';
 if(mk.bias)tg+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
 if(mk.regime){tg+='<span class="tag '+regC(mk.regime)+'">'+esc(mk.regime)+'</span>';}
+// v15.2 — period indicator (OPENING / MIDDAY / CLOSING)
+if(d.period){tg+='<span class="tag tpu">'+esc(d.period)+'</span>';}
 if(mk.market_open&&!mk.indicators_warm){var _wtxt='Indicators warming up';if(mk.warmup_progress!=null)_wtxt+=' ('+mk.warmup_progress+'/'+mk.warmup_needed+' candles, ETA '+(mk.warmup_eta||'—')+')';tg+='<span class="tag tw" title="'+_wtxt+'">WARMUP</span>';}
 document.getElementById('tags').innerHTML=tg;
 
@@ -236,13 +238,10 @@ if(pos.in_trade){
   var l1=(_lot1.status==='active'),l2=(_lot2.status==='active');
   var al=(l1?1:0)+(l2?1:0); if(al===0)al=2; // fallback: both active
   var prs=Math.round(pnl*65*al),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
-  // BUG-023: compute active SL from lot objects + profit floors
-  var sl=parseFloat(l1?_lot1.sl:_lot2.sl)||parseFloat(pos.sl||0);
+  // v15.2: SL is the dynamic EMA9-low trailing stop (or BE+2 if armed)
+  var sl=parseFloat(pos.stop||l1?_lot1.sl:_lot2.sl)||0;
   if(sl<=0)sl=Math.round((entry-12)*100)/100;
-  var _pk=parseFloat(pos.peak||0);
-  var _pfloors=[{p:5,l:-6},{p:10,l:2},{p:20,l:12},{p:30,l:22},{p:40,l:32},{p:50,l:42}];
-  for(var _i=0;_i<_pfloors.length;_i++){if(_pk>=_pfloors[_i].p){var _c=Math.round((entry+_pfloors[_i].l)*100)/100;if(_c>sl)sl=_c;}}
-  var em=pos.entry_mode||pos.mode||'',bc=em==='FAST'?'bf':'bc';
+  var em=pos.entry_mode||'EMA9_BREAKOUT',bc='bc';
   pa+='<div class="pos '+pc+'">';
   pa+='<div class="ph"><div class="ps"><div class="pd '+(sp?'s':'g')+'"></div>'+esc(sym)+' '+(sp?'SPLIT':'IN TRADE')+'</div>';
   if(em)pa+='<span class="bg '+bc+'">'+esc(em)+'</span>';
@@ -261,25 +260,35 @@ if(pos.in_trade){
     pa+='<div class="lt"><div class="ll">Lot 2</div><div class="lv" style="color:'+(l2?'var(--or)':'var(--tx3)')+'">'+( l2?'ATR Trail':'Exited')+'</div>'+(l2?'<div class="ls mono">SL \u20B9'+sl2+'</div>':'')+'</div>';
   }
   pa+='</div>';
-  // v13.7: RSI bar — cap at 75, color red when > 70
-  var rp=Math.min(Math.max((rsi/75)*100,0),100);
-  var _rsiClr=rsi>70?'linear-gradient(90deg,var(--or),var(--rd))':'linear-gradient(90deg,var(--gn),var(--yl),var(--or))';
-  // v15.1: Dynamic EMA9-low trailing stop + BE+2 lock display
+  // v15.2: dynamic EMA9-low trailing stop + BE+2 lock display
   var _cur_el=parseFloat(pos.current_ema9_low||0);
   var _cur_eh=parseFloat(pos.current_ema9_high||0);
   var _dist_stop=_cur_el>0?(ltp-_cur_el):0;
-  var _be2_active=!!pos.be2_active||(pk>=10);
+  var _be2_thresh=parseInt(pos.be2_threshold||10);
+  var _be2_active=!!pos.be2_active||(pk>=_be2_thresh);
   var _be2_level=parseFloat(pos.be2_level||0)||(entry+2);
-  pa+='<div class="rb"><div class="rl"><span>Stop: EMA9-low \u20B9'+_cur_el.toFixed(1)+' ('+(_dist_stop>=0?'+':'')+_dist_stop.toFixed(1)+'pts)</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
-  // Visual band: show price between ema9_low and ema9_high
+  pa+='<div class="rb"><div class="rl"><span>Stop: EMA9-low \u20B9'+_cur_el.toFixed(1)+' ('+(_dist_stop>=0?'+':'')+_dist_stop.toFixed(1)+'pts away)</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
   var _band_range=Math.max(1,_cur_eh-_cur_el);
   var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
   pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
-  // BE+2 badge: shown after peak >= 10
+  // BE+2 badge — peak ≥ 10 (v15.2)
   if(_be2_active){
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--gn-bg);border:1px solid var(--gn-bd);color:var(--gn2);font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 BE+2 ACTIVE \u2713 — Lock at \u20B9'+_be2_level.toFixed(1)+'</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--gn-bg);border:1px solid var(--gn-bd);color:var(--gn2);font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 BE+2 ACTIVE @ \u20B9'+_be2_level.toFixed(1)+' (locks if reverses)</div>';
   }else{
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">BE+2 arms at peak +10 \u2192 \u20B9'+(entry+2).toFixed(1)+'</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">BE+2 INACTIVE (peak '+fmt(pk)+', need +'+_be2_thresh+')</div>';
+  }
+  // v15.2: replay the straddle Δ + VWAP that fired this entry
+  var _esd=pos.entry_straddle_delta;
+  var _esp=pos.entry_straddle_period||'';
+  if(_esd!=null||_esp){
+    var _esd_str=(_esd==null)?'n/a':((_esd>=0?'+':'')+parseFloat(_esd).toFixed(1));
+    pa+='<div style="margin-top:6px;padding:6px 10px;border-radius:8px;background:var(--bl-bg);border:1px solid var(--bl-bd);color:var(--bl);font-size:9px;text-align:center">Entry straddle Δ '+_esd_str+'pts ['+esc(_esp)+']</div>';
+  }
+  var _evb=pos.entry_vwap_bonus||'';
+  if(_evb){
+    var _vwc=_evb==='CONFLUENCE'?'var(--gn2)':'var(--or2)';
+    var _vbg=_evb==='CONFLUENCE'?'var(--gn-bg)':'var(--or-bg)';
+    pa+='<div style="margin-top:6px;padding:6px 10px;border-radius:8px;background:'+_vbg+';color:'+_vwc+';font-size:9px;text-align:center;font-weight:700">VWAP '+esc(_evb)+'</div>';
   }
   pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span>'+(em?'<span>Mode: <b>'+em+'</b></span>':'')+'</div>';
   pa+='</div>';
@@ -342,9 +351,30 @@ sh+='<div class="sg">';
   sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
+  // v15.2 — Straddle Δ tiered filter (Gate 7)
+  var _sd=s.straddle_delta;
+  var _sth=parseFloat(s.straddle_threshold||0);
+  var _spr=s.straddle_period||(d.period||'');
+  if(_sd!=null||_sth>0){
+    var _sd_v=(_sd==null)?null:parseFloat(_sd);
+    var _sd_str=(_sd_v==null)?'n/a':((_sd_v>=0?'\u0394 +':'\u0394 ')+_sd_v.toFixed(1));
+    var _sd_ok=(_sd_v!=null&&_sd_v>=_sth);
+    var _sd_clr=_sd_ok?'ok':'fl';
+    sh+='<div class="sr"><span class="sk">Straddle</span><span class="sv '+_sd_clr+' mono" style="font-weight:800">'+_sd_str+' [need +'+_sth+' '+esc(_spr)+'] '+(_sd_ok?'\u2713':'\u2717')+'</span></div>';
+  }
+  // v15.2 — VWAP confluence bonus (display only)
+  var _vw=parseFloat(s.spot_vwap||0);
+  var _vd=parseFloat(s.spot_vs_vwap||0);
+  var _vbn=s.vwap_bonus||'';
+  if(_vw>0||_vbn){
+    var _vbn_clr=_vbn==='CONFLUENCE'?'ok':_vbn==='AGAINST'?'fl':'';
+    var _vbn_icon=_vbn==='CONFLUENCE'?'\u2713':_vbn==='AGAINST'?'\u26A0':'';
+    sh+='<div class="sr"><span class="sk">VWAP</span><span class="sv mono '+_vbn_clr+'" style="font-weight:700">spot vs '+_vw.toFixed(0)+' ('+(_vd>=0?'+':'')+_vd.toFixed(0)+') '+esc(_vbn)+' '+_vbn_icon+'</span></div>';
+  }
+
   // Verdict
   var vc='vw',vt='WAIT';
-  if(fi){vc='vf';vt='FIRED \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
+  if(fi){vc='vf';vt='READY TO FIRE \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
   else if(s.reject_reason){vt=esc(s.reject_reason);}
   else if(_pos==='ABOVE'&&_green&&_bodyok&&_widthok){vc='vr';vt='READY';}
@@ -394,12 +424,19 @@ if(trades&&trades.length){
     th+='<div class="tp2 mono '+(w?'gn':'rd')+'">'+fmt(p)+'</div>';
     th+='<div class="ti"><div class="tn">'+esc(shortSym(t.symbol,t.direction,t.strike));
     var em2=t.entry_mode||t.mode||'';
-    // BUG-026: show LEGACY for old MINIMAL/empty modes
-    if(em2==='MINIMAL'||em2==='EMA')em2='LEGACY';
-    var _bc2=em2==='FAST'?'bf':em2==='LEGACY'?'':'bc';
+    // v15.x mode is EMA9_BREAKOUT; older modes show as LEGACY
+    if(em2&&em2!=='EMA9_BREAKOUT')em2='LEGACY';
+    var _bc2=em2==='LEGACY'?'':'bc';
     var _bstyle=em2==='LEGACY'?'background:var(--bg2);color:var(--tx3);box-shadow:none':'';
     if(em2)th+=' <span class="bg '+_bc2+'" style="font-size:7px;padding:2px 8px;'+_bstyle+'">'+esc(em2)+'</span>';
-    th+='</div><div class="tt">'+(t.entry_time||'')+' \u2192 '+(t.exit_time||'')+' \u00B7 '+(t.candles_held||0)+'c \u00B7 Peak '+fmt(t.peak_pnl||0)+'</div></div>';
+    // v15.2: replay straddle Δ if logged
+    var _t_sd=t.entry_straddle_delta;
+    var _sd_str='';
+    if(_t_sd!=null&&_t_sd!==''){
+      var _v=parseFloat(_t_sd);
+      _sd_str=' \u00B7 \u0394 '+(_v>=0?'+':'')+_v.toFixed(1);
+    }
+    th+='</div><div class="tt">'+(t.entry_time||'')+' \u2192 '+(t.exit_time||'')+' \u00B7 '+(t.candles_held||0)+'c \u00B7 Peak '+fmt(t.peak_pnl||0)+_sd_str+'</div></div>';
     th+='<div class="tre">'+esc(t.exit_reason||'')+'</div></div>';
   });
 }

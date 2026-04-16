@@ -1,13 +1,12 @@
 # ═══════════════════════════════════════════════════════════════
 #  VISHAL RAJPUT TRADE v15.2 — Central Configuration
-#  Dual EMA9 Band Breakout + BE+2 lock after peak ≥ 5 + narrow band filter
-#  Entry: close > EMA9-high (fresh) + green + body ≥ 30% + band width ≥ 8
-#  Exit:  BREAKEVEN_LOCK (peak≥5) | EMA9-low close break
+#  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display + BE+2 (peak≥10)
 # ═══════════════════════════════════════════════════════════════
 
 version: "v15.2"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
+lots_fixed: 2
 
 # ── Instrument ─────────────────────────────────────────────────
 instrument:
@@ -18,29 +17,42 @@ instrument:
   spot_token: 256265
   vix_token: 264969
 
+# Legacy compat for existing accessors (lots.count / lots.size)
 lots:
   count: 2
   size: 65
 
-# ── v15.0 Entry: Dual EMA9 Band Breakout ──────────────────────
-entry_ema9_band:
-  body_pct_min: 30
-  cooldown_minutes: 5
-  warmup_until: "09:45"
-  cutoff_after: "15:10"
-  min_band_width_pts: 8        # v15.2: chop filter — block entry if ema9 band narrower than 8pts
+# ── v15.2 Entry configuration (nested structure) ──────────────
+entry:
+  ema9_band:
+    body_pct_min: 30
+    cooldown_minutes_same_dir: 5
+    warmup_until: "09:45"
+    cutoff_after: "15:10"
+    min_band_width_pts: 8
+  filters:
+    # Tiered straddle expansion filter (Gate 7). Hard gate.
+    straddle_expansion:
+      enabled: true
+      lookback_minutes: 15
+      thresholds:
+        opening: {start: "09:45", end: "10:30", min_delta: 1}
+        midday:  {start: "10:30", end: "14:00", min_delta: 5}
+        closing: {start: "14:00", end: "15:10", min_delta: 3}
+    # VWAP confluence — display only, never blocks
+    vwap_bonus:
+      enabled: true
+      mode: display_only
 
-# ── v15.1 Exit: dynamic system + breakeven lock ─────────────
-exit_ema9_band:
-  emergency_sl_pts: -20
-  stale_candles: 5
-  stale_peak_max: 3
-  eod_exit_time: "15:30"
-  breakeven_lock_peak_threshold: 5    # v15.2: lock activates when peak >= 5 pts
-  breakeven_lock_offset: 2            # v15.2: SL locks at entry + 2
-
-cooldown:
-  same_direction: 5            # legacy compat (also read from entry_ema9_band)
+# ── v15.2 Exit configuration (nested structure) ──────────────
+exit:
+  ema9_band:
+    emergency_sl_pts: -20
+    stale_candles: 5
+    stale_peak_max: 3
+    eod_exit_time: "15:30"
+    breakeven_lock_peak_threshold: 10
+    breakeven_lock_offset: 2
 
 # ── Strike selection ───────────────────────────────────────────
 strike:

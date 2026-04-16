@@ -112,22 +112,84 @@ h2{font-size:16px;margin-bottom:8px}
 .msg{color:#888;font-size:13px}
 </style></head><body><div class="box"><h2>MSG_TITLE</h2><div class="msg">MSG_BODY</div></div></body></html>"""
 
-def _read_dash():
-    if not os.path.isfile(DASH_FILE): return {"version": _D.VERSION}
+def _today_trade_summary():
+    """v15.2 BUG-2: dashboard trade count is the single source of truth.
+    Reads the CSV trade log directly and computes counts/PNL for today.
+    Falls back gracefully on missing/corrupt file."""
+    today = date.today().isoformat()
+    summary = {"trades": 0, "wins": 0, "losses": 0,
+               "pnl": 0.0, "pnl_rs": 0.0,
+               "gross_pnl_rs": 0.0, "total_charges": 0.0, "net_pnl_rs": 0.0}
+    if not os.path.isfile(TRADE_LOG):
+        return summary
     try:
-        with open(DASH_FILE) as f:
-            data = json.load(f)
-        # Always inject current VERSION so dashboard shows correct version
-        data["version"] = _D.VERSION
-        return data
-    except (json.JSONDecodeError, OSError) as e:
-        # Dashboard JSON corrupted or unreadable — return empty so UI degrades gracefully
+        with open(TRADE_LOG) as f:
+            for r in csv.DictReader(f):
+                if r.get("date") != today:
+                    continue
+                summary["trades"] += 1
+                try:
+                    p = float(r.get("pnl_pts", 0) or 0)
+                    summary["pnl"] += p
+                    if p > 0:
+                        summary["wins"] += 1
+                    else:
+                        summary["losses"] += 1
+                except Exception:
+                    pass
+                try:
+                    summary["pnl_rs"] += float(r.get("pnl_rs", 0) or 0)
+                except Exception:
+                    pass
+                try:
+                    summary["gross_pnl_rs"]  += float(r.get("gross_pnl_rs", 0) or 0)
+                    summary["total_charges"] += float(r.get("total_charges", 0) or 0)
+                    summary["net_pnl_rs"]    += float(r.get("net_pnl_rs", 0) or 0)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    summary["pnl"]            = round(summary["pnl"], 1)
+    summary["pnl_rs"]         = round(summary["pnl_rs"], 0)
+    summary["gross_pnl_rs"]   = round(summary["gross_pnl_rs"], 0)
+    summary["total_charges"]  = round(summary["total_charges"], 0)
+    summary["net_pnl_rs"]     = round(summary["net_pnl_rs"], 0)
+    return summary
+
+
+def _read_dash():
+    """v15.2: reads vrl_dashboard.json but ALWAYS overlays the today block
+    with a fresh recount from trade_log.csv. This is the single source of
+    truth — fixes BUG-2 dashboard vs state count drift."""
+    data = {"version": _D.VERSION}
+    if os.path.isfile(DASH_FILE):
         try:
-            import logging
-            logging.getLogger("vrl_web").debug("[WEB] _read_dash error: " + str(e))
-        except Exception:
-            pass
-        return {}
+            with open(DASH_FILE) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            try:
+                import logging
+                logging.getLogger("vrl_web").debug("[WEB] _read_dash error: " + str(e))
+            except Exception:
+                pass
+            data = {}
+    # Always inject current VERSION so dashboard shows correct version
+    data["version"] = _D.VERSION
+    # v15.2 BUG-2: reconcile today block from trade_log.csv (single source)
+    csv_summary = _today_trade_summary()
+    today_block = data.get("today") or {}
+    today_block.update({
+        "trades":         csv_summary["trades"],
+        "wins":           csv_summary["wins"],
+        "losses":         csv_summary["losses"],
+        "pnl":            csv_summary["pnl"],
+        "pnl_rs":         csv_summary["pnl_rs"],
+        "gross_pnl_rs":   csv_summary["gross_pnl_rs"],
+        "total_charges":  csv_summary["total_charges"],
+        "net_pnl_rs":     csv_summary["net_pnl_rs"],
+    })
+    data["today"] = today_block
+    return data
 
 import glob as _glob
 
@@ -621,6 +683,10 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type","application/json")
         self.send_header("Access-Control-Allow-Origin","*")
+        # v15.2 BUG-2: never let any layer cache /api/dashboard
+        self.send_header("Cache-Control","no-cache, no-store, must-revalidate")
+        self.send_header("Pragma","no-cache")
+        self.send_header("Expires","0")
         self.end_headers()
         self.wfile.write(json.dumps(d,default=str).encode())
     def _send_file(self, path):

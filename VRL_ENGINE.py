@@ -1,20 +1,25 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.2
-#  Dual EMA9 Band Breakout — pure option-level price action.
+#  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display.
 #
-#  ENTRY (6 gates, all must pass):
+#  ENTRY (7 hard gates, all must pass + VWAP bonus shown but never blocks):
 #    1. Time window 9:45 – 15:10 IST
 #    2. Cooldown 5min same direction
 #    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
 #    4. Green candle
 #    5. Body ≥ 30% of range
-#    6. Band width ≥ 8 pts (v15.2: chop filter)
+#    6. Band width ≥ 8 pts (chop filter)
+#    7. Tiered straddle Δ (v15.2):
+#         Open  9:45-10:30  Δ ≥ +1
+#         Mid  10:30-14:00  Δ ≥ +5
+#         Close 14:00-15:10 Δ ≥ +3
+#    BONUS: VWAP confluence (display only, never blocks)
 #
 #  EXIT (5-rule priority chain):
 #    1. EMERGENCY_SL    pnl ≤ -20
 #    2. EOD_EXIT        15:30 IST
 #    3. STALE_ENTRY     5 candles + peak < 3
-#    4. BREAKEVEN_LOCK  after peak ≥ 5, lock at entry+2 (v15.2)
+#    4. BREAKEVEN_LOCK  after peak ≥ 10, lock at entry+2 (v15.2)
 #    5. EMA9_LOW_BREAK  last 3m close < ema9_low (primary trail)
 # ═══════════════════════════════════════════════════════════════
 
@@ -61,7 +66,7 @@ def pre_entry_checks(kite, token: int, state: dict,
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
             last_dir = state.get("last_exit_direction", "")
-            cd_min = CFG.get().get("entry_ema9_band", {}).get("cooldown_minutes", 5)
+            cd_min = CFG.entry_ema9_band("cooldown_minutes", 5)
             if direction and last_dir and direction == last_dir:
                 if elapsed < cd_min:
                     remaining = round(cd_min - elapsed, 1)
@@ -104,7 +109,8 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None,
                 other_token: int = 0, silent: bool = False,
                 state: dict = None) -> dict:
-    """v15.0: Buy option whose 3-min just broke fresh above its own EMA9-high."""
+    """v15.2: Buy option whose 3-min just broke fresh above its own EMA9-high,
+    confirmed by a tiered straddle expansion gate. VWAP shown for context."""
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "entry_mode": "",
@@ -115,16 +121,20 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "band_width": 0,
         "cooldown_ok": False, "reject_reason": "",
         "band_position": "",
+        # v15.2 tiered straddle filter
+        "straddle_delta": None, "straddle_threshold": 0,
+        "straddle_period": "", "atm_strike_used": 0,
+        # v15.2 VWAP bonus (display only)
+        "spot_vwap": 0.0, "spot_vs_vwap": 0.0, "vwap_bonus": "",
     }
     if state is None:
         state = {}
     try:
-        cfg = CFG.get().get("entry_ema9_band", {})
-        body_min = cfg.get("body_pct_min", 30)
-        cd_min = cfg.get("cooldown_minutes", 5)
-        warmup_until = cfg.get("warmup_until", "09:45")
-        cutoff_after = cfg.get("cutoff_after", "15:10")
-        min_band_width = cfg.get("min_band_width_pts", 8)
+        body_min       = CFG.entry_ema9_band("body_pct_min", 30)
+        cd_min         = CFG.entry_ema9_band("cooldown_minutes", 5)   # back-compat alias
+        warmup_until   = CFG.entry_ema9_band("warmup_until", "09:45")
+        cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
+        min_band_width = CFG.entry_ema9_band("min_band_width_pts", 8)
 
         # ── Fetch 3-min option data ──
         opt_3m = D.get_option_3min(token, lookback=15)
@@ -234,7 +244,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                             + "% < " + str(body_min) + "%")
             return result
 
-        # ── GATE 6 (v15.2): Narrow band chop filter ──
+        # ── GATE 6: Narrow band chop filter ──
         if band_width < min_band_width:
             result["reject_reason"] = "narrow_band_" + str(round(band_width, 1)) + "pts"
             if not silent:
@@ -242,7 +252,101 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                             + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
             return result
 
-        # ═══ ALL GATES PASSED — FIRE ═══
+        # ── GATE 7 (v15.2): Tiered straddle expansion filter ──
+        # Block entries during chop where straddle isn't actually expanding,
+        # while staying loose at the open and tight midday.
+        if CFG.straddle_filter("enabled", True):
+            atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
+            result["atm_strike_used"] = atm_strike
+            lookback_min = int(CFG.straddle_filter("lookback_minutes", 15))
+            # Time tier — period + threshold (mins-of-day)
+            now_for_period = datetime.now()
+            mod = now_for_period.hour * 60 + now_for_period.minute
+            tiers = CFG.straddle_thresholds() or {}
+
+            def _tier_minutes(key, default):
+                t = (tiers.get(key) or {}).get(default)
+                if not t:
+                    return None
+                hh, mm = str(t).split(":")
+                return int(hh) * 60 + int(mm)
+
+            open_s  = _tier_minutes("opening", "start") or 585   # 09:45
+            open_e  = _tier_minutes("opening", "end")   or 630   # 10:30
+            mid_s   = _tier_minutes("midday",  "start") or 630
+            mid_e   = _tier_minutes("midday",  "end")   or 840   # 14:00
+            close_s = _tier_minutes("closing", "start") or 840
+            close_e = _tier_minutes("closing", "end")   or 910   # 15:10
+
+            if open_s <= mod < open_e:
+                threshold = (tiers.get("opening") or {}).get("min_delta", 1)
+                period = "OPENING"
+            elif mid_s <= mod < mid_e:
+                threshold = (tiers.get("midday")  or {}).get("min_delta", 5)
+                period = "MIDDAY"
+            else:
+                threshold = (tiers.get("closing") or {}).get("min_delta", 3)
+                period = "CLOSING"
+
+            result["straddle_threshold"] = threshold
+            result["straddle_period"]    = period
+
+            straddle_delta = None
+            try:
+                straddle_delta = D.get_straddle_delta(
+                    atm_strike, lookback_minutes=lookback_min)
+            except Exception as e:
+                logger.warning("[ENGINE] straddle delta error: " + str(e))
+            result["straddle_delta"] = straddle_delta
+
+            if straddle_delta is None:
+                result["reject_reason"] = "straddle_data_unavailable"
+                if not silent:
+                    logger.info("[ENGINE] " + option_type
+                                + " STRADDLE_NA period=" + period
+                                + " strike=" + str(atm_strike))
+                return result
+
+            # Strict spec-format: straddle_bleed_{:+.1f}_need_{}_in_{PERIOD}
+            _sd_str = ("{:+.1f}".format(straddle_delta))
+            if straddle_delta < threshold:
+                result["reject_reason"] = ("straddle_bleed_" + _sd_str
+                                            + "_need_" + str(threshold)
+                                            + "_in_" + period)
+                if not silent:
+                    logger.info("[ENGINE] " + option_type
+                                + " STRADDLE_BLEED \u0394" + _sd_str
+                                + " < +" + str(threshold) + " (" + period + ")")
+                return result
+
+            if not silent:
+                logger.info("[ENGINE] " + option_type
+                            + " STRADDLE_OK \u0394" + _sd_str
+                            + " >= +" + str(threshold) + " (" + period + ")")
+
+        # ── BONUS (v15.2): VWAP confluence — display only, never blocks ──
+        # This block must NEVER set reject_reason or return — it only logs
+        # and populates display fields.
+        try:
+            if CFG.vwap_bonus("enabled", True):
+                vwap_val = D.get_spot_vwap()
+                _spot = D.get_spot_ltp() or spot_ltp
+                if vwap_val and _spot:
+                    diff = round(_spot - vwap_val, 2)
+                    result["spot_vwap"]    = round(vwap_val, 1)
+                    result["spot_vs_vwap"] = round(diff, 1)
+                    if option_type == "CE":
+                        result["vwap_bonus"] = "CONFLUENCE" if diff > 0 else "AGAINST"
+                    else:  # PE
+                        result["vwap_bonus"] = "CONFLUENCE" if diff < 0 else "AGAINST"
+                    logger.info("[ENGINE] VWAP_INFO spot=" + str(round(_spot, 1))
+                                + " vwap=" + "{:.1f}".format(vwap_val)
+                                + " diff=" + "{:+.1f}".format(diff)
+                                + " " + result["vwap_bonus"])
+        except Exception as e:
+            logger.debug("[ENGINE] vwap bonus error: " + str(e))
+
+        # ═══ ALL HARD GATES PASSED — FIRE ═══
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
@@ -252,8 +356,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                         + " ema9l=" + str(round(ema9_low, 1))
                         + " width=" + str(round(band_width, 1))
                         + " body=" + str(int(body_pct)) + "% green=Y"
-                        + " prev_close=" + str(round(prev_close, 1))
-                        + "<=prev_ema9h" + str(round(prev_ema9_high, 1)))
+                        + " straddleΔ=" + str(result.get("straddle_delta"))
+                        + " (" + str(result.get("straddle_period", "-")) + ")"
+                        + " vwap=" + str(result.get("vwap_bonus", "-")))
         return result
 
     except Exception as e:
@@ -304,13 +409,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
 
     candles = state.get("candles_held", 0)
 
-    exit_cfg = CFG.get().get("exit_ema9_band", {})
-    emergency_sl = exit_cfg.get("emergency_sl_pts", -20)
-    stale_candles = exit_cfg.get("stale_candles", 5)
-    stale_peak_max = exit_cfg.get("stale_peak_max", 3)
-    eod_time = exit_cfg.get("eod_exit_time", "15:30")
-    be2_peak_threshold = exit_cfg.get("breakeven_lock_peak_threshold", 5)
-    be2_offset = exit_cfg.get("breakeven_lock_offset", 2)
+    emergency_sl       = CFG.exit_ema9_band("emergency_sl_pts", -20)
+    stale_candles      = CFG.exit_ema9_band("stale_candles", 5)
+    stale_peak_max     = CFG.exit_ema9_band("stale_peak_max", 3)
+    eod_time           = CFG.exit_ema9_band("eod_exit_time", "15:30")
+    be2_peak_threshold = CFG.exit_ema9_band("breakeven_lock_peak_threshold", 10)
+    be2_offset         = CFG.exit_ema9_band("breakeven_lock_offset", 2)
 
     # ── RULE 1: EMERGENCY catastrophic ──
     if pnl <= emergency_sl:

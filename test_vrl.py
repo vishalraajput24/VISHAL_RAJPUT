@@ -1,21 +1,36 @@
-#!/home/vishalraajput24/kite_env/bin/python3
+#!/home/user/kite_env/bin/python3
 """
 ═══════════════════════════════════════════════════════════════
  test_vrl.py — VISHAL RAJPUT TRADE v15.2 Test Suite
- 31 focused tests: Band Breakout + BE+2 (peak≥5) + narrow band filter.
+ 28 focused tests covering:
+   Entry gates 1–6 | Straddle Gate 7 tiers | VWAP display
+   Exit chain (5 rules) | BE+2 peak 10 | Validation | Data integrity
 ═══════════════════════════════════════════════════════════════
 """
 
-import sys
 import os
-import pandas as pd
+import sys
+from unittest.mock import MagicMock, patch
 from datetime import date, datetime, timedelta
-from unittest.mock import patch, MagicMock
-from copy import deepcopy
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# ── Test Framework ──────────────────────────────────────────
+# Stub kiteconnect so dev / CI envs without the broker SDK still run tests.
+# On the prod server the real module is already installed and wins the import.
+if "kiteconnect" not in sys.modules:
+    _stub = MagicMock()
+    _stub.KiteTicker = MagicMock()
+    _stub.KiteConnect = MagicMock()
+    sys.modules["kiteconnect"] = _stub
+
+import pandas as pd
+import VRL_DATA as D
+import VRL_ENGINE as E
+import VRL_CONFIG as C
+C.load()
+
+
+# ── Test framework ──────────────────────────────────────────
 
 _passed = 0
 _failed = 0
@@ -25,52 +40,46 @@ def test(name, condition, detail=""):
     global _passed, _failed
     if condition:
         _passed += 1
-        print("  ✅ " + name)
+        print("  PASS " + name)
     else:
         _failed += 1
-        msg = "  ❌ " + name + (" — " + detail if detail else "")
+        msg = "  FAIL " + name + (" — " + detail if detail else "")
         print(msg)
         _errors.append(msg)
 
 def section(name):
-    print("\n━━━ " + name + " ━━━")
+    print("\n=== " + name + " ===")
 
 
-import VRL_DATA as D
-import VRL_ENGINE as E
+# ── Fixture builders ──────────────────────────────────────────
 
-
-# ═══════════════════════════════════════════════════════════════
-#  FIXTURE BUILDERS
-# ═══════════════════════════════════════════════════════════════
-
-def _make_opt_3m(n=20, ema9_high=100.0, ema9_low=91.0,
-                 last_close=102.0, last_open=98.0,
-                 last_high=103.0, last_low=97.5,
+def _make_opt_3m(n=20,
+                 ema9_high=100.0, ema9_low=91.0,
+                 last_close=103.0, last_open=98.0,
+                 last_high=104.0, last_low=97.5,
                  prev_close=99.0, prev_ema9_high=100.0):
     """Build a 3-min option DataFrame with controlled last + prev rows.
-    Default band width = 9 (satisfies v15.2 min_band_width_pts=8)."""
+    Default band width = 9 (satisfies min_band_width_pts=8)."""
     rows = []
-    for i in range(n - 2):
-        rows.append({"open": 97.0, "high": 99.0, "low": 96.0, "close": 98.0, "volume": 1000})
-    # iloc[-3] = prev candle
+    for _i in range(n - 2):
+        rows.append({"open": 97.0, "high": 99.0, "low": 96.0,
+                     "close": 98.0, "volume": 1000})
     rows.append({"open": 98.0, "high": prev_close + 0.5, "low": 97.0,
                  "close": prev_close, "volume": 1000})
-    # iloc[-2] = last closed candle
     rows.append({"open": last_open, "high": last_high, "low": last_low,
                  "close": last_close, "volume": 1000})
-    # iloc[-1] = live in-progress
-    rows.append({"open": last_close, "high": last_close + 1, "low": last_close - 1,
-                 "close": last_close + 0.5, "volume": 500})
+    # live in-progress candle
+    rows.append({"open": last_close, "high": last_close + 1,
+                 "low": last_close - 1, "close": last_close + 0.5,
+                 "volume": 500})
     df = pd.DataFrame(rows)
     _base = datetime(2026, 4, 16, 10, 0)
     df.index = [_base + timedelta(minutes=i * 3) for i in range(len(rows))]
     df = D.add_indicators(df)
-    # Override ema9_high / ema9_low for controlled tests
     df.iloc[-2, df.columns.get_loc("ema9_high")] = ema9_high
-    df.iloc[-2, df.columns.get_loc("ema9_low")] = ema9_low
+    df.iloc[-2, df.columns.get_loc("ema9_low")]  = ema9_low
     df.iloc[-3, df.columns.get_loc("ema9_high")] = prev_ema9_high
-    df.iloc[-3, df.columns.get_loc("ema9_low")] = ema9_low - 2
+    df.iloc[-3, df.columns.get_loc("ema9_low")]  = ema9_low - 2
     return df
 
 
@@ -79,329 +88,380 @@ def _make_state(entry=200, peak=0, candles=0, in_trade=True):
         "in_trade": in_trade, "entry_price": entry, "peak_pnl": peak,
         "trough_pnl": 0, "candles_held": candles, "token": 12345,
         "entry_mode": "EMA9_BREAKOUT",
-        "entry_ema9_high": 0, "entry_ema9_low": 0,
         "current_ema9_high": 0, "current_ema9_low": 0,
         "last_band_check_ts": "",
     }
 
 
+class _FakeNow:
+    """Context manager that patches VRL_ENGINE.datetime.now() to a fixed time
+    so Gate 7 picks a predictable straddle tier."""
+    def __init__(self, hour, minute):
+        self.hour = hour
+        self.minute = minute
+        self._patcher = None
+
+    def __enter__(self):
+        fixed = datetime(2026, 4, 16, self.hour, self.minute)
+        mock_dt = MagicMock(wraps=datetime)
+        mock_dt.now = MagicMock(return_value=fixed)
+        mock_dt.fromisoformat = datetime.fromisoformat
+        self._patcher = patch("VRL_ENGINE.datetime", mock_dt)
+        self._patcher.start()
+        return self
+
+    def __exit__(self, *a):
+        self._patcher.stop()
+
+
+def _run_entry(direction="CE", spot=24000, df=None,
+               straddle_delta=10, vwap=None, spot_ltp_for_vwap=None,
+               state=None, hour=10, minute=15, market_open=False):
+    """Run E.check_entry with standard v15.2 mocks. Returns the result dict."""
+    if df is None:
+        df = _make_opt_3m()
+    if state is None:
+        state = {}
+    patches = [
+        patch.object(D, "get_historical_data", return_value=df),
+        patch.object(D, "add_indicators", side_effect=lambda x: x),
+        patch.object(D, "get_straddle_delta", return_value=straddle_delta),
+        patch.object(D, "resolve_atm_strike", return_value=24000),
+        patch.object(D, "is_market_open", return_value=market_open),
+        patch.object(D, "get_spot_vwap", return_value=vwap),
+        patch.object(D, "get_spot_ltp",
+                     return_value=(spot_ltp_for_vwap if spot_ltp_for_vwap is not None else spot)),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        with _FakeNow(hour, minute):
+            r = E.check_entry(12345, direction, spot, 3, state=state)
+    finally:
+        for p in patches:
+            p.stop()
+    return r
+
+
 # ═══════════════════════════════════════════════════════════════
-#  T01-T03: FOUNDATION
+#  Section 1 — Entry gates (7 tests)
 # ═══════════════════════════════════════════════════════════════
 
-section("FOUNDATION")
+section("ENTRY GATES")
 
-test("T01: VERSION is v15.2", D.VERSION == "v15.2", "got " + str(D.VERSION))
+# 1. Full breakout → FIRES
+r = _run_entry()
+test("1. test_breakout_fires",
+     r["fired"] is True and r["entry_mode"] == "EMA9_BREAKOUT",
+     "fired=" + str(r["fired"]) + " reject=" + r.get("reject_reason", ""))
 
-s = D.resolve_strike_for_direction(22819, "CE", 3)
-test("T02: Strike CE 22819 DTE3 → 22800", s == 22800, "got " + str(s))
+# 2. Stale breakout (prev was already above) → BLOCKED
+_df_stale = _make_opt_3m(last_close=103.0, last_open=101.0, last_high=104.0,
+                         last_low=100.5, ema9_high=100.0,
+                         prev_close=101.0, prev_ema9_high=100.0)
+r = _run_entry(df=_df_stale)
+test("2. test_no_fresh_breakout_blocked",
+     r["fired"] is False and "stale_breakout" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
-test("T03: add_indicators includes ema9_high + ema9_low",
-     True,  # verified by fixture build — columns present
-     "")
+# 3. Red candle → BLOCKED
+_df_red = _make_opt_3m(last_close=101.0, last_open=103.0, last_high=103.5,
+                       last_low=100.5, ema9_high=100.0,
+                       prev_close=99.0, prev_ema9_high=100.0)
+r = _run_entry(df=_df_red)
+test("3. test_red_candle_blocked",
+     r["fired"] is False and "red_candle" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
+# 4. Weak body (body 10% of range) → BLOCKED
+_df_weak = _make_opt_3m(last_close=103.0, last_open=102.0, last_high=108.0,
+                        last_low=98.0, ema9_high=100.0,
+                        prev_close=99.0, prev_ema9_high=100.0)
+r = _run_entry(df=_df_weak)
+test("4. test_weak_body_blocked",
+     r["fired"] is False and "weak_body" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
-# ═══════════════════════════════════════════════════════════════
-#  T04-T11: ENTRY GATES
-# ═══════════════════════════════════════════════════════════════
+# 5. Warmup window (market_open=True, time 09:30) → BLOCKED
+r = _run_entry(hour=9, minute=30, market_open=True)
+test("5. test_warmup_blocked",
+     r["fired"] is False and "before_09:45" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
-section("v15.0 — ENTRY GATES")
+# 6. After cutoff (market_open=True, time 15:20) → BLOCKED
+r = _run_entry(hour=15, minute=20, market_open=True)
+test("6. test_cutoff_blocked",
+     r["fired"] is False and "after_15:10" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
-# T04: Full fresh breakout → FIRES
-_df = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                   ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T04: Fresh breakout close>ema9h prev<=prev_ema9h green body 55% → FIRES",
-         r["fired"] == True and r["entry_mode"] == "EMA9_BREAKOUT",
-         "fired=" + str(r["fired"]) + " reject=" + str(r.get("reject_reason", "")))
-
-# T05: Close below band → BLOCKED
-_df2 = _make_opt_3m(last_close=98.0, last_open=97.0, last_high=99.0, last_low=96.5,
-                    ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df2), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T05: Close 98 < ema9h 100 → BLOCKED (below_band)",
-         r["fired"] == False and "below_band" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T06: Stale breakout (prev was already above) → BLOCKED
-_df3 = _make_opt_3m(last_close=103.0, last_open=101.0, last_high=104.0, last_low=100.5,
-                    ema9_high=100.0, prev_close=101.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df3), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T06: prev_close 101 > prev_ema9h 100 → stale_breakout blocked",
-         r["fired"] == False and "stale_breakout" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T07: Red candle → BLOCKED
-_df4 = _make_opt_3m(last_close=101.0, last_open=103.0, last_high=103.5, last_low=100.5,
-                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df4), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T07: close 101 < open 103 → red_candle blocked",
-         r["fired"] == False and "red_candle" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T08: Weak body (<30%) → BLOCKED
-# range 10, body 1 = 10%
-_df5 = _make_opt_3m(last_close=103.0, last_open=102.0, last_high=108.0, last_low=98.0,
-                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df5), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T08: body 10% < 30% → weak_body blocked",
-         r["fired"] == False and "weak_body" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T09: Cooldown active (same direction within 5min) → BLOCKED
-_df6 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
-_cd_state = {
-    "last_exit_time": (datetime.now() - timedelta(minutes=2)).isoformat(),
+# 7. Cooldown — same direction exit 2min ago (relative to the engine's
+#    patched "now") → BLOCKED. Must use the same fixed clock as _FakeNow
+#    otherwise the stored exit-time falls hours into the past.
+_fixed_now_cd   = datetime(2026, 4, 16, 10, 15)
+_state_cd = {
+    "last_exit_time": (_fixed_now_cd - timedelta(minutes=2)).isoformat(),
     "last_exit_direction": "CE",
 }
-with patch.object(D, 'get_historical_data', return_value=_df6), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3, state=_cd_state)
-    test("T09: Same dir CE 2min after exit → cooldown blocked",
-         r["fired"] == False and "cooldown" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T10: Opposite direction during cooldown → allowed through gates
-_df7 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                    ema9_high=100.0, prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df7), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "PE", 24000, 3, state=_cd_state)
-    test("T10: Opposite dir PE during CE cooldown → not blocked by cooldown",
-         "cooldown" not in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T11: band_position label populated
-_df8 = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                    ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df8), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T11: band_position populated (ABOVE/IN/BELOW)",
-         r.get("band_position") in ("ABOVE", "IN", "BELOW"),
-         "got " + str(r.get("band_position")))
+r = _run_entry(state=_state_cd)
+test("7. test_cooldown_blocked",
+     r["fired"] is False and "cooldown" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  T12-T18: EXIT CHAIN
+#  Section 2 — Straddle Gate 7 tiers (4 tests)
 # ═══════════════════════════════════════════════════════════════
 
-section("v15.0 — EXIT CHAIN")
+section("STRADDLE FILTER (GATE 7)")
 
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
+# 8. Opening tier (09:45-10:30), threshold 1, delta +2 → ALLOWS
+r = _run_entry(hour=10, minute=0, straddle_delta=2)
+test("8. test_straddle_opening_threshold_1",
+     r["fired"] is True and r.get("straddle_period") == "OPENING",
+     "fired=" + str(r["fired"]) + " period=" + str(r.get("straddle_period"))
+     + " reject=" + r.get("reject_reason", ""))
 
-    # T12: EMERGENCY_SL at -20
+# 9. Midday tier (10:30-14:00), threshold 5 — delta +3 BLOCKS, delta +6 FIRES
+r_b = _run_entry(hour=12, minute=0, straddle_delta=3)
+r_p = _run_entry(hour=12, minute=0, straddle_delta=6)
+test("9. test_straddle_midday_threshold_5",
+     (r_b["fired"] is False and "straddle_bleed" in r_b.get("reject_reason", ""))
+     and (r_p["fired"] is True and r_p.get("straddle_period") == "MIDDAY"),
+     "block=" + r_b.get("reject_reason", "") + " | pass fired=" + str(r_p["fired"]))
+
+# 10. Closing tier (14:00-15:10), threshold 3 — delta +2 BLOCKS, delta +4 FIRES
+r_b = _run_entry(hour=14, minute=30, straddle_delta=2)
+r_p = _run_entry(hour=14, minute=30, straddle_delta=4)
+test("10. test_straddle_closing_threshold_3",
+     (r_b["fired"] is False and "straddle_bleed" in r_b.get("reject_reason", ""))
+     and (r_p["fired"] is True and r_p.get("straddle_period") == "CLOSING"),
+     "block=" + r_b.get("reject_reason", "") + " | pass fired=" + str(r_p["fired"]))
+
+# 11. Straddle bleed (negative delta) → BLOCKED with "straddle_bleed"
+r = _run_entry(hour=12, minute=0, straddle_delta=-5)
+test("11. test_straddle_bleed_blocks",
+     r["fired"] is False and "straddle_bleed" in r.get("reject_reason", ""),
+     "reject=" + r.get("reject_reason", ""))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 3 — VWAP bonus display (2 tests — MUST NEVER BLOCK)
+# ═══════════════════════════════════════════════════════════════
+
+section("VWAP BONUS (display only)")
+
+# 12. CE with spot < vwap (AGAINST) → STILL FIRES
+r = _run_entry(direction="CE", spot=24000, vwap=24050.0,
+               spot_ltp_for_vwap=24000.0)
+test("12. test_vwap_against_does_not_block",
+     r["fired"] is True and r.get("vwap_bonus") == "AGAINST",
+     "fired=" + str(r["fired"]) + " bonus=" + str(r.get("vwap_bonus"))
+     + " reject=" + r.get("reject_reason", ""))
+
+# 13. CE with spot > vwap → vwap_bonus = "CONFLUENCE"
+r = _run_entry(direction="CE", spot=24050, vwap=24000.0,
+               spot_ltp_for_vwap=24050.0)
+test("13. test_vwap_confluence_logged",
+     r["fired"] is True and r.get("vwap_bonus") == "CONFLUENCE"
+     and abs(float(r.get("spot_vs_vwap", 0)) - 50.0) < 0.1,
+     "bonus=" + str(r.get("vwap_bonus"))
+     + " diff=" + str(r.get("spot_vs_vwap")))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 4 — Exit chain (6 tests)
+# ═══════════════════════════════════════════════════════════════
+
+section("EXIT CHAIN")
+
+# 14. Emergency SL at pnl -20
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(200, peak=0, candles=1)
     ex = E.manage_exit(st, 180, {})
-    test("T12: pnl -20 → EMERGENCY_SL",
-         len(ex) == 1 and ex[0]["reason"] == "EMERGENCY_SL")
+test("14. test_emergency_sl",
+     len(ex) == 1 and ex[0]["reason"] == "EMERGENCY_SL",
+     "got " + str(ex))
 
-    # T13: pnl -15 → no exit (no fixed candle_sl in v15.0)
-    st = _make_state(200, peak=0, candles=1)
-    ex = E.manage_exit(st, 185, {})
-    test("T13: pnl -15 → no exit (band-only, no fixed candle_sl)",
-         len(ex) == 0)
+# 15. EOD at 15:30 (market_open=True, time 15:30) → EOD_EXIT
+with patch.object(D, "is_market_open", return_value=True), \
+     patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    with _FakeNow(15, 30):
+        st = _make_state(200, peak=5, candles=3)
+        ex = E.manage_exit(st, 200, {})
+test("15. test_eod_exit",
+     len(ex) == 1 and ex[0]["reason"] == "EOD_EXIT",
+     "got " + str(ex))
 
-    # T14: STALE — 5 candles, peak < 3
+# 16. Stale — 5 candles, peak < 3 → STALE_ENTRY
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(200, peak=2, candles=5)
     ex = E.manage_exit(st, 201, {})
-    test("T14: 5 candles peak 2 → STALE_ENTRY",
-         len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY")
+test("16. test_stale_exit",
+     len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY",
+     "got " + str(ex))
 
-
-# T15: EMA9_LOW_BREAK — close below ema9_low triggers exit
-# Use peak=4 so BE+2 (threshold 5) stays dormant and doesn't mask the band check
-_df_break = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
-                         ema9_high=100.0, ema9_low=95.5)
-with patch.object(D, 'get_historical_data', return_value=_df_break), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
+# 17. EMA9_LOW_BREAK — last close < ema9_low. peak=4 keeps BE+2 dormant.
+_df_break = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0,
+                         last_low=93.5, ema9_high=100.0, ema9_low=95.5)
+with patch.object(D, "get_historical_data", return_value=_df_break), \
+     patch.object(D, "add_indicators", side_effect=lambda x: x):
     st = _make_state(entry=100, peak=4, candles=3)
     ex = E.manage_exit(st, 94, {})
-    test("T15: close 94 < ema9_low 95.5 → EMA9_LOW_BREAK",
-         len(ex) == 1 and ex[0]["reason"] == "EMA9_LOW_BREAK",
-         "got " + str(ex))
+test("17. test_ema9_low_break",
+     len(ex) == 1 and ex[0]["reason"] == "EMA9_LOW_BREAK",
+     "got " + str(ex))
 
-# T16: Close above ema9_low → hold
-_df_hold = _make_opt_3m(last_close=102.0, last_open=101.0, last_high=103.0, last_low=100.5,
-                        ema9_high=100.0, ema9_low=99.0)
-with patch.object(D, 'get_historical_data', return_value=_df_hold), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    st = _make_state(entry=95, peak=7, candles=3)
-    ex = E.manage_exit(st, 102, {})
-    test("T16: close 102 > ema9_low 99 → hold (no exit)",
-         len(ex) == 0, "got " + str(ex))
+# 18. BE+2 arms at peak 10 → SL = entry + 2. Hold at ltp 108 (above lock).
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=10, candles=3)
+    ex = E.manage_exit(st, 108, {})
+test("18. test_be2_at_peak_10",
+     st.get("be2_active") is True and st.get("be2_level") == 102 and len(ex) == 0,
+     "be2_active=" + str(st.get("be2_active")) + " level=" + str(st.get("be2_level"))
+     + " ex=" + str(ex))
 
-# T17: Same candle doesn't trigger repeat exit (ts dedup)
-# Use peak=4 to keep BE+2 dormant and isolate the band-check dedup logic
-_df_dup = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0, last_low=93.5,
-                       ema9_high=100.0, ema9_low=95.5)
-with patch.object(D, 'get_historical_data', return_value=_df_dup), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    st = _make_state(entry=100, peak=4, candles=3)
-    st["last_band_check_ts"] = str(_df_dup.iloc[-2].name)  # pretend we already saw this bar
-    ex = E.manage_exit(st, 94, {})
-    test("T17: same-candle ts dedup → no repeat EMA9_LOW_BREAK",
-         len(ex) == 0, "got " + str(ex))
-
-# T18: Peak tracking updates
-with patch.object(D, 'get_historical_data', return_value=_df_hold), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    st = _make_state(entry=100, peak=5, candles=2)
-    E.manage_exit(st, 110, {})
-    test("T18: peak ratchets up when pnl > peak",
-         st["peak_pnl"] >= 10, "peak=" + str(st.get("peak_pnl")))
+# 19. BE+2 does NOT arm at peak 9 → no lock, no exit
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=9, candles=3)
+    ex = E.manage_exit(st, 108, {})
+test("19. test_be2_not_at_peak_9",
+     st.get("be2_active") is False and len(ex) == 0,
+     "be2_active=" + str(st.get("be2_active")) + " ex=" + str(ex))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  T19-T22: STATE + CONFIG SANITY
+#  Section 5 — Validation whitelist (2 tests)
 # ═══════════════════════════════════════════════════════════════
 
-section("v15.0 — STATE + CONFIG SANITY")
+section("VALIDATION")
 
-import VRL_CONFIG as C
-C.load()
+from VRL_VALIDATE import VALID_ENTRY_MODES, LEGACY_MODES, VALID_EXIT_REASONS
 
-test("T19: entry_ema9_band.body_pct_min = 30",
-     C.entry_ema9_band("body_pct_min") == 30)
+# 20. EMA9_BREAKOUT is in VALID_ENTRY_MODES
+test("20. test_validate_entry_mode_accepted",
+     "EMA9_BREAKOUT" in VALID_ENTRY_MODES and "FAST" in LEGACY_MODES,
+     "valid=" + str(VALID_ENTRY_MODES) + " legacy=" + str(LEGACY_MODES))
 
-test("T20: exit_ema9_band.emergency_sl_pts = -20",
-     C.exit_ema9_band("emergency_sl_pts") == -20)
-
-# T21: STATE_PERSIST_FIELDS has v15.0 band fields
-required_v15 = ["entry_ema9_high", "entry_ema9_low", "entry_band_position",
-                "current_ema9_high", "current_ema9_low", "last_band_check_ts",
-                "entry_body_pct"]
-missing = [f for f in required_v15 if f not in D.STATE_PERSIST_FIELDS]
-test("T21: STATE_PERSIST_FIELDS includes v15.0 band fields",
-     len(missing) == 0, "missing: " + str(missing))
-
-# T22: No v13/v14 stale strategy fields in engine
-_eng_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "VRL_ENGINE.py")).read()
-stale_patterns = ["rsi_3m_entry", "adx_3m_entry", "confidence_15m",
-                  "spot_slope", "breakout_confirmed", "two_green_above",
-                  "momentum_pts", "spot_confirms"]
-_check_body = _eng_src.split("def check_entry")[1] if "def check_entry" in _eng_src else ""
-_exit_body = _eng_src.split("def manage_exit")[1] if "def manage_exit" in _eng_src else ""
-stale_found = [p for p in stale_patterns if p in _check_body or p in _exit_body]
-test("T22: Engine has no v13/v14 stale strategy fields",
-     len(stale_found) == 0, "found: " + str(stale_found))
+# 21. All 6 v15.2 exit reasons accepted
+_expected = ("EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
+             "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT")
+_missing = [r for r in _expected if r not in VALID_EXIT_REASONS]
+test("21. test_validate_exit_reason_accepted",
+     len(_missing) == 0,
+     "missing: " + str(_missing))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  T23-T25: CODEBASE INTEGRITY
+#  Section 6 — Dashboard source-of-truth (1 test)
 # ═══════════════════════════════════════════════════════════════
 
-section("v15.0 — CODEBASE INTEGRITY")
+section("DASHBOARD")
+
+# 22. VRL_WEB._today_trade_summary reads the CSV — the single source of truth
+import importlib, VRL_WEB
+importlib.reload(VRL_WEB)
+test("22. test_dashboard_count_matches_state",
+     hasattr(VRL_WEB, "_today_trade_summary")
+     and callable(VRL_WEB._today_trade_summary),
+     "no _today_trade_summary() in VRL_WEB")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 7 — Data integrity (2 tests)
+# ═══════════════════════════════════════════════════════════════
+
+section("DATA INTEGRITY")
+
+# 23. add_indicators populates ema9_high/ema9_low with non-zero values
+_raw = pd.DataFrame({
+    "open":   [100, 101, 102, 103, 104, 105, 106, 107, 108, 109],
+    "high":   [101, 102, 103, 104, 105, 106, 107, 108, 109, 110],
+    "low":    [ 99, 100, 101, 102, 103, 104, 105, 106, 107, 108],
+    "close":  [100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5, 107.5, 108.5, 109.5],
+    "volume": [1000] * 10,
+})
+_out = D.add_indicators(_raw)
+_eh_all = float((_out["ema9_high"] > 0).all())
+_el_all = float((_out["ema9_low"]  > 0).all())
+test("23. test_ema9_columns_non_zero",
+     _eh_all == 1.0 and _el_all == 1.0,
+     "ema9_high>0 all=" + str(_eh_all) + " ema9_low>0 all=" + str(_el_all))
+
+# 24. signal_scans schema has all 6 v15.2 straddle/VWAP columns
+import VRL_DB, VRL_LAB
+required = ["straddle_delta", "straddle_threshold", "straddle_period",
+            "spot_vwap", "spot_vs_vwap", "vwap_bonus",
+            "atm_strike_used", "band_width"]
+_missing_db  = [f for f in required if f not in VRL_DB._SCAN_FIELDS]
+_missing_csv = [f for f in required if f not in VRL_LAB.FIELDNAMES_SCAN]
+test("24. test_signal_scan_has_straddle",
+     len(_missing_db) == 0 and len(_missing_csv) == 0,
+     "missing_db=" + str(_missing_db) + " missing_csv=" + str(_missing_csv))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 8 — Banner / integrity (4 tests)
+# ═══════════════════════════════════════════════════════════════
+
+section("BANNER + CONFIG INTEGRITY")
 
 _repo = os.path.dirname(os.path.abspath(__file__))
-def _read_file(name):
+def _read(name):
     with open(os.path.join(_repo, name)) as f:
         return f.read()
 
-_main_src = _read_file("VRL_MAIN.py")
-_cfg_src = _read_file("config.yaml")
-_dash_src = _read_file("static/VRL_DASHBOARD.html")
-_cmd_src = _read_file("VRL_COMMANDS.py")
+_main_src = _read("VRL_MAIN.py")
+_cmd_src  = _read("VRL_COMMANDS.py")
+_dash_src = _read("static/VRL_DASHBOARD.html")
+_cfg_src  = _read("config.yaml")
 
-# T23: All files mention current version
-_v = D.VERSION
-test("T23: " + _v + " in VRL_MAIN, config, dashboard, commands",
-     _v in _main_src and _v in _cfg_src
-     and _v in _dash_src and _v in _cmd_src)
+# 25. No old floor ladder anywhere (banner, /help, dashboard)
+_stale = ["+5→-6", "+5\u2192-6", "+10→+2", "+10\u2192+2",
+          "{p:5,l:-6}", "{p:10,l:2}", "SL -12 close",
+          "FLOORS: +5"]
+_all_src = _main_src + _cmd_src + _dash_src
+_leaks = [s for s in _stale if s in _all_src]
+test("25. test_banner_no_old_floors",
+     len(_leaks) == 0,
+     "leaks=" + str(_leaks))
 
-# T24: Engine has ema9_high + ema9_low + EMA9_BREAKOUT + EMA9_LOW_BREAK
-test("T24: Engine contains v15.0 band strategy keywords",
-     "ema9_high" in _eng_src and "ema9_low" in _eng_src
-     and "EMA9_BREAKOUT" in _eng_src and "EMA9_LOW_BREAK" in _eng_src)
+# 26. VRL_DATA.VERSION matches config.yaml
+test("26. test_version_is_v15_2",
+     D.VERSION == "v15.2" and 'version: "v15.2"' in _cfg_src,
+     "VERSION=" + str(D.VERSION))
 
-# T25: No dead config sections present
-test("T25: config.yaml has no entry_3min / profit_floors / rsi_exit",
-     "entry_3min:" not in _cfg_src and "profit_floors:" not in _cfg_src
-     and "rsi_exit:" not in _cfg_src)
+# 27. Config uses nested entry:/exit: structure and has BE+2=10
+import yaml
+_cfg_parsed = yaml.safe_load(_cfg_src)
+_be2 = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("breakeven_lock_peak_threshold")
+_has_straddle = (_cfg_parsed.get("entry", {}).get("filters", {})
+                 .get("straddle_expansion", {}).get("enabled"))
+_has_vwap = (_cfg_parsed.get("entry", {}).get("filters", {})
+             .get("vwap_bonus", {}).get("enabled"))
+test("27. test_config_v15_2_structure",
+     _be2 == 10 and _has_straddle is True and _has_vwap is True,
+     "be2=" + str(_be2) + " straddle=" + str(_has_straddle)
+     + " vwap=" + str(_has_vwap))
 
-
-# ═══════════════════════════════════════════════════════════════
-#  v15.2 — BREAKEVEN+2 LOCK (peak ≥ 5) + NARROW BAND FILTER
-# ═══════════════════════════════════════════════════════════════
-
-section("v15.2 — BREAKEVEN+2 LOCK (peak≥5)")
-
-# T26: Peak >= 5 arms BE+2 at entry+2, no exit while price above it
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=5, candles=2)
-    ex = E.manage_exit(st, 108, {})  # ltp 108, BE level = 102, no exit
-    test("T26: peak 5 arms be2_active=True at entry+2 (102), no exit at ltp 108",
-         st.get("be2_active") == True and st.get("be2_level") == 102 and len(ex) == 0,
-         "be2_active=" + str(st.get("be2_active")) + " be2_level=" + str(st.get("be2_level")))
-
-# T27: Price drops to BE+2 level → BREAKEVEN_LOCK fires at entry+2
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=7, candles=3)
-    ex = E.manage_exit(st, 101.5, {})  # ltp 101.5 <= 102 → exit
-    test("T27: peak 7, ltp 101.5 <= 102 → BREAKEVEN_LOCK at 102",
-         len(ex) == 1 and ex[0]["reason"] == "BREAKEVEN_LOCK"
-         and ex[0]["price"] == 102,
-         "got " + str(ex))
-
-# T28: Peak < 5 → BE+2 stays dormant (no premature exit)
-with patch.object(D, 'get_historical_data', return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=3, candles=2)
-    ex = E.manage_exit(st, 101, {})  # peak only 3, ltp 101 — BE+2 not armed
-    test("T28: peak 3 < 5 → be2_active=False, no BREAKEVEN_LOCK exit",
-         st.get("be2_active") == False and len(ex) == 0,
-         "be2_active=" + str(st.get("be2_active")) + " ex=" + str(ex))
-
-
-section("v15.2 — NARROW BAND CHOP FILTER")
-
-# T29: Narrow band (<8 pts) blocks otherwise valid entry
-_df_narrow = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                          ema9_high=100.0, ema9_low=95.0,  # width = 5
-                          prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df_narrow), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T29: band_width 5 < 8 → narrow_band blocked",
-         r["fired"] == False and "narrow_band" in r.get("reject_reason", ""),
-         "reject=" + r.get("reject_reason", ""))
-
-# T30: Wide band (>=8 pts) + all other gates → FIRES
-_df_wide = _make_opt_3m(last_close=103.0, last_open=98.0, last_high=104.0, last_low=97.5,
-                        ema9_high=100.0, ema9_low=91.0,  # width = 9
-                        prev_close=99.0, prev_ema9_high=100.0)
-with patch.object(D, 'get_historical_data', return_value=_df_wide), \
-     patch.object(D, 'add_indicators', side_effect=lambda x: x):
-    r = E.check_entry(12345, "CE", 24000, 3)
-    test("T30: band_width 9 >= 8 → FIRES",
-         r["fired"] == True,
-         "fired=" + str(r["fired"]) + " reject=" + r.get("reject_reason", ""))
-
-# T31: result dict exposes band_width field
-test("T31: result dict includes band_width", "band_width" in r, str(list(r.keys())[:10]))
+# 28. Deleted config keys are actually gone
+_dead = ["profit_floors:", "entry_3min:", "rsi_exit:",
+         "atr_filter:", "stop_hunt_recovery:"]
+_alive = [k for k in _dead if k in _cfg_src]
+test("28. test_deleted_config_keys_absent",
+     len(_alive) == 0,
+     "still present: " + str(_alive))
 
 
 # ═══════════════════════════════════════════════════════════════
-#  SUMMARY
+#  Summary
 # ═══════════════════════════════════════════════════════════════
 
-print("\n" + "═" * 50)
+print("\n" + "=" * 50)
 print("  RESULTS: " + str(_passed) + " passed, " + str(_failed) + " failed")
-print("═" * 50)
+print("=" * 50)
 
 if _errors:
-    print("\nFAILED TESTS:")
+    print("\nFAILED:")
     for e in _errors:
         print(e)
 

@@ -1,8 +1,12 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v13.7
+#  VRL_VALIDATE.py — VISHAL RAJPUT TRADE v15.2
 #  20 live market validation checks. Run on every entry + exit.
 #  Silent on PASS, alerts + logs on FAIL.
 #  Zero impact on trading speed (runs after orders, not in critical path).
+#
+#  v15.2: VALID_ENTRY_MODES is the single allowed mode (EMA9_BREAKOUT).
+#  LEGACY_MODES carries old strings — recognized for historical CSV/DB
+#  replay so reports don't break, but never flagged as errors.
 # ═══════════════════════════════════════════════════════════════
 
 import os
@@ -14,6 +18,29 @@ from datetime import date, datetime
 
 import VRL_DATA as D
 import VRL_CONFIG as CFG
+
+# v15.2 — single live entry mode
+VALID_ENTRY_MODES = ("EMA9_BREAKOUT",)
+
+# Old strings that may still appear in historical trades; do NOT raise
+# errors on them, but they're not allowed as fresh entries either.
+LEGACY_MODES = (
+    "FAST", "CONFIRMED", "MOMENTUM", "3MIN",
+    "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION",
+)
+
+# v15.2 — exit reasons accepted for live + historical trades
+VALID_EXIT_REASONS = (
+    # v15.2 primary exits
+    "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
+    "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
+    # safety / manual
+    "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
+    # historical (kept for back-compat with old trade log rows)
+    "HARD_SL", "PROFIT_FLOOR", "FLOOR_SL",
+    "RSI_BLOWOFF", "RSI_SPIKE", "ATR_TRAIL", "SCOUT_SL",
+    "CANDLE_SL", "DIVERGENCE_EXIT", "WEAK_SL",
+)
 
 # ── Validation logger ─────────────────────────────────────────
 _VAL_LOG_DIR  = os.path.expanduser("~/logs")
@@ -110,16 +137,9 @@ def validate_entry(state, entry_result, kite=None):
         if not state.get("_sl_order_id"):
             failures.append("EXCHANGE_SL: no SL order placed (live mode)")
 
-    # CHECK 6: Entry mode is valid (v15.x: EMA9_BREAKOUT is the only live mode)
+    # CHECK 6: Entry mode is valid (v15.2: EMA9_BREAKOUT is the only live mode)
     mode = state.get("entry_mode", "") or state.get("mode", "")
-    valid_modes = (
-        # v15.x primary
-        "EMA9_BREAKOUT",
-        # historical (kept so old trade log replay doesn't fail)
-        "FAST", "CONFIRMED", "MOMENTUM", "3MIN",
-        "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION",
-    )
-    if mode and mode not in valid_modes:
+    if mode and mode not in VALID_ENTRY_MODES and mode not in LEGACY_MODES:
         failures.append("ENTRY_MODE: invalid mode=" + str(mode))
 
     # CHECK 7: Direction matches option type in symbol
@@ -181,18 +201,7 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
         failures.append("CHECK11_ERR: " + str(e))
 
     # CHECK 12: Exit reason is in the known set
-    valid_reasons = (
-        # v15.2 primary exits
-        "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "EMERGENCY_SL",
-        "STALE_ENTRY", "EOD_EXIT",
-        # safety / manual
-        "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
-        # historical (kept for back-compat with old trade log rows)
-        "HARD_SL", "TRAIL_FLOOR", "PROFIT_FLOOR", "FLOOR_SL",
-        "RSI_BLOWOFF", "RSI_SPIKE", "ATR_TRAIL", "SCOUT_SL",
-        "CANDLE_SL", "DIVERGENCE_EXIT", "WEAK_SL",
-    )
-    if exit_reason not in valid_reasons:
+    if exit_reason not in VALID_EXIT_REASONS:
         failures.append("EXIT_REASON: unknown=" + str(exit_reason))
 
     # CHECK 13: Charges calculator returns sensible numbers (if module exists)

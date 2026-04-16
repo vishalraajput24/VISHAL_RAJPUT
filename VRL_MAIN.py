@@ -80,6 +80,15 @@ DEFAULT_STATE = {
     "current_ema9_high"  : 0.0,
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
+    # ── v15.2 entry context (straddle + VWAP) ──
+    "entry_straddle_delta"     : 0.0,
+    "entry_straddle_threshold" : 0.0,
+    "entry_straddle_period"    : "",
+    "entry_atm_strike"         : 0,
+    "entry_band_width"         : 0.0,
+    "entry_spot_vwap"          : 0.0,
+    "entry_spot_vs_vwap"       : 0.0,
+    "entry_vwap_bonus"         : "",
     # v15.1 BE+2 lock
     "be2_active"         : False,
     "be2_level"          : 0.0,
@@ -671,10 +680,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "v15.2 EMA9 Band Breakout (3-min option candles)\n"
-        "ENTRY: close &gt; EMA9-high (fresh) + green + body \u226530% + band width \u22658pts\n"
-        "EXIT: EMA9-low close break | BE+2 after peak \u22655 | Emergency -20 | Stale 5c | EOD 15:30\n"
-        "2 lots fixed | No entry before 9:45 or after 15:10\n"
+        "🤖 <b>VISHAL RAJPUT TRADE v15.2</b>\n"
+        + _mode_tag() + " | EMA9 Band Breakout (3-min option candles)\n"
+        "ENTRY: close &gt; EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
+        "EXIT: EMA9-low break | BE+2 after peak 10 | Emergency -20 | Stale 5c | EOD 15:30\n"
+        "2 lots fixed | No entry 9:15-9:45 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -686,7 +696,7 @@ def _alert_bot_started():
             "Account: " + str(D.get_account_info().get("name", "")) + "\n"
             "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
             "Lots: 2 × " + str(D.LOT_SIZE) + " = " + str(D.LOT_SIZE * 2) + " qty\n"
-            "SL: 12pts = ₹" + "{:,}".format(12 * D.LOT_SIZE * 2) + " max loss per trade\n"
+            "Stop: dynamic EMA9-low close break (trail) | Emergency -20pts\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Every order uses REAL money.\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -860,6 +870,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_ema9_low"]   = round(float(entry_result.get("ema9_low", 0)), 2)
         state["last_band_check_ts"] = ""
         state["other_token"]        = _other_token_entry
+        # v15.2: capture straddle + VWAP context for exit alert + dashboard
+        _sd_at_entry = entry_result.get("straddle_delta")
+        state["entry_straddle_delta"]     = float(_sd_at_entry) if _sd_at_entry is not None else 0.0
+        state["entry_straddle_threshold"] = float(entry_result.get("straddle_threshold", 0) or 0)
+        state["entry_straddle_period"]    = entry_result.get("straddle_period", "")
+        state["entry_atm_strike"]         = int(entry_result.get("atm_strike_used", 0) or 0)
+        state["entry_band_width"]         = float(entry_result.get("band_width", 0) or 0)
+        state["entry_spot_vwap"]          = float(entry_result.get("spot_vwap", 0) or 0)
+        state["entry_spot_vs_vwap"]       = float(entry_result.get("spot_vs_vwap", 0) or 0)
+        state["entry_vwap_bonus"]         = entry_result.get("vwap_bonus", "")
         # Counters
         state["daily_trades"]      += 1
 
@@ -883,52 +903,56 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     except Exception as _se:
         logger.warning("[MAIN] SL-M place error: " + str(_se))
 
-    # Entry alert
+    # ── v15.2 Entry alert ──
     _slip_line = ""
     if _entry_slippage > 0:
         _slip_line = "Slip: +" + str(_entry_slippage) + "pts\n"
-    # Bonus indicators line (wrapped in try — never crash entry alert)
-    _bonus_line = ""
-    try:
-        _eb = entry_result.get("bonus", {})
-        _bt = []
-        if _eb.get("above_vwap"):
-            _bt.append("VWAP ✓")
-        else:
-            _bt.append("VWAP ✗")
-        if _eb.get("fib_nearest"):
-            _bt.append("Fib " + str(_eb["fib_nearest"]) + " " + str(_eb.get("fib_distance", 0)) + "pts")
-        if _eb.get("vol_spike"):
-            _bt.append("Vol " + str(_eb.get("vol_ratio", 0)) + "x 🔥")
-        if _eb.get("pdh_break"):
-            _bt.append("PDH ↑")
-        if _eb.get("pdl_break"):
-            _bt.append("PDL ↓")
-        if _bt:
-            _bonus_line = "Bonus: " + " | ".join(_bt) + "\n"
-    except Exception:
-        _bonus_line = ""
-    # v15.0: EMA9 Band Breakout entry detail
+
     _emode = entry_result.get("entry_mode", "EMA9_BREAKOUT")
     _close = round(float(entry_result.get("close", actual_price)), 1)
     _ema9h = round(float(entry_result.get("ema9_high", 0)), 1)
     _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
-    _body = int(round(float(entry_result.get("body_pct", 0)), 0))
+    _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
     _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
-    _be2_level = round(actual_price + 2, 1)
-    _ema9_width = round(_ema9h - _ema9l, 1) if _ema9h and _ema9l else 0
+
+    # Straddle Δ line (Gate 7 context)
+    _sd  = entry_result.get("straddle_delta")
+    _sth = entry_result.get("straddle_threshold", 0)
+    _spd = entry_result.get("straddle_period", "-")
+    if _sd is None:
+        _straddle_line = ("Straddle \u0394 n/a [need " + str(_sth)
+                          + " in " + _spd + "]\n")
+    else:
+        _straddle_line = ("Straddle \u0394" + "{:+.1f}".format(float(_sd))
+                          + "pts [need " + str(_sth) + " in " + _spd + "]\n")
+
+    # VWAP bonus line (display only, matches spec)
+    _vwap_line = ""
+    try:
+        _vw   = entry_result.get("spot_vwap")
+        _diff = entry_result.get("spot_vs_vwap")
+        _vbon = entry_result.get("vwap_bonus", "")
+        if _vw and _vw > 0:
+            _spot_disp = round(float(_vw) + float(_diff or 0), 1)
+            _vwap_line = ("VWAP: spot " + "{:.1f}".format(_spot_disp)
+                          + " vs vwap " + "{:.1f}".format(float(_vw))
+                          + " (" + "{:+.0f}".format(float(_diff or 0))
+                          + ") [" + str(_vbon) + "]\n")
+    except Exception:
+        _vwap_line = ""
+
     _detail = ("Close " + str(_close) + " &gt; EMA9-high " + str(_ema9h) + "\n"
-               + "Body " + str(_body) + "% green \u2713\n"
-               + "Band width: " + str(_ema9_width) + "pts \u2713\n"
-               + "Stop: EMA9-low " + str(_ema9l) + " (" + str(_dist_to_stop) + "pts away)\n"
-               + "BE+2 lock: activates after peak +5 \u2192 SL locks at \u20B9"
-               + str(_be2_level) + "\n")
+               + "Body " + str(_body) + "% green\n"
+               + _straddle_line
+               + _vwap_line
+               + "Stop: EMA9-low " + str(_ema9l)
+               + " (" + "{:.1f}".format(_dist_to_stop) + "pts away)\n"
+               + "BE+2 lock: activates after peak +10\n")
     _tg_send(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎯 <b>" + _short_sym(symbol, option_type, state.get("strike", 0))
-        + " × " + str(lot_count) + " LOTS [" + _emode + "]</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + datetime.now().strftime("%H:%M") + "  ₹" + str(round(actual_price, 1)) + "\n"
+        "<b>" + _short_sym(symbol, option_type, state.get("strike", 0))
+        + " x " + str(lot_count) + " LOTS [" + _emode + "]</b>\n"
+        + datetime.now().strftime("%H:%M") + "  \u20B9" + str(round(actual_price, 1)) + "\n"
         + _detail + _slip_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -1118,47 +1142,21 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _ch = {"gross_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.LOT_SIZE) * D.LOT_SIZE,
                    "charges_pts": 0}
-        if pnl >= 0:
-            _confirm_exit = _entry_conf
-            _tg_send(
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "✅ <b>" + _sym_short + "  +" + str(round(pnl, 1)) + "pts</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "₹" + str(round(entry, 1)) + " → ₹" + str(round(actual_exit, 1))
-                + " | " + reason + "\n"
-                "Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
-                "Confirm at entry: " + _confirm_exit + "\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Gross  : +₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
-                "Charges: -₹" + "{:,}".format(int(_ch["total_charges"]))
-                + " (" + str(_ch["charges_pts"]) + "pts)\n"
-                "Net    : " + ("+" if _ch["net_pnl"] >= 0 else "-") + "₹"
-                + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts"
-                + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            )
-        else:
-            _cd_min = _cd_cfg.get("after_loss", 5)
-            _fast_sl = "⚡ FAST SL — " + str(candles) + " candle exit\n" if reason == "HARD_SL" and candles <= 1 else ""
-            _confirm_exit_l = _entry_conf
-            _tg_send(
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "❌ <b>" + _sym_short + "  " + str(round(pnl, 1)) + "pts</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                + reason + " | Peak +" + str(round(peak, 1)) + " | " + str(candles) + "min\n"
-                + _fast_sl +
-                "Confirm at entry: " + _confirm_exit_l + "\n"
-                "Gross  : -₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
-                "Charges: -₹" + "{:,}".format(int(_ch["total_charges"])) + "\n"
-                "Net    : -₹" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
-                "⏳ " + direction + " blocked " + str(_cd_min) + "min\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "DAY: " + ("+" if _day_pnl >= 0 else "") + str(round(_day_pnl, 1)) + "pts"
-                + " | " + str(_day_wins) + "W " + str(_day_losses) + "L\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            )
+        # v15.2 exit alert — 5 data lines, spec-aligned (no confirm-at-entry line)
+        _gross_sign = "+" if _ch["gross_pnl"] >= 0 else "-"
+        _net_sign   = "+" if _ch["net_pnl"]   >= 0 else "-"
+        _tg_send(
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>" + _sym_short + "</b>  " + "{:+.1f}".format(pnl) + "pts\n"
+            + reason + " | Peak +" + "{:.1f}".format(peak) + " | " + str(candles) + "min\n"
+            "Entry " + str(round(entry, 1)) + " -> Exit " + str(round(actual_exit, 1)) + "\n"
+            "Gross: " + _gross_sign + "\u20B9" + "{:,}".format(abs(int(_ch["gross_pnl"])))
+            + " | Charges: -\u20B9" + "{:,}".format(int(_ch["total_charges"]))
+            + " | Net: " + _net_sign + "\u20B9" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
+            "DAY: " + "{:+.1f}".format(_day_pnl) + "pts | "
+            + str(_day_wins) + "W " + str(_day_losses) + "L\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
     else:
         # Partial exit — update daily PNL for the exited lot
         with _state_lock:
@@ -1449,7 +1447,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         straddle_open = getattr(D, "_straddle_open", 0)
         straddle_captured = getattr(D, "_straddle_captured", False)
 
-        # ── Build CE/PE signal blocks (v15.0: Dual EMA9 Band fields) ──
+        # ── Build CE/PE signal blocks (v15.2: Bands + Straddle Δ + VWAP) ──
         def _build_signal(opt_type, result):
             if not result:
                 return {
@@ -1458,6 +1456,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "candle_green": False, "fired": False,
                     "verdict": "NO DATA", "ltp": 0, "entry_mode": "",
                     "strike": dir_strikes.get(opt_type, atm_strike),
+                    "straddle_delta": None, "straddle_threshold": 0,
+                    "straddle_period": "",
+                    "spot_vwap": 0, "spot_vs_vwap": 0, "vwap_bonus": "",
                 }
             _fired = result.get("fired", False)
             _mode = result.get("entry_mode", "")
@@ -1472,7 +1473,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             # Verdict
             _width = float(result.get("band_width", 0))
             if _fired:
-                verdict = "FIRED [" + _mode + "]"
+                verdict = "READY TO FIRE"
             elif _reject:
                 verdict = _reject
             elif _width > 0 and _width < 8:
@@ -1503,6 +1504,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
+                # v15.2 straddle filter context
+                "straddle_delta":     result.get("straddle_delta"),
+                "straddle_threshold": result.get("straddle_threshold", 0),
+                "straddle_period":    result.get("straddle_period", ""),
+                "atm_strike_used":    result.get("atm_strike_used", 0),
+                # v15.2 VWAP bonus (display only)
+                "spot_vwap":     round(float(result.get("spot_vwap", 0) or 0), 2),
+                "spot_vs_vwap":  round(float(result.get("spot_vs_vwap", 0) or 0), 2),
+                "vwap_bonus":    result.get("vwap_bonus", ""),
                 # Legacy compat
                 "rsi": 0, "ema9": round(_eh, 2), "ema21": 0,
             }
@@ -1563,66 +1573,52 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             entry = st.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            # v13.5: single lot path. SL = entry - candle_close_sl (12)
-            import VRL_CONFIG as _CFG_pos
-            _candle_sl = _CFG_pos.get().get("exit", {}).get("candle_close_sl", 12)
-            _entry_mode_pos = st.get("entry_mode", "FAST")
-            if _entry_mode_pos == "CONFIRMED":
-                _trail_act = _CFG_pos.get().get("profit_trail", {}).get("confirmed_activate_at", 20)
-            else:
-                _trail_act = _CFG_pos.get().get("profit_trail", {}).get("fast_activate_at", 15)
-            _peak = st.get("peak_pnl", 0)
-            _floor = st.get("current_floor", 0)
-            _trail_on = _peak >= _trail_act and _floor > 0
+            # v15.2: single dynamic stop = current EMA9-low (or BE+2 if armed)
+            _stop_price = round(st.get("current_ema9_low", 0), 2)
+            if _stop_price <= 0:
+                _stop_price = round(entry - 12, 2)  # fallback before band warms up
+            _stop_type = "EMA9_LOW"
+            if st.get("be2_active") and st.get("be2_level", 0) > _stop_price:
+                _stop_price = round(st.get("be2_level", 0), 2)
+                _stop_type = "BE+2"
 
-            # Lot1 (maintained for dashboard compat — actually same path as lot2)
-            if st.get("lot1_active"):
-                _l1_sl_price = round(entry - _candle_sl, 2)
-                if _trail_on and _floor > _l1_sl_price:
-                    _l1_sl_price = round(_floor, 2)
-                    _l1_type = "TRAIL"
-                else:
-                    _l1_type = "CANDLE_SL"
-                lot1 = {"status": "active", "pnl": running,
-                         "sl": _l1_sl_price, "sl_type": _l1_type}
-            else:
-                lot1 = {"status": "exited", "pnl": round(st.get("lot1_exit_pnl", 0), 2),
-                         "exit_price": st.get("lot1_exit_price", 0),
-                         "exit_reason": st.get("lot1_exit_reason", ""),
-                         "exit_time": st.get("lot1_exit_time", ""), "sl": 0, "sl_type": ""}
+            lot1 = {"status": "active", "pnl": running,
+                    "sl": _stop_price, "sl_type": _stop_type}
+            lot2 = {"status": "active", "pnl": running,
+                    "sl": _stop_price, "sl_type": _stop_type}
 
-            # Lot2 (same path as lot1 in v13.5)
-            if st.get("lot2_active"):
-                _l2_sl_price = round(entry - _candle_sl, 2)
-                if _trail_on and _floor > _l2_sl_price:
-                    _l2_sl_price = round(_floor, 2)
-                    _l2_type = "TRAIL"
-                else:
-                    _l2_type = "CANDLE_SL"
-                lot2 = {"status": "active", "pnl": running,
-                         "sl": _l2_sl_price, "sl_type": _l2_type}
-            else:
-                lot2 = {"status": "exited", "pnl": round(st.get("lot2_exit_pnl", 0), 2),
-                         "exit_price": st.get("lot2_exit_price", 0),
-                         "exit_reason": st.get("lot2_exit_reason", ""), "sl": 0, "sl_type": ""}
-
+            _be2_thresh = CFG.exit_ema9_band("breakeven_lock_peak_threshold", 10)
             position = {
                 "in_trade": True,
                 "symbol": st.get("symbol", ""),
                 "direction": st.get("direction", ""),
                 "entry": entry,
+                "entry_time": st.get("entry_time", ""),
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
                 "pnl": running,
                 "peak": round(st.get("peak_pnl", 0), 1),
+                "trough": round(st.get("trough_pnl", 0), 1),
                 "candles": st.get("candles_held", 0),
                 "strike": st.get("strike", 0),
                 "entry_mode": st.get("entry_mode", ""),
                 # v15.0 band trail
                 "current_ema9_high": round(st.get("current_ema9_high", 0), 2),
                 "current_ema9_low":  round(st.get("current_ema9_low", 0), 2),
+                "stop": round(st.get("current_ema9_low", 0), 2),
+                "stop_dist": round(opt_ltp - st.get("current_ema9_low", 0), 2)
+                              if opt_ltp > 0 and st.get("current_ema9_low", 0) > 0 else 0,
                 # v15.1 BE+2 lock
-                "be2_active": bool(st.get("be2_active", False)),
-                "be2_level":  round(st.get("be2_level", 0), 2),
+                "be2_active":    bool(st.get("be2_active", False)),
+                "be2_level":     round(st.get("be2_level", 0), 2),
+                "be2_threshold": _be2_thresh,
+                # v15.2 entry context (replayed at exit on dashboard)
+                "entry_straddle_delta":     st.get("entry_straddle_delta", 0),
+                "entry_straddle_threshold": st.get("entry_straddle_threshold", 0),
+                "entry_straddle_period":    st.get("entry_straddle_period", ""),
+                "entry_band_width":         st.get("entry_band_width", 0),
+                "entry_spot_vwap":          st.get("entry_spot_vwap", 0),
+                "entry_spot_vs_vwap":       st.get("entry_spot_vs_vwap", 0),
+                "entry_vwap_bonus":         st.get("entry_vwap_bonus", ""),
                 # Legacy compat
                 "lots_split": False,
                 "current_rsi": round(st.get("current_rsi", 0), 1),
@@ -1710,11 +1706,21 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "captured": straddle_captured,
         }
 
+        # ── v15.2 period (OPENING / MIDDAY / CLOSING) ──
+        _mod = now.hour * 60 + now.minute
+        if 585 <= _mod < 630:
+            _period = "OPENING"
+        elif 630 <= _mod < 840:
+            _period = "MIDDAY"
+        else:
+            _period = "CLOSING"
+
         # ── Full snapshot ──
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
             "mode": "PAPER" if D.PAPER_MODE else "LIVE",
+            "period": _period,
             "market": {
                 "spot": round(spot_ltp, 1),
                 "atm": atm_strike,

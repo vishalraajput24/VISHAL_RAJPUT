@@ -162,6 +162,10 @@ STATE_PERSIST_FIELDS = [
     "entry_band_position", "entry_body_pct",
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
     "score_at_entry", "other_token",
+    # v15.2 entry context (straddle + VWAP)
+    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
+    "entry_atm_strike", "entry_band_width",
+    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
     # v15.1 BE+2 lock
     "be2_active", "be2_level",
     # Last exit memory
@@ -548,6 +552,11 @@ def get_ltp(token) -> float:
         return 0.0
     return entry["ltp"]
 
+
+def get_spot_ltp() -> float:
+    """v15.2: convenience helper — spot LTP via WebSocket tick cache."""
+    return get_ltp(NIFTY_SPOT_TOKEN)
+
 def is_tick_live(token) -> bool:
     with _tick_lock:
         entry = _ticks.get(int(token) if token else 0)
@@ -817,6 +826,128 @@ def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
     if df.empty:
         return df
     return add_indicators(df)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v15.2 STRADDLE EXPANSION HELPERS — used by Gate 7
+#  Read live ATM CE+PE 3-min closes and compare current vs N min ago.
+#  Returns None on missing data so the gate can reject explicitly.
+# ═══════════════════════════════════════════════════════════════
+
+def get_atm_straddle(timestamp=None, atm_strike: int = 0) -> float:
+    """Return ATM_CE_close + ATM_PE_close at (or just before) `timestamp`.
+    timestamp=None → live (use the most recent CLOSED 3-min candle of each leg).
+    Returns None if either leg's data is missing."""
+    if not atm_strike:
+        return None
+    expiry = None
+    try:
+        expiry = get_nearest_expiry(_kite)
+    except Exception:
+        expiry = None
+    if expiry is None or _kite is None:
+        return None
+    tokens = get_option_tokens(_kite, atm_strike, expiry) or {}
+    ce_tok = (tokens.get("CE") or {}).get("token")
+    pe_tok = (tokens.get("PE") or {}).get("token")
+    if not ce_tok or not pe_tok:
+        return None
+    try:
+        ce_df = get_historical_data(int(ce_tok), "3minute", 30)
+        pe_df = get_historical_data(int(pe_tok), "3minute", 30)
+        if ce_df is None or pe_df is None or ce_df.empty or pe_df.empty:
+            return None
+
+        def _closest(df, ts):
+            if ts is None:
+                # live → use last closed candle (iloc[-2] when in-progress exists)
+                idx = -2 if len(df) >= 2 else -1
+                return float(df.iloc[idx]["close"])
+            try:
+                snapped = df.index[df.index <= ts]
+                if len(snapped) == 0:
+                    return None
+                return float(df.loc[snapped[-1]]["close"])
+            except Exception:
+                return None
+
+        ce_close = _closest(ce_df, timestamp)
+        pe_close = _closest(pe_df, timestamp)
+        if ce_close is None or pe_close is None:
+            return None
+        return round(ce_close + pe_close, 2)
+    except Exception as e:
+        logger.debug("[STRADDLE] get_atm_straddle err: " + str(e))
+        return None
+
+
+def get_straddle_delta(atm_strike: int, lookback_minutes: int = 15) -> float:
+    """Straddle expansion = straddle(now) - straddle(now - lookback_minutes).
+    `atm_strike` is the active ATM strike. `lookback_minutes` snaps back 15 min
+    (5 x 3-min candles) by default. Returns None if either side is missing —
+    the caller must treat that as a reject (straddle_data_unavailable)."""
+    if not atm_strike:
+        return None
+    now_dt = now_ist().replace(tzinfo=None)
+    current = get_atm_straddle(None, atm_strike)       # None = use last CLOSED candle
+    prior_dt = now_dt - timedelta(minutes=int(lookback_minutes))
+    # Snap to 3-min boundary (00, 03, 06, ...)
+    prior_dt = prior_dt.replace(
+        minute=(prior_dt.minute // 3) * 3, second=0, microsecond=0)
+    prior = get_atm_straddle(prior_dt, atm_strike)
+    if current is None or prior is None:
+        return None
+    return round(current - prior, 2)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v15.2 SPOT VWAP — display-only confluence indicator
+#  Cumulative session VWAP from 5-min spot candles, market open → now.
+# ═══════════════════════════════════════════════════════════════
+
+def get_spot_5min(today: bool = True, end=None) -> list:
+    """Return today's spot 5-min candles up to `end` (or now). List of dicts."""
+    try:
+        df = get_historical_data(NIFTY_SPOT_TOKEN, "5minute", 80)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    df = df.copy()
+    today_str = date.today().strftime("%Y-%m-%d")
+    df["_date"] = df.index.map(
+        lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
+    if today:
+        df = df[df["_date"] == today_str]
+    if end is not None:
+        try:
+            df = df[df.index <= end]
+        except Exception:
+            pass
+    if df.empty:
+        return []
+    return [
+        {"high":  float(r["high"]),
+         "low":   float(r["low"]),
+         "close": float(r["close"]),
+         "volume": float(r["volume"]) if r["volume"] else 0.0}
+        for _, r in df.iterrows()
+    ]
+
+
+def get_spot_vwap(end=None) -> float:
+    """Cumulative session VWAP from 5-min spot candles. Returns None if no data."""
+    rows = get_spot_5min(today=True, end=end)
+    if not rows:
+        return None
+    cum_pv = 0.0
+    cum_v  = 0.0
+    for r in rows:
+        typical = (r["high"] + r["low"] + r["close"]) / 3.0
+        v = r["volume"] if r["volume"] > 0 else 1.0
+        cum_pv += typical * v
+        cum_v  += v
+    return round(cum_pv / cum_v, 2) if cum_v > 0 else None
 
 
 # ═══════════════════════════════════════════════════════════════
