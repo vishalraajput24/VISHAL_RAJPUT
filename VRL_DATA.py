@@ -168,6 +168,8 @@ STATE_PERSIST_FIELDS = [
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
     # v15.2.5 velocity stall tracking
     "peak_history", "last_peak_candle_ts", "current_velocity",
+    # v15.2.5 pre-entry alert toggle + rate-limit history
+    "pre_entry_alerts_enabled", "alert_history",
     # v15.1 BE+2 lock
     "be2_active", "be2_level",
     # Last exit memory

@@ -410,6 +410,86 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         return result
 
 
+# ═══════════════════════════════════════════════════════════════
+#  v15.2.5 MULTI-CANDIDATE STRIKE SCANNER
+#  Scans ATM-50, ATM, ATM+50 (×CE+PE = 6 candidates) every call.
+#  Picks the best fired candidate by score:
+#      (straddle_delta, body_pct, -abs(strike - center_atm))
+#  Higher straddle expansion wins; tiebreaker is body strength, then
+#  closeness to the true ATM.
+#  Opt-in via config (entry.ema9_band.multi_candidate.enabled).
+# ═══════════════════════════════════════════════════════════════
+
+def scan_all_candidates(kite, spot_ltp: float, atm_strike: int,
+                        expiry, dte: int = 0,
+                        state: dict = None) -> dict:
+    """Scan 3 neighboring strikes (ATM-50, ATM, ATM+50) × (CE, PE).
+    Returns the best fired candidate dict (with keys: strike, side,
+    token, symbol, result) or None if nothing fired. Never raises —
+    any per-strike error is logged and skipped.
+
+    Callers should use this INSTEAD of a single check_entry() call
+    when `entry.ema9_band.multi_candidate.enabled=true`. When disabled
+    (default), the caller's existing locked-strike path remains in use.
+    """
+    if state is None:
+        state = {}
+    if not atm_strike or expiry is None:
+        return None
+
+    step = int(CFG.entry_ema9_band("multi_candidate_strike_range", 50) or 50)
+    strikes = [atm_strike - step, atm_strike, atm_strike + step]
+    fired = []
+    for strike in strikes:
+        try:
+            tokens = D.get_option_tokens(kite, int(strike), expiry) or {}
+        except Exception as e:
+            logger.debug("[ENGINE] multi_candidate token resolve "
+                         + str(strike) + " err: " + str(e))
+            continue
+        for side in ("CE", "PE"):
+            info = tokens.get(side)
+            if not info:
+                continue
+            tok = int(info.get("token") or 0)
+            if not tok:
+                continue
+            try:
+                r = check_entry(
+                    tok, side, spot_ltp, dte, expiry, kite,
+                    silent=True, state=state)
+            except Exception as e:
+                logger.debug("[ENGINE] multi_candidate check_entry "
+                             + str(strike) + side + " err: " + str(e))
+                continue
+            if r.get("fired"):
+                fired.append({
+                    "strike": int(strike),
+                    "side":   side,
+                    "token":  tok,
+                    "symbol": info.get("symbol", ""),
+                    "result": r,
+                })
+
+    if not fired:
+        return None
+
+    def _score(c):
+        r = c["result"]
+        sd = float(r.get("straddle_delta") or 0)
+        body = float(r.get("body_pct") or 0)
+        dist = -abs(c["strike"] - atm_strike)
+        return (sd, body, dist)
+
+    fired.sort(key=_score, reverse=True)
+    best = fired[0]
+    logger.info("[ENGINE] MULTI_CANDIDATE fired=" + str(len(fired))
+                + " chose=" + str(best["strike"]) + best["side"]
+                + " Δ=" + str(best["result"].get("straddle_delta"))
+                + " body=" + str(best["result"].get("body_pct")) + "%")
+    return best
+
+
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
     """v15.0: legacy compat. Initial SL placed at entry-12 by VRL_TRADE
     as a static safety net while the dynamic band trail takes over."""
@@ -521,23 +601,22 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     else:
         state["current_velocity"] = 0.0
 
-    # ── RULE 4 (v15.2.5): VELOCITY_STALL — 2 consecutive no-growth candles ──
-    # Per-candle delta: ph[-i] - ph[-(i+1)]. If <=0 for `vs_consec` iterations
-    # in a row, momentum has died. Only act once peak ≥ vs_min_peak so we
-    # don't exit on a flat-at-zero trade that STALE will catch later.
-    if vs_enabled and len(ph) >= vs_consec + 1 and peak >= vs_min_peak:
-        stalls = 0
-        for i in range(1, vs_consec + 1):
-            if ph[-i] - ph[-(i + 1)] <= 0:
-                stalls += 1
-            else:
-                break
-        if stalls >= vs_consec:
+    # ── RULE 4 (v15.2.5): VELOCITY_STALL — 3-candle-avg velocity ≤ 0 for 2 windows ──
+    # velocity = (ph[-1] - ph[-4]) / 3        # pts per candle over last 3 candles
+    # prev_velocity = (ph[-2] - ph[-5]) / 3   # same but one candle earlier
+    # If BOTH <= 0 and peak >= vs_min_peak → momentum died, exit.
+    # Needs len(ph) >= 5 so both velocity windows are defined.
+    if vs_enabled and len(ph) >= 5 and peak >= vs_min_peak:
+        velocity      = (ph[-1] - ph[-4]) / 3.0
+        prev_velocity = (ph[-2] - ph[-5]) / 3.0
+        state["current_velocity"] = round(velocity, 2)
+        if velocity <= 0 and prev_velocity <= 0:
             logger.info("[ENGINE] VELOCITY_STALL peak_hist="
-                        + str(ph[-(vs_consec + 1):])
-                        + " stalls=" + str(stalls)
+                        + str(ph[-5:])
+                        + " v=" + "{:+.2f}".format(velocity)
+                        + " prev_v=" + "{:+.2f}".format(prev_velocity)
                         + " peak=" + str(round(peak, 1))
-                        + " velocity=" + str(state["current_velocity"]) + " → exit")
+                        + " → exit")
             return [{"lot_id": "ALL", "reason": "VELOCITY_STALL", "price": option_ltp}]
 
     # ── RULE 5: EMA9_LOW_BREAK — the dynamic trailing stop ──

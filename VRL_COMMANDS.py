@@ -269,6 +269,8 @@ def _cmd_help(args):
         "/pause     — block new entries\n"
         "/resume    — re-enable entries\n"
         "/forceexit — emergency exit all lots\n"
+        "/alerts_on — pre-entry learning alerts ON\n"
+        "/alerts_off— pre-entry learning alerts OFF\n"
         "/restart   — restart bot\n"
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1514,8 +1516,27 @@ def _cmd_slippage(args):
     )
 
 
+def _cmd_alerts_on(args):
+    with _state_lock:
+        state["pre_entry_alerts_enabled"] = True
+    _tg_send("🔔 <b>Pre-entry alerts ON</b>\n"
+             "REVERSAL 🔔 / APPROACHING ⏰ / READY ⚡ / BLOCKED ⚠️ "
+             "events will send during the trading window.\n"
+             "Use /alerts_off to silence.")
+
+
+def _cmd_alerts_off(args):
+    with _state_lock:
+        state["pre_entry_alerts_enabled"] = False
+    _tg_send("🔕 <b>Pre-entry alerts OFF</b>\n"
+             "Learning-mode alerts silenced. Trade alerts + EOD still fire.\n"
+             "Use /alerts_on to re-enable.")
+
+
 _DISPATCH = {
     "/help"        : _cmd_help,
+    "/alerts_on"   : _cmd_alerts_on,
+    "/alerts_off"  : _cmd_alerts_off,
     "/status"      : _cmd_status,
     "/edge"        : _cmd_edge,
     "/greeks"      : _cmd_edge,

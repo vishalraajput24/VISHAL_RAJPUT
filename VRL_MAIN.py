@@ -93,6 +93,9 @@ DEFAULT_STATE = {
     "peak_history"       : [],
     "last_peak_candle_ts": "",
     "current_velocity"   : 0.0,
+    # v15.2.5 pre-entry alerts (learning mode)
+    "pre_entry_alerts_enabled": True,
+    "alert_history"      : {},   # key -> ISO timestamp
     # v15.1 BE+2 lock
     "be2_active"         : False,
     "be2_level"          : 0.0,
@@ -318,6 +321,9 @@ def _reset_daily(today_str: str):
         VRL_SHADOW.reset_day()
     except Exception:
         pass
+    # v15.2.5: clear pre-entry alert rate-limit history at daily rollover
+    with _state_lock:
+        state["alert_history"] = {}
     # DB maintenance
     try:
         import VRL_DB as _DB
@@ -2447,6 +2453,30 @@ def _strategy_loop(kite):
                         "ce": ce_res,
                         "pe": pe_res,
                     }
+
+                # ── v15.2.5: pre-entry awareness alerts (learning mode) ──
+                # Non-blocking. Only runs during the trading window (outer
+                # if-gate guarantees that). Rate-limited inside VRL_ALERTS.
+                try:
+                    import VRL_ALERTS
+                    with _state_lock:
+                        _alert_state = {
+                            "pre_entry_alerts_enabled":
+                                state.get("pre_entry_alerts_enabled", True),
+                            "alert_history":
+                                dict(state.get("alert_history") or {}),
+                        }
+                    _signals = VRL_ALERTS.detect_pre_entry_signals(
+                        all_results, _alert_state, dfs=None)
+                    # Persist updated history + send
+                    if _signals:
+                        with _state_lock:
+                            state["alert_history"] = _alert_state.get(
+                                "alert_history", {})
+                        for _sig in _signals:
+                            _tg_send(_sig["msg"])
+                except Exception as _ae:
+                    logger.debug("[ALERTS] dispatch error: " + str(_ae))
 
                 # ── v15.2 Part 4: silent 1-min shadow strategy ────────
                 # Runs after live scan on every 1-min boundary. Independent

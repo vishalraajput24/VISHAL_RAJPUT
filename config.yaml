@@ -35,6 +35,13 @@ entry:
     # AND the current bar's close > its ema9_high. N=3 recovers from
     # a restart that lands mid-move; N=1 is the strict immediate cross.
     fresh_breakout_lookback: 3
+    # v15.2.5: multi-candidate strike scanning (ATM-50/ATM/ATM+50).
+    # When enabled, every scan cycle evaluates all 6 CE/PE candidates
+    # and picks the best fired one by (straddle_delta, body_pct, -|Δstrike|).
+    # Disabled by default — enable after confirming the 6-token subscription
+    # load is acceptable on the production Kite quota.
+    multi_candidate_enabled: false
+    multi_candidate_strike_range: 50
   filters:
     # Tiered straddle expansion filter (Gate 7). Hard gate.
     straddle_expansion:
@@ -113,6 +120,21 @@ notifications:
   trade_alerts: true
   error_alerts: true
   daily_summary: true
+
+# ── v15.2.5 Pre-entry awareness alerts (learning mode) ───────
+# Educational Telegram alerts when setups form. Never trigger trades.
+# Runtime toggle via /alerts_on and /alerts_off (persists in state).
+alerts:
+  pre_entry:
+    enabled: true
+    rate_limit_per_key_minutes: 15   # max 1 alert per (strike, side, type) per N min
+    global_hourly_cap: 10            # absolute cap across all keys per hour
+    approaching_breakout_gap_pts: 3  # B: close must be within this many pts of ema9_high
+    signal_types:
+      reversal_building: true        # A 🔔
+      approaching_breakout: true     # B ⏰
+      ready_to_fire: true            # C ⚡
+      blocked_setup: true            # D ⚠️
 
 web:
   port: 8080

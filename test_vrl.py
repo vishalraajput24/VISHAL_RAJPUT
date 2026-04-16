@@ -488,38 +488,42 @@ def _vs_state(peak_history, peak=None, entry=100, candles=4):
     }
 
 
-# 32. VELOCITY_STALL fires after 2 consecutive no-growth candles with peak>=3
-_ph_stalled = [5, 8, 12, 12, 12]   # 2 consecutive no-growth at 12, peak=12
+# 32. VELOCITY_STALL fires when 3-candle-avg velocity <= 0 for two windows.
+#     Needs 5 flat slots: ph[-5..-1]=15 → v=(15-15)/3=0, prev_v=(15-15)/3=0. EXIT.
+#     candles=3 so STALE_ENTRY (5c+peak<3) doesn't fire first.
+_ph_stalled = [10, 15, 15, 15, 15, 15]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
-    st = _vs_state(_ph_stalled, peak=12.0, candles=5)
-    ex = E.manage_exit(st, entry := 112.0, {})
+    st = _vs_state(_ph_stalled, peak=15.0, candles=3)
+    ex = E.manage_exit(st, 115.0, {})
 test("32. test_velocity_stall_exits",
      len(ex) == 1 and ex[0]["reason"] == "VELOCITY_STALL",
      "got " + str(ex))
 
-# 33. Only 1 stall at the end → no exit. [5,10,15,15,18] shows growth on last
-_ph_one_stall = [5, 10, 15, 15, 18]
+# 33. Only latest window stalled but prior window still had growth → no exit.
+#     ph=[5, 10, 15, 15, 15] → v=(15-10)/3=1.67 (>0), prev_v=(15-5)/3=3.3 (>0). HOLD.
+_ph_one_window = [5, 10, 15, 15, 15]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
-    st = _vs_state(_ph_one_stall, peak=18.0, candles=5)
-    ex = E.manage_exit(st, 118.0, {})
+    st = _vs_state(_ph_one_window, peak=15.0, candles=5)
+    ex = E.manage_exit(st, 115.0, {})
 test("33. test_velocity_stall_needs_2_consecutive",
      len(ex) == 0,
      "got " + str(ex))
 
-# 34. Stall at tiny peaks is ignored (peak < vs_min_peak=3)
-_ph_tiny = [0, 0, 1, 1, 1]
+# 34. Stall at tiny peaks is ignored (peak < vs_min_peak=3).
+#     candles=3 so STALE_ENTRY (5c+peak<3) doesn't fire first.
+_ph_tiny = [0, 1, 1, 1, 1, 1]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
-    st = _vs_state(_ph_tiny, peak=1.0, candles=4)
+    st = _vs_state(_ph_tiny, peak=1.0, candles=3)
     ex = E.manage_exit(st, 101.0, {})
 test("34. test_velocity_stall_ignores_tiny_peaks",
      len(ex) == 0,
      "got " + str(ex))
 
-# 35. Healthy growth → no exit. Each candle adds peak → no stall
-_ph_growing = [5, 8, 11, 14, 17]
+# 35. Healthy growth → no exit. Each candle adds peak, both velocities > 0.
+_ph_growing = [5, 8, 11, 14, 17, 20]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
-    st = _vs_state(_ph_growing, peak=17.0, candles=5)
-    ex = E.manage_exit(st, 117.0, {})
+    st = _vs_state(_ph_growing, peak=20.0, candles=6)
+    ex = E.manage_exit(st, 120.0, {})
 test("35. test_velocity_still_alive",
      len(ex) == 0,
      "got " + str(ex))
@@ -552,6 +556,207 @@ test("37. test_signal_scan_reject_reason_matches_engine",
      (not _has_old_recon) and _uses_engine_reason,
      "old_recon=" + str(_has_old_recon)
      + " uses_engine_reason=" + str(_uses_engine_reason))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 8c — v15.2.5 Smart ATM multi-candidate scanner
+# ═══════════════════════════════════════════════════════════════
+
+section("v15.2.5 — SMART ATM MULTI-CANDIDATE")
+
+# 38. scan_all_candidates returns the best fired candidate by (sd, body, -|Δ|)
+_df_fire = _make_opt_3m()   # default fixture fires
+_tokens_map = {
+    24150: {"CE": {"token": 111, "symbol": "CE24150"}, "PE": {"token": 112, "symbol": "PE24150"}},
+    24200: {"CE": {"token": 211, "symbol": "CE24200"}, "PE": {"token": 212, "symbol": "PE24200"}},
+    24250: {"CE": {"token": 311, "symbol": "CE24250"}, "PE": {"token": 312, "symbol": "PE24250"}},
+}
+# Score by straddle_delta — patch get_straddle_delta to return side-dependent values
+# so the scoring picks the highest.
+_straddle_by_token = {
+    111: 3.0, 112: 3.0,     # ATM-50: weak
+    211: 7.0, 212: 7.0,     # ATM:    strong
+    311: 5.0, 312: 5.0,     # ATM+50: medium
+}
+_patches_38 = [
+    patch.object(D, "get_historical_data", return_value=_df_fire),
+    patch.object(D, "add_indicators", side_effect=lambda x: x),
+    patch.object(D, "get_option_tokens",
+                 side_effect=lambda k, strike, exp: _tokens_map.get(int(strike), {})),
+    patch.object(D, "get_straddle_delta",
+                 side_effect=lambda atm, lookback_minutes=15: 7.0),
+    patch.object(D, "resolve_atm_strike", return_value=24200),
+    patch.object(D, "is_market_open", return_value=False),
+    patch.object(D, "get_spot_vwap", return_value=None),
+    patch.object(D, "get_spot_ltp", return_value=24200),
+]
+for _p in _patches_38: _p.start()
+try:
+    with _FakeNow(10, 30):
+        best = E.scan_all_candidates(
+            kite=MagicMock(), spot_ltp=24200.0,
+            atm_strike=24200, expiry=date(2026, 4, 30), dte=3)
+finally:
+    for _p in _patches_38: _p.stop()
+test("38. test_scan_all_candidates_returns_best_fired",
+     best is not None and best.get("strike") in (24150, 24200, 24250)
+     and best.get("result", {}).get("fired") is True,
+     "got " + str(best))
+
+# 39. When no candidate fires, scan_all_candidates returns None
+_df_below = _make_opt_3m(last_close=98.0, last_open=97.0, last_high=99.0,
+                         last_low=96.5, ema9_high=100.0)
+_patches_39 = [
+    patch.object(D, "get_historical_data", return_value=_df_below),
+    patch.object(D, "add_indicators", side_effect=lambda x: x),
+    patch.object(D, "get_option_tokens",
+                 side_effect=lambda k, strike, exp: _tokens_map.get(int(strike), {})),
+    patch.object(D, "get_straddle_delta", return_value=7.0),
+    patch.object(D, "resolve_atm_strike", return_value=24200),
+    patch.object(D, "is_market_open", return_value=False),
+    patch.object(D, "get_spot_vwap", return_value=None),
+    patch.object(D, "get_spot_ltp", return_value=24200),
+]
+for _p in _patches_39: _p.start()
+try:
+    with _FakeNow(10, 30):
+        best_none = E.scan_all_candidates(
+            kite=MagicMock(), spot_ltp=24200.0,
+            atm_strike=24200, expiry=date(2026, 4, 30), dte=3)
+finally:
+    for _p in _patches_39: _p.stop()
+test("39. test_scan_all_candidates_none_if_nothing_fires",
+     best_none is None,
+     "got " + str(best_none))
+
+# 40. Scoring picks the highest straddle_delta candidate when >1 fires.
+#     We patch get_straddle_delta to return a token-keyed value so two
+#     strikes fire with different deltas.
+_df_fire2 = _make_opt_3m()
+_sd_map = {111: 4.0, 112: 4.0, 211: 9.0, 212: 9.0, 311: 2.5, 312: 2.5}
+
+def _sd_by_atm(atm, lookback_minutes=15):
+    # atm 24200 uses 24200 tokens → sd=9; 24150 uses 24150 → sd=4; etc.
+    return {24150: 4.0, 24200: 9.0, 24250: 2.5}.get(int(atm), 0)
+
+_patches_40 = [
+    patch.object(D, "get_historical_data", return_value=_df_fire2),
+    patch.object(D, "add_indicators", side_effect=lambda x: x),
+    patch.object(D, "get_option_tokens",
+                 side_effect=lambda k, strike, exp: _tokens_map.get(int(strike), {})),
+    patch.object(D, "get_straddle_delta", side_effect=_sd_by_atm),
+    patch.object(D, "resolve_atm_strike", side_effect=lambda spot, step=None: int(spot)),
+    patch.object(D, "is_market_open", return_value=False),
+    patch.object(D, "get_spot_vwap", return_value=None),
+    patch.object(D, "get_spot_ltp", return_value=24200),
+]
+for _p in _patches_40: _p.start()
+try:
+    with _FakeNow(10, 30):
+        best_best = E.scan_all_candidates(
+            kite=MagicMock(), spot_ltp=24200.0,
+            atm_strike=24200, expiry=date(2026, 4, 30), dte=3)
+finally:
+    for _p in _patches_40: _p.stop()
+test("40. test_scoring_picks_highest_straddle_delta",
+     best_best is not None and best_best.get("strike") == 24200,
+     "got strike=" + str(best_best.get("strike") if best_best else None))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Section 8d — v15.2.5 Pre-entry awareness alerts
+# ═══════════════════════════════════════════════════════════════
+
+section("v15.2.5 — PRE-ENTRY ALERTS")
+
+import importlib as _imp, VRL_ALERTS
+_imp.reload(VRL_ALERTS)
+
+# Helper: build a minimal result + df representing each signal profile.
+def _alert_df(last, prev1, prev2):
+    """last/prev1/prev2 = dicts with open/high/low/close/ema9_high/ema9_low/RSI"""
+    rows = [prev2, prev1, last, last]  # last row repeated = "in progress"
+    idx = [_base_ts + timedelta(minutes=3 * i) for i in range(len(rows))]
+    df = _pd.DataFrame(rows, index=idx)
+    return df
+
+
+# 41. REVERSAL BUILDING fires when last=green big body, prev/prev2 close<=ema9l, RSI rising
+_df_rev = _alert_df(
+    last  = {"open": 90, "high": 103, "low": 89, "close": 100,
+             "ema9_high": 105, "ema9_low": 92, "RSI": 55},
+    prev1 = {"open": 95, "high": 96, "low": 88, "close": 88,
+             "ema9_high": 105, "ema9_low": 92, "RSI": 42},
+    prev2 = {"open": 96, "high": 97, "low": 87, "close": 89,
+             "ema9_high": 105, "ema9_low": 92, "RSI": 38},
+)
+_sig_rev = VRL_ALERTS._detect_reversal_building(
+    "PE", 24200, {"close": 100, "ema9_high": 105, "ema9_low": 92,
+                  "body_pct": 90, "candle_green": True}, _df_rev)
+test("41. test_reversal_building_alert_conditions",
+     _sig_rev is not None and _sig_rev.get("type") == "A"
+     and "REVERSAL BUILDING" in _sig_rev.get("msg", ""),
+     "got " + str(_sig_rev))
+
+# 42. APPROACHING BREAKOUT: close within 3pts below ema9_high, RSI 2x rising, 1+ green
+_df_apr = _alert_df(
+    last  = {"open": 97, "high": 99, "low": 96, "close": 98,
+             "ema9_high": 100, "ema9_low": 90, "RSI": 58},
+    prev1 = {"open": 95, "high": 98, "low": 94, "close": 97,
+             "ema9_high": 100, "ema9_low": 90, "RSI": 52},
+    prev2 = {"open": 93, "high": 95, "low": 92, "close": 94,
+             "ema9_high": 100, "ema9_low": 90, "RSI": 48},
+)
+_sig_apr = VRL_ALERTS._detect_approaching_breakout(
+    "CE", 24200, {"close": 98, "ema9_high": 100, "ema9_low": 90}, _df_apr)
+test("42. test_approaching_breakout_alert_conditions",
+     _sig_apr is not None and _sig_apr.get("type") == "B"
+     and "APPROACHING BREAKOUT" in _sig_apr.get("msg", ""),
+     "got " + str(_sig_apr))
+
+# 43. READY TO FIRE: all gates OK except body<30 (weak_body reject)
+_sig_ready = VRL_ALERTS._detect_ready_to_fire(
+    "CE", 24200,
+    {"fired": False, "reject_reason": "weak_body_22pct_<_30",
+     "close": 103, "ema9_high": 100, "body_pct": 22,
+     "candle_green": True, "straddle_delta": 6.5},
+    None)
+test("43. test_ready_to_fire_detects_one_gate_missing",
+     _sig_ready is not None and _sig_ready.get("type") == "C"
+     and "READY TO FIRE" in _sig_ready.get("msg", ""),
+     "got " + str(_sig_ready))
+
+# 44. BLOCKED SETUP: valid breakout + green + body>=30 but straddle_bleed rejects
+_sig_blocked = VRL_ALERTS._detect_blocked_setup(
+    "PE", 24250,
+    {"fired": False, "reject_reason": "straddle_bleed_+2.0_need_5_in_MIDDAY",
+     "close": 103, "ema9_high": 100, "body_pct": 55,
+     "candle_green": True, "straddle_delta": 2.0},
+    None)
+test("44. test_blocked_setup_alert_for_valid_breakout_gate_block",
+     _sig_blocked is not None and _sig_blocked.get("type") == "D"
+     and "BLOCKED" in _sig_blocked.get("msg", ""),
+     "got " + str(_sig_blocked))
+
+# 45. Rate limit: same (strike,side,type) key within 15 min → suppressed
+_state_rl = {"pre_entry_alerts_enabled": True,
+             "alert_history": {
+                 "PE_24200_A": (datetime.now() - timedelta(minutes=5)).isoformat()
+             }}
+_rl = VRL_ALERTS._rate_limited(_state_rl, "PE_24200_A", window_min=15)
+test("45. test_alert_rate_limit_15min_per_key",
+     _rl is True,
+     "rate_limited=" + str(_rl))
+
+# 46. Toggle works: set_enabled(False) → is_enabled()=False, True → True
+_toggle_state = {}
+VRL_ALERTS.set_enabled(_toggle_state, False)
+_off = VRL_ALERTS.is_enabled(_toggle_state)
+VRL_ALERTS.set_enabled(_toggle_state, True)
+_on = VRL_ALERTS.is_enabled(_toggle_state)
+test("46. test_alert_toggle_on_off",
+     _off is False and _on is True,
+     "off=" + str(_off) + " on=" + str(_on))
 
 
 # ═══════════════════════════════════════════════════════════════
