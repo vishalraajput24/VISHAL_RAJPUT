@@ -882,25 +882,46 @@ def _cmd_score(args):
 
 def _cmd_files(args):  _send_file_browser()
 def _cmd_download(args):
-    """Smart download — 4 key files only."""
+    """Smart download — 4 key files only.
+
+    BUG-DL2 v15.2.5: replaced the four hardcoded paths with canonical
+    constants from VRL_DATA so the zip actually picks up the file the
+    bot is really reading + writing. The old hardcoded
+    ~/state/vrl_live_state.json pointed at a path that hasn't existed
+    since BUG-015; the real file is under D.STATE_FILE_PATH
+    (~/VISHAL_RAJPUT/state/vrl_live_state.json).
+    """
     import zipfile as _zf
+    import os as _os
     from datetime import date as _d
     _today = _d.today().strftime("%Y-%m-%d")
     _zip_name = "vrl_strategy_" + _today + ".zip"
-    _zip_path = os.path.join(os.path.expanduser("~"), _zip_name)
+    _zip_path = _os.path.join(_os.path.expanduser("~"), _zip_name)
+
+    # Canonical paths — all derived from VRL_DATA so a future refactor
+    # of BASE_DIR / LAB_DIR / STATE_DIR updates this command
+    # automatically.
+    _db_path = getattr(D, "DB_PATH", None) or _os.path.join(D.LAB_DIR, "vrl_data.db")
+    _cfg_path = _os.path.join(_os.path.dirname(
+        _os.path.abspath(D.__file__)), "config.yaml")
     _files = [
-        (os.path.expanduser("~/lab_data/vrl_trade_log.csv"), "vrl_trade_log.csv"),
-        (os.path.expanduser("~/lab_data/vrl_data.db"), "vrl_data.db"),
-        (os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml"), "config.yaml"),
-        (os.path.expanduser("~/state/vrl_live_state.json"), "vrl_live_state.json"),
+        (D.TRADE_LOG_PATH,   "vrl_trade_log.csv"),
+        (_db_path,           "vrl_data.db"),
+        (_cfg_path,          "config.yaml"),
+        (D.STATE_FILE_PATH,  "vrl_live_state.json"),
     ]
+    # Warn on any missing canonical path before trying to zip.
+    _missing = [fname for fpath, fname in _files if not _os.path.isfile(fpath)]
+    if _missing:
+        logger.warning("[DOWNLOAD] missing canonical files: "
+                       + ", ".join(_missing))
     try:
         with _zf.ZipFile(_zip_path, "w", _zf.ZIP_DEFLATED) as zf:
             for fpath, fname in _files:
-                if os.path.isfile(fpath):
+                if _os.path.isfile(fpath):
                     zf.write(fpath, fname)
         _tg_send_file(_zip_path, "📦 Strategy data — " + _today)
-        os.remove(_zip_path)
+        _os.remove(_zip_path)
     except Exception as e:
         _tg_send("Download error: " + str(e))
 
