@@ -15,12 +15,22 @@
 # ═══════════════════════════════════════════════════════════════
 
 import logging
+import threading
 from datetime import datetime, timedelta
 
 import VRL_DATA as D
 import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
+
+# BUG-L v15.2.5 Batch 5: dedicated lock for alert_history mutations.
+# Today VRL_MAIN already copies alert_history in/out under _state_lock,
+# so the state dict handed to detect_pre_entry_signals() is a private
+# snapshot. This lock makes the helpers safe ANYWAY — if a future
+# caller passes a shared state dict without holding _state_lock (e.g.
+# a /status handler or a diagnostic script), _record() and
+# _rate_limited() won't tear the history dict.
+_alert_lock = threading.Lock()
 
 
 # Alert keys are strings like "PE_24150_A" so state.alert_history is
@@ -56,9 +66,11 @@ def _now_iso() -> str:
 
 def _rate_limited(state: dict, key: str, window_min: int) -> bool:
     """Returns True if the specific (strike, side, type) key fired within
-    the last `window_min` minutes — caller should skip sending."""
-    hist = state.get("alert_history") or {}
-    last = hist.get(key)
+    the last `window_min` minutes — caller should skip sending.
+    BUG-L: alert_history read protected by _alert_lock."""
+    with _alert_lock:
+        hist = state.get("alert_history") or {}
+        last = hist.get(key)
     if not last:
         return False
     try:
@@ -69,7 +81,11 @@ def _rate_limited(state: dict, key: str, window_min: int) -> bool:
 
 
 def _global_cap_exceeded(state: dict, cap_per_hour: int) -> bool:
-    hist = state.get("alert_history") or {}
+    """BUG-L: snapshot alert_history under _alert_lock before iterating
+    so we don't get RuntimeError: dictionary changed size during iteration
+    if another thread is mutating it."""
+    with _alert_lock:
+        hist = dict(state.get("alert_history") or {})
     cutoff = datetime.now() - timedelta(hours=1)
     count = 0
     for _k, ts in hist.items():
@@ -82,18 +98,22 @@ def _global_cap_exceeded(state: dict, cap_per_hour: int) -> bool:
 
 
 def _record(state: dict, key: str):
-    hist = dict(state.get("alert_history") or {})
-    hist[key] = _now_iso()
-    # Trim entries older than 2h to stop unbounded growth.
+    """BUG-L: full read-modify-write of alert_history serialized under
+    _alert_lock so two concurrent signals for different keys can't
+    clobber each other's additions or each other's trim pass."""
     cutoff = datetime.now() - timedelta(hours=2)
-    fresh = {}
-    for k, ts in hist.items():
-        try:
-            if datetime.fromisoformat(ts) > cutoff:
-                fresh[k] = ts
-        except Exception:
-            pass
-    state["alert_history"] = fresh
+    with _alert_lock:
+        hist = dict(state.get("alert_history") or {})
+        hist[key] = _now_iso()
+        # Trim entries older than 2h to stop unbounded growth.
+        fresh = {}
+        for k, ts in hist.items():
+            try:
+                if datetime.fromisoformat(ts) > cutoff:
+                    fresh[k] = ts
+            except Exception:
+                pass
+        state["alert_history"] = fresh
 
 
 def _key(strike: int, side: str, signal_type: str) -> str:
