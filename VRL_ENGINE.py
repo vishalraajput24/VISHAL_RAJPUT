@@ -476,3 +476,44 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.warning("[ENGINE] band check error: " + str(e))
 
     return []
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v15.2 Part 4 — Shadow 1-min strategy public API
+#  The full implementation lives in VRL_SHADOW (separate module so
+#  shadow state, CSV writers, and EOD Telegram can evolve without
+#  coupling to the live engine). VRL_ENGINE re-exports the canonical
+#  symbols so callers can do:
+#      from VRL_ENGINE import shadow_scan_1min, shadow_state
+# ═══════════════════════════════════════════════════════════════
+
+import VRL_SHADOW as _SHADOW
+
+# Module-level shadow state — the SAME dict backing VRL_SHADOW's state.
+# Shared by reference; never persisted to state.json; in-memory only.
+shadow_state = _SHADOW.shadow_state
+
+
+def shadow_scan_1min(spot_ltp):
+    """v15.2 Part 4: silent 1-min EMA9 band breakout scan. Logs only,
+    never trades, never touches live state. Call once per 1-min boundary
+    from VRL_MAIN (after the live 3-min check_entry loop).
+
+    Resolves ATM strike + nearest expiry internally using VRL_DATA helpers.
+    Any exception is caught and logged — this must never kill the main loop.
+    """
+    try:
+        if not spot_ltp or float(spot_ltp) <= 0:
+            return
+        atm = D.resolve_atm_strike(float(spot_ltp))
+        expiry = None
+        try:
+            expiry = D.get_nearest_expiry()
+        except Exception:
+            expiry = None
+        if not atm or expiry is None:
+            # Can't scan without both — skip silently, next minute will retry.
+            return
+        _SHADOW.tick(None, float(spot_ltp), int(atm), expiry)
+    except Exception as e:
+        logger.warning("[SHADOW_1MIN] scan error: " + str(e))

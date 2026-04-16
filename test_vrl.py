@@ -524,6 +524,15 @@ test("30. test_shadow_never_affects_live",
      "live state mutated: " + str({k: v for k, v in _live_state_snapshot.items()
                                     if _before.get(k) != v}))
 
+# 31a. v15.2.1: public API surface — shadow_scan_1min + shadow_state
+#      must be importable from VRL_ENGINE (not just from VRL_SHADOW).
+from VRL_ENGINE import shadow_scan_1min as _sscan, shadow_state as _sstate
+test("31a. test_shadow_function_exists",
+     callable(_sscan) and isinstance(_sstate, dict) and "in_trade" in _sstate,
+     "callable=" + str(callable(_sscan))
+     + " state_type=" + type(_sstate).__name__
+     + " has_in_trade=" + str("in_trade" in (_sstate or {})))
+
 # 31. EOD summary renders both shadow AND live stats in one message
 VRL_SHADOW.reset_day()
 # Simulate 2 shadow trades (1 win, 1 loss) via direct accumulation

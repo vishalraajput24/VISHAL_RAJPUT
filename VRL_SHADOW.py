@@ -128,7 +128,7 @@ def _append_csv(path: str, fields: list, row: dict):
                 w.writeheader()
             w.writerow(row)
     except Exception as e:
-        logger.debug("[SHADOW] CSV write error " + path + ": " + str(e))
+        logger.debug("[SHADOW_1MIN] CSV write error " + path + ": " + str(e))
 
 
 # ── Indicator layer — 1-min EMA9 band ────────────────────────
@@ -285,7 +285,7 @@ def _scan_side(option_type: str, token: int, atm_strike: int,
 
         out["fired"] = True
     except Exception as e:
-        logger.debug("[SHADOW] scan error " + option_type + ": " + str(e))
+        logger.debug("[SHADOW_1MIN] scan error " + option_type + ": " + str(e))
         out["reject_reason"] = "err_" + str(e)[:40]
     return out
 
@@ -420,7 +420,7 @@ def tick(kite, spot_ltp: float, atm_strike: int, expiry,
                 "last_band_ts": "",
                 "token": tok,
             })
-        logger.info("[SHADOW] 1M ENTER " + side + " @ " + str(scan["close"])
+        logger.info("[SHADOW_1MIN] ENTRY " + side + " @ " + str(scan["close"])
                     + " ema9h=" + str(scan["ema9_high"])
                     + " ema9l=" + str(scan["ema9_low"])
                     + " straddleΔ=" + str(scan["straddle_delta"]))
@@ -455,7 +455,7 @@ def _manage(tokens: dict, now: datetime):
         "exit_reason": reason,
         "straddle_delta": round(sd_at_entry, 2) if sd_at_entry else "",
     })
-    logger.info("[SHADOW] 1M EXIT " + direction + " " + reason
+    logger.info("[SHADOW_1MIN] EXIT " + direction + " " + reason
                 + " pnl=" + str(pnl) + " peak=" + str(round(peak, 1))
                 + " candles=" + str(candles))
 
@@ -506,4 +506,4 @@ def emit_eod_summary(tg_send_fn, live_stats: dict = None):
     try:
         tg_send_fn(msg)
     except Exception as e:
-        logger.warning("[SHADOW] EOD telegram send: " + str(e))
+        logger.warning("[SHADOW_1MIN] EOD telegram send: " + str(e))

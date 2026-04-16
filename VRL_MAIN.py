@@ -2388,10 +2388,10 @@ def _strategy_loop(kite):
                 # state, independent cooldown, never touches live state,
                 # never places orders, never alerts during the day.
                 try:
-                    import VRL_SHADOW
-                    VRL_SHADOW.tick(kite, spot_ltp, atm_strike, expiry, now=now)
+                    from VRL_ENGINE import shadow_scan_1min
+                    shadow_scan_1min(spot_ltp)
                 except Exception as _shade:
-                    logger.debug("[SHADOW] tick: " + str(_shade))
+                    logger.debug("[SHADOW_1MIN] tick: " + str(_shade))
 
                 # Write dashboard + cache args for post-exit refresh
                 global _last_dash_args
