@@ -2679,10 +2679,28 @@ def _shutdown(signum, frame):
     _running = False
     _stop_telegram_listener()
     # BUG-028: warn if shutting down with open trade
+    # fix(BUG-C-tail): also Telegram the operator. Uses _tg_send_sync
+    # (blocking) rather than _tg_send (async) so the message actually
+    # fires before sys.exit(0). BUG-U's CRITICAL flood-control bypass
+    # is not implemented yet; direct sync send is the specified fallback.
     if state.get("in_trade"):
+        _sym   = state.get("symbol", "?")
+        _entry = round(state.get("entry_price", 0), 2)
+        _pk    = round(state.get("peak_pnl", 0), 1)
         logger.warning("[MAIN] Shutdown with open trade — state preserved for resume"
-                       " (symbol=" + state.get("symbol", "?")
-                       + " pnl=" + str(state.get("peak_pnl", 0)) + ")")
+                       " (symbol=" + _sym
+                       + " entry=" + str(_entry)
+                       + " peak=" + str(_pk) + ")")
+        try:
+            _tg_send_sync(
+                "⚠️ VRL SHUTDOWN with open position: " + _sym
+                + " entry=" + str(_entry)
+                + " peak=" + str(_pk)
+            )
+        except Exception as _tge:
+            # Shutdown path: network may already be down. Swallow —
+            # the log line above is the fallback signal.
+            logger.debug("[MAIN] Shutdown telegram send failed: " + str(_tge))
     _save_state()
     _remove_pid()
     logger.info("[MAIN] Clean shutdown")
