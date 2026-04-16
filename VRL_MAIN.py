@@ -1318,10 +1318,21 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             logger.warning("[VALIDATE] Exit validation error: " + str(_ve))
 
 
-def _execute_exit(kite, option_ltp: float, reason: str):
-    """Legacy wrapper — exits all lots."""
+def _execute_exit(kite, option_ltp: float, reason: str,
+                  saved_entry_price: float = None):
+    """Legacy wrapper — exits all lots.
+
+    BUG-D fix: now forwards `saved_entry_price` so callers (FORCE_EXIT,
+    other legacy paths) can capture the entry price BEFORE any state
+    mutation and guarantee correct PNL even if state["entry_price"]
+    has been touched between capture and exit. Without this, the
+    FORCE_EXIT path at line ~2100 captured _entry_px locally but the
+    thin wrapper dropped it, forcing _execute_exit_v13 to re-read
+    state — defeating the whole point of the capture.
+    """
     _execute_exit_v13(kite, {"lots": "ALL", "lot_id": "ALL",
-                             "reason": reason, "price": option_ltp})
+                             "reason": reason, "price": option_ltp},
+                      saved_entry_price=saved_entry_price)
 
 # ═══════════════════════════════════════════════════════════════
 #  CANDLE BOUNDARY
@@ -2101,7 +2112,10 @@ def _strategy_loop(kite):
                 # BUG-027: use floor SL as minimum if LTP is stale/zero
                 _floor_sl = state.get("_static_floor_sl", state.get("phase1_sl", 0))
                 _exit_px = option_ltp if option_ltp > 0 else max(_entry_px, _floor_sl)
-                _execute_exit(kite, _exit_px, "FORCE_EXIT")
+                # BUG-D fix: thread the pre-captured entry through so PNL is
+                # computed against the REAL entry — not a race-stale state read.
+                _execute_exit(kite, _exit_px, "FORCE_EXIT",
+                              saved_entry_price=_entry_px)
                 time.sleep(1)
                 continue
 
