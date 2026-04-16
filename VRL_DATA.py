@@ -166,6 +166,7 @@ STATE_PERSIST_FIELDS = [
     "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+    "entry_straddle_info",
     # v15.2.5 velocity stall tracking
     "peak_history", "last_peak_candle_ts", "current_velocity",
     # v15.2.5 pre-entry alert toggle + rate-limit history

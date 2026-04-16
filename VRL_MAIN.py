@@ -89,6 +89,7 @@ DEFAULT_STATE = {
     "entry_spot_vwap"          : 0.0,
     "entry_spot_vs_vwap"       : 0.0,
     "entry_vwap_bonus"         : "",
+    "entry_straddle_info"      : "",
     # v15.2.5 velocity stall tracking (per 3-min candle)
     "peak_history"       : [],
     "last_peak_candle_ts": "",
@@ -384,6 +385,8 @@ TRADE_FIELDNAMES = [
     "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+    # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification at entry
+    "entry_straddle_info",
 ]
 
 def _cleanup_trade_log():
@@ -507,6 +510,8 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "entry_spot_vwap":     round(float(st.get("entry_spot_vwap", 0) or 0), 2),
         "entry_spot_vs_vwap":  round(float(st.get("entry_spot_vs_vwap", 0) or 0), 2),
         "entry_vwap_bonus":    st.get("entry_vwap_bonus", "") or "",
+        # v15.2.5 Fix 5: straddle classification captured at entry
+        "entry_straddle_info": st.get("entry_straddle_info", "") or "",
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -944,6 +949,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["entry_spot_vwap"]          = float(entry_result.get("spot_vwap", 0) or 0)
         state["entry_spot_vs_vwap"]       = float(entry_result.get("spot_vs_vwap", 0) or 0)
         state["entry_vwap_bonus"]         = entry_result.get("vwap_bonus", "")
+        # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA straddle classification
+        state["entry_straddle_info"]      = entry_result.get("straddle_info", "")
         # Counters
         state["daily_trades"]      += 1
 
@@ -979,16 +986,17 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
     _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
 
-    # Straddle Δ line (Gate 7 context)
-    _sd  = entry_result.get("straddle_delta")
-    _sth = entry_result.get("straddle_threshold", 0)
-    _spd = entry_result.get("straddle_period", "-")
-    if _sd is None:
-        _straddle_line = ("Straddle \u0394 n/a [need " + str(_sth)
-                          + " in " + _spd + "]\n")
+    # v15.2.5 Fix 5: straddle is now DISPLAY ONLY. Line shows the
+    # STRONG / NEUTRAL / WEAK / NA classification + period label, no threshold.
+    _sd    = entry_result.get("straddle_delta")
+    _sinfo = entry_result.get("straddle_info", "") or ""
+    _spd   = entry_result.get("straddle_period", "-") or "-"
+    _savail = entry_result.get("straddle_available", True)
+    if not _savail or _sd is None:
+        _straddle_line = "Straddle: DATA UNAVAILABLE [NA]\n"
     else:
-        _straddle_line = ("Straddle \u0394" + "{:+.1f}".format(float(_sd))
-                          + "pts [need " + str(_sth) + " in " + _spd + "]\n")
+        _straddle_line = ("Straddle: \u0394" + "{:+.1f}".format(float(_sd))
+                          + " [" + _sinfo + "] (" + _spd + ")\n")
 
     # VWAP bonus line (display only, matches spec)
     _vwap_line = ""

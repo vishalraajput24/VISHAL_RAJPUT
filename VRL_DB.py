@@ -337,6 +337,8 @@ def init_db():
             ("trades",       "entry_spot_vwap",          "REAL DEFAULT 0"),
             ("trades",       "entry_spot_vs_vwap",       "REAL DEFAULT 0"),
             ("trades",       "entry_vwap_bonus",         "TEXT DEFAULT ''"),
+            # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification
+            ("trades",       "entry_straddle_info",      "TEXT DEFAULT ''"),
         ]:
             try:
                 c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
@@ -527,6 +529,8 @@ _TRADE_FIELDS = [
     "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+    # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA
+    "entry_straddle_info",
 ]
 
 def insert_trade(row):

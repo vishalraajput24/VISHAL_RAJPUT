@@ -43,14 +43,13 @@ entry:
     multi_candidate_enabled: false
     multi_candidate_strike_range: 50
   filters:
-    # Tiered straddle expansion filter (Gate 7). Hard gate.
-    straddle_expansion:
+    # v15.2.5 Fix 5: straddle is DISPLAY ONLY — same policy as VWAP below.
+    # Never rejects entry. Engine classifies delta into STRONG/NEUTRAL/WEAK/NA
+    # and annotates the result dict + logs + trades table for analysis.
+    straddle_display:
       enabled: true
+      mode: display_only
       lookback_minutes: 15
-      thresholds:
-        opening: {start: "09:45", end: "10:30", min_delta: 1}
-        midday:  {start: "10:30", end: "14:00", min_delta: 5}
-        closing: {start: "14:00", end: "15:10", min_delta: 3}
     # VWAP confluence — display only, never blocks
     vwap_bonus:
       enabled: true

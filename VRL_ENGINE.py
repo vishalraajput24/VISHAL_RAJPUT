@@ -295,77 +295,60 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                             + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
             return result
 
-        # ── GATE 7 (v15.2): Tiered straddle expansion filter ──
-        # Block entries during chop where straddle isn't actually expanding,
-        # while staying loose at the open and tight midday.
+        # ── GATE 7 (v15.2.5 Fix 5): straddle = DISPLAY ONLY, never blocks ──
+        # Earlier versions hard-rejected on straddle_bleed / straddle_data_unavailable.
+        # April 16 evidence: PE 24300 09:51 fresh breakout was blocked by the
+        # NA bug and would have been +22pts. Even fully fixed, the delta can
+        # underread real breakouts in fast moves. Policy decision: treat
+        # straddle as contextual telemetry like VWAP. Classify into
+        # STRONG (Δ≥+5) / NEUTRAL (0≤Δ<+5) / WEAK (Δ<0) / NA (no data),
+        # log + annotate result, but NEVER reject.
         if CFG.straddle_filter("enabled", True):
             atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
             result["atm_strike_used"] = atm_strike
             lookback_min = int(CFG.straddle_filter("lookback_minutes", 15))
-            # Time tier — period + threshold (mins-of-day)
+
+            # Period label kept for the Telegram display + DB column, even
+            # though no tier-specific threshold applies any more.
             now_for_period = datetime.now()
             mod = now_for_period.hour * 60 + now_for_period.minute
-            tiers = CFG.straddle_thresholds() or {}
-
-            def _tier_minutes(key, default):
-                t = (tiers.get(key) or {}).get(default)
-                if not t:
-                    return None
-                hh, mm = str(t).split(":")
-                return int(hh) * 60 + int(mm)
-
-            open_s  = _tier_minutes("opening", "start") or 585   # 09:45
-            open_e  = _tier_minutes("opening", "end")   or 630   # 10:30
-            mid_s   = _tier_minutes("midday",  "start") or 630
-            mid_e   = _tier_minutes("midday",  "end")   or 840   # 14:00
-            close_s = _tier_minutes("closing", "start") or 840
-            close_e = _tier_minutes("closing", "end")   or 910   # 15:10
-
-            if open_s <= mod < open_e:
-                threshold = (tiers.get("opening") or {}).get("min_delta", 1)
+            if 585 <= mod < 630:
                 period = "OPENING"
-            elif mid_s <= mod < mid_e:
-                threshold = (tiers.get("midday")  or {}).get("min_delta", 5)
+            elif 630 <= mod < 840:
                 period = "MIDDAY"
             else:
-                threshold = (tiers.get("closing") or {}).get("min_delta", 3)
                 period = "CLOSING"
-
-            result["straddle_threshold"] = threshold
             result["straddle_period"]    = period
+            result["straddle_threshold"] = 0   # deprecated; kept for back-compat
 
-            straddle_delta = None
+            sd = None
             try:
-                straddle_delta = D.get_straddle_delta(
+                sd = D.get_straddle_delta(
                     atm_strike, lookback_minutes=lookback_min)
             except Exception as e:
                 logger.warning("[ENGINE] straddle delta error: " + str(e))
-            result["straddle_delta"] = straddle_delta
 
-            if straddle_delta is None:
-                result["reject_reason"] = "straddle_data_unavailable"
-                if not silent:
-                    logger.info("[ENGINE] " + option_type
-                                + " STRADDLE_NA period=" + period
-                                + " strike=" + str(atm_strike))
-                return result
+            result["straddle_delta"]     = sd if sd is not None else 0
+            result["straddle_available"] = sd is not None
 
-            # Strict spec-format: straddle_bleed_{:+.1f}_need_{}_in_{PERIOD}
-            _sd_str = ("{:+.1f}".format(straddle_delta))
-            if straddle_delta < threshold:
-                result["reject_reason"] = ("straddle_bleed_" + _sd_str
-                                            + "_need_" + str(threshold)
-                                            + "_in_" + period)
-                if not silent:
-                    logger.info("[ENGINE] " + option_type
-                                + " STRADDLE_BLEED \u0394" + _sd_str
-                                + " < +" + str(threshold) + " (" + period + ")")
-                return result
-
-            if not silent:
+            if sd is None:
+                result["straddle_info"] = "NA"
                 logger.info("[ENGINE] " + option_type
-                            + " STRADDLE_OK \u0394" + _sd_str
-                            + " >= +" + str(threshold) + " (" + period + ")")
+                            + " STRADDLE_NA atm=" + str(atm_strike)
+                            + " (" + period + ") — informational, proceeding")
+            elif sd >= 5:
+                result["straddle_info"] = "STRONG"
+                logger.info("[ENGINE] " + option_type + " STRADDLE_STRONG "
+                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
+            elif sd >= 0:
+                result["straddle_info"] = "NEUTRAL"
+                logger.info("[ENGINE] " + option_type + " STRADDLE_NEUTRAL "
+                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
+            else:
+                result["straddle_info"] = "WEAK"
+                logger.info("[ENGINE] " + option_type + " STRADDLE_WEAK "
+                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
+            # NO return here — straddle is display-only in v15.2.5 Fix 5.
 
         # ── BONUS (v15.2): VWAP confluence — display only, never blocks ──
         # This block must NEVER set reject_reason or return — it only logs

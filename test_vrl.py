@@ -226,36 +226,51 @@ test("7. test_cooldown_blocked",
 #  Section 2 — Straddle Gate 7 tiers (4 tests)
 # ═══════════════════════════════════════════════════════════════
 
-section("STRADDLE FILTER (GATE 7)")
+section("v15.2.5 Fix 5 — STRADDLE DISPLAY ONLY (never blocks)")
 
-# 8. Opening tier (09:45-10:30), threshold 1, delta +2 → ALLOWS
-r = _run_entry(hour=10, minute=0, straddle_delta=2)
-test("8. test_straddle_opening_threshold_1",
-     r["fired"] is True and r.get("straddle_period") == "OPENING",
-     "fired=" + str(r["fired"]) + " period=" + str(r.get("straddle_period"))
+# 8. Period label populates correctly for each time-of-day window.
+r_o = _run_entry(hour=10, minute=0,  straddle_delta=2)
+r_m = _run_entry(hour=12, minute=0,  straddle_delta=6)
+r_c = _run_entry(hour=14, minute=30, straddle_delta=4)
+test("8. test_straddle_period_labels",
+     (r_o.get("straddle_period") == "OPENING"
+      and r_m.get("straddle_period") == "MIDDAY"
+      and r_c.get("straddle_period") == "CLOSING"),
+     "got O=" + str(r_o.get("straddle_period"))
+     + " M=" + str(r_m.get("straddle_period"))
+     + " C=" + str(r_c.get("straddle_period")))
+
+# 9. NEGATIVE straddle delta (weak) does NOT block any more.
+r = _run_entry(hour=12, minute=0, straddle_delta=-5)
+test("9. test_straddle_weak_does_not_block_entry",
+     r["fired"] is True and r.get("straddle_info") == "WEAK"
+     and "straddle" not in r.get("reject_reason", ""),
+     "fired=" + str(r["fired"])
+     + " info=" + str(r.get("straddle_info"))
      + " reject=" + r.get("reject_reason", ""))
 
-# 9. Midday tier (10:30-14:00), threshold 5 — delta +3 BLOCKS, delta +6 FIRES
-r_b = _run_entry(hour=12, minute=0, straddle_delta=3)
-r_p = _run_entry(hour=12, minute=0, straddle_delta=6)
-test("9. test_straddle_midday_threshold_5",
-     (r_b["fired"] is False and "straddle_bleed" in r_b.get("reject_reason", ""))
-     and (r_p["fired"] is True and r_p.get("straddle_period") == "MIDDAY"),
-     "block=" + r_b.get("reject_reason", "") + " | pass fired=" + str(r_p["fired"]))
+# 10. Missing straddle data (None) does NOT block — annotates as NA.
+r = _run_entry(hour=12, minute=0, straddle_delta=None)
+test("10. test_straddle_na_does_not_block_entry",
+     r["fired"] is True and r.get("straddle_info") == "NA"
+     and r.get("straddle_available") is False
+     and "straddle" not in r.get("reject_reason", ""),
+     "fired=" + str(r["fired"])
+     + " info=" + str(r.get("straddle_info"))
+     + " available=" + str(r.get("straddle_available")))
 
-# 10. Closing tier (14:00-15:10), threshold 3 — delta +2 BLOCKS, delta +4 FIRES
-r_b = _run_entry(hour=14, minute=30, straddle_delta=2)
-r_p = _run_entry(hour=14, minute=30, straddle_delta=4)
-test("10. test_straddle_closing_threshold_3",
-     (r_b["fired"] is False and "straddle_bleed" in r_b.get("reject_reason", ""))
-     and (r_p["fired"] is True and r_p.get("straddle_period") == "CLOSING"),
-     "block=" + r_b.get("reject_reason", "") + " | pass fired=" + str(r_p["fired"]))
-
-# 11. Straddle bleed (negative delta) → BLOCKED with "straddle_bleed"
-r = _run_entry(hour=12, minute=0, straddle_delta=-5)
-test("11. test_straddle_bleed_blocks",
-     r["fired"] is False and "straddle_bleed" in r.get("reject_reason", ""),
-     "reject=" + r.get("reject_reason", ""))
+# 11. Classification boundaries: STRONG >=+5, 0<=NEUTRAL<+5, WEAK<0, NA=None.
+_r_strong  = _run_entry(hour=12, minute=0, straddle_delta=7.0)
+_r_neutral = _run_entry(hour=12, minute=0, straddle_delta=2.0)
+_r_weak    = _run_entry(hour=12, minute=0, straddle_delta=-1.5)
+_r_na      = _run_entry(hour=12, minute=0, straddle_delta=None)
+test("11. test_straddle_info_classified_correctly",
+     _r_strong.get("straddle_info")  == "STRONG"
+     and _r_neutral.get("straddle_info") == "NEUTRAL"
+     and _r_weak.get("straddle_info")    == "WEAK"
+     and _r_na.get("straddle_info")      == "NA",
+     "got " + ", ".join(str(r.get("straddle_info")) for r in
+                        (_r_strong, _r_neutral, _r_weak, _r_na)))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -448,8 +463,10 @@ test("26. test_version_is_v15_2_family",
 import yaml
 _cfg_parsed = yaml.safe_load(_cfg_src)
 _be2 = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("breakeven_lock_peak_threshold")
-_has_straddle = (_cfg_parsed.get("entry", {}).get("filters", {})
-                 .get("straddle_expansion", {}).get("enabled"))
+# v15.2.5 Fix 5 renamed straddle_expansion → straddle_display (display only)
+_filters_block = _cfg_parsed.get("entry", {}).get("filters", {})
+_has_straddle  = (_filters_block.get("straddle_display", {}).get("enabled")
+                  or _filters_block.get("straddle_expansion", {}).get("enabled"))
 _has_vwap = (_cfg_parsed.get("entry", {}).get("filters", {})
              .get("vwap_bonus", {}).get("enabled"))
 test("27. test_config_v15_2_structure",
@@ -539,6 +556,7 @@ _required_trade_cols = [
     "entry_straddle_period", "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
 ]
+_required_trade_cols.append("entry_straddle_info")   # Fix 5 addition
 _missing_trade = [c for c in _required_trade_cols if c not in _VDB._TRADE_FIELDS]
 test("36. test_trade_db_all_fields_populated",
      len(_missing_trade) == 0,

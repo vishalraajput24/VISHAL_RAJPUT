@@ -133,14 +133,20 @@ def exit_ema9_band(key: str, default=None):
 
 
 def straddle_filter(key: str, default=None):
-    """Read entry.filters.straddle_expansion.<key>."""
-    sf = ((get().get("entry") or {}).get("filters") or {}).get("straddle_expansion") or {}
+    """v15.2.5 Fix 5: straddle is display-only. Accessor now reads from
+    entry.filters.straddle_display. Falls back to the legacy
+    entry.filters.straddle_expansion section so older live configs on
+    disk don't break an import."""
+    filters = (get().get("entry") or {}).get("filters") or {}
+    sf = filters.get("straddle_display") or filters.get("straddle_expansion") or {}
     return sf.get(key, default)
 
 
 def straddle_thresholds() -> dict:
-    """Full thresholds dict (opening / midday / closing)."""
-    return straddle_filter("thresholds", {}) or {}
+    """Deprecated in v15.2.5 Fix 5 (straddle no longer blocks). Returns
+    an empty dict — callers that still reach for thresholds fall back to
+    the hardcoded period boundaries in the engine."""
+    return {}
 
 
 def vwap_bonus(key: str, default=None):

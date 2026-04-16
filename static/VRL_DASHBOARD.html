@@ -368,16 +368,32 @@ sh+='<div class="sg">';
   sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
-  // v15.2 — Straddle Δ tiered filter (Gate 7)
+  // v15.2.5 Fix 5 — Straddle is display only (never blocks). Classification
+  // STRONG / NEUTRAL / WEAK / NA with color coding so the operator can
+  // eyeball momentum quality per side without threshold math.
   var _sd=s.straddle_delta;
-  var _sth=parseFloat(s.straddle_threshold||0);
+  var _sinfo=(s.straddle_info||'').toString();
   var _spr=s.straddle_period||(d.period||'');
-  if(_sd!=null||_sth>0){
+  var _savail=(s.straddle_available!==false);
+  if(_sd!=null || _sinfo){
     var _sd_v=(_sd==null)?null:parseFloat(_sd);
-    var _sd_str=(_sd_v==null)?'n/a':((_sd_v>=0?'\u0394 +':'\u0394 ')+_sd_v.toFixed(1));
-    var _sd_ok=(_sd_v!=null&&_sd_v>=_sth);
-    var _sd_clr=_sd_ok?'ok':'fl';
-    sh+='<div class="sr"><span class="sk">Straddle</span><span class="sv '+_sd_clr+' mono" style="font-weight:800">'+_sd_str+' [need +'+_sth+' '+esc(_spr)+'] '+(_sd_ok?'\u2713':'\u2717')+'</span></div>';
+    var _label, _bg, _fg;
+    if(!_savail || _sd_v==null || _sinfo==='NA'){
+      _label='NA'; _bg='var(--or-bg)';  _fg='var(--or2)';
+    } else if(_sinfo==='STRONG'){
+      _label='STRONG';  _bg='var(--gn-bg)';  _fg='var(--gn2)';
+    } else if(_sinfo==='WEAK'){
+      _label='WEAK';    _bg='var(--yl-bg)';  _fg='#b45309';
+    } else {
+      _label='NEUTRAL'; _bg='var(--bg2)';    _fg='var(--tx2)';
+    }
+    var _sd_str=(_sd_v==null)?'n/a'
+                :((_sd_v>=0?'\u0394 +':'\u0394 ')+_sd_v.toFixed(1));
+    sh+='<div class="sr"><span class="sk">Straddle</span>'
+      + '<span class="sv mono" style="font-weight:800;color:'+_fg
+      + ';background:'+_bg
+      + ';padding:2px 8px;border-radius:6px">'+_sd_str
+      + ' ['+_label+'] ('+esc(_spr)+')</span></div>';
   }
   // v15.2 — VWAP confluence bonus (display only)
   var _vw=parseFloat(s.spot_vwap||0);

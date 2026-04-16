@@ -264,10 +264,12 @@ def _scan_side(option_type: str, token: int, atm_strike: int,
             out["reject_reason"] = "narrow_band_" + str(round(band_width, 1)) + "pts"
             return out
 
-        # Gate 7: tiered straddle (shared with live)
-        period, thr = _period_and_threshold(now)
+        # Gate 7 (v15.2.5 Fix 5): straddle = DISPLAY ONLY, never blocks.
+        # Mirrors the live engine policy change. Still logged to the scan CSV
+        # for A/B analysis but no longer rejects a 1-min shadow entry.
+        period, _thr = _period_and_threshold(now)
         out["period"] = period
-        out["threshold"] = thr
+        out["threshold"] = 0   # deprecated; kept for back-compat
         sd = None
         try:
             sd = D.get_straddle_delta(
@@ -275,14 +277,7 @@ def _scan_side(option_type: str, token: int, atm_strike: int,
         except Exception:
             sd = None
         out["straddle_delta"] = sd
-        if sd is None:
-            out["reject_reason"] = "straddle_data_unavailable"
-            return out
-        if sd < thr:
-            out["reject_reason"] = ("straddle_bleed_" + "{:+.1f}".format(sd)
-                                    + "_need_" + str(thr) + "_in_" + period)
-            return out
-
+        # No reject path — shadow fires on the same gates as live.
         out["fired"] = True
     except Exception as e:
         logger.debug("[SHADOW_1MIN] scan error " + option_type + ": " + str(e))
