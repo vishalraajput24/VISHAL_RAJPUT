@@ -208,18 +208,61 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 pass
         result["cooldown_ok"] = True
 
-        # ── GATE 3: Fresh breakout above EMA9-high ──
-        if not (close > ema9_high and prev_close <= prev_ema9_high):
-            if close <= ema9_high:
-                reason = "below_band_close=" + str(round(close, 1)) + "_ema9h=" + str(round(ema9_high, 1))
+        # ── GATE 3 (v15.2.4): Fresh breakout above EMA9-high ──
+        # Relaxed from the original strict 1-candle check so the bot can
+        # recover after a restart that happened mid-move. Fires when:
+        #   close > ema9_high  AND  some candle in the last N bars had
+        #   close <= its ema9_high (i.e. we WERE below the band recently).
+        # Controlled by config: entry.ema9_band.fresh_breakout_lookback
+        # (default 3). Setting it to 1 restores the strict v15.2 rule.
+        fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
+        if fb_lookback < 1:
+            fb_lookback = 1
+
+        # Walk back from iloc[-3] up to `fb_lookback` candles looking for
+        # "was below its own ema9_high".
+        was_below_in_lookback = False
+        for _k in range(3, 3 + fb_lookback):
+            if len(opt_3m) < _k:
+                break
+            _bar = opt_3m.iloc[-_k]
+            _bar_close  = float(_bar.get("close", 0))
+            _bar_ema9h  = float(_bar.get("ema9_high", 0))
+            if _bar_ema9h > 0 and _bar_close <= _bar_ema9h:
+                was_below_in_lookback = True
+                break
+
+        is_fresh_breakout = (close > ema9_high) and was_below_in_lookback
+
+        if not is_fresh_breakout:
+            # v15.2.4: precise block-reason categorization. Lets us tell
+            # stale post-restart state from pure chop in the log.
+            if close <= ema9_high and prev_close > prev_ema9_high:
+                reason_code = "just_crossed_down"
+            elif close <= ema9_high:
+                reason_code = "below_band"
+            elif close > ema9_high and not was_below_in_lookback:
+                # Above band for > fb_lookback candles — this is the
+                # "bot restarted mid-move" case.
+                reason_code = "already_above_band"
             else:
-                reason = "stale_breakout_prev_close=" + str(round(prev_close, 1)) + "_>_prev_ema9h=" + str(round(prev_ema9_high, 1))
-            result["reject_reason"] = reason
+                # Logic says this branch shouldn't run (covered by the
+                # fresh_breakout=True path). Log it so we can investigate.
+                reason_code = "fresh_cross_up_but_missed_fire"
+
+            result["reject_reason"] = (reason_code
+                                       + "_close=" + str(round(close, 1))
+                                       + "_ema9h=" + str(round(ema9_high, 1))
+                                       + "_lookback=" + str(fb_lookback) + "c")
             if not silent:
-                logger.info("[ENGINE] " + option_type + " NO_BREAKOUT close="
-                            + str(round(close, 1)) + " ema9h=" + str(round(ema9_high, 1))
+                logger.info("[ENGINE] " + option_type
+                            + " NO_BREAKOUT [" + reason_code + "]"
+                            + " close=" + str(round(close, 1))
+                            + " ema9h=" + str(round(ema9_high, 1))
                             + " prev_close=" + str(round(prev_close, 1))
-                            + " prev_ema9h=" + str(round(prev_ema9_high, 1)))
+                            + " prev_ema9h=" + str(round(prev_ema9_high, 1))
+                            + " lookback=" + str(fb_lookback) + "c"
+                            + " was_below=" + str(was_below_in_lookback))
             return result
 
         # ── GATE 4: Green candle ──

@@ -155,13 +155,27 @@ test("1. test_breakout_fires",
      r["fired"] is True and r["entry_mode"] == "EMA9_BREAKOUT",
      "fired=" + str(r["fired"]) + " reject=" + r.get("reject_reason", ""))
 
-# 2. Stale breakout (prev was already above) → BLOCKED
-_df_stale = _make_opt_3m(last_close=103.0, last_open=101.0, last_high=104.0,
-                         last_low=100.5, ema9_high=100.0,
-                         prev_close=101.0, prev_ema9_high=100.0)
+# 2. v15.2.4: SUSTAINED above-band (entire 3-candle lookback above)
+#    → BLOCKED with the new "already_above_band" reject code.
+#    The relaxed fresh-breakout rule fires when ANY of the last N bars
+#    was below the band, so this test forces ALL lookback bars above.
+import pandas as _pd
+_rows_above = []
+for _i in range(20):
+    _rows_above.append({"open": 101.0, "high": 103.0, "low": 100.0,
+                        "close": 102.0, "volume": 1000})
+_df_stale = _pd.DataFrame(_rows_above)
+_base_ts = datetime(2026, 4, 16, 10, 0)
+_df_stale.index = [_base_ts + timedelta(minutes=i * 3) for i in range(len(_rows_above))]
+# Hand-set indicators so EVERY row has close > ema9_high (sustained above).
+_df_stale["EMA_9"]     = 101.0
+_df_stale["EMA_21"]    = 101.0
+_df_stale["RSI"]       = 50.0
+_df_stale["ema9_high"] = 100.0
+_df_stale["ema9_low"]  = 91.0
 r = _run_entry(df=_df_stale)
 test("2. test_no_fresh_breakout_blocked",
-     r["fired"] is False and "stale_breakout" in r.get("reject_reason", ""),
+     r["fired"] is False and "already_above_band" in r.get("reject_reason", ""),
      "reject=" + r.get("reject_reason", ""))
 
 # 3. Red candle → BLOCKED
