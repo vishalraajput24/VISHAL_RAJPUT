@@ -65,6 +65,11 @@ EXPECTED_SPARSE = {
         "trough_pnl", "momentum_pts", "rsi_rising",
         "spot_confirms", "spot_move", "straddle_decay",
         "exit_phase", "score",
+        # v13 dead fields — still in _TRADE_FIELDS but v15.x state never
+        # populates them. Audited 2026-04-16 across 40 rows, confirmed
+        # always zero/empty. Kept in schema for CSV back-compat.
+        "iv_at_entry", "spread_1m", "spread_3m", "delta_at_entry",
+        "regime", "sl_pts",
         # Exit-side band is 0 when trade exited without band ever populating
         "exit_ema9_high", "exit_ema9_low", "exit_band_position",
     },
@@ -141,7 +146,8 @@ def audit(days: int = 3, fix: bool = False):
     # ── 2. Always-zero / always-empty columns on recent trades + scans ──
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     print("\n2. ALWAYS-ZERO COLUMNS on last " + str(days) + " days of trades + scans")
-    print("   (flags the 'column is in schema but insert wrote zero every time' bug)")
+    print("   (a column flagged here means every sampled row had 0/'' for it —")
+    print("    legitimate bug post-restart, expected for pre-fix historical rows)")
     for tbl, date_col in (("trades", "date"),
                           ("signal_scans", "date(timestamp)")):
         n = _count(conn,
