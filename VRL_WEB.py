@@ -1149,8 +1149,62 @@ class H(BaseHTTPRequestHandler):
             self._db_stats()
         else:self.send_error(404)
 
+def _bind_host():
+    """v15.2.5 BUG-M: fail-safe bind selection.
+    If ADMIN_PASS_HASH is empty, admin login is impossible but the
+    process would still happily listen on 0.0.0.0 and expose
+    subscriber-token endpoints + /api/* to the public internet.
+    Fall back to loopback-only so a misconfigured box can't leak
+    data while operators are still fixing the env file. Emits a
+    CRITICAL stderr line and attempts a Telegram warn (best-effort)
+    so the misconfiguration surfaces immediately."""
+    if ADMIN_PASS_HASH:
+        return "0.0.0.0"
+    msg = ("CRITICAL: VRL_DASHBOARD_PASS missing from ~/.env — "
+           "ADMIN_PASS_HASH is empty. Binding to 127.0.0.1 only "
+           "(loopback). Set VRL_DASHBOARD_PASS and restart "
+           "vrl-web to re-expose publicly.")
+    import sys as _sys
+    print("[VRL_WEB] " + msg, file=_sys.stderr, flush=True)
+    try:
+        import logging as _logging
+        _logging.getLogger("vrl_web").critical(msg)
+    except Exception:
+        pass
+    # Best-effort Telegram — needs token + chat from env. Never raise.
+    try:
+        _tok = ""
+        _cid = ""
+        _envp = os.path.join(BASE, ".env")
+        if os.path.isfile(_envp):
+            with open(_envp) as _ef:
+                for _line in _ef:
+                    _line = _line.strip()
+                    if _line.startswith("TG_TOKEN="):
+                        _tok = _line.split("=", 1)[1].strip().strip('"\'')
+                    elif _line.startswith("TG_GROUP_ID="):
+                        _cid = _line.split("=", 1)[1].strip().strip('"\'')
+        if _tok and _cid:
+            import urllib.request as _ur
+            import urllib.parse as _up
+            _payload = _up.urlencode({
+                "chat_id": _cid,
+                "text": "⚠️ VRL_WEB started on 127.0.0.1 only — "
+                        "VRL_DASHBOARD_PASS missing. Set it in ~/.env "
+                        "and restart vrl-web to re-expose the dashboard."
+            }).encode()
+            _req = _ur.Request(
+                "https://api.telegram.org/bot" + _tok + "/sendMessage",
+                data=_payload, method="POST")
+            _ur.urlopen(_req, timeout=5).read()
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
 if __name__=="__main__":
-    s=HTTPServer(("0.0.0.0",PORT),H)
-    print("VRL War Room v13.9 — http://0.0.0.0:"+str(PORT))
+    _host = _bind_host()
+    s=HTTPServer((_host,PORT),H)
+    print("VRL War Room v15.2.5 — http://" + _host + ":" + str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()
