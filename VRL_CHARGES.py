@@ -1,8 +1,15 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_CHARGES.py — VISHAL RAJPUT TRADE v13.7
+#  VRL_CHARGES.py — VISHAL RAJPUT TRADE v15.2.5
 #  Brokerage & charges calculator. Pure math, no API calls.
 #  Zerodha F&O charges as of April 2026.
+#
+#  BUG-K (v15.2.5 Batch 5): lot_size is no longer a module-load
+#  constant. calculate_lot_charges() / calculate_split_charges()
+#  now look it up from VRL_DATA at CALL TIME when the caller
+#  doesn't pass an explicit value. This lets a mid-session lot-size
+#  change (Zerodha has historically adjusted NIFTY lots) flow
+#  through without a code edit or restart.
 # ═══════════════════════════════════════════════════════════════
 
 BROKERAGE_PER_ORDER = 20.0
@@ -11,6 +18,22 @@ EXCHANGE_NSE_PCT = 0.000530       # 0.053% NSE F&O transaction
 SEBI_TURNOVER_PCT = 0.000001      # ₹1 per crore
 STAMP_DUTY_BUY_PCT = 0.00003     # 0.003% on buy side
 GST_PCT = 0.18                    # 18% on (brokerage + exchange)
+
+
+def _live_lot_size() -> int:
+    """Runtime lookup of the active NIFTY lot size. Re-read on every
+    call so a mid-session broker adjustment surfaces without a
+    restart. Falls back to the historical default 65 only if
+    VRL_DATA is somehow unavailable (e.g. unit test that imports
+    CHARGES in isolation)."""
+    try:
+        import VRL_DATA
+        lot = int(getattr(VRL_DATA, "LOT_SIZE", 0) or 0)
+        if lot > 0:
+            return lot
+    except Exception:
+        pass
+    return 65
 
 
 def calculate_charges(entry_price: float, exit_price: float,
@@ -46,13 +69,21 @@ def calculate_charges(entry_price: float, exit_price: float,
 
 
 def calculate_lot_charges(entry_price: float, exit_price: float,
-                          lot_size: int = 65) -> dict:
+                          lot_size: int = None) -> dict:
+    """BUG-K: lot_size defaults to live VRL_DATA.LOT_SIZE when None,
+    so the broker's current lot value flows through on every call
+    instead of being frozen at module import."""
+    if lot_size is None:
+        lot_size = _live_lot_size()
     return calculate_charges(entry_price, exit_price, lot_size, num_exit_orders=1)
 
 
 def calculate_split_charges(entry_price: float,
                             exit1_price: float, exit2_price: float,
-                            lot_size: int = 65) -> dict:
+                            lot_size: int = None) -> dict:
+    """BUG-K: same runtime lookup as calculate_lot_charges."""
+    if lot_size is None:
+        lot_size = _live_lot_size()
     lot1 = calculate_charges(entry_price, exit1_price, lot_size, num_exit_orders=1)
     lot2 = calculate_charges(entry_price, exit2_price, lot_size, num_exit_orders=1)
     # Correct: 1 entry + 2 exits = 3 orders, not 4
