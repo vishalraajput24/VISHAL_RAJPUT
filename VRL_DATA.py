@@ -1506,10 +1506,17 @@ def compute_spot_regime() -> str:
 def calculate_spot_gap() -> dict:
     """
     Calculate gap: today's open vs previous trading session's close.
-    Uses 7-day fetch — handles weekends + holidays automatically.
-    Kite returns only market-hours candles — last candle before today
-    is always the previous session's close, regardless of how many
-    non-trading days are in between.
+
+    BUG-G v15.2.5 Batch 4: lookback extended from 7 → 14 days so that
+    long weekends + back-to-back holidays (e.g. Diwali + weekend combo)
+    don't strand us with no previous session in the window. Also
+    falls back to the DAILY candle endpoint when the 1-min fetch
+    returns no prior-day data — daily candles survive any gap.
+
+    Kite's 1-min historical_data returns only market-hours candles,
+    so the last candle before today in the fetched window is always
+    the previous session's close regardless of non-trading days — as
+    long as the window actually reaches one.
     """
     global _spot_gap, _spot_prev_close
     result = {"gap_pts": 0.0, "gap_pct": 0.0, "prev_close": 0.0, "today_open": 0.0}
@@ -1517,39 +1524,71 @@ def calculate_spot_gap() -> dict:
         if _kite is None:
             return result
         now     = datetime.now()
-        from_dt = now - timedelta(days=7)  # 7 days covers any holiday combo
+        # BUG-G: widened from 7 → 14 days to survive long weekends +
+        # paired holidays. Extra data is cheap and skipped in the loop below.
+        from_dt = now - timedelta(days=14)
         raw = _kite.historical_data(
             instrument_token=NIFTY_SPOT_TOKEN,
             from_date=from_dt, to_date=now,
             interval="minute", continuous=False, oi=False)
-        if not raw or len(raw) < 50:
-            return result
 
-        # Group by date to find previous session
         today_str = date.today().strftime("%Y-%m-%d")
-        dates_seen = {}
-        for c in raw:
-            d = str(c["date"])[:10]
-            if d not in dates_seen:
-                dates_seen[d] = {"first_open": c["open"], "last_close": c["close"]}
-            dates_seen[d]["last_close"] = c["close"]
+        prev_close = None
+        prev_date  = None
+        today_open = None
 
-        sorted_dates = sorted(dates_seen.keys())
-        if today_str not in sorted_dates:
-            logger.warning("[SPOT] Today not in fetched data")
+        # Primary path: 1-min grouped by date.
+        if raw and len(raw) >= 50:
+            dates_seen = {}
+            for c in raw:
+                d = str(c["date"])[:10]
+                if d not in dates_seen:
+                    dates_seen[d] = {"first_open": c["open"], "last_close": c["close"]}
+                dates_seen[d]["last_close"] = c["close"]
+
+            sorted_dates = sorted(dates_seen.keys())
+            if today_str in sorted_dates:
+                today_idx = sorted_dates.index(today_str)
+                today_open = float(dates_seen[today_str]["first_open"])
+                if today_idx > 0:
+                    prev_date  = sorted_dates[today_idx - 1]
+                    prev_close = float(dates_seen[prev_date]["last_close"])
+
+        # BUG-G fallback: if 1-min path couldn't find a previous session,
+        # ask the daily-candle endpoint directly. Daily candles survive
+        # any combo of weekends + holidays because Kite stores one per
+        # actual trading day, with the session's final close baked in.
+        if prev_close is None:
+            try:
+                daily = _kite.historical_data(
+                    instrument_token=NIFTY_SPOT_TOKEN,
+                    from_date=(now - timedelta(days=30)),
+                    to_date=now,
+                    interval="day", continuous=False, oi=False)
+            except Exception as _e:
+                daily = None
+            if daily:
+                dsorted = sorted(daily, key=lambda r: str(r.get("date", "")))
+                # Walk backwards past any same-day candle and pick the
+                # first one strictly before today.
+                for r in reversed(dsorted):
+                    d = str(r.get("date", ""))[:10]
+                    if d < today_str:
+                        prev_close = float(r["close"])
+                        prev_date  = d
+                        if today_open is None:
+                            today_open = float(r["close"])  # degrades to 0 gap, honest default
+                        logger.info("[SPOT] Gap prev_close via DAILY fallback: "
+                                    + str(prev_close) + " (" + prev_date + ")")
+                        break
+
+        if prev_close is None or today_open is None:
+            logger.warning("[SPOT] Gap calc: no prev session found in 14d 1-min "
+                           "OR 30d daily — returning zero-gap result")
             return result
 
-        today_idx = sorted_dates.index(today_str)
-        if today_idx == 0:
-            logger.warning("[SPOT] No previous session in fetched data")
-            return result
-
-        prev_date  = sorted_dates[today_idx - 1]
-        prev_close = float(dates_seen[prev_date]["last_close"])
-        today_open = float(dates_seen[today_str]["first_open"])
-        gap_pts    = round(today_open - prev_close, 2)
-        gap_pct    = round(gap_pts / prev_close * 100, 2) if prev_close > 0 else 0.0
-
+        gap_pts = round(today_open - prev_close, 2)
+        gap_pct = round(gap_pts / prev_close * 100, 2) if prev_close > 0 else 0.0
         _spot_gap        = gap_pts
         _spot_prev_close = prev_close
         result = {
@@ -1558,7 +1597,7 @@ def calculate_spot_gap() -> dict:
         }
         logger.info("[SPOT] Gap: " + str(gap_pts) + "pts ("
                     + str(gap_pct) + "%) prev=" + str(prev_close)
-                    + " (" + prev_date + ") open=" + str(today_open))
+                    + " (" + str(prev_date) + ") open=" + str(today_open))
     except Exception as e:
         logger.warning("[SPOT] Gap calculation error: " + str(e))
     return result
