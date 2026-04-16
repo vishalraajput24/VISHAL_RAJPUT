@@ -308,6 +308,12 @@ def _reset_daily(today_str: str):
     D.clear_token_cache()
     D.reset_daily_warnings()
     _reset_strike_lock()
+    # v15.2 Part 4: reset shadow state on new trading day
+    try:
+        import VRL_SHADOW
+        VRL_SHADOW.reset_day()
+    except Exception:
+        pass
     # DB maintenance
     try:
         import VRL_DB as _DB
@@ -1765,6 +1771,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "rolling": rolling_block,
         }
 
+        # v15.2 Part 4: shadow 1-min head-to-head line
+        try:
+            import VRL_SHADOW
+            dashboard["shadow"] = VRL_SHADOW.day_summary()
+        except Exception:
+            dashboard["shadow"] = {"trades": 0, "wins": 0, "losses": 0,
+                                    "pnl": 0.0, "wr": 0, "avg_peak": 0.0,
+                                    "peaks_over_10": 0}
+
         # Atomic write
         tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
         with open(tmp, "w") as f:
@@ -1967,6 +1982,22 @@ def _strategy_loop(kite):
                     generate_daily_summary()
                 except Exception as e:
                     logger.warning("[MAIN] Daily summary: " + str(e))
+                # ── v15.2 Part 4: emit ONE shadow-vs-live EOD summary ──
+                try:
+                    import VRL_SHADOW
+                    _live_trades_today = _read_today_trades()
+                    _live_n = len(_live_trades_today)
+                    _live_w = sum(1 for t in _live_trades_today
+                                  if float(t.get("pnl_pts", 0)) > 0)
+                    _live_pnl = round(sum(float(t.get("pnl_pts", 0))
+                                           for t in _live_trades_today), 1)
+                    _live_wr = round(_live_w / _live_n * 100) if _live_n else 0
+                    VRL_SHADOW.emit_eod_summary(
+                        _tg_send,
+                        live_stats={"trades": _live_n, "wins": _live_w,
+                                    "pnl": _live_pnl, "wr": _live_wr})
+                except Exception as _se:
+                    logger.warning("[SHADOW] EOD summary: " + str(_se))
 
             with _state_lock:
                 _force = state.get("force_exit")
@@ -2351,6 +2382,16 @@ def _strategy_loop(kite):
                         "ce": ce_res,
                         "pe": pe_res,
                     }
+
+                # ── v15.2 Part 4: silent 1-min shadow strategy ────────
+                # Runs after live scan on every 1-min boundary. Independent
+                # state, independent cooldown, never touches live state,
+                # never places orders, never alerts during the day.
+                try:
+                    import VRL_SHADOW
+                    VRL_SHADOW.tick(kite, spot_ltp, atm_strike, expiry, now=now)
+                except Exception as _shade:
+                    logger.debug("[SHADOW] tick: " + str(_shade))
 
                 # Write dashboard + cache args for post-exit refresh
                 global _last_dash_args

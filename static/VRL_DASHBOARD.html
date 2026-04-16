@@ -407,6 +407,16 @@ if(mtf&&(mtf.spot&&mtf.spot.length||mtf.ce&&mtf.ce.length)){
   });
   mh+='</div>';
 }
+
+// v15.2 Part 4: silent 1-min shadow strategy — one-line A/B comparison
+var _sh=d.shadow||{};
+var _shn=parseInt(_sh.trades||0),_shw=parseInt(_sh.wins||0);
+var _shp=parseFloat(_sh.pnl||0);
+var _shc=_shp>=0?'var(--gn)':'var(--rd)';
+mh+='<div class="ms2"><div class="mh">\uD83C\uDF17 Shadow 1-min (silent A/B)</div>';
+mh+='<div class="mw"><span class="mk2">Today</span><span class="mv2 mono" style="color:'+_shc+'">'+_shn+' trades \u00B7 '+_shw+'W \u00B7 '+fmt(_shp)+'pts</span></div>';
+mh+='</div>';
+
 document.getElementById('p-mkt').innerHTML=mh;
 
 // Trades

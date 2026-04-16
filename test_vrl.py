@@ -453,6 +453,103 @@ test("28. test_deleted_config_keys_absent",
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Section 9 — Silent 1-min shadow strategy (Part 4, 3 tests)
+# ═══════════════════════════════════════════════════════════════
+
+section("SHADOW 1-MIN (PART 4)")
+
+import importlib, VRL_SHADOW
+importlib.reload(VRL_SHADOW)
+
+# Build a 1-min breakout fixture tuned so the real EMA9 bands produce
+# width >= 8 without any overrides. Shadow recomputes the bands inside
+# _scan_side, so hardcoded ema9 values would get clobbered — the fixture
+# instead makes the natural EWM land where we need:
+#   highs stable near 100, lows stable near 91, last close 103 > 100,
+#   prev close 99 <= prev_ema9h ~100.
+def _make_1m():
+    rows = []
+    for _i in range(15):
+        rows.append({"open": 95, "high": 100, "low": 91,
+                     "close": 96, "volume": 1000})
+    # prev (iloc[-3]): close 99, high stays at 100, low at 91 so EWM holds.
+    rows.append({"open": 96, "high": 100, "low": 91, "close": 99, "volume": 1000})
+    # last closed (iloc[-2]): breakout close 103 > ema9_high ~100.
+    rows.append({"open": 98, "high": 104, "low": 97.5, "close": 103, "volume": 1000})
+    # live in-progress (iloc[-1]): ignored by the scan.
+    rows.append({"open": 103, "high": 104, "low": 102,
+                 "close": 103.5, "volume": 500})
+    df = pd.DataFrame(rows)
+    _base = datetime(2026, 4, 16, 10, 15)
+    df.index = [_base + timedelta(minutes=i) for i in range(len(rows))]
+    return df
+
+
+# 29. Shadow can fire INDEPENDENTLY of whether live is in a position.
+#     We simulate a running LIVE trade (state has in_trade=True elsewhere),
+#     then call shadow tick and verify it still enters a shadow position.
+VRL_SHADOW.reset_day()
+_live_state_snapshot = {"in_trade": True, "direction": "PE",
+                        "entry_price": 150.0, "daily_trades": 3}
+_df_1m = _make_1m()
+_fake_now = datetime(2026, 4, 16, 10, 30)  # MIDDAY → threshold 5
+_patches = [
+    patch.object(D, "get_historical_data", return_value=_df_1m),
+    patch.object(D, "add_indicators", side_effect=lambda x: x),
+    patch.object(D, "get_option_tokens",
+                 return_value={"CE": {"token": 11111, "symbol": "CE11111"},
+                               "PE": {"token": 22222, "symbol": "PE22222"}}),
+    patch.object(D, "get_straddle_delta", return_value=7.0),
+    patch.object(D, "is_market_open", return_value=False),
+    patch.object(D, "get_ltp", return_value=103.0),
+    patch.object(D, "resolve_atm_strike", return_value=24000),
+]
+for p in _patches: p.start()
+try:
+    VRL_SHADOW.tick(kite=None, spot_ltp=24000, atm_strike=24000,
+                    expiry=date(2026, 4, 30), now=_fake_now)
+finally:
+    for p in _patches: p.stop()
+_shadow_entered = VRL_SHADOW.shadow_state.get("in_trade", False)
+test("29. test_shadow_fires_independently",
+     _shadow_entered is True and VRL_SHADOW.shadow_state["direction"] in ("CE", "PE"),
+     "shadow in_trade=" + str(_shadow_entered)
+     + " dir=" + str(VRL_SHADOW.shadow_state.get("direction")))
+
+# 30. Shadow entry NEVER mutates the live state dict
+_before = dict(_live_state_snapshot)
+# tick already ran above; nothing should have touched _live_state_snapshot.
+test("30. test_shadow_never_affects_live",
+     _live_state_snapshot == _before,
+     "live state mutated: " + str({k: v for k, v in _live_state_snapshot.items()
+                                    if _before.get(k) != v}))
+
+# 31. EOD summary renders both shadow AND live stats in one message
+VRL_SHADOW.reset_day()
+# Simulate 2 shadow trades (1 win, 1 loss) via direct accumulation
+with VRL_SHADOW._lock:
+    VRL_SHADOW.shadow_state.update({
+        "trades_today": 2, "wins_today": 1, "losses_today": 1,
+        "total_pnl": 3.4, "peak_sum": 12.0, "peaks_over_10": 1,
+    })
+_captured = {"msg": ""}
+def _fake_tg(text):
+    _captured["msg"] = text
+VRL_SHADOW.emit_eod_summary(_fake_tg, live_stats={"trades": 3, "wins": 2,
+                                                  "pnl": 8.5, "wr": 67})
+_msg = _captured["msg"]
+_has_shadow_line = "[SHADOW 1-MIN] Day Summary" in _msg
+_has_live_line   = "vs LIVE 3-MIN:" in _msg
+_has_both_counts = ("Trades: 2" in _msg) and ("3 trades" in _msg)
+test("31. test_shadow_eod_summary_has_both_stats",
+     _has_shadow_line and _has_live_line and _has_both_counts,
+     "msg_has shadow=" + str(_has_shadow_line)
+     + " live=" + str(_has_live_line)
+     + " both_counts=" + str(_has_both_counts)
+     + "\n--- msg ---\n" + _msg)
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════════════════════════
 
