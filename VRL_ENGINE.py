@@ -552,10 +552,17 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     last_close = None
     last_ema9_low = None
     last_ema9_high = None
+    # v15.2.5 BUG-J: on first manage_exit call after a restart-with-open-trade,
+    # peak_history can be empty (pre-v15.2.5 state.json or a state.alert_history
+    # clobber). VELOCITY_STALL needs 5+ slots to fire, so without backfill
+    # we'd be blind to momentum death for 5 × 3-min = 15 minutes AFTER a
+    # restart — exactly the window we most need the guard. Seed the history
+    # from today's closed 3-min bars once per trade.
+    opt_3m_full = None
     try:
-        opt_3m = D.get_option_3min(token, lookback=10)
-        if opt_3m is not None and not opt_3m.empty and len(opt_3m) >= 2:
-            last = opt_3m.iloc[-2]
+        opt_3m_full = D.get_option_3min(token, lookback=10)
+        if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
+            last = opt_3m_full.iloc[-2]
             last_close     = float(last["close"])
             last_ema9_low  = float(last.get("ema9_low", 0))
             last_ema9_high = float(last.get("ema9_high", 0))
@@ -566,6 +573,54 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
             state["current_floor"]     = round(last_ema9_low, 2)  # legacy compat
     except Exception as e:
         logger.warning("[ENGINE] band fetch error: " + str(e))
+
+    # ── v15.2.5 BUG-J: one-shot peak_history backfill on startup-with-trade ──
+    if (not state.get("_peak_history_backfilled")
+            and not state.get("peak_history")
+            and opt_3m_full is not None
+            and not opt_3m_full.empty
+            and entry > 0):
+        try:
+            # Build peak per closed 3-min candle since entry. Use each
+            # bar's HIGH (max intra-bar excursion) — close-only would
+            # understate the peak the live run would have seen and
+            # create false all-zero history on losing trades.
+            closed = opt_3m_full.iloc[:-1]            # drop live in-progress bar
+            recent = closed.tail(6)
+            running = 0.0
+            seeded  = []
+            for _i, _r in recent.iterrows():
+                _h = float(_r.get("high", _r.get("close", 0) or 0))
+                _p = max(_h - float(entry), 0.0)
+                if _p > running:
+                    running = _p
+                seeded.append(round(running, 2))
+
+            # Skip seeding when the trade NEVER reached the min-peak
+            # threshold that VELOCITY_STALL cares about — an all-zeros
+            # or all-sub-threshold history would otherwise trigger
+            # spurious VELOCITY_STALL exits on a losing-trade restart.
+            # STALE_ENTRY (5 candles + peak<3) already covers the
+            # never-in-profit case; no need for velocity logic there.
+            vs_min_peak_for_seed = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
+            if seeded and max(seeded) >= vs_min_peak_for_seed:
+                state["peak_history"] = seeded
+                last_seed_ts = str(recent.index[-1]) if len(recent) else ""
+                state["last_peak_candle_ts"] = last_seed_ts
+                state["_peak_history_backfilled"] = True
+                logger.info("[ENGINE] peak_history backfilled from "
+                            + str(len(seeded)) + " bars: " + str(seeded)
+                            + " (entry=" + str(round(float(entry), 2)) + ")")
+            elif seeded:
+                # Still mark sentinel so we don't re-attempt every tick,
+                # but leave peak_history empty — VELOCITY_STALL stays dormant.
+                state["_peak_history_backfilled"] = True
+                logger.info("[ENGINE] peak_history backfill SKIPPED — max peak "
+                            + str(max(seeded) if seeded else 0)
+                            + " < vs_min_peak " + str(vs_min_peak_for_seed)
+                            + " (trade never reached stall threshold)")
+        except Exception as _bf:
+            logger.warning("[ENGINE] peak_history backfill error: " + str(_bf))
 
     # ── v15.2.5: Update peak_history once per NEW 3-min candle ──
     # Dedupe by candle timestamp so we don't append on every tick.

@@ -94,6 +94,8 @@ DEFAULT_STATE = {
     "peak_history"       : [],
     "last_peak_candle_ts": "",
     "current_velocity"   : 0.0,
+    # BUG-J: one-shot flag so backfill runs only once per trade
+    "_peak_history_backfilled": False,
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
     "alert_history"      : {},   # key -> ISO timestamp
@@ -938,6 +940,14 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["trough_pnl"]         = 0.0
         state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
+        # v15.2.5 BUG-J: fresh trade starts with an empty peak_history so
+        # the normal per-candle append path populates it cleanly. Reset
+        # the one-shot backfill sentinel so the NEXT restart-with-trade
+        # (if this position is still open) gets its own seed.
+        state["peak_history"]        = []
+        state["last_peak_candle_ts"] = ""
+        state["current_velocity"]    = 0.0
+        state["_peak_history_backfilled"] = False
         state["_last_milestone"]    = 0
         state["current_rsi"]        = 0
         # v15.0 entry context — band values at entry
