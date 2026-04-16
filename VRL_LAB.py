@@ -352,11 +352,16 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "vol_ratio_1m"   : 0,
                 "rsi_rising_1m"  : int(result.get("rsi_ok", False)),
                 "spread_1m"      : result.get("ema_gap", 0),
-                "rsi_3m"         : 0,
-                "body_pct_3m"    : 0,
-                "ema_spread_3m"  : 0,
+                # v15.2.5 audit fix: these were hardcoded 0/'' on every scan
+                # even though the engine result dict has the values. Audit
+                # run 2026-04-16 showed rsi_3m/body_pct_3m/ema_spread_3m/
+                # mode_3m always 0 on 2728 rows. Now mapped from result.
+                "rsi_3m"         : float(result.get("rsi", 0) or 0),
+                "body_pct_3m"    : float(result.get("body_pct", 0) or 0),
+                "ema_spread_3m"  : round(float(result.get("ema9_high", 0) or 0)
+                                         - float(result.get("ema9_low", 0) or 0), 2),
                 "conditions_3m"  : 0,
-                "mode_3m"        : "",
+                "mode_3m"        : result.get("entry_mode", "") or "",
                 "score"          : 0,
                 "fired"          : int(result.get("fired", False)),
                 "reject_reason"  : reject,
