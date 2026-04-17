@@ -310,7 +310,6 @@ def _reset_daily(today_str: str):
         state["profit_locked"]         = False
         state["_eod_reported"]         = False
         state["_eod_exited"]           = False
-    logger.info("[MAIN] _eod_exited reset for new day")
         state["aggressive_mode"]       = False
         state["paused"]                = False
         state["_bias_done"]            = False
@@ -321,6 +320,7 @@ def _reset_daily(today_str: str):
     D.clear_token_cache()
     D.reset_daily_warnings()
     _reset_strike_lock()
+    logger.info("[MAIN] _eod_exited reset for new day")
     # v15.2 Part 4: reset shadow state on new trading day
     try:
         import VRL_SHADOW
