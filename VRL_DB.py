@@ -131,6 +131,18 @@ def init_db():
         _startup_integrity_check(conn)
         c = conn.cursor()
 
+        # ── Schema version tracking (BUG-F1) ──
+        c.execute("CREATE TABLE IF NOT EXISTS schema_meta "
+                  "(key TEXT PRIMARY KEY, value TEXT)")
+        _schema_v = 0
+        try:
+            _sv_row = c.execute(
+                "SELECT value FROM schema_meta WHERE key='version'"
+            ).fetchone()
+            _schema_v = int(_sv_row[0]) if _sv_row else 0
+        except Exception:
+            pass
+
         # ── SPOT TABLES ──
         for table in ("spot_1min", "spot_5min", "spot_15min", "spot_60min"):
             c.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
@@ -209,6 +221,10 @@ def init_db():
             bias TEXT, vix_at_entry REAL, hourly_rsi REAL, straddle_decay REAL)""")
 
         # v13.3: migrate trades table — add columns that may not exist yet
+        # BUG-F1: skip if schema v15+ (migration already dropped these)
+        if _schema_v >= 15:
+            logger.info("[DB] Schema v" + str(_schema_v) + " — legacy "
+                        "ALTER TABLE blocks skipped")
         _new_trade_cols = [
             ("brokerage",       "REAL DEFAULT 0"),
             ("stt",             "REAL DEFAULT 0"),
@@ -240,13 +256,14 @@ def init_db():
             ("other_falling",   "INTEGER DEFAULT 0"),
             ("other_move",      "REAL DEFAULT 0"),
         ]
-        _existing = {row[1] for row in c.execute("PRAGMA table_info(trades)")}
-        for _cname, _ctype in _new_trade_cols:
-            if _cname not in _existing:
-                try:
-                    c.execute("ALTER TABLE trades ADD COLUMN " + _cname + " " + _ctype)
-                except Exception:
-                    pass
+        if _schema_v < 15:
+            _existing = {row[1] for row in c.execute("PRAGMA table_info(trades)")}
+            for _cname, _ctype in _new_trade_cols:
+                if _cname not in _existing:
+                    try:
+                        c.execute("ALTER TABLE trades ADD COLUMN " + _cname + " " + _ctype)
+                    except Exception:
+                        pass
 
         # ── INDEXES ──
         _indexes = [
@@ -294,31 +311,31 @@ def init_db():
         except Exception:
             pass
 
-        # v13.2: Add slippage + lot_id + bonus columns to trades
-        for _sc, _st in [("entry_slippage", "REAL DEFAULT 0"),
-                          ("exit_slippage", "REAL DEFAULT 0"),
-                          ("signal_price", "REAL DEFAULT 0"),
-                          ("lot_id", "TEXT DEFAULT 'ALL'"),
-                          ("bonus_vwap", "INTEGER DEFAULT 0"),
-                          ("bonus_fib_level", "TEXT DEFAULT ''"),
-                          ("bonus_fib_dist", "REAL DEFAULT 0"),
-                          ("bonus_vol_spike", "INTEGER DEFAULT 0"),
-                          ("bonus_vol_ratio", "REAL DEFAULT 0"),
-                          ("bonus_pdh_break", "INTEGER DEFAULT 0"),
-                          ("qty_exited", "INTEGER DEFAULT 130"),
-                          ("entry_mode", "TEXT DEFAULT 'EMA'"),
-                          ("momentum_pts", "REAL DEFAULT 0"),
-                          ("rsi_rising", "INTEGER DEFAULT 0"),
-                          ("spot_confirms", "INTEGER DEFAULT 0"),
-                          ("spot_move", "REAL DEFAULT 0")]:
-            try:
-                c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
-            except Exception:
-                pass
+        # v13.2 + v15.0 ALTER TABLE blocks — skipped on v15+ schema
+        if _schema_v < 15:
+            for _sc, _st in [("entry_slippage", "REAL DEFAULT 0"),
+                              ("exit_slippage", "REAL DEFAULT 0"),
+                              ("signal_price", "REAL DEFAULT 0"),
+                              ("lot_id", "TEXT DEFAULT 'ALL'"),
+                              ("bonus_vwap", "INTEGER DEFAULT 0"),
+                              ("bonus_fib_level", "TEXT DEFAULT ''"),
+                              ("bonus_fib_dist", "REAL DEFAULT 0"),
+                              ("bonus_vol_spike", "INTEGER DEFAULT 0"),
+                              ("bonus_vol_ratio", "REAL DEFAULT 0"),
+                              ("bonus_pdh_break", "INTEGER DEFAULT 0"),
+                              ("qty_exited", "INTEGER DEFAULT 130"),
+                              ("entry_mode", "TEXT DEFAULT 'EMA'"),
+                              ("momentum_pts", "REAL DEFAULT 0"),
+                              ("rsi_rising", "INTEGER DEFAULT 0"),
+                              ("spot_confirms", "INTEGER DEFAULT 0"),
+                              ("spot_move", "REAL DEFAULT 0")]:
+                try:
+                    c.execute(f"ALTER TABLE trades ADD COLUMN {_sc} {_st}")
+                except Exception:
+                    pass
 
-        # v15.0: EMA9 band columns for option_3min, signal_scans, trades
-        # v15.2: signal_scans straddle/VWAP context for April 28 review
-        for _tbl, _col, _typ in [
+        if _schema_v < 15:
+            for _tbl, _col, _typ in [
             ("option_3min",  "ema9_high",       "REAL DEFAULT 0"),
             ("option_3min",  "ema9_low",        "REAL DEFAULT 0"),
             ("signal_scans", "ema9_high",       "REAL DEFAULT 0"),
@@ -368,12 +385,22 @@ def init_db():
         logger.info("[DB] Database initialized: " + DB_PATH)
 
         # BUG-N6 + N7: one-shot migration to drop dead v13 columns.
-        # Runs after all ALTER TABLE migrations so the legacy table
-        # has every column that the new table needs to SELECT from.
-        try:
-            migrate_schema_v15()
-        except Exception as _me:
-            logger.warning("[DB] Schema v15 migration: " + str(_me))
+        # BUG-F1: gated by schema version so it doesn't re-run.
+        if _schema_v < 15:
+            try:
+                migrate_schema_v15()
+                # Stamp schema version AFTER successful migration so
+                # the next restart skips all legacy ALTER TABLE blocks
+                # AND the migration itself.
+                c.execute("INSERT OR REPLACE INTO schema_meta "
+                          "VALUES ('version', '15')")
+                conn.commit()
+                logger.info("[DB] Schema version stamped: 15")
+            except Exception as _me:
+                logger.warning("[DB] Schema v15 migration: " + str(_me))
+        else:
+            logger.info("[DB] Schema v" + str(_schema_v)
+                        + " — migration already done, skipped")
 
 
 # ═══════════════════════════════════════════════════════════════
