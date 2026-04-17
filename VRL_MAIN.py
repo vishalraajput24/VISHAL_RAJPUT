@@ -1178,6 +1178,13 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     _log_trade(state, actual_exit, reason, candles, saved_entry=entry,
                lot_id=lot_id, qty=exit_qty)
 
+    # ── v15.2.5 Batch 3 BUG-R3: shadow trade summary ──
+    try:
+        _log_shadow_trade_summary(state, entry, actual_exit, reason,
+                                  peak, candles)
+    except Exception as _sts:
+        logger.debug("[SHADOW_EXIT] trade summary: " + str(_sts))
+
     # Telegram alert
     if trade_done:
         with _state_lock:
@@ -1493,6 +1500,105 @@ def _log_shadow_exit_tick(st: dict, option_ltp: float, now: datetime):
             w.writerow(row)
     except Exception as _we:
         logger.debug("[SHADOW_EXIT] CSV write: " + str(_we))
+
+
+_SHADOW_TRADE_FIELDS = [
+    "date", "entry_time", "exit_time", "symbol", "direction",
+    "entry_price", "actual_exit_price", "actual_exit_reason", "actual_pnl",
+    "peak_pnl",
+    "first_ratchet_hit_time", "first_ratchet_tier", "first_ratchet_price",
+    "first_ratchet_pnl_if_exited_here",
+    "first_ema1m_break_time", "first_ema1m_break_price",
+    "first_ema1m_break_pnl_if_exited_here",
+    "rule_winner", "rule_winner_pnl", "rule_winner_saved_pts",
+]
+
+
+def _log_shadow_trade_summary(st, entry, exit_price, reason, peak, candles):
+    """BUG-R3: after a real exit, read today's shadow tick CSV and compute
+    what ratchet + ema1m would have done. Pure read + write — no state mutation."""
+    today_str = date.today().strftime("%Y-%m-%d")
+    tick_path = os.path.join(_SHADOW_EXIT_DIR, "shadow_" + today_str + ".csv")
+    if not os.path.isfile(tick_path):
+        return
+    actual_pnl = round(float(exit_price) - float(entry), 2)
+    entry_time = st.get("entry_time", "")
+    exit_time  = datetime.now().strftime("%H:%M:%S")
+    symbol     = st.get("symbol", "")
+    direction  = st.get("direction", "")
+
+    # Scan tick CSV for first ratchet + ema1m triggers
+    first_ratchet = None
+    first_ema1m   = None
+    try:
+        with open(tick_path, "r") as f:
+            for row in csv.DictReader(f):
+                if row.get("symbol") != symbol:
+                    continue
+                if not first_ratchet and row.get("would_exit_ratchet") == "1":
+                    first_ratchet = row
+                if not first_ema1m and row.get("would_exit_ema1m") == "1":
+                    first_ema1m = row
+                if first_ratchet and first_ema1m:
+                    break
+    except Exception:
+        pass
+
+    def _pnl_at(row_or_none):
+        if not row_or_none:
+            return None, "", 0.0
+        ltp = float(row_or_none.get("current_ltp", 0) or 0)
+        ts  = row_or_none.get("timestamp", "")
+        p   = round(ltp - float(entry), 2)
+        return p, ts, ltp
+
+    r_pnl, r_ts, r_price = _pnl_at(first_ratchet)
+    e_pnl, e_ts, e_price = _pnl_at(first_ema1m)
+    r_tier = first_ratchet.get("ratchet_tier", "") if first_ratchet else ""
+
+    # Determine rule winner (earliest trigger)
+    candidates = []
+    if r_pnl is not None:
+        candidates.append(("ratchet", r_pnl, r_ts))
+    if e_pnl is not None:
+        candidates.append(("ema1m", e_pnl, e_ts))
+    if not candidates:
+        winner, winner_pnl = "actual", actual_pnl
+    else:
+        candidates.sort(key=lambda x: x[2])
+        winner, winner_pnl = candidates[0][0], candidates[0][1]
+    saved = round(winner_pnl - actual_pnl, 2)
+
+    out = {
+        "date": today_str, "entry_time": entry_time, "exit_time": exit_time,
+        "symbol": symbol, "direction": direction,
+        "entry_price": round(float(entry), 2),
+        "actual_exit_price": round(float(exit_price), 2),
+        "actual_exit_reason": reason, "actual_pnl": actual_pnl,
+        "peak_pnl": round(float(peak), 2),
+        "first_ratchet_hit_time": r_ts, "first_ratchet_tier": r_tier,
+        "first_ratchet_price": round(r_price, 2) if r_price else "",
+        "first_ratchet_pnl_if_exited_here": r_pnl if r_pnl is not None else "",
+        "first_ema1m_break_time": e_ts,
+        "first_ema1m_break_price": round(e_price, 2) if e_price else "",
+        "first_ema1m_break_pnl_if_exited_here": e_pnl if e_pnl is not None else "",
+        "rule_winner": winner, "rule_winner_pnl": winner_pnl,
+        "rule_winner_saved_pts": saved,
+    }
+    trades_path = os.path.join(_SHADOW_EXIT_DIR,
+                               "shadow_trades_" + today_str + ".csv")
+    is_new = not os.path.isfile(trades_path)
+    try:
+        with open(trades_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=_SHADOW_TRADE_FIELDS,
+                               extrasaction="ignore")
+            if is_new:
+                w.writeheader()
+            w.writerow(out)
+        logger.info("[SHADOW_EXIT] trade summary: " + winner + " saved "
+                    + str(saved) + "pts vs actual " + str(actual_pnl))
+    except Exception as _we:
+        logger.debug("[SHADOW_EXIT] trade CSV: " + str(_we))
 
 
 def _update_dashboard_ltp():
