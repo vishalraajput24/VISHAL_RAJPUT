@@ -856,10 +856,22 @@ def _get_nfo_instruments(kite=None):
         _nfo_instruments_date = today
     return instruments
 
+# BUG-N8 v15.2.5: per-date cache for lot_size.
+# get_lot_size() called 28× per day via D.get_lot_size() — each call
+# invokes _get_nfo_instruments(kite) which returns thousands of rows.
+# Cache the result per date so only the FIRST call per day hits Kite.
+_lot_size_cache = {}  # {"2026-04-17": 65}
+_lot_size_cache_lock = threading.Lock()
+
 def get_lot_size(kite=None) -> int:
     k = kite or _kite
     if k is None:
         return LOT_SIZE_BASE
+    today_iso = date.today().isoformat()
+    with _lot_size_cache_lock:
+        if today_iso in _lot_size_cache:
+            return _lot_size_cache[today_iso]
+    # Cache miss — fetch from broker (first call of the day).
     try:
         instruments = _get_nfo_instruments(k)
         for inst in instruments:
@@ -867,7 +879,14 @@ def get_lot_size(kite=None) -> int:
                     and inst.get("instrument_type") == "CE"
                     and inst.get("lot_size", 0) > 0):
                 lot = int(inst["lot_size"])
-                logger.info("[DATA] Lot size from broker: " + str(lot))
+                logger.info("[DATA] Lot size from broker: " + str(lot)
+                            + " (cached for " + today_iso + ")")
+                with _lot_size_cache_lock:
+                    _lot_size_cache[today_iso] = lot
+                    # Evict stale dates (keep only today).
+                    for k_date in list(_lot_size_cache.keys()):
+                        if k_date != today_iso:
+                            del _lot_size_cache[k_date]
                 return lot
     except Exception as e:
         logger.warning("[DATA] Lot size fetch failed: " + str(e))
