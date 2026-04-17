@@ -133,20 +133,9 @@ def exit_ema9_band(key: str, default=None):
 
 
 def straddle_filter(key: str, default=None):
-    """v15.2.5 Fix 5: straddle is display-only. Accessor now reads from
-    entry.filters.straddle_display. Falls back to the legacy
-    entry.filters.straddle_expansion section so older live configs on
-    disk don't break an import."""
-    filters = (get().get("entry") or {}).get("filters") or {}
-    sf = filters.get("straddle_display") or filters.get("straddle_expansion") or {}
+    """v16: straddle is display-only. Reads entry.filters.straddle_display."""
+    sf = ((get().get("entry") or {}).get("filters") or {}).get("straddle_display") or {}
     return sf.get(key, default)
-
-
-def straddle_thresholds() -> dict:
-    """Deprecated in v15.2.5 Fix 5 (straddle no longer blocks). Returns
-    an empty dict — callers that still reach for thresholds fall back to
-    the hardcoded period boundaries in the engine."""
-    return {}
 
 
 def vwap_bonus(key: str, default=None):
@@ -156,23 +145,6 @@ def vwap_bonus(key: str, default=None):
 
 def cooldown(key: str, default=None):
     return _deep_get(get(), "cooldown", key, default=default)
-
-
-# Legacy compat stubs (return safe defaults)
-def entry_3min(key: str, default=None):
-    return default
-
-def exit_cfg(key: str, default=None):
-    return default
-
-def rsi_exit_cfg(key: str, default=None):
-    return default
-
-def profit_trail(key: str, default=None):
-    return default
-
-def profit_floors() -> list:
-    return []
 
 
 # ── Risk ──
@@ -219,68 +191,8 @@ def strike_cfg(key: str, default=None):
     return _deep_get(get(), "strike", key, default=default)
 
 
-# ── Lookback (legacy compat for VRL_DATA constants) ──
+# ── Lookback ──
 
 def lookback(tf: str) -> int:
-    """Legacy compat. Returns 50 for 1m, 60 for 3m, 10 for 5m."""
     defaults = {"1m": 50, "3m": 60, "5m": 10}
     return defaults.get(tf, 50)
-
-
-# ═══════════════════════════════════════════════════════════════
-#  LEGACY ACCESSORS — return defaults, no longer in config
-#  These exist so VRL_DATA constants don't crash. They're dead
-#  values that v14.0 strategy doesn't read. Kept as no-ops only.
-# ═══════════════════════════════════════════════════════════════
-
-def rsi(key: str, default=None):
-    return default
-
-def spread(key: str, default=None):
-    return default
-
-def scoring(key: str, default=None):
-    return default
-
-def session_score_min() -> dict:
-    return {"OPEN": 5, "MORNING": 5, "AFTERNOON": 5, "LATE": 6}
-
-def trail(key: str, default=None):
-    return default
-
-def expiry_cfg(key: str, default=None):
-    return default
-
-def dte0_cfg(key: str, default=None):
-    return default
-
-def dte_profile(dte: int) -> dict:
-    return {"conv_sl_pts": 12, "conv_breakeven_pts": 10,
-            "delta_min": 0.30, "delta_max": 0.70}
-
-def prediction(regime: str, session: str) -> int:
-    return 22
-
-def regime_threshold(key: str, default=None):
-    return default
-
-def zones_enabled() -> bool:
-    return False
-
-def zones_file() -> str:
-    return os.path.expanduser("~/state/vrl_zones.json")
-
-def ml_enabled() -> bool:
-    return False
-
-def ml_model_path() -> str:
-    return os.path.expanduser("~/state/ml_model.pkl")
-
-def ml_score_weight() -> float:
-    return 0.5
-
-def adaptive_ema(level: str) -> dict:
-    return {"timeframe": "5minute", "candles": 2}
-
-def entry_cfg(key: str, default=None):
-    return default

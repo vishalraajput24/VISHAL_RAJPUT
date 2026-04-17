@@ -289,7 +289,7 @@ def _why_blocked(st: dict) -> str:
     if st.get("profit_locked"):
         return "🔒 Profit locked — trailing only"
     if st.get("consecutive_losses", 0) >= 2:
-        return "⚠️ Streak=" + str(st["consecutive_losses"]) + " — score≥" + str(D.EXCELLENCE_BYPASS_SCORE) + " needed"
+        return "⚠️ Streak=" + str(st["consecutive_losses"]) + " — score≥" + str(6) + " needed"
     return "✅ Ready to enter"
 
 def _cmd_help(args):
@@ -478,7 +478,7 @@ def _cmd_edge(args):
         strike  = D.resolve_atm_strike(spot, step) if spot > 0 else 0
         now     = datetime.now()
         session = D.get_session_block(now.hour, now.minute)
-        prof    = D.get_dte_profile(dte)
+        prof    = {"conv_sl_pts": 12}
         rsi_lo  = prof["rsi_low"]       # 3-min zone (42-72)
         rsi_hi  = prof["rsi_high"]
         rsi_1m_lo = prof.get("rsi_1m_low", D.RSI_1M_LOW)   # 1-min zone (45-65)
@@ -656,7 +656,7 @@ def _cmd_edge(args):
 
         secs_left = 60 - now.second
         countdown = str(secs_left) + "s to scan"
-        sess_min  = D.SESSION_SCORE_MIN.get(session, 999)
+        sess_min  = 999
         session_ok= sess_min < 999
         streak    = st.get("consecutive_losses",0)
         dpnl      = st.get("daily_pnl",0)
@@ -743,7 +743,7 @@ def _cmd_edge(args):
             return
 
         # ── NO TRADE ──────────────────────────────────────────
-        streak_str = (" ⚠️ need score≥"+str(D.EXCELLENCE_BYPASS_SCORE) if streak>=2 else " ✅")
+        streak_str = (" ⚠️ need score≥"+str(6) if streak>=2 else " ✅")
 
         # v12.11: Fetch spot data for display
         spot_3m = D.get_spot_indicators("3minute")
@@ -923,7 +923,7 @@ def _cmd_score(args):
         elif dte <= 2: dte_str += " ⚠️ NEAR"
 
     streak = st.get("consecutive_losses", 0)
-    gate_str = ("⚠️ Streak=" + str(streak) + " — score≥" + str(D.EXCELLENCE_BYPASS_SCORE) + " needed"
+    gate_str = ("⚠️ Streak=" + str(streak) + " — score≥" + str(6) + " needed"
                 if streak >= 2 else "✅ Clear")
 
     result_str = ("→ " + f_type + " " + fired + " ⚡ ENTERING"

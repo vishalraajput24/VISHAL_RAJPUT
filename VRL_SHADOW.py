@@ -149,25 +149,13 @@ def _ema9_bands_1min(df: pd.DataFrame) -> pd.DataFrame:
 # ── Gate 7 period + threshold (shared logic with VRL_ENGINE) ─
 
 def _period_and_threshold(now: datetime):
-    tiers = CFG.straddle_thresholds() or {}
-
-    def _m(tier, pos):
-        s = (tiers.get(tier) or {}).get(pos)
-        if not s:
-            return None
-        hh, mm = str(s).split(":")
-        return int(hh) * 60 + int(mm)
-
+    # v16: period detection hardcoded (straddle_thresholds() removed)
     mod = now.hour * 60 + now.minute
-    open_s = _m("opening", "start") or 585
-    open_e = _m("opening", "end")   or 630
-    mid_e  = _m("midday",  "end")   or 840
-
-    if open_s <= mod < open_e:
-        return "OPENING", (tiers.get("opening") or {}).get("min_delta", 1)
-    if open_e <= mod < mid_e:
-        return "MIDDAY",  (tiers.get("midday")  or {}).get("min_delta", 5)
-    return "CLOSING", (tiers.get("closing") or {}).get("min_delta", 3)
+    if 585 <= mod < 630:
+        return "OPENING", 1
+    if 630 <= mod < 840:
+        return "MIDDAY", 5
+    return "CLOSING", 3
 
 
 # ── Scan one option side (CE or PE) on 1-min candles ─────────

@@ -300,7 +300,7 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
 
     today   = date.today()
     dte     = D.calculate_dte(_current_expiry)
-    profile = D.get_dte_profile(dte)
+    profile = {"conv_sl_pts": 12}
     session = D.get_session_block(now.hour, now.minute)
     vix     = D.get_vix()
     ts_str  = now.strftime("%Y-%m-%d %H:%M:%S")

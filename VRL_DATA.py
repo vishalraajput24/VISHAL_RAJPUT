@@ -20,7 +20,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v15.2.5"
+VERSION  = "v16.0"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
@@ -96,40 +96,12 @@ MAX_DAILY_TRADES        = CFG.risk("max_daily_trades", 999)
 MAX_DAILY_LOSSES        = CFG.risk("max_daily_losses", 999)
 PROFIT_LOCK_PTS         = CFG.risk("profit_lock_pts", 150)
 PROFIT_LOCK_TRAIL_TF    = "3minute"
-LOSS_STREAK_GATE_SCORE  = CFG.scoring("loss_streak_gate", 5)
-EXCELLENCE_BYPASS_SCORE = CFG.scoring("excellence_bypass", 6)
 
-SPREAD_1M_MIN_CE      = CFG.spread("ce_min", 2)
-SPREAD_1M_MIN_PE      = CFG.spread("pe_min", 2)
-SPREAD_1M_MIN_CE_DTE0 = CFG.spread("ce_min_dte0", 1)
-SPREAD_1M_MIN_PE_DTE0 = CFG.spread("pe_min_dte0", 1)
-
-RSI_1M_LOW         = CFG.rsi("1m_low", 30)
-RSI_1M_HIGH_NORMAL = CFG.rsi("1m_high_normal", 60)
-RSI_1M_HIGH_STRONG = CFG.rsi("1m_high_strong", 70)
+# v16: RSI constants kept for shadow analysis
+RSI_1M_LOW         = 30
+RSI_1M_HIGH_NORMAL = 60
+RSI_1M_HIGH_STRONG = 70
 RSI_1M_HIGH        = RSI_1M_HIGH_NORMAL
-RSI_3M_LOW         = CFG.rsi("3m_low", 42)
-RSI_3M_HIGH        = CFG.rsi("3m_high", 72)
-
-ATR_SL_MULTIPLIER = CFG.risk("sl_multiplier", 2.0)
-ATR_SL_MAX        = CFG.risk("sl_max", 25)
-ATR_SL_CANDLES    = CFG.risk("sl_candles", 5)
-
-TRAIL_DRAWDOWN_PCT     = CFG.trail("drawdown_pct", 25)
-TRAIL_EMA_CANDLES_FAIL = CFG.trail("ema_candles_fail", 2)
-
-EXPIRY_CONSOL_CANDLES  = CFG.expiry_cfg("consol_candles", 5)
-EXPIRY_CONSOL_RANGE    = CFG.expiry_cfg("consol_range", 15)
-EXPIRY_BREAKOUT_MIN    = CFG.expiry_cfg("breakout_min", 10)
-EXPIRY_SL_MAX          = CFG.risk("sl_dte0", 15)
-EXPIRY_TRAIL_PCT       = CFG.expiry_cfg("trail_pct", 20)
-EXPIRY_START_HOUR      = CFG.expiry_cfg("start_hour", 9)
-EXPIRY_START_MIN       = CFG.expiry_cfg("start_min", 45)
-EXPIRY_CUTOFF_HOUR     = CFG.expiry_cfg("cutoff_hour", 15)
-EXPIRY_CUTOFF_MIN      = CFG.expiry_cfg("cutoff_min", 0)
-EXPIRY_FIB_PROXIMITY   = CFG.expiry_cfg("fib_proximity", 20)
-
-SCALP_MODE_ENABLED = False
 
 LOOKBACK_1M = CFG.lookback("1m")
 LOOKBACK_3M = CFG.lookback("3m")
@@ -143,10 +115,6 @@ MARKET_OPEN_HOUR  = CFG.market_hours("open_hour", 9)
 MARKET_OPEN_MIN   = CFG.market_hours("open_min", 15)
 MARKET_CLOSE_HOUR = CFG.market_hours("close_hour", 15)
 MARKET_CLOSE_MIN  = CFG.market_hours("close_min", 30)
-
-REENTRY_COOLDOWN_MIN = CFG.risk("reentry_cooldown_min", 5)
-
-SESSION_SCORE_MIN = CFG.session_score_min()
 
 WS_RECONNECT_DELAY = CFG.ws_reconnect_delay()
 TICK_STALE_SECS    = CFG.ws_tick_stale_secs()
@@ -192,40 +160,12 @@ STATE_PERSIST_FIELDS = [
     "phase1_sl", "exit_phase", "lot1_active", "lot2_active", "lots_split",
 ]
 
-# ── Prediction table + DTE profiles — read from config.yaml ──
-# v14.0: prediction table + DTE profiles removed (dead v12 code).
-# Stubs kept so legacy callers don't crash.
-PREDICTION_TABLE = {}
-DTE_PROFILES     = {}
-
-def get_dte_profile(dte: int) -> dict:
-    return CFG.dte_profile(dte)
-
 def get_session_block(hour: int, minute: int) -> str:
     mins = hour * 60 + minute
     if   mins < 10 * 60: return "OPEN"
     elif mins < 12 * 60: return "MORNING"
     elif mins < 14 * 60: return "AFTERNOON"
     else:                return "LATE"
-
-def predict_trade(regime: str, session: str, score: int) -> dict:
-    """
-    Predict trade outcome from regime + session + score.
-    Returns conservative / target / stretch in pts and rupees.
-    """
-    avg_peak   = PREDICTION_TABLE.get((regime, session),
-                 PREDICTION_TABLE.get(("TRENDING", "MORNING"), 22))
-    score_mult = 1.0 + (score - 5) * 0.05
-    adj_peak   = avg_peak * score_mult
-    c = round(adj_peak * 0.40)
-    t = round(adj_peak * 0.65)
-    s = round(adj_peak * 0.90)
-    return {
-        "avg_peak"       : round(adj_peak, 1),
-        "conservative"   : c, "conservative_rs": c * LOT_SIZE,
-        "target"         : t, "target_rs"      : t * LOT_SIZE,
-        "stretch"        : s, "stretch_rs"     : s * LOT_SIZE,
-    }
 
 def ensure_dirs():
     for d in [LIVE_LOG_DIR, LAB_LOG_DIR, FLOW_LOG_DIR, STATE_DIR,

@@ -5,7 +5,7 @@
 #  Zerodha F&O charges as of April 2026.
 #
 #  BUG-K (v15.2.5 Batch 5): lot_size is no longer a module-load
-#  constant. calculate_lot_charges() / calculate_split_charges()
+#  constant. calculate_lot_charges()
 #  now look it up from VRL_DATA at CALL TIME when the caller
 #  doesn't pass an explicit value. This lets a mid-session lot-size
 #  change (Zerodha has historically adjusted NIFTY lots) flow
@@ -76,28 +76,3 @@ def calculate_lot_charges(entry_price: float, exit_price: float,
     if lot_size is None:
         lot_size = _live_lot_size()
     return calculate_charges(entry_price, exit_price, lot_size, num_exit_orders=1)
-
-
-def calculate_split_charges(entry_price: float,
-                            exit1_price: float, exit2_price: float,
-                            lot_size: int = None) -> dict:
-    """BUG-K: same runtime lookup as calculate_lot_charges."""
-    if lot_size is None:
-        lot_size = _live_lot_size()
-    lot1 = calculate_charges(entry_price, exit1_price, lot_size, num_exit_orders=1)
-    lot2 = calculate_charges(entry_price, exit2_price, lot_size, num_exit_orders=1)
-    # Correct: 1 entry + 2 exits = 3 orders, not 4
-    lot2["brokerage"] = round(lot2["brokerage"] - BROKERAGE_PER_ORDER, 2)
-    lot2["gst"] = round((lot2["brokerage"] + lot2["exchange"]) * GST_PCT, 2)
-    lot2["total_charges"] = round(lot2["brokerage"] + lot2["stt"] + lot2["exchange"]
-                                   + lot2["sebi"] + lot2["stamp"] + lot2["gst"], 2)
-    lot2["net_pnl"] = round(lot2["gross_pnl"] - lot2["total_charges"], 2)
-    lot2["num_orders"] = 1
-    return {
-        "lot1": lot1, "lot2": lot2,
-        "gross_pnl": round(lot1["gross_pnl"] + lot2["gross_pnl"], 2),
-        "total_charges": round(lot1["total_charges"] + lot2["total_charges"], 2),
-        "net_pnl": round(lot1["net_pnl"] + lot2["net_pnl"], 2),
-        "total_brokerage": round(lot1["brokerage"] + lot2["brokerage"], 2),
-        "num_orders": 3,
-    }

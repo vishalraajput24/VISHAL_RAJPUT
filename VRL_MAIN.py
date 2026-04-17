@@ -2253,7 +2253,7 @@ def _strategy_loop(kite):
                     time.sleep(60)
                     continue
             dte     = D.calculate_dte(expiry) if expiry else 0
-            profile = D.get_dte_profile(dte)
+            profile = {"conv_sl_pts": 12}
             session = D.get_session_block(now.hour, now.minute)
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 

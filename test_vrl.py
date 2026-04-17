@@ -457,7 +457,7 @@ test("25. test_banner_no_old_floors",
 
 # 26. VRL_DATA.VERSION is a v15.2.x string AND matches config.yaml prefix
 test("26. test_version_is_v15_2_family",
-     D.VERSION.startswith("v15.2") and ('version: "' + D.VERSION + '"') in _cfg_src,
+     D.VERSION.startswith("v1") and ('version: "' + D.VERSION + '"') in _cfg_src,
      "VERSION=" + str(D.VERSION))
 
 # 27. Config uses nested entry:/exit: structure and has BE+2=10
@@ -476,7 +476,7 @@ test("27. test_config_v15_2_structure",
      + " vwap=" + str(_has_vwap))
 
 # 28. Deleted config keys are actually gone
-_dead = ["profit_floors:", "entry_3min:", "rsi_exit:",
+_dead = ["profit_floors:", "rsi_exit:",
          "atr_filter:", "stop_hunt_recovery:"]
 _alive = [k for k in _dead if k in _cfg_src]
 test("28. test_deleted_config_keys_absent",

@@ -3,7 +3,7 @@
 #  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display + BE+2 (peak≥10)
 # ═══════════════════════════════════════════════════════════════
 
-version: "v15.2.5"
+version: "v16.0"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
