@@ -486,6 +486,42 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
 #  for the shadow CSV logger to record. Analysis only.
 # ═══════════════════════════════════════════════════════════════
 
+def is_setup_building(token: int, direction: str) -> bool:
+    """BUG-S2: Returns True if the locked strike is close to firing.
+    Used by VRL_MAIN to defer ATM relock when a setup is 75%+ formed.
+    Pure function — no state mutation.
+
+    Criteria (all must hold):
+      - close > ema9_high (breakout valid)
+      - green candle (close > open)
+      - body_pct >= 25 (near the 30% threshold)
+      - band_width >= 6.0 (near the 8pt threshold — 75%)
+    """
+    try:
+        df = D.get_option_3min(token, lookback=10)
+        if df is None or df.empty or len(df) < 3:
+            return False
+        last = df.iloc[-2]
+        close    = float(last["close"])
+        open_    = float(last["open"])
+        high     = float(last["high"])
+        low      = float(last["low"])
+        ema9_high = float(last.get("ema9_high", 0))
+        ema9_low  = float(last.get("ema9_low", 0))
+        band_width = ema9_high - ema9_low
+        candle_range = high - low
+        body_pct = (abs(close - open_) / candle_range * 100) if candle_range > 0 else 0
+
+        breakout  = close > ema9_high
+        green     = close > open_
+        body_near = body_pct >= 25
+        band_near = band_width >= 6.0
+
+        return bool(breakout and green and body_near and band_near)
+    except Exception:
+        return False
+
+
 def compute_ratchet_sl(entry_price: float, peak_pnl: float,
                        direction: str) -> tuple:
     """Returns (sl_price, tier_label). sl_price=0 if no tier crossed.
