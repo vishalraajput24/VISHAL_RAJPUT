@@ -71,6 +71,8 @@ FIELDNAMES_SCAN = [
     "straddle_delta", "straddle_threshold", "straddle_period",
     "atm_strike_used", "band_width",
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
+    # BUG-N3: ground-truth "was this scan actually opened as a trade?"
+    "trade_taken",
 ]
 
 # ─── SESSION STATE ────────────────────────────────────────────
@@ -391,6 +393,12 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "spot_vwap"          : result.get("spot_vwap", 0),
                 "spot_vs_vwap"       : result.get("spot_vs_vwap", 0),
                 "vwap_bonus"         : result.get("vwap_bonus", ""),
+                # BUG-N3: check if VRL_MAIN's live entry for this
+                # direction actually took a trade (distinguishes
+                # "signal passed all gates" from "trade opened").
+                "trade_taken"        : 1 if (int(result.get("fired", 0))
+                                            and D.consume_trade_taken(opt_type))
+                                        else 0,
             })
 
             try:

@@ -501,6 +501,34 @@ def _set_auth_rejected():
         _auth_rejected = True
 
 
+# ── BUG-N3 v15.2.5: cross-module "trade was taken" signal ────
+# VRL_MAIN sets this after a successful entry; VRL_LAB reads it
+# when building the next signal_scans row and writes trade_taken=1.
+_trade_taken_lock = threading.Lock()
+_trade_taken_direction = ""    # "" = no trade pending, "CE" or "PE"
+_trade_taken_ts        = ""    # ISO timestamp of the entry
+
+
+def mark_trade_taken(direction: str, ts: str = ""):
+    """Called by VRL_MAIN after a successful entry."""
+    global _trade_taken_direction, _trade_taken_ts
+    with _trade_taken_lock:
+        _trade_taken_direction = direction
+        _trade_taken_ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def consume_trade_taken(direction: str) -> bool:
+    """Called by VRL_LAB when building a fired scan row. Returns True
+    and resets the flag if a trade was taken for this direction."""
+    global _trade_taken_direction, _trade_taken_ts
+    with _trade_taken_lock:
+        if _trade_taken_direction == direction:
+            _trade_taken_direction = ""
+            _trade_taken_ts = ""
+            return True
+    return False
+
+
 def notify_auth_refreshed():
     """Called by VRL_AUTH on successful login / token refresh.
     Resets the auth-rejection flag so historical_data and WS

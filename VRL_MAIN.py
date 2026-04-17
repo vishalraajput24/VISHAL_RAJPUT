@@ -2644,6 +2644,11 @@ def _strategy_loop(kite):
                 if best_result and best_opt_info:
                     _execute_entry(kite, best_opt_info, best_type,
                                    best_result, profile, expiry, dte, session)
+                    # BUG-N3: mark that this scan became a real trade.
+                    # VRL_LAB's next scan row will read the flag via
+                    # D.consume_trade_taken() and set trade_taken=1.
+                    if state.get("in_trade"):
+                        D.mark_trade_taken(best_type)
 
             # Quick LTP update between candle scans
             if now.second % 10 < 2:

@@ -335,6 +335,9 @@ def init_db():
             ("signal_scans", "spot_vwap",     "REAL DEFAULT 0"),
             ("signal_scans", "spot_vs_vwap",  "REAL DEFAULT 0"),
             ("signal_scans", "vwap_bonus",    "TEXT DEFAULT ''"),
+            # BUG-N3 v15.2.5: distinguishes "signal passed all gates"
+            # (fired=1) from "trade was actually opened" (trade_taken=1).
+            ("signal_scans", "trade_taken",   "INTEGER DEFAULT 0"),
             ("trades",       "entry_ema9_high", "REAL DEFAULT 0"),
             ("trades",       "entry_ema9_low",  "REAL DEFAULT 0"),
             ("trades",       "exit_ema9_high",  "REAL DEFAULT 0"),
@@ -505,6 +508,10 @@ _SCAN_FIELDS = [
     "straddle_delta", "straddle_threshold", "straddle_period",
     "atm_strike_used", "band_width",
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
+    # BUG-N3: ground truth for research — did this fired signal
+    # actually result in a trade? (fired=1 is necessary but not
+    # sufficient — cooldown, margin, paused can block after gates pass)
+    "trade_taken",
 ]
 
 def insert_scan(row):
