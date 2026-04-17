@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ═══════════════════════════════════════════════════════════════
- VRL_BACKFILL_BANDS.py — VISHAL RAJPUT TRADE v15.2
+ VRL_BACKFILL_BANDS.py — VISHAL RAJPUT TRADE v16.0
 
  BUG 5 fix: backfill ema9_high / ema9_low for any option_3min rows
  in the database where the bands are still 0. Recomputes the

@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ALERTS.py — VISHAL RAJPUT TRADE v15.2.5 (Part 5)
+#  VRL_ALERTS.py — VISHAL RAJPUT TRADE v16.0 (Part 5)
 #  Pre-entry awareness alerts for learning mode. Educational only,
 #  never triggers trades. Four signal families:
 #

@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v15.2
+#  VRL_COMMANDS.py — VISHAL RAJPUT TRADE v16.0
 #  Telegram command handlers.
 # ═══════════════════════════════════════════════════════════════
 
@@ -324,7 +324,7 @@ def _cmd_help(args):
         "/token     — manage subscriber access tokens\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("PAPER" if D.PAPER_MODE else "LIVE")
-        + " | v15.2 EMA9 Band Breakout (3-min)\n"
+        + " | v16.0 EMA9 Band Breakout (3-min)\n"
         + "Entry: close > EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
         + "Exit: EMA9-low break | BE+2 peak 10 | Emergency -20 | Stale 5c | EOD 15:30\n"
         + "2 lots fixed | No entry 9:15-9:45 or after 15:10\n"
