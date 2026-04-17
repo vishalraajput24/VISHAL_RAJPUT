@@ -418,7 +418,8 @@ test("23. test_ema9_columns_non_zero",
 
 # 24. signal_scans schema has all 6 v15.2 straddle/VWAP columns
 import VRL_DB, VRL_LAB
-required = ["straddle_delta", "straddle_threshold", "straddle_period",
+# BUG-N6: straddle_threshold removed (dead after Fix 5 display-only).
+required = ["straddle_delta", "straddle_period",
             "spot_vwap", "spot_vs_vwap", "vwap_bonus",
             "atm_strike_used", "band_width"]
 _missing_db  = [f for f in required if f not in VRL_DB._SCAN_FIELDS]

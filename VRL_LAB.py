@@ -43,36 +43,28 @@ FIELDNAMES_1M = [
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
-# Signal scan log — every minute, both CE + PE, fired or not
+# Signal scan log — BUG-N6 v15.2.5: live columns only.
+# Dead v13 fields (rsi_1m, body_pct_1m, vol_ratio_1m, rsi_rising_1m,
+# spread_1m, rsi_3m, conditions_3m, score, iv_pct, delta,
+# straddle_decay_pct, straddle_threshold, near_fib_level, fib_distance)
+# removed in the schema migration. CSV matches the DB schema.
 FIELDNAMES_SCAN = [
     "timestamp", "session", "dte", "atm_strike", "spot",
     "direction", "entry_price",
-    # 1-min
-    "rsi_1m", "body_pct_1m", "vol_ratio_1m", "rsi_rising_1m",
-    "spread_1m",
-    # 3-min
-    "rsi_3m", "body_pct_3m", "ema_spread_3m", "conditions_3m", "mode_3m",
-    # result
-    "score", "fired", "reject_reason",
-    # Greeks
-    "iv_pct", "delta",
-    # VIX
-    "vix",
-    # v12.11: Spot columns
-    "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime", "spot_gap",
-    # v12.15: Market context
-    "bias", "hourly_rsi", "straddle_decay_pct",
-    "near_fib_level", "fib_distance",
-    # v12.15: Blocked trade analysis (forward fill at EOD)
-    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
-    # v15.0: EMA9 band columns
+    # v15.2 indicator fields
     "ema9_high", "ema9_low", "band_position", "body_pct",
-    # v15.2: tiered straddle filter + VWAP bonus context per scan
-    "straddle_delta", "straddle_threshold", "straddle_period",
+    "body_pct_3m", "ema_spread_3m", "mode_3m",
+    # v15.2 straddle + VWAP (display-only after Fix 5)
+    "straddle_delta", "straddle_period",
     "atm_strike_used", "band_width",
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
-    # BUG-N3: ground-truth "was this scan actually opened as a trade?"
-    "trade_taken",
+    # Market context
+    "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
+    "spot_gap", "bias", "hourly_rsi",
+    # Result
+    "fired", "trade_taken", "reject_reason",
+    # Forward fill (populated EOD)
+    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]
 
 # ─── SESSION STATE ────────────────────────────────────────────
@@ -349,56 +341,35 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "spot"           : round(spot_ltp, 2),
                 "direction"      : opt_type,
                 "entry_price"    : result.get("entry_price", 0),
-                "rsi_1m"         : result.get("rsi", 0),
-                "body_pct_1m"    : 0,
-                "vol_ratio_1m"   : 0,
-                "rsi_rising_1m"  : int(result.get("rsi_ok", False)),
-                "spread_1m"      : result.get("ema_gap", 0),
-                # v15.2.5 audit fix: these were hardcoded 0/'' on every scan
-                # even though the engine result dict has the values. Audit
-                # run 2026-04-16 showed rsi_3m/body_pct_3m/ema_spread_3m/
-                # mode_3m always 0 on 2728 rows. Now mapped from result.
-                "rsi_3m"         : float(result.get("rsi", 0) or 0),
-                "body_pct_3m"    : float(result.get("body_pct", 0) or 0),
-                "ema_spread_3m"  : round(float(result.get("ema9_high", 0) or 0)
-                                         - float(result.get("ema9_low", 0) or 0), 2),
-                "conditions_3m"  : 0,
-                "mode_3m"        : result.get("entry_mode", "") or "",
-                "score"          : 0,
-                "fired"          : int(result.get("fired", False)),
-                "reject_reason"  : reject,
-                "iv_pct"         : 0,
-                "delta"          : 0,
-                "vix"            : round(vix, 2),
-                "spot_rsi_3m"       : spot_3m.get("rsi", 0),
-                "spot_ema_spread_3m": spot_3m.get("spread", 0),
-                "spot_regime"       : spot_3m.get("regime", ""),
-                "spot_gap"          : round(spot_gap, 1),
-                "bias"              : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
-                "hourly_rsi"        : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
-                "straddle_decay_pct": 0.0,
-                "near_fib_level"    : "",
-                "fib_distance"      : 0,
-                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
-                # v15.0 + v15.2 — pull from check_entry result if present
+                # v15.2.5 BUG-N6: live columns only (dead v13 fields removed)
                 "ema9_high"          : result.get("ema9_high", 0),
                 "ema9_low"           : result.get("ema9_low", 0),
                 "band_position"      : result.get("band_position", ""),
                 "body_pct"           : result.get("body_pct", 0),
+                "body_pct_3m"        : float(result.get("body_pct", 0) or 0),
+                "ema_spread_3m"      : round(float(result.get("ema9_high", 0) or 0)
+                                             - float(result.get("ema9_low", 0) or 0), 2),
+                "mode_3m"            : result.get("entry_mode", "") or "",
                 "straddle_delta"     : result.get("straddle_delta") or 0,
-                "straddle_threshold" : result.get("straddle_threshold", 0),
                 "straddle_period"    : result.get("straddle_period", ""),
                 "atm_strike_used"    : result.get("atm_strike_used", 0),
                 "band_width"         : result.get("band_width", 0),
                 "spot_vwap"          : result.get("spot_vwap", 0),
                 "spot_vs_vwap"       : result.get("spot_vs_vwap", 0),
                 "vwap_bonus"         : result.get("vwap_bonus", ""),
-                # BUG-N3: check if VRL_MAIN's live entry for this
-                # direction actually took a trade (distinguishes
-                # "signal passed all gates" from "trade opened").
+                "vix"                : round(vix, 2),
+                "spot_rsi_3m"        : spot_3m.get("rsi", 0),
+                "spot_ema_spread_3m" : spot_3m.get("spread", 0),
+                "spot_regime"        : spot_3m.get("regime", ""),
+                "spot_gap"           : round(spot_gap, 1),
+                "bias"               : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
+                "hourly_rsi"         : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
+                "fired"              : int(result.get("fired", False)),
                 "trade_taken"        : 1 if (int(result.get("fired", 0))
                                             and D.consume_trade_taken(opt_type))
                                         else 0,
+                "reject_reason"      : reject,
+                "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
             })
 
             try:

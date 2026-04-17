@@ -367,10 +367,216 @@ def init_db():
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
 
+        # BUG-N6 + N7: one-shot migration to drop dead v13 columns.
+        # Runs after all ALTER TABLE migrations so the legacy table
+        # has every column that the new table needs to SELECT from.
+        try:
+            migrate_schema_v15()
+        except Exception as _me:
+            logger.warning("[DB] Schema v15 migration: " + str(_me))
+
 
 # ═══════════════════════════════════════════════════════════════
-#  INSERT HELPERS — one per table type
+#  v15.2.5 BUG-N6/N7 — SCHEMA MIGRATION: drop dead v13 columns
+#  SQLite < 3.35 has no ALTER TABLE DROP COLUMN. Strategy:
+#    1. Backup DB
+#    2. Rename table → _legacy
+#    3. CREATE new table with live columns only
+#    4. INSERT SELECT from _legacy → new
+#    5. DROP _legacy
+#  Idempotent: skips if _legacy table already gone AND the new
+#  table has the expected column count.
 # ═══════════════════════════════════════════════════════════════
+
+# Live columns for signal_scans (v15.2.5 — dead v13 fields removed)
+_SCAN_LIVE_COLS = [
+    "timestamp TEXT NOT NULL",
+    "session TEXT", "dte INTEGER", "atm_strike INTEGER", "spot REAL",
+    "direction TEXT", "entry_price REAL",
+    # v15.2 indicator fields (populated by engine + LAB)
+    "ema9_high REAL DEFAULT 0", "ema9_low REAL DEFAULT 0",
+    "band_position TEXT DEFAULT ''", "body_pct REAL DEFAULT 0",
+    "body_pct_3m REAL DEFAULT 0", "ema_spread_3m REAL DEFAULT 0",
+    "mode_3m TEXT DEFAULT ''",
+    # v15.2 straddle + VWAP (display-only after Fix 5)
+    "straddle_delta REAL DEFAULT 0", "straddle_period TEXT DEFAULT ''",
+    "atm_strike_used INTEGER DEFAULT 0", "band_width REAL DEFAULT 0",
+    "spot_vwap REAL DEFAULT 0", "spot_vs_vwap REAL DEFAULT 0",
+    "vwap_bonus TEXT DEFAULT ''",
+    # Market context
+    "vix REAL DEFAULT 0", "spot_rsi_3m REAL DEFAULT 0",
+    "spot_ema_spread_3m REAL DEFAULT 0", "spot_regime TEXT DEFAULT ''",
+    "spot_gap REAL DEFAULT 0", "bias TEXT DEFAULT ''",
+    "hourly_rsi REAL DEFAULT 0",
+    # Result
+    "fired TEXT DEFAULT '0'", "trade_taken INTEGER DEFAULT 0",
+    "reject_reason TEXT DEFAULT ''",
+    # Forward fill (populated EOD)
+    "fwd_3c REAL", "fwd_5c REAL", "fwd_10c REAL",
+    "fwd_outcome TEXT DEFAULT ''",
+]
+
+# Live columns for trades (v15.2.5 — dead v13 fields removed)
+_TRADES_LIVE_COLS = [
+    "date TEXT NOT NULL", "entry_time TEXT", "exit_time TEXT",
+    "symbol TEXT", "direction TEXT", "strike INTEGER",
+    "entry_price REAL", "exit_price REAL",
+    "pnl_pts REAL", "pnl_rs REAL", "gross_pnl_rs REAL DEFAULT 0",
+    "net_pnl_rs REAL DEFAULT 0",
+    "peak_pnl REAL", "trough_pnl REAL",
+    "exit_reason TEXT", "exit_phase INTEGER DEFAULT 1",
+    "dte INTEGER", "candles_held INTEGER", "session TEXT",
+    "sl_pts REAL DEFAULT 0", "bias TEXT DEFAULT ''",
+    "vix_at_entry REAL DEFAULT 0", "hourly_rsi REAL DEFAULT 0",
+    "entry_mode TEXT DEFAULT ''",
+    # Charges
+    "brokerage REAL DEFAULT 0", "stt REAL DEFAULT 0",
+    "exchange_charges REAL DEFAULT 0", "gst REAL DEFAULT 0",
+    "stamp_duty REAL DEFAULT 0", "total_charges REAL DEFAULT 0",
+    "num_exit_orders INTEGER DEFAULT 1", "qty_exited INTEGER DEFAULT 0",
+    "entry_slippage REAL DEFAULT 0", "exit_slippage REAL DEFAULT 0",
+    "lot_id TEXT DEFAULT 'ALL'",
+    # v15.2 entry/exit context
+    "entry_ema9_high REAL DEFAULT 0", "entry_ema9_low REAL DEFAULT 0",
+    "exit_ema9_high REAL DEFAULT 0", "exit_ema9_low REAL DEFAULT 0",
+    "entry_band_position TEXT DEFAULT ''",
+    "exit_band_position TEXT DEFAULT ''",
+    "entry_body_pct REAL DEFAULT 0",
+    "entry_straddle_delta REAL DEFAULT 0",
+    "entry_straddle_threshold REAL DEFAULT 0",
+    "entry_straddle_period TEXT DEFAULT ''",
+    "entry_straddle_info TEXT DEFAULT ''",
+    "entry_atm_strike INTEGER DEFAULT 0",
+    "entry_band_width REAL DEFAULT 0",
+    "entry_spot_vwap REAL DEFAULT 0",
+    "entry_spot_vs_vwap REAL DEFAULT 0",
+    "entry_vwap_bonus TEXT DEFAULT ''",
+]
+
+
+def _col_name(col_def):
+    return col_def.strip().split()[0]
+
+
+def _backup_db():
+    """Back up DB before schema migration. Returns backup path."""
+    import shutil
+    backup = DB_PATH + ".backup_" + date.today().strftime("%Y%m%d")
+    if not os.path.isfile(backup):
+        shutil.copy2(DB_PATH, backup)
+        logger.info("[DB] Migration backup created: " + backup)
+    return backup
+
+
+def _migrate_table(conn, table, live_cols_defs):
+    """Migrate a table by creating a new version with only the live columns
+    and copying data from the existing table. Idempotent."""
+    from datetime import date as _d
+    live_names = [_col_name(c) for c in live_cols_defs]
+    legacy_name = table + "_legacy"
+
+    # Check: does the legacy table already exist? If so, we crashed
+    # mid-migration last time. Drop the new table (if partial) and redo.
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if legacy_name in tables and table in tables:
+        # Both exist — previous migration was partial. Drop the new one
+        # and re-run from the rename step.
+        conn.execute("DROP TABLE IF EXISTS " + table)
+        tables.discard(table)
+    if legacy_name in tables and table not in tables:
+        # Normal: legacy exists, new doesn't. Create new + copy.
+        pass
+    elif table in tables and legacy_name not in tables:
+        # First migration: rename current → legacy.
+        existing_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(" + table + ")").fetchall()}
+        # Idempotent: if the existing table already has ONLY the live
+        # columns (±2 tolerance for newly-added cols), skip migration.
+        dead = existing_cols - set(live_names)
+        if len(dead) <= 2:
+            logger.info("[DB] " + table + " already clean ("
+                        + str(len(existing_cols)) + " cols, "
+                        + str(len(dead)) + " extra). Migration skipped.")
+            return
+        conn.execute("ALTER TABLE " + table + " RENAME TO " + legacy_name)
+        logger.info("[DB] Renamed " + table + " → " + legacy_name
+                    + " (had " + str(len(existing_cols)) + " cols, "
+                    + str(len(dead)) + " dead)")
+    else:
+        logger.info("[DB] " + table + " migration: nothing to do")
+        return
+
+    # Create new table with live columns only.
+    col_defs = ", ".join(live_cols_defs)
+    conn.execute("CREATE TABLE IF NOT EXISTS " + table
+                 + " (" + col_defs + ")")
+
+    # INSERT SELECT: copy only columns that exist in BOTH legacy and new.
+    legacy_cols = {r[1] for r in conn.execute(
+        "PRAGMA table_info(" + legacy_name + ")").fetchall()}
+    common = [c for c in live_names if c in legacy_cols]
+    common_str = ", ".join(common)
+    conn.execute("INSERT OR IGNORE INTO " + table
+                 + " (" + common_str + ") SELECT " + common_str
+                 + " FROM " + legacy_name)
+    n_migrated = conn.execute(
+        "SELECT COUNT(*) FROM " + table).fetchone()[0]
+    n_legacy = conn.execute(
+        "SELECT COUNT(*) FROM " + legacy_name).fetchone()[0]
+
+    # Drop legacy only if counts match (data integrity check).
+    if n_migrated >= n_legacy:
+        conn.execute("DROP TABLE " + legacy_name)
+        logger.info("[DB] " + table + " migration complete: "
+                    + str(n_migrated) + " rows, "
+                    + str(len(live_names)) + " cols (was "
+                    + str(len(legacy_cols)) + ")")
+    else:
+        logger.error("[DB] " + table + " migration MISMATCH: "
+                     + str(n_migrated) + " vs " + str(n_legacy)
+                     + " rows. Legacy table preserved for manual review: "
+                     + legacy_name)
+
+
+def migrate_schema_v15():
+    """BUG-N6 + BUG-N7: one-shot migration that drops dead v13 columns
+    from signal_scans and trades. Call from init_db() gated by a
+    version check. Idempotent — running twice is a no-op if the first
+    run completed."""
+    if not os.path.isfile(DB_PATH):
+        return
+    try:
+        _backup_db()
+    except Exception as e:
+        logger.error("[DB] Migration backup failed: " + str(e)
+                     + " — aborting migration for safety")
+        return
+    conn = get_conn()
+    try:
+        _migrate_table(conn, "signal_scans", _SCAN_LIVE_COLS)
+        _migrate_table(conn, "trades", _TRADES_LIVE_COLS)
+        conn.commit()
+        # Re-create indexes that were dropped with the old tables.
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_ts "
+                         "ON signal_scans(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_dir "
+                         "ON signal_scans(direction, fired)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_date "
+                         "ON signal_scans(date(timestamp))")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_date "
+                         "ON trades(date)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_dir "
+                         "ON trades(direction, date)")
+            conn.commit()
+        except Exception as _ie:
+            logger.warning("[DB] Index recreation: " + str(_ie))
+    except Exception as e:
+        logger.error("[DB] Schema migration error: " + str(e))
+
+
+from datetime import date
 
 def _insert(table, row, fields):
     """Generic insert. row is a dict, fields is ordered list of column names."""
@@ -491,27 +697,22 @@ def insert_option_15min_many(rows):
 
 # ── Scans ──
 
+# v15.2.5 BUG-N6: live columns only. Dead v13 fields (rsi_1m, body_pct_1m,
+# vol_ratio_1m, rsi_rising_1m, spread_1m, rsi_3m, conditions_3m, score,
+# iv_pct, delta, straddle_decay_pct, straddle_threshold, near_fib_level,
+# fib_distance) removed after schema migration in migrate_schema_v15().
 _SCAN_FIELDS = [
     "timestamp", "session", "dte", "atm_strike", "spot",
     "direction", "entry_price",
-    "rsi_1m", "body_pct_1m", "vol_ratio_1m", "rsi_rising_1m", "spread_1m",
-    "rsi_3m", "body_pct_3m", "ema_spread_3m", "conditions_3m", "mode_3m",
-    "score", "fired", "reject_reason",
-    "iv_pct", "delta", "vix",
-    "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime", "spot_gap",
-    "bias", "hourly_rsi", "straddle_decay_pct",
-    "near_fib_level", "fib_distance",
-    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
-    # v15.0 band fields
     "ema9_high", "ema9_low", "band_position", "body_pct",
-    # v15.2 — straddle filter + VWAP bonus context per scan
-    "straddle_delta", "straddle_threshold", "straddle_period",
+    "body_pct_3m", "ema_spread_3m", "mode_3m",
+    "straddle_delta", "straddle_period",
     "atm_strike_used", "band_width",
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
-    # BUG-N3: ground truth for research — did this fired signal
-    # actually result in a trade? (fired=1 is necessary but not
-    # sufficient — cooldown, margin, paused can block after gates pass)
-    "trade_taken",
+    "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
+    "spot_gap", "bias", "hourly_rsi",
+    "fired", "trade_taken", "reject_reason",
+    "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]
 
 def insert_scan(row):
@@ -523,35 +724,30 @@ def insert_scan_many(rows):
 
 # ── Trades ──
 
+# v15.2.5 BUG-N7: live columns only. Dead v13 fields (mode, score,
+# iv_at_entry, regime, spread_1m, spread_3m, delta_at_entry,
+# straddle_decay, signal_price, bonus_*, momentum_pts, rsi_rising,
+# spot_confirms, spot_move, spike_ratio, other_falling, other_move,
+# momentum_tf) removed after schema migration in migrate_schema_v15().
 _TRADE_FIELDS = [
-    "date", "entry_time", "exit_time", "symbol", "direction", "mode",
+    "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
+    "gross_pnl_rs", "net_pnl_rs",
     "peak_pnl", "trough_pnl", "exit_reason", "exit_phase",
-    "score", "iv_at_entry", "regime", "dte", "candles_held",
-    "session", "strike", "sl_pts",
-    "spread_1m", "spread_3m", "delta_at_entry",
-    "bias", "vix_at_entry", "hourly_rsi", "straddle_decay",
+    "dte", "candles_held", "session", "sl_pts",
+    "bias", "vix_at_entry", "hourly_rsi", "entry_mode",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
-    "total_charges", "net_pnl_rs", "gross_pnl_rs", "num_exit_orders",
-    "entry_slippage", "exit_slippage", "signal_price",
-    "lot_id",
-    "bonus_vwap", "bonus_fib_level", "bonus_fib_dist",
-    "bonus_vol_spike", "bonus_vol_ratio", "bonus_pdh_break",
-    "qty_exited",
-    "entry_mode", "momentum_pts",
-    "rsi_rising", "spot_confirms", "spot_move",
-    # v15.2.5: v15.2 entry/exit context columns — were in the schema via
-    # idempotent ALTER TABLE migrations but missing from the INSERT path.
-    # That's why every column read back as 0 / ''.
+    "total_charges", "num_exit_orders", "qty_exited",
+    "entry_slippage", "exit_slippage", "lot_id",
+    # v15.2 entry/exit context
     "entry_ema9_high", "entry_ema9_low",
     "exit_ema9_high", "exit_ema9_low",
     "entry_band_position", "exit_band_position",
     "entry_body_pct",
-    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
+    "entry_straddle_delta", "entry_straddle_threshold",
+    "entry_straddle_period", "entry_straddle_info",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
-    # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA
-    "entry_straddle_info",
 ]
 
 def insert_trade(row):
