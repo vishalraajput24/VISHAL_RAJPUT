@@ -232,33 +232,23 @@ if(pos.in_trade){
   var pnl=parseFloat(pos.pnl||0),pk=parseFloat(pos.peak||0);
   var entry=parseFloat(pos.entry||0),ltp=parseFloat(pos.ltp||0);
   var rsi=parseFloat(pos.current_rsi||pos.rsi||0);
-  var cn=pos.candles||0,sp=pos.lots_split;
-  // BUG-022: read lot active status from lot1/lot2 objects
-  var _lot1=pos.lot1||{},_lot2=pos.lot2||{};
-  var l1=(_lot1.status==='active'),l2=(_lot2.status==='active');
-  var al=(l1?1:0)+(l2?1:0); if(al===0)al=2; // fallback: both active
-  var prs=Math.round(pnl*65*al),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
-  // v15.2: SL is the dynamic EMA9-low trailing stop (or BE+2 if armed)
-  var sl=parseFloat(pos.stop||l1?_lot1.sl:_lot2.sl)||0;
+  var cn=pos.candles||0;
+  // v16: both lots always exit together at the same SL
+  var prs=Math.round(pnl*65*2),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
+  var sl=parseFloat(pos.stop||0);
   if(sl<=0)sl=Math.round((entry-12)*100)/100;
   var em=pos.entry_mode||'EMA9_BREAKOUT',bc='bc';
   pa+='<div class="pos '+pc+'">';
-  pa+='<div class="ph"><div class="ps"><div class="pd '+(sp?'s':'g')+'"></div>'+esc(sym)+' '+(sp?'SPLIT':'IN TRADE')+'</div>';
+  pa+='<div class="ph"><div class="ps"><div class="pd g"></div>'+esc(sym)+' IN TRADE</div>';
   if(em)pa+='<span class="bg '+bc+'">'+esc(em)+'</span>';
   pa+='</div>';
   pa+='<div class="pp mono '+nc+'">'+fmt(pnl)+'<span style="font-size:16px;font-weight:700">pts</span></div>';
   pa+='<div class="pr mono">\u20B9'+prs.toLocaleString('en-IN')+'</div>';
   pa+='<div class="pe">Entry \u20B9'+entry+' \u2192 \u20B9'+ltp+' · '+cn+' candles</div>';
-  // Lots
+  // v16: two lots, same SL, no split display
   pa+='<div class="pl">';
-  if(!sp){
-    pa+='<div class="lt"><div class="ll">Lot 1 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
-    pa+='<div class="lt"><div class="ll">Lot 2 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
-  } else {
-    pa+='<div class="lt"><div class="ll">Lot 1</div><div class="lv" style="color:'+(l1?'var(--gn)':'var(--tx3)')+'">'+( l1?'Active \u25CF':'Exited')+'</div>'+(l1?'<div class="ls mono">SL \u20B9'+sl+'</div>':'')+'</div>';
-    var sl2=parseFloat(pos.lot2_trail_sl||sl);
-    pa+='<div class="lt"><div class="ll">Lot 2</div><div class="lv" style="color:'+(l2?'var(--or)':'var(--tx3)')+'">'+( l2?'ATR Trail':'Exited')+'</div>'+(l2?'<div class="ls mono">SL \u20B9'+sl2+'</div>':'')+'</div>';
-  }
+  pa+='<div class="lt"><div class="ll">Lot 1 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
+  pa+='<div class="lt"><div class="ll">Lot 2 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
   pa+='</div>';
   // v15.2: dynamic EMA9-low trailing stop + BE+2 lock display
   var _cur_el=parseFloat(pos.current_ema9_low||0);

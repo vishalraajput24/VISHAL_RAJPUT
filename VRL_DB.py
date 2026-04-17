@@ -398,6 +398,11 @@ def init_db():
                 logger.info("[DB] Schema version stamped: 15")
             except Exception as _me:
                 logger.warning("[DB] Schema v15 migration: " + str(_me))
+        elif _schema_v < 16:
+            try:
+                migrate_schema_v16()
+            except Exception as _me:
+                logger.warning("[DB] Schema v16 migration: " + str(_me))
         else:
             logger.info("[DB] Schema v" + str(_schema_v)
                         + " — migration already done, skipped")
@@ -601,6 +606,31 @@ def migrate_schema_v15():
             logger.warning("[DB] Index recreation: " + str(_ie))
     except Exception as e:
         logger.error("[DB] Schema migration error: " + str(e))
+
+
+def migrate_schema_v16():
+    """v16.0: drop straddle_threshold from signal_scans + clean up
+    any leftover _legacy tables. Stamps schema_meta version=16."""
+    if not os.path.isfile(DB_PATH):
+        return
+    conn = get_conn()
+    try:
+        for tbl in ("signal_scans_legacy", "trades_legacy"):
+            try:
+                conn.execute("DROP TABLE IF EXISTS " + tbl)
+            except Exception:
+                pass
+        live = {r[1] for r in conn.execute("PRAGMA table_info(signal_scans)")}
+        if "straddle_threshold" in live:
+            new_cols = [c for c in _SCAN_LIVE_COLS
+                        if _col_name(c) != "straddle_threshold"]
+            _migrate_table(conn, "signal_scans", new_cols)
+            logger.info("[DB] v16: dropped straddle_threshold from signal_scans")
+        conn.execute("INSERT OR REPLACE INTO schema_meta VALUES ('version', '16')")
+        conn.commit()
+        logger.info("[DB] Schema version stamped: 16")
+    except Exception as e:
+        logger.warning("[DB] v16 migration error: " + str(e))
 
 
 from datetime import date

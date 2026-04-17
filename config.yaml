@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v15.2 — Central Configuration
-#  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display + BE+2 (peak≥10)
+#  VISHAL RAJPUT TRADE v16.0 — Central Configuration
+#  EMA9 Band Breakout + Velocity Stall + Straddle Display + VWAP
 # ═══════════════════════════════════════════════════════════════
 
 version: "v16.0"
