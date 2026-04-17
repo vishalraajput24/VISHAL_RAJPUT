@@ -310,6 +310,7 @@ def _reset_daily(today_str: str):
         state["profit_locked"]         = False
         state["_eod_reported"]         = False
         state["_eod_exited"]           = False
+    logger.info("[MAIN] _eod_exited reset for new day")
         state["aggressive_mode"]       = False
         state["paused"]                = False
         state["_bias_done"]            = False
@@ -2216,6 +2217,18 @@ def _strategy_loop(kite):
                               saved_entry_price=_entry_px)
                 time.sleep(1)
                 continue
+
+            # BUG-N5 v15.2.5: unconditionally mark EOD at 15:30+ BEFORE
+            # the in_trade block. Old code only set _eod_exited inside
+            # the in_trade force-exit path, so days with no trade at
+            # close left the flag at None / False in state.json.
+            if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
+                if not state.get("_eod_exited"):
+                    with _state_lock:
+                        state["_eod_exited"] = True
+                    logger.info("[MAIN] _eod_exited=True at "
+                                + now.strftime("%H:%M:%S")
+                                + " (no trade open → flag-only)")
 
             if _in_trade:
                 option_ltp = D.get_ltp(_token)
