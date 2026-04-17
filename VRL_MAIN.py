@@ -1409,6 +1409,92 @@ def _compute_bonus(token: int) -> dict:
 #  VRL_WEB.py reads this file. Zero calculation in web server.
 # ═══════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════
+#  v15.2.5 Batch 3 BUG-R2 — Shadow exit tick CSV logger
+#  Pure logging — NEVER mutates state, NEVER calls exit functions,
+#  NEVER touches production SL fields.
+# ═══════════════════════════════════════════════════════════════
+
+_SHADOW_EXIT_DIR = os.path.join(os.path.expanduser("~"), "lab_data", "shadow_exits")
+os.makedirs(_SHADOW_EXIT_DIR, exist_ok=True)
+
+_SHADOW_EXIT_FIELDS = [
+    "timestamp", "symbol", "direction", "entry_price", "current_ltp",
+    "running_pnl", "peak_pnl", "candles_held",
+    "ema9_low_3m", "ratchet_sl", "ratchet_tier",
+    "ema1m_break", "ema1m_close", "ema1m_ema9",
+    "would_exit_ratchet", "would_exit_ema1m", "would_exit_ema9_low",
+    "actual_sl", "actual_exit_reason_pending",
+]
+
+
+def _log_shadow_exit_tick(st: dict, option_ltp: float, now: datetime):
+    """BUG-R2: one row per strategy-loop tick while in_trade. Read-only on st."""
+    if not st.get("in_trade") or option_ltp <= 0:
+        return
+    entry   = float(st.get("entry_price", 0) or 0)
+    pnl     = round(option_ltp - entry, 2)
+    peak    = float(st.get("peak_pnl", 0) or 0)
+    candles = int(st.get("candles_held", 0) or 0)
+    token   = st.get("token")
+    direction = st.get("direction", "")
+    ema9l_3m = float(st.get("current_ema9_low", 0) or 0)
+
+    # Shadow ratchet (pure function — no state mutation)
+    from VRL_ENGINE import compute_ratchet_sl, compute_1min_ema9_break
+    ratchet_sl, ratchet_tier = compute_ratchet_sl(entry, peak, direction)
+
+    # 1-min EMA9 break (pure function — fetches historical_data)
+    ema1m_break, ema1m_close, ema1m_ema9 = (False, 0.0, 0.0)
+    if token:
+        ema1m_break, ema1m_close, ema1m_ema9 = compute_1min_ema9_break(
+            int(token), pnl)
+
+    # Would-exit flags (hypothetical — never executed)
+    would_ratchet = 1 if (ratchet_sl > 0 and option_ltp <= ratchet_sl) else 0
+    would_ema1m   = 1 if ema1m_break else 0
+    would_ema9low = 1 if (ema9l_3m > 0 and option_ltp <= ema9l_3m) else 0
+
+    # Actual SL the bot is using right now
+    actual_sl = float(st.get("current_ema9_low", 0) or 0)
+    if st.get("be2_active") and float(st.get("be2_level", 0) or 0) > actual_sl:
+        actual_sl = float(st.get("be2_level", 0))
+
+    row = {
+        "timestamp":              now.strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol":                 st.get("symbol", ""),
+        "direction":              direction,
+        "entry_price":            round(entry, 2),
+        "current_ltp":            round(option_ltp, 2),
+        "running_pnl":            pnl,
+        "peak_pnl":               round(peak, 2),
+        "candles_held":           candles,
+        "ema9_low_3m":            round(ema9l_3m, 2),
+        "ratchet_sl":             ratchet_sl,
+        "ratchet_tier":           ratchet_tier,
+        "ema1m_break":            1 if ema1m_break else 0,
+        "ema1m_close":            ema1m_close,
+        "ema1m_ema9":             ema1m_ema9,
+        "would_exit_ratchet":     would_ratchet,
+        "would_exit_ema1m":       would_ema1m,
+        "would_exit_ema9_low":    would_ema9low,
+        "actual_sl":              round(actual_sl, 2),
+        "actual_exit_reason_pending": "",
+    }
+    _csv_path = os.path.join(_SHADOW_EXIT_DIR,
+                             "shadow_" + now.strftime("%Y-%m-%d") + ".csv")
+    is_new = not os.path.isfile(_csv_path)
+    try:
+        with open(_csv_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=_SHADOW_EXIT_FIELDS,
+                               extrasaction="ignore")
+            if is_new:
+                w.writeheader()
+            w.writerow(row)
+    except Exception as _we:
+        logger.debug("[SHADOW_EXIT] CSV write: " + str(_we))
+
+
 def _update_dashboard_ltp():
     """Quick update — just LTP values in dashboard JSON. No API calls."""
     try:
@@ -2253,6 +2339,17 @@ def _strategy_loop(kite):
                                                 + "Trail widened: keep 65% from +20 🔥")
                                 except Exception as _ue:
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
+
+                    # ── v15.2.5 Batch 3 BUG-R2: shadow exit CSV logger ──
+                    # Runs BEFORE manage_exit so it captures pre-exit state.
+                    # Pure logging — never mutates state or calls exit fns.
+                    try:
+                        _log_shadow_exit_tick(state, option_ltp, now)
+                    except Exception as _se:
+                        if not getattr(_log_shadow_exit_tick, "_warned", False):
+                            logger.warning("[SHADOW_EXIT] tick logger error: "
+                                           + str(_se))
+                            _log_shadow_exit_tick._warned = True
 
                     # v13.0: manage_exit returns list of exit dicts
                     _mex_other_tok = state.get("other_token", 0)
