@@ -476,6 +476,42 @@ _subscribed       = set()
 _subscribed_lock  = threading.Lock()
 _ws_connected     = False
 
+# ── BUG-N1 v15.2.5: auth-rejection backoff ───────────────────
+# When Kite's nightly 03:30 session invalidation kills the token,
+# every historical_data / quote / LTP call raises "Incorrect
+# api_key or access_token". Without a guard, the bot retries
+# every 1-2 seconds for hours, flooding the log with 13K+ warnings.
+# This flag stops all retries until VRL_AUTH refreshes the token
+# and calls notify_auth_refreshed().
+_auth_rejected = False
+_auth_rejected_lock = threading.Lock()
+
+
+def _is_auth_rejected() -> bool:
+    with _auth_rejected_lock:
+        return _auth_rejected
+
+
+def _set_auth_rejected():
+    global _auth_rejected
+    with _auth_rejected_lock:
+        if not _auth_rejected:
+            logger.warning("[DATA] Auth token rejected — pausing retries "
+                           "until re-auth via VRL_AUTH.")
+        _auth_rejected = True
+
+
+def notify_auth_refreshed():
+    """Called by VRL_AUTH on successful login / token refresh.
+    Resets the auth-rejection flag so historical_data and WS
+    resume normal operation."""
+    global _auth_rejected
+    with _auth_rejected_lock:
+        if _auth_rejected:
+            logger.info("[DATA] Auth refreshed — resuming historical_data "
+                        "and WS operations.")
+        _auth_rejected = False
+
 def init(kite_instance):
     global _kite
     _kite = kite_instance
@@ -690,6 +726,9 @@ def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
         return ltp
+    # BUG-N1: skip REST fallback if auth is rejected
+    if _is_auth_rejected():
+        return 0.0
     if _kite is not None:
         try:
             quote = _kite.quote(["NSE:INDIA VIX"])
@@ -697,7 +736,11 @@ def get_vix() -> float:
             if vix and vix > 0:
                 return float(vix)
         except Exception as e:
-            logger.debug("[DATA] VIX quote fallback failed: " + str(e))
+            err_str = str(e).lower()
+            if "incorrect api_key" in err_str or "access_token" in err_str:
+                _set_auth_rejected()
+            else:
+                logger.debug("[DATA] VIX quote fallback failed: " + str(e))
     return 0.0
 
 # ═══════════════════════════════════════════════════════════════
@@ -830,6 +873,9 @@ def get_historical_data(token: int, interval: str, lookback: int,
     from_dt = min(candidate_from, min_from)
     to_dt   = datetime.now()
     raw   = None
+    # BUG-N1: skip entirely if auth is known-rejected (03:30 session kill).
+    if _is_auth_rejected():
+        return pd.DataFrame()
     for attempt in range(2):
         try:
             raw = _kite.historical_data(
@@ -837,6 +883,10 @@ def get_historical_data(token: int, interval: str, lookback: int,
                 interval=interval, continuous=False, oi=False)
             break
         except Exception as e:
+            err_str = str(e).lower()
+            if "incorrect api_key" in err_str or "access_token" in err_str:
+                _set_auth_rejected()
+                return pd.DataFrame()
             logger.warning("[DATA] historical_data attempt " + str(attempt+1)
                            + " token=" + str(token) + ": " + str(e))
             if attempt < 1:
