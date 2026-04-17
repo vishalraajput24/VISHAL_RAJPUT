@@ -321,6 +321,8 @@ def _reset_daily(today_str: str):
     D.reset_daily_warnings()
     _reset_strike_lock()
     logger.info("[MAIN] _eod_exited reset for new day")
+    with _state_lock:
+        state["_shadow_exit_eod_sent"] = False
     # v15.2 Part 4: reset shadow state on new trading day
     try:
         import VRL_SHADOW
@@ -1502,6 +1504,59 @@ def _log_shadow_exit_tick(st: dict, option_ltp: float, now: datetime):
         logger.debug("[SHADOW_EXIT] CSV write: " + str(_we))
 
 
+def _send_shadow_exit_eod():
+    """BUG-R4: one Telegram at 15:35 summarizing shadow vs actual exits."""
+    today_str = date.today().strftime("%Y-%m-%d")
+    trades_path = os.path.join(_SHADOW_EXIT_DIR,
+                               "shadow_trades_" + today_str + ".csv")
+    if not os.path.isfile(trades_path):
+        _tg_send("[SHADOW EXIT] No shadow data today.")
+        return
+    rows = []
+    try:
+        with open(trades_path) as f:
+            rows = list(csv.DictReader(f))
+    except Exception:
+        _tg_send("[SHADOW EXIT] CSV read error.")
+        return
+    if not rows:
+        _tg_send("[SHADOW EXIT] No shadow data today.")
+        return
+    n = len(rows)
+    lot = D.get_lot_size()
+    actual_sum = sum(float(r.get("actual_pnl", 0) or 0) for r in rows)
+    ratchet_sum = 0.0
+    ema1m_sum   = 0.0
+    r_count = 0
+    e_count = 0
+    for r in rows:
+        rp = r.get("first_ratchet_pnl_if_exited_here")
+        ep = r.get("first_ema1m_break_pnl_if_exited_here")
+        ap = float(r.get("actual_pnl", 0) or 0)
+        if rp not in (None, ""):
+            ratchet_sum += float(rp); r_count += 1
+        else:
+            ratchet_sum += ap
+        if ep not in (None, ""):
+            ema1m_sum += float(ep); e_count += 1
+        else:
+            ema1m_sum += ap
+    best = max(actual_sum, ratchet_sum, ema1m_sum)
+    saved = round(best - actual_sum, 1)
+    _tg_send(
+        "📊 <b>SHADOW EXIT REPORT — " + today_str + "</b>\n"
+        "Trades: " + str(n) + "\n"
+        "Actual:  " + "{:+.1f}".format(actual_sum) + "pts  (₹"
+        + "{:+,.0f}".format(actual_sum * lot * 2) + ")\n"
+        "Ratchet: " + "{:+.1f}".format(ratchet_sum) + "pts  (₹"
+        + "{:+,.0f}".format(ratchet_sum * lot * 2) + ")  fired " + str(r_count) + "x\n"
+        "EMA1m:   " + "{:+.1f}".format(ema1m_sum) + "pts  (₹"
+        + "{:+,.0f}".format(ema1m_sum * lot * 2) + ")  fired " + str(e_count) + "x\n"
+        "Best:    " + "{:+.1f}".format(best) + "pts\n"
+        "Saved:   " + "{:+.1f}".format(saved) + "pts vs actual"
+    )
+
+
 _SHADOW_TRADE_FIELDS = [
     "date", "entry_time", "exit_time", "symbol", "direction",
     "entry_price", "actual_exit_price", "actual_exit_reason", "actual_pnl",
@@ -2331,6 +2386,16 @@ def _strategy_loop(kite):
                                     "pnl": _live_pnl, "wr": _live_wr})
                 except Exception as _se:
                     logger.warning("[SHADOW] EOD summary: " + str(_se))
+
+            # ── v15.2.5 Batch 3 BUG-R4: EOD shadow exit Telegram ──
+            # One-shot after the existing EOD report, gated by same
+            # _eod_reported flag (fires at 15:35).
+            try:
+                if state.get("_eod_reported") and not state.get("_shadow_exit_eod_sent"):
+                    state["_shadow_exit_eod_sent"] = True
+                    _send_shadow_exit_eod()
+            except Exception as _sre:
+                logger.debug("[SHADOW_EXIT] EOD telegram: " + str(_sre))
 
             # ── BUG-V v15.2.5 Batch 6: daily lab cleanup at 15:45+ IST ──
             # Previously cleanup ran only at bot startup. A process that
