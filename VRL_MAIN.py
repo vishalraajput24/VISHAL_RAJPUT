@@ -3119,6 +3119,48 @@ def main():
     _kite = kite
     D.init(kite)
 
+    # ── Token health ping (prediction #5 prevention) ────────────
+    # One Telegram at startup confirming token is alive, Kite API
+    # responds, and spot LTP resolves. If any layer fails, the
+    # operator knows BEFORE 09:15 that the session is compromised.
+    # This covers the 08:00→09:10 gap where AUTH succeeded but
+    # Zerodha maintenance killed the token afterward.
+    try:
+        _health_ok = True
+        _health_lines = []
+        # 1. Profile check (proves token is valid)
+        try:
+            _prof = kite.profile()
+            _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
+        except Exception as _he:
+            _health_lines.append("Token: ❌ " + str(_he)[:60])
+            _health_ok = False
+        # 2. Spot quote (proves API data flow)
+        try:
+            _sq = kite.ltp(["NSE:NIFTY 50"])
+            _sp = float(list(_sq.values())[0]["last_price"])
+            _health_lines.append("Spot: ✅ " + str(round(_sp, 1)))
+        except Exception as _he:
+            _health_lines.append("Spot: ❌ " + str(_he)[:60])
+            _health_ok = False
+        # 3. WebSocket (proves tick feed)
+        import time as _time_h
+        _time_h.sleep(3)
+        _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        if _ws_ltp > 0:
+            _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+        else:
+            _health_lines.append("WS: ⚠️ no tick yet (may need 30s to connect)")
+        _icon = "✅" if _health_ok else "⚠️"
+        _tg_send(
+            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
+            + "\n".join(_health_lines) + "\n"
+            "Time: " + datetime.now().strftime("%H:%M:%S IST")
+        )
+        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines)))
+    except Exception as _the:
+        logger.warning("[MAIN] Token health check error: " + str(_the))
+
     # v13.10: Register WS auto-heal Telegram callback
     try:
         D.set_autoheal_callback(_tg_send)
