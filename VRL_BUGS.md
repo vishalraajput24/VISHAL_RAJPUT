@@ -1,6 +1,4 @@
-# VRL Bug Sheet — All Bugs Found & Fixed
-
-> Reference for future debugging. Never encounter the same bug twice.
+# VRL Bug Sheet — v15+ Active Bugs
 
 ## v15.2.5: Velocity-based exit + trade DB persistence + signal scan labels
 
