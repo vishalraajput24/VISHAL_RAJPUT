@@ -668,6 +668,110 @@ def collect_option_3min(kite, spot_ltp: float):
             pass
         logger.debug("[LAB] 3m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
 
+    # BUG-N12: also write the active trade's strike if it differs from ATM
+    try:
+        _at_n = _collect_active_trade_candles(
+            kite, "3minute", today, now, today_ts)
+        if _at_n:
+            logger.debug("[LAB] 3m active-trade wrote=" + str(_at_n))
+    except Exception as _ate:
+        logger.debug("[LAB] 3m active-trade err: " + str(_ate))
+
+
+# ── BUG-N12: persist active-trade strike candles through ATM rotation ──
+
+def _collect_active_trade_candles(kite, interval: str, today, now,
+                                  already_written_keys: set = None):
+    """If VRL_MAIN has an active trade at a strike different from the
+    current ATM, fetch + write candles for the trade's CE + PE tokens
+    so the data trail has zero gaps from entry to exit.
+
+    interval: "3minute" or "minute".
+    already_written_keys: set of (timestamp, strike, type) tuples
+      already written by the current collection pass — used to dedup.
+    """
+    active = D.get_active_trade()
+    if not active:
+        return 0
+    trade_strike = active.get("strike", 0)
+    if not trade_strike or trade_strike == _current_atm_strike:
+        return 0   # same strike, already covered by normal collection
+    if _current_expiry is None:
+        return 0
+    from_dt = now - timedelta(minutes=180 if interval == "3minute" else 60)
+    to_dt   = now
+    dte     = D.calculate_dte(_current_expiry)
+    session = D.get_session_block(now.hour, now.minute)
+    spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+    n_written = 0
+    for side, tok_key in [("CE", "token_ce"), ("PE", "token_pe")]:
+        tok = active.get(tok_key, 0)
+        if not tok:
+            continue
+        try:
+            candles = _fetch_candles_with_warmup(
+                kite, int(tok), from_dt, to_dt, interval, 30)
+            if not candles or len(candles) < 2:
+                continue
+            last = candles[-2]
+            ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
+                      if hasattr(last["date"], "strftime") else str(last["date"]))
+            key = (ts_str, str(trade_strike), side)
+            if already_written_keys and key in already_written_keys:
+                continue
+            row = {
+                "timestamp"    : ts_str,
+                "strike"       : trade_strike,
+                "type"         : side,
+                "open"         : round(last["open"], 2),
+                "high"         : round(last["high"], 2),
+                "low"          : round(last["low"],  2),
+                "close"        : round(last["close"], 2),
+                "volume"       : int(last["volume"]),
+                "spot_ref"     : round(spot_ltp, 2) if spot_ltp else 0,
+                "atm_distance" : round(abs((spot_ltp or 0) - trade_strike), 0),
+                "dte"          : dte,
+                "session_block": session,
+            }
+            if interval == "3minute":
+                # Compute indicators for the active trade's candles
+                _adf = pd.DataFrame(candles)
+                _adf.rename(columns={"date": "timestamp"}, inplace=True)
+                _adf.set_index("timestamp", inplace=True)
+                _adf = D.add_indicators(_adf)
+                _arow = _adf.iloc[-2]
+                row.update({
+                    "rsi"      : round(float(_arow.get("RSI", 50)), 1),
+                    "ema9"     : round(float(_arow.get("EMA_9", last["close"])), 2),
+                    "ema21"    : round(float(_arow.get("EMA_21", last["close"])), 2),
+                    "ema9_high": round(float(_arow.get("ema9_high", last["high"])), 2),
+                    "ema9_low" : round(float(_arow.get("ema9_low", last["low"])), 2),
+                })
+                try:
+                    DB.insert_option_3min(row)
+                    n_written += 1
+                except Exception:
+                    pass
+            else:
+                _adf = pd.DataFrame(candles)
+                _adf.rename(columns={"date": "timestamp"}, inplace=True)
+                _adf.set_index("timestamp", inplace=True)
+                _adf = D.add_indicators(_adf)
+                _arow = _adf.iloc[-2]
+                row.update({
+                    "rsi" : round(float(_arow.get("RSI", 50)), 1),
+                    "ema9": round(float(_arow.get("EMA_9", last["close"])), 2),
+                })
+                try:
+                    DB.insert_option_1min(row)
+                    n_written += 1
+                except Exception:
+                    pass
+        except Exception as _e:
+            logger.debug("[LAB] active-trade candle " + side
+                         + " " + interval + ": " + str(_e))
+    return n_written
+
 
 # ─── LIVE COLLECTION — 1-MIN ──────────────────────────────────
 
@@ -778,6 +882,14 @@ def collect_option_1min(kite, spot_ltp: float):
         except Exception:
             pass
         logger.debug("[LAB] 1m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
+
+    # BUG-N12: also write the active trade's strike if it differs from ATM
+    try:
+        _at_n = _collect_active_trade_candles(kite, "minute", today, now)
+        if _at_n:
+            logger.debug("[LAB] 1m active-trade wrote=" + str(_at_n))
+    except Exception as _ate:
+        logger.debug("[LAB] 1m active-trade err: " + str(_ate))
 
 
 # ─── BACKFILL — 3-MIN ─────────────────────────────────────────

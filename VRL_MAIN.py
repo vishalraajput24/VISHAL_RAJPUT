@@ -926,6 +926,26 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["lot1_active"]        = True
         state["lot2_active"]        = True
         state["lots_split"]         = False
+
+        # BUG-N12: tell VRL_LAB which strike to keep writing regardless
+        # of ATM drift. Resolve both sides so the opposite-side candles
+        # are also persisted for hedge research.
+        try:
+            _trade_strike = state["strike"]
+            _trade_dir    = option_type
+            _tce = int(_ce_info_v15.get("token", 0)) if _ce_info_v15 else 0
+            _tpe = int(_pe_info_v15.get("token", 0)) if _pe_info_v15 else 0
+            # If we only have the traded side, fill the other from the
+            # same token-resolution batch at this strike.
+            if not _tce or not _tpe:
+                _both = D.get_option_tokens(kite, int(_trade_strike), expiry) or {}
+                if not _tce:
+                    _tce = int((_both.get("CE") or {}).get("token", 0))
+                if not _tpe:
+                    _tpe = int((_both.get("PE") or {}).get("token", 0))
+            D.set_active_trade(_trade_strike, _trade_dir, _tce, _tpe)
+        except Exception as _ate:
+            logger.debug("[MAIN] set_active_trade: " + str(_ate))
         # Exit state
         state["exit_phase"]         = 1
         state["phase1_sl"]          = phase1_sl
@@ -1202,6 +1222,12 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_reason"] = reason
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
+            # BUG-N12: clear the LAB pinned strike so it returns to
+            # ATM-following mode.
+            try:
+                D.clear_active_trade()
+            except Exception:
+                pass
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
                 "direction": "", "entry_price": 0.0, "entry_time": "",

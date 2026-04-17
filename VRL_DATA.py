@@ -529,6 +529,40 @@ def consume_trade_taken(direction: str) -> bool:
     return False
 
 
+# ── BUG-N12 v15.2.5: active trade token for LAB persistence ──
+# VRL_MAIN sets this on entry; VRL_LAB reads it to ensure the
+# traded strike's candles are always written regardless of ATM drift.
+_active_trade_lock = threading.Lock()
+_active_trade = None   # None or {"token_ce": int, "token_pe": int, "strike": int, "direction": str}
+
+
+def set_active_trade(strike: int, direction: str, token_ce: int = 0,
+                     token_pe: int = 0):
+    """Called by VRL_MAIN on successful entry."""
+    global _active_trade
+    with _active_trade_lock:
+        _active_trade = {
+            "strike": int(strike), "direction": str(direction),
+            "token_ce": int(token_ce), "token_pe": int(token_pe),
+        }
+    logger.info("[DATA] Active trade set: strike=" + str(strike)
+                + " dir=" + direction)
+
+
+def clear_active_trade():
+    """Called by VRL_MAIN on trade exit."""
+    global _active_trade
+    with _active_trade_lock:
+        _active_trade = None
+
+
+def get_active_trade() -> dict:
+    """Called by VRL_LAB to get the active trade's tokens. Returns
+    None if no trade is open."""
+    with _active_trade_lock:
+        return dict(_active_trade) if _active_trade else None
+
+
 def notify_auth_refreshed():
     """Called by VRL_AUTH on successful login / token refresh.
     Resets the auth-rejection flag so historical_data and WS
