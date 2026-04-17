@@ -2097,20 +2097,32 @@ def _lab_loop():
                 except Exception as e:
                     logger.debug("[LAB] daily spot: " + str(e))
 
-            # ── EOD forward fill at 15:35 ─────────────────────
-            if (now.hour == 15 and now.minute == 35
-                    and not _fwd_done and now.second < 30):
+            # ── EOD forward fill — BUG-N4: widened from exact 15:35:00-30
+            # to 15:35–15:50 window. The old 30-second slot was missed if
+            # the loop was slow, restarting, or busy with the 3-min
+            # collection tick. Still gated by _fwd_done so it runs AT MOST
+            # once per trading day.
+            if (now.hour == 15 and 35 <= now.minute <= 50
+                    and not _fwd_done):
                 _fwd_done = True
-                logger.info("[LAB] EOD forward fill starting")
+                logger.info("[LAB] EOD forward fill starting at "
+                            + now.strftime("%H:%M:%S"))
+                _n_fwd = 0
                 try:
                     fill_forward_columns(_kite_ref, today, "3min")
+                    _n_fwd += 1
                     fill_forward_columns(_kite_ref, today, "1min")
+                    _n_fwd += 1
                 except Exception as e:
                     logger.error("[LAB] Forward fill error: " + str(e))
                 try:
                     fill_forward_scan(_kite_ref, today)
+                    _n_fwd += 1
                 except Exception as e:
                     logger.error("[LAB] Scan forward fill error: " + str(e))
+                logger.info("[LAB] Forward fill complete: "
+                            + str(_n_fwd) + "/3 jobs for "
+                            + today.isoformat())
 
         except Exception as e:
             logger.error("[LAB] Loop error: " + str(e))
