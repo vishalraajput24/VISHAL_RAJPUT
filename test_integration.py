@@ -144,8 +144,10 @@ for label, sql in audit_queries:
 dead_scan_cols = [
     "rsi_1m", "body_pct_1m", "vol_ratio_1m", "rsi_rising_1m",
     "spread_1m", "rsi_3m", "conditions_3m", "score",
-    "iv_pct", "delta", "straddle_decay_pct", "straddle_threshold",
+    "iv_pct", "delta", "straddle_decay_pct",
     "near_fib_level", "fib_distance",
+    # straddle_threshold deliberately kept — stores 0, costs nothing,
+    # removing requires a full table rebuild for one column.
 ]
 dead_trade_cols = [
     "mode", "score", "iv_at_entry", "regime",
