@@ -582,12 +582,29 @@ def _on_connect(ws, response):
             ws.set_mode(ws.MODE_FULL, list(_subscribed))
 
 def _on_close(ws, code, reason):
-    global _ws_connected
+    global _ws_connected, _ticker
     _ws_connected = False
-    logger.warning("[WS] Closed: " + str(code) + " " + str(reason))
+    reason_str = str(reason or "")
+    logger.warning("[WS] Closed: " + str(code) + " " + reason_str)
+    # BUG-N2: if Kite returned 403, the token is dead. Don't let
+    # KiteTicker's auto-reconnect hammer a dead endpoint every minute.
+    # Set the auth-rejection flag so historical_data also pauses.
+    # notify_auth_refreshed() (from VRL_AUTH at 08:00) re-enables both.
+    if "403" in reason_str or "Forbidden" in reason_str:
+        logger.warning("[WS] 403 Forbidden — auth required, stopping WS "
+                       "reconnect. Will resume after next VRL_AUTH refresh.")
+        _set_auth_rejected()
+        try:
+            if _ticker:
+                _ticker.close()
+        except Exception:
+            pass
 
 def _on_error(ws, code, reason):
-    logger.error("[WS] Error: " + str(code) + " " + str(reason))
+    reason_str = str(reason or "")
+    logger.error("[WS] Error: " + str(code) + " " + reason_str)
+    if "403" in reason_str or "Forbidden" in reason_str:
+        _set_auth_rejected()
 
 def _on_reconnect(ws, attempts):
     logger.info("[WS] Reconnecting attempt " + str(attempts))
@@ -671,6 +688,10 @@ def check_and_reconnect():
     """
     global _last_reconnect_attempt, _kite, _ticker
     if not is_market_open():
+        return
+    # BUG-N2: if auth is known-rejected, auto-heal can't help — VRL_AUTH
+    # must refresh the token first. Skip to avoid pointless reconnect.
+    if _is_auth_rejected():
         return
     # Check if spot tick is stale (v13.10: tightened from 5min to 3min)
     with _tick_lock:
