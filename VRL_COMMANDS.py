@@ -415,6 +415,30 @@ def _cmd_status(args):
             _need = 0
         _be2_line = ("BE+2   : INACTIVE (peak +" + str(round(peak, 1))
                      + ", need +10)\n")
+    # v15.2.5: velocity + peak_history for /status
+    _vel = round(float(st.get("current_velocity", 0) or 0), 2)
+    _ph  = (st.get("peak_history") or [])[-4:]
+    _vel_sign = "+" if _vel >= 0 else ""
+    if _vel > 1:
+        _vel_tag = "GROWING"
+    elif _vel > 0:
+        _vel_tag = "SLOWING"
+    elif _vel == 0:
+        _vel_tag = "FLAT ⚠️"
+    else:
+        _vel_tag = "DYING ⚠️"
+    _vel_line = ("Vel    : " + _vel_sign + str(_vel) + " pts/candle (" + _vel_tag + ")\n"
+                 + "Peaks  : " + str(_ph) + "\n")
+
+    # Effective stop = max(ema9_low, be2_level if armed)
+    _ema9l = round(float(st.get("current_ema9_low", 0) or 0), 2)
+    _stop_label = "EMA9-low"
+    _effective_stop = _ema9l
+    if st.get("be2_active") and float(st.get("be2_level", 0) or 0) > _ema9l:
+        _effective_stop = round(float(st.get("be2_level", 0)), 2)
+        _stop_label = "BE+2 🔒"
+    _stop_dist_v = round(ltp - _effective_stop, 1) if ltp > 0 and _effective_stop > 0 else "—"
+
     _tg_send(
         "📊 <b>STATUS — IN TRADE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -426,8 +450,11 @@ def _cmd_status(args):
         "LTP    : " + str(round(ltp, 2)) + "\n"
         "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + _rs(pnl) + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
-        "Stop   : ₹" + str(round(sl_val, 2)) + "  (" + str(sl_dist) + "pts away)\n"
-        + _be2_line +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Stop   : " + _stop_label + " ₹" + str(round(_effective_stop, 2))
+        + "  (" + str(_stop_dist_v) + "pts away)\n"
+        "Trail  : EMA9-low ₹" + str(_ema9l) + "\n"
+        + _be2_line + _vel_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
         "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"
