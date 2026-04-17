@@ -479,6 +479,54 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
     return round(entry_price - hard_sl, 2)
 
 
+# ═══════════════════════════════════════════════════════════════
+#  v15.2.5 Batch 3 BUG-R1 — Shadow-mode pure functions.
+#  These NEVER mutate state, NEVER call exit functions, NEVER
+#  touch production SL fields. They compute hypothetical values
+#  for the shadow CSV logger to record. Analysis only.
+# ═══════════════════════════════════════════════════════════════
+
+def compute_ratchet_sl(entry_price: float, peak_pnl: float,
+                       direction: str) -> tuple:
+    """Returns (sl_price, tier_label). sl_price=0 if no tier crossed.
+    Pure function — no side effects."""
+    if peak_pnl >= 45:
+        lock, tier = 40, "T5"
+    elif peak_pnl >= 35:
+        lock, tier = 25, "T4"
+    elif peak_pnl >= 25:
+        lock, tier = 15, "T3"
+    elif peak_pnl >= 15:
+        lock, tier = 7, "T2"
+    elif peak_pnl >= 10:
+        lock, tier = 2, "T1"
+    else:
+        return 0.0, "None"
+    return round(entry_price + lock, 2), tier
+
+
+def compute_1min_ema9_break(option_token: int, running_pnl: float,
+                             min_pnl_guard: float = 5.0) -> tuple:
+    """Returns (would_break, close_price, ema9_1m).
+    Checks last CLOSED 1-min candle: red + close < EMA9 + in profit.
+    Pure function — no side effects. Returns (False, 0, 0) on error."""
+    try:
+        df = D.get_historical_data(int(option_token), "minute", 15)
+        if df is None or df.empty or len(df) < 10:
+            return False, 0.0, 0.0
+        df = D.add_indicators(df)
+        last = df.iloc[-2]
+        ema9 = float(last.get("EMA_9", last["close"]))
+        close = float(last["close"])
+        is_red = close < float(last["open"])
+        below_ema = close < ema9
+        pnl_ok = running_pnl >= min_pnl_guard
+        return bool(is_red and below_ema and pnl_ok), round(close, 2), round(ema9, 2)
+    except Exception as e:
+        logger.debug("[ENGINE] 1m EMA9 break calc error: " + str(e))
+        return False, 0.0, 0.0
+
+
 def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     if state.get("profit_locked"):
         return False
