@@ -101,7 +101,10 @@ DEFAULT_STATE = {
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
     "alert_history"      : {},   # key -> ISO timestamp
-    # v15.1 BE+2 lock
+    # v16.0 ratchet state
+    "active_ratchet_tier": "",
+    "active_ratchet_sl"  : 0.0,
+    # v15.1 BE+2 lock (legacy, kept for state compat)
     "be2_active"         : False,
     "be2_level"          : 0.0,
     "score_at_entry"     : 0,
@@ -745,11 +748,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web    : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🤖 <b>VISHAL RAJPUT TRADE v15.2</b>\n"
+        "🤖 <b>VISHAL RAJPUT TRADE v16.0</b>\n"
         + _mode_tag() + " | EMA9 Band Breakout (3-min option candles)\n"
         "ENTRY: close &gt; EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
-        "EXIT: EMA9-low break | BE+2 after peak 10 | Emergency -20 | Stale 5c | EOD 15:30\n"
-        "2 lots fixed | No entry 9:15-9:45 or after 15:10\n"
+        "EXIT: Ratchet 5-tier | 1m EMA9 break | Velocity stall | Emergency -20 | EOD 15:30\n"
+        "2 lots fixed | No entry 9:15-9:30 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1490,10 +1493,10 @@ def _log_shadow_exit_tick(st: dict, option_ltp: float, now: datetime):
     would_ema1m   = 1 if ema1m_break else 0
     would_ema9low = 1 if (ema9l_3m > 0 and option_ltp <= ema9l_3m) else 0
 
-    # Actual SL the bot is using right now
-    actual_sl = float(st.get("current_ema9_low", 0) or 0)
-    if st.get("be2_active") and float(st.get("be2_level", 0) or 0) > actual_sl:
-        actual_sl = float(st.get("be2_level", 0))
+    # Actual SL the bot is using right now (ratchet takes priority)
+    actual_sl = float(st.get("active_ratchet_sl", 0) or 0)
+    if actual_sl <= 0:
+        actual_sl = float(st.get("current_ema9_low", 0) or 0)
 
     row = {
         "timestamp":              now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1958,21 +1961,22 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             entry = st.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            # v15.2: single dynamic stop = current EMA9-low (or BE+2 if armed)
-            _stop_price = round(st.get("current_ema9_low", 0), 2)
-            if _stop_price <= 0:
-                _stop_price = round(entry - 12, 2)  # fallback before band warms up
-            _stop_type = "EMA9_LOW"
-            if st.get("be2_active") and st.get("be2_level", 0) > _stop_price:
-                _stop_price = round(st.get("be2_level", 0), 2)
-                _stop_type = "BE+2"
+            # v16.0: stop = ratchet SL if armed, else EMA9-low band
+            _ratchet_sl = float(st.get("active_ratchet_sl", 0) or 0)
+            if _ratchet_sl > 0:
+                _stop_price = round(_ratchet_sl, 2)
+                _stop_type = "RATCHET_" + str(st.get("active_ratchet_tier", ""))
+            else:
+                _stop_price = round(st.get("current_ema9_low", 0), 2)
+                if _stop_price <= 0:
+                    _stop_price = round(entry - 12, 2)
+                _stop_type = "EMA9_LOW"
 
             lot1 = {"status": "active", "pnl": running,
                     "sl": _stop_price, "sl_type": _stop_type}
             lot2 = {"status": "active", "pnl": running,
                     "sl": _stop_price, "sl_type": _stop_type}
 
-            _be2_thresh = CFG.exit_ema9_band("breakeven_lock_peak_threshold", 10)
             position = {
                 "in_trade": True,
                 "symbol": st.get("symbol", ""),
@@ -1986,16 +1990,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "candles": st.get("candles_held", 0),
                 "strike": st.get("strike", 0),
                 "entry_mode": st.get("entry_mode", ""),
-                # v15.0 band trail
+                # v16.0 band context (display only)
                 "current_ema9_high": round(st.get("current_ema9_high", 0), 2),
                 "current_ema9_low":  round(st.get("current_ema9_low", 0), 2),
-                "stop": round(st.get("current_ema9_low", 0), 2),
-                "stop_dist": round(opt_ltp - st.get("current_ema9_low", 0), 2)
-                              if opt_ltp > 0 and st.get("current_ema9_low", 0) > 0 else 0,
-                # v15.1 BE+2 lock
-                "be2_active":    bool(st.get("be2_active", False)),
-                "be2_level":     round(st.get("be2_level", 0), 2),
-                "be2_threshold": _be2_thresh,
+                "stop": _stop_price,
+                "stop_dist": round(opt_ltp - _stop_price, 2)
+                              if opt_ltp > 0 and _stop_price > 0 else 0,
+                # v16.0 ratchet state
+                "active_ratchet_tier": st.get("active_ratchet_tier", ""),
+                "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
                 # v15.2 entry context (replayed at exit on dashboard)
                 "entry_straddle_delta":     st.get("entry_straddle_delta", 0),
                 "entry_straddle_threshold": st.get("entry_straddle_threshold", 0),

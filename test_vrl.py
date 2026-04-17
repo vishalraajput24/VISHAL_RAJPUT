@@ -196,10 +196,10 @@ test("4. test_weak_body_blocked",
      r["fired"] is False and "weak_body" in r.get("reject_reason", ""),
      "reject=" + r.get("reject_reason", ""))
 
-# 5. Warmup window (market_open=True, time 09:30) → BLOCKED
-r = _run_entry(hour=9, minute=30, market_open=True)
+# 5. Warmup window (market_open=True, time 09:20) → BLOCKED
+r = _run_entry(hour=9, minute=20, market_open=True)
 test("5. test_warmup_blocked",
-     r["fired"] is False and "before_09:45" in r.get("reject_reason", ""),
+     r["fired"] is False and "before_09:30" in r.get("reject_reason", ""),
      "reject=" + r.get("reject_reason", ""))
 
 # 6. After cutoff (market_open=True, time 15:20) → BLOCKED
@@ -329,33 +329,29 @@ test("16. test_stale_exit",
      len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY",
      "got " + str(ex))
 
-# 17. EMA9_LOW_BREAK — last close < ema9_low. peak=4 keeps BE+2 dormant.
-_df_break = _make_opt_3m(last_close=94.0, last_open=95.0, last_high=96.0,
-                         last_low=93.5, ema9_high=100.0, ema9_low=95.5)
-with patch.object(D, "get_historical_data", return_value=_df_break), \
-     patch.object(D, "add_indicators", side_effect=lambda x: x):
-    st = _make_state(entry=100, peak=4, candles=3)
-    ex = E.manage_exit(st, 94, {})
-test("17. test_ema9_low_break",
-     len(ex) == 1 and ex[0]["reason"] == "EMA9_LOW_BREAK",
+# 17. PROFIT_RATCHET — peak=15 → T2 lock at entry+7, ltp below lock → exit
+with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
+    st = _make_state(entry=100, peak=15, candles=3)
+    ex = E.manage_exit(st, 106, {})
+test("17. test_profit_ratchet_exit",
+     len(ex) == 1 and ex[0]["reason"] == "PROFIT_RATCHET",
      "got " + str(ex))
 
-# 18. BE+2 arms at peak 10 → SL = entry + 2. Hold at ltp 108 (above lock).
+# 18. PROFIT_RATCHET — peak=10 → T1 lock at entry+2, ltp above lock → hold
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=10, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("18. test_be2_at_peak_10",
-     st.get("be2_active") is True and st.get("be2_level") == 102 and len(ex) == 0,
-     "be2_active=" + str(st.get("be2_active")) + " level=" + str(st.get("be2_level"))
-     + " ex=" + str(ex))
+test("18. test_ratchet_t1_hold",
+     len(ex) == 0 and st.get("active_ratchet_tier") == "T1",
+     "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
-# 19. BE+2 does NOT arm at peak 9 → no lock, no exit
+# 19. PROFIT_RATCHET — peak=9 → no tier armed, no exit
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=9, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("19. test_be2_not_at_peak_9",
-     st.get("be2_active") is False and len(ex) == 0,
-     "be2_active=" + str(st.get("be2_active")) + " ex=" + str(ex))
+test("19. test_ratchet_no_tier_at_peak_9",
+     st.get("active_ratchet_tier") == "None" and len(ex) == 0,
+     "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -371,9 +367,9 @@ test("20. test_validate_entry_mode_accepted",
      "EMA9_BREAKOUT" in VALID_ENTRY_MODES and "FAST" in LEGACY_MODES,
      "valid=" + str(VALID_ENTRY_MODES) + " legacy=" + str(LEGACY_MODES))
 
-# 21. All 6 v15.2 exit reasons accepted
-_expected = ("EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
-             "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT")
+# 21. All v16.0 exit reasons accepted (6 live + historical)
+_expected = ("EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
+             "VELOCITY_STALL", "EMA1M_BREAK", "PROFIT_RATCHET")
 _missing = [r for r in _expected if r not in VALID_EXIT_REASONS]
 test("21. test_validate_exit_reason_accepted",
      len(_missing) == 0,
@@ -463,16 +459,15 @@ test("26. test_version_is_v15_2_family",
 # 27. Config uses nested entry:/exit: structure and has BE+2=10
 import yaml
 _cfg_parsed = yaml.safe_load(_cfg_src)
-_be2 = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("breakeven_lock_peak_threshold")
-# v15.2.5 Fix 5 renamed straddle_expansion → straddle_display (display only)
+_vs = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("velocity_stall_enabled")
 _filters_block = _cfg_parsed.get("entry", {}).get("filters", {})
 _has_straddle  = (_filters_block.get("straddle_display", {}).get("enabled")
                   or _filters_block.get("straddle_expansion", {}).get("enabled"))
 _has_vwap = (_cfg_parsed.get("entry", {}).get("filters", {})
              .get("vwap_bonus", {}).get("enabled"))
-test("27. test_config_v15_2_structure",
-     _be2 == 10 and _has_straddle is True and _has_vwap is True,
-     "be2=" + str(_be2) + " straddle=" + str(_has_straddle)
+test("27. test_config_v16_structure",
+     _vs is True and _has_straddle is True and _has_vwap is True,
+     "vs=" + str(_vs) + " straddle=" + str(_has_straddle)
      + " vwap=" + str(_has_vwap))
 
 # 28. Deleted config keys are actually gone

@@ -31,11 +31,11 @@ LEGACY_MODES = (
 
 # v15.2 — exit reasons accepted for live + historical trades
 VALID_EXIT_REASONS = (
-    # v15.2 primary exits
-    "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
+    # v16.0 primary exits
     "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
-    # v15.2.5: velocity-based primary exit (catches momentum death)
-    "VELOCITY_STALL",
+    "VELOCITY_STALL", "EMA1M_BREAK", "PROFIT_RATCHET",
+    # v15.x historical (kept for back-compat with old trade log rows)
+    "EMA9_LOW_BREAK", "BREAKEVEN_LOCK", "TRAIL_FLOOR",
     # safety / manual
     "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
     # historical (kept for back-compat with old trade log rows)

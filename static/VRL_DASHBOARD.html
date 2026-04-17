@@ -250,22 +250,21 @@ if(pos.in_trade){
   pa+='<div class="lt"><div class="ll">Lot 1 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
   pa+='<div class="lt"><div class="ll">Lot 2 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
   pa+='</div>';
-  // v15.2: dynamic EMA9-low trailing stop + BE+2 lock display
+  // v16.0: Profit Ratchet tier display + EMA9 band context
   var _cur_el=parseFloat(pos.current_ema9_low||0);
   var _cur_eh=parseFloat(pos.current_ema9_high||0);
-  var _dist_stop=_cur_el>0?(ltp-_cur_el):0;
-  var _be2_thresh=parseInt(pos.be2_threshold||10);
-  var _be2_active=!!pos.be2_active||(pk>=_be2_thresh);
-  var _be2_level=parseFloat(pos.be2_level||0)||(entry+2);
-  pa+='<div class="rb"><div class="rl"><span>Stop: EMA9-low \u20B9'+_cur_el.toFixed(1)+' ('+(_dist_stop>=0?'+':'')+_dist_stop.toFixed(1)+'pts away)</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
+  var _ratchet_tier=pos.active_ratchet_tier||'';
+  var _ratchet_sl=parseFloat(pos.active_ratchet_sl||0);
+  var _dist_rsl=_ratchet_sl>0?(ltp-_ratchet_sl):0;
+  pa+='<div class="rb"><div class="rl"><span>EMA9 band \u20B9'+_cur_el.toFixed(1)+' — \u20B9'+_cur_eh.toFixed(1)+'</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
   var _band_range=Math.max(1,_cur_eh-_cur_el);
   var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
   pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
-  // BE+2 badge — peak ≥ 10 (v15.2)
-  if(_be2_active){
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--gn-bg);border:1px solid var(--gn-bd);color:var(--gn2);font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 BE+2 ACTIVE @ \u20B9'+_be2_level.toFixed(1)+' (locks if reverses)</div>';
+  // Ratchet badge (v16.0)
+  if(_ratchet_tier){
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--gn-bg);border:1px solid var(--gn-bd);color:var(--gn2);font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 RATCHET '+esc(_ratchet_tier)+' @ \u20B9'+_ratchet_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
   }else{
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">BE+2 INACTIVE (peak '+fmt(pk)+', need +'+_be2_thresh+')</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">RATCHET INACTIVE (peak '+fmt(pk)+', need +10)</div>';
   }
   // v15.2: replay the straddle Δ + VWAP that fired this entry
   var _esd=pos.entry_straddle_delta;

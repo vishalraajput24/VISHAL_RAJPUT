@@ -1,26 +1,27 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v15.2
-#  EMA9 Band Breakout + Tiered Straddle Filter + VWAP Display.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.0
+#  EMA9 Band Breakout + Ratchet Exit + 1-min EMA9 Break.
 #
 #  ENTRY (7 hard gates, all must pass + VWAP bonus shown but never blocks):
-#    1. Time window 9:45 – 15:10 IST
+#    1. Time window 9:30 – 15:10 IST
 #    2. Cooldown 5min same direction
 #    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
 #    4. Green candle
 #    5. Body ≥ 30% of range
 #    6. Band width ≥ 8 pts (chop filter)
 #    7. Tiered straddle Δ (v15.2):
-#         Open  9:45-10:30  Δ ≥ +1
+#         Open  9:30-10:30  Δ ≥ +1
 #         Mid  10:30-14:00  Δ ≥ +5
 #         Close 14:00-15:10 Δ ≥ +3
 #    BONUS: VWAP confluence (display only, never blocks)
 #
-#  EXIT (5-rule priority chain):
+#  EXIT (6-rule priority chain, v16.0):
 #    1. EMERGENCY_SL    pnl ≤ -20
 #    2. EOD_EXIT        15:30 IST
 #    3. STALE_ENTRY     5 candles + peak < 3
-#    4. BREAKEVEN_LOCK  after peak ≥ 10, lock at entry+2 (v15.2)
-#    5. EMA9_LOW_BREAK  last 3m close < ema9_low (primary trail)
+#    4. VELOCITY_STALL  2 consecutive no-growth windows
+#    5. EMA1M_BREAK     1-min red + close < 1m EMA9 + pnl ≥ 5
+#    6. PROFIT_RATCHET  5-tier lock based on peak
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -98,7 +99,7 @@ def loss_streak_gate(state: dict) -> bool:
 #  v15.0 ENTRY — Dual EMA9 Band Breakout
 #
 #  Five gates (all must pass):
-#    1. Time window: 9:45 ≤ now < 15:10
+#    1. Time window: 9:30 ≤ now < 15:10
 #    2. Cooldown: 5 min same direction
 #    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
 #    4. Green candle: close > open
@@ -132,7 +133,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
     try:
         body_min       = CFG.entry_ema9_band("body_pct_min", 30)
         cd_min         = CFG.entry_ema9_band("cooldown_minutes", 5)   # back-compat alias
-        warmup_until   = CFG.entry_ema9_band("warmup_until", "09:45")
+        warmup_until   = CFG.entry_ema9_band("warmup_until", "09:30")
         cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
         min_band_width = CFG.entry_ema9_band("min_band_width_pts", 8)
 
@@ -179,7 +180,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             "band_width": band_width,
         })
 
-        # ── GATE 1: Time window 9:45 — 15:10 ──
+        # ── GATE 1: Time window 9:30 — 15:10 ──
         # Only enforced when market is actually open (so tests at night pass)
         if D.is_market_open():
             now = datetime.now()
@@ -574,21 +575,23 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v15.2.5 EXIT — Single dynamic system with velocity stall
+#  v16.0 EXIT CHAIN — 6 rules, priority order
 #
-#  Priority order (first match wins, no fallthrough):
-#    1. EMERGENCY_SL    → pnl ≤ -20
-#    2. EOD_EXIT        → time ≥ 15:30
-#    3. STALE_ENTRY     → 5 candles held AND peak < 3
-#    4. VELOCITY_STALL  → 2 consecutive candles peak didn't grow (NEW v15.2.5)
-#    5. EMA9_LOW_BREAK  → last closed 3m candle close < ema9_low
-#    6. BREAKEVEN_LOCK  → peak >= 10 AND ltp ≤ entry+2  (moved below band-break)
+#    1. EMERGENCY_SL     → pnl ≤ -20
+#    2. EOD_EXIT         → time ≥ 15:30
+#    3. STALE_ENTRY      → 5 candles held AND peak < 3
+#    4. VELOCITY_STALL   → 2 consecutive 3-candle windows no growth
+#    5. EMA1M_BREAK      → 1-min red + close < 1m EMA9 + pnl ≥ 5
+#    6. PROFIT_RATCHET   → 5-tier lock based on peak
+#
+#  EMA9_LOW_BREAK removed — too slow (−84% capture in backtest).
+#  BREAKEVEN_LOCK removed — redundant with Ratchet T1 (both +2 at peak≥10).
 # ═══════════════════════════════════════════════════════════════
 
 def manage_exit(state: dict, option_ltp: float, profile: dict,
                 other_token: int = 0) -> list:
-    """v15.2.5: Single dynamic exit system with velocity stall.
-    Band IS the stop; velocity catches momentum death before price reversal."""
+    """v16.0: 6-rule exit chain. Ratchet + 1-min EMA9 break replace
+    EMA9_LOW_BREAK and BREAKEVEN_LOCK."""
     if not state.get("in_trade"):
         return []
 
@@ -601,15 +604,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
 
     candles = state.get("candles_held", 0)
 
-    emergency_sl       = CFG.exit_ema9_band("emergency_sl_pts", -20)
-    stale_candles      = CFG.exit_ema9_band("stale_candles", 5)
-    stale_peak_max     = CFG.exit_ema9_band("stale_peak_max", 3)
-    eod_time           = CFG.exit_ema9_band("eod_exit_time", "15:30")
-    be2_peak_threshold = CFG.exit_ema9_band("breakeven_lock_peak_threshold", 10)
-    be2_offset         = CFG.exit_ema9_band("breakeven_lock_offset", 2)
-    vs_enabled         = bool(CFG.exit_ema9_band("velocity_stall_enabled", True))
-    vs_consec          = int(CFG.exit_ema9_band("velocity_stall_consecutive", 2))
-    vs_min_peak        = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
+    emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -20)
+    stale_candles = CFG.exit_ema9_band("stale_candles", 5)
+    stale_peak_max= CFG.exit_ema9_band("stale_peak_max", 3)
+    eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:30")
+    vs_enabled    = bool(CFG.exit_ema9_band("velocity_stall_enabled", True))
+    vs_min_peak   = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
 
     # ── RULE 1: EMERGENCY catastrophic ──
     if pnl <= emergency_sl:
@@ -630,46 +630,29 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.info("[ENGINE] STALE_ENTRY " + str(candles) + "c peak=" + str(peak))
         return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
 
-    # ── Fetch 3-min bars once (shared by peak_history update + EMA9_LOW_BREAK) ──
+    # ── Fetch 3-min bars once (for peak_history + band display) ──
     token = state.get("token")
     last_candle_ts = ""
-    last_close = None
-    last_ema9_low = None
-    last_ema9_high = None
-    # v15.2.5 BUG-J: on first manage_exit call after a restart-with-open-trade,
-    # peak_history can be empty (pre-v15.2.5 state.json or a state.alert_history
-    # clobber). VELOCITY_STALL needs 5+ slots to fire, so without backfill
-    # we'd be blind to momentum death for 5 × 3-min = 15 minutes AFTER a
-    # restart — exactly the window we most need the guard. Seed the history
-    # from today's closed 3-min bars once per trade.
     opt_3m_full = None
     try:
         opt_3m_full = D.get_option_3min(token, lookback=10)
         if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
             last = opt_3m_full.iloc[-2]
-            last_close     = float(last["close"])
-            last_ema9_low  = float(last.get("ema9_low", 0))
-            last_ema9_high = float(last.get("ema9_high", 0))
             last_candle_ts = str(last.name) if hasattr(last, "name") else str(last.get("timestamp", ""))
-            # Keep current band in state so dashboard + /status can read it.
-            state["current_ema9_high"] = round(last_ema9_high, 2)
-            state["current_ema9_low"]  = round(last_ema9_low, 2)
-            state["current_floor"]     = round(last_ema9_low, 2)  # legacy compat
+            # Keep current band in state for dashboard display (entry trigger, not exit)
+            state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
+            state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
     except Exception as e:
         logger.warning("[ENGINE] band fetch error: " + str(e))
 
-    # ── v15.2.5 BUG-J: one-shot peak_history backfill on startup-with-trade ──
+    # ── BUG-J: one-shot peak_history backfill on startup-with-trade ──
     if (not state.get("_peak_history_backfilled")
             and not state.get("peak_history")
             and opt_3m_full is not None
             and not opt_3m_full.empty
             and entry > 0):
         try:
-            # Build peak per closed 3-min candle since entry. Use each
-            # bar's HIGH (max intra-bar excursion) — close-only would
-            # understate the peak the live run would have seen and
-            # create false all-zero history on losing trades.
-            closed = opt_3m_full.iloc[:-1]            # drop live in-progress bar
+            closed = opt_3m_full.iloc[:-1]
             recent = closed.tail(6)
             running = 0.0
             seeded  = []
@@ -679,13 +662,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
                 if _p > running:
                     running = _p
                 seeded.append(round(running, 2))
-
-            # Skip seeding when the trade NEVER reached the min-peak
-            # threshold that VELOCITY_STALL cares about — an all-zeros
-            # or all-sub-threshold history would otherwise trigger
-            # spurious VELOCITY_STALL exits on a losing-trade restart.
-            # STALE_ENTRY (5 candles + peak<3) already covers the
-            # never-in-profit case; no need for velocity logic there.
             vs_min_peak_for_seed = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
             if seeded and max(seeded) >= vs_min_peak_for_seed:
                 state["peak_history"] = seeded
@@ -693,29 +669,20 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
                 state["last_peak_candle_ts"] = last_seed_ts
                 state["_peak_history_backfilled"] = True
                 logger.info("[ENGINE] peak_history backfilled from "
-                            + str(len(seeded)) + " bars: " + str(seeded)
-                            + " (entry=" + str(round(float(entry), 2)) + ")")
+                            + str(len(seeded)) + " bars: " + str(seeded))
             elif seeded:
-                # Still mark sentinel so we don't re-attempt every tick,
-                # but leave peak_history empty — VELOCITY_STALL stays dormant.
                 state["_peak_history_backfilled"] = True
-                logger.info("[ENGINE] peak_history backfill SKIPPED — max peak "
-                            + str(max(seeded) if seeded else 0)
-                            + " < vs_min_peak " + str(vs_min_peak_for_seed)
-                            + " (trade never reached stall threshold)")
         except Exception as _bf:
             logger.warning("[ENGINE] peak_history backfill error: " + str(_bf))
 
-    # ── v15.2.5: Update peak_history once per NEW 3-min candle ──
-    # Dedupe by candle timestamp so we don't append on every tick.
+    # ── Update peak_history once per NEW 3-min candle ──
     if last_candle_ts and state.get("last_peak_candle_ts") != last_candle_ts:
         ph = list(state.get("peak_history") or [])
         ph.append(round(peak, 2))
-        ph = ph[-6:]                               # keep last 6 candles
+        ph = ph[-6:]
         state["peak_history"] = ph
         state["last_peak_candle_ts"] = last_candle_ts
     ph = list(state.get("peak_history") or [])
-    # Dashboard/status velocity = 3-candle rolling average (smooth)
     if len(ph) >= 4:
         state["current_velocity"] = round((ph[-1] - ph[-4]) / 3.0, 2)
     elif len(ph) >= 2:
@@ -723,11 +690,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     else:
         state["current_velocity"] = 0.0
 
-    # ── RULE 4 (v15.2.5): VELOCITY_STALL — 3-candle-avg velocity ≤ 0 for 2 windows ──
-    # velocity = (ph[-1] - ph[-4]) / 3        # pts per candle over last 3 candles
-    # prev_velocity = (ph[-2] - ph[-5]) / 3   # same but one candle earlier
-    # If BOTH <= 0 and peak >= vs_min_peak → momentum died, exit.
-    # Needs len(ph) >= 5 so both velocity windows are defined.
+    # ── RULE 4: VELOCITY_STALL — 3-candle-avg velocity ≤ 0 for 2 windows ──
     if vs_enabled and len(ph) >= 5 and peak >= vs_min_peak:
         velocity      = (ph[-1] - ph[-4]) / 3.0
         prev_velocity = (ph[-2] - ph[-5]) / 3.0
@@ -737,33 +700,31 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
                         + str(ph[-5:])
                         + " v=" + "{:+.2f}".format(velocity)
                         + " prev_v=" + "{:+.2f}".format(prev_velocity)
-                        + " peak=" + str(round(peak, 1))
-                        + " → exit")
+                        + " peak=" + str(round(peak, 1)) + " → exit")
             return [{"lot_id": "ALL", "reason": "VELOCITY_STALL", "price": option_ltp}]
 
-    # ── RULE 5: EMA9_LOW_BREAK — the dynamic trailing stop ──
-    # Uses the bars we already fetched above. Only act once per closed candle.
-    if last_close is not None and last_ema9_low is not None and last_candle_ts:
-        if state.get("last_band_check_ts") != last_candle_ts:
-            state["last_band_check_ts"] = last_candle_ts
-            if last_ema9_low > 0 and last_close < last_ema9_low:
-                logger.info("[ENGINE] EMA9_LOW_BREAK close=" + str(round(last_close, 1))
-                            + " < ema9l=" + str(round(last_ema9_low, 1)))
-                return [{"lot_id": "ALL", "reason": "EMA9_LOW_BREAK", "price": option_ltp}]
+    # ── RULE 5: EMA1M_BREAK — 1-min red + close < 1m EMA9 + in profit ──
+    running_pnl = round(option_ltp - entry, 2)
+    would_break, ema1m_close, ema1m_ema9 = compute_1min_ema9_break(
+        option_token=int(token) if token else 0,
+        running_pnl=running_pnl, min_pnl_guard=5.0)
+    if would_break:
+        logger.info("[ENGINE] EMA1M_BREAK close=" + str(ema1m_close)
+                    + " ema9_1m=" + str(ema1m_ema9)
+                    + " pnl=" + str(running_pnl))
+        return [{"lot_id": "ALL", "reason": "EMA1M_BREAK", "price": option_ltp}]
 
-    # ── RULE 6: BREAKEVEN_LOCK — peak ≥ 10, lock at entry+offset ──
-    # Runs AFTER band-break and velocity so those fire first on momentum death.
-    if peak >= be2_peak_threshold:
-        be2_level = round(entry + be2_offset, 2)
-        state["be2_active"] = True
-        state["be2_level"]  = be2_level
-        if option_ltp <= be2_level:
-            logger.info("[ENGINE] BREAKEVEN_LOCK hit: peak=" + str(round(peak, 1))
-                        + " ltp=" + str(round(option_ltp, 2))
-                        + " <= lock=" + str(be2_level))
-            return [{"lot_id": "ALL", "reason": "BREAKEVEN_LOCK", "price": be2_level}]
-    else:
-        state["be2_active"] = False
+    # ── RULE 6: PROFIT_RATCHET — 5-tier lock based on peak ──
+    ratchet_sl, ratchet_tier = compute_ratchet_sl(entry, peak,
+                                                   state.get("direction", ""))
+    state["active_ratchet_tier"] = ratchet_tier
+    state["active_ratchet_sl"]   = ratchet_sl
+    if ratchet_sl > 0 and option_ltp <= ratchet_sl:
+        logger.info("[ENGINE] PROFIT_RATCHET tier=" + ratchet_tier
+                    + " peak=" + str(round(peak, 1))
+                    + " lock=+" + str(round(ratchet_sl - entry, 1))
+                    + " sl=" + str(ratchet_sl))
+        return [{"lot_id": "ALL", "reason": "PROFIT_RATCHET", "price": ratchet_sl}]
 
     return []
 

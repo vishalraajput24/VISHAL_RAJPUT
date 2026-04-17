@@ -143,7 +143,9 @@ STATE_PERSIST_FIELDS = [
     "_last_cleanup_date",
     # v15.2.5 pre-entry alert toggle + rate-limit history
     "pre_entry_alerts_enabled", "alert_history",
-    # v15.1 BE+2 lock
+    # v16.0 ratchet state
+    "active_ratchet_tier", "active_ratchet_sl",
+    # v15.1 BE+2 lock (legacy)
     "be2_active", "be2_level",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
@@ -1951,7 +1953,7 @@ def is_expiry_window(now: datetime = None) -> bool:
 # ═══════════════════════════════════════════════════════════════
 #  v12.15: WARNING SYSTEM (all warnings only — no blocking)
 #  Bias 9:20 | Straddle 9:30 | VIX+Hourly RSI continuous
-#  Entry fire: 9:45-15:10 | Scan from 9:15
+#  Entry fire: 9:30-15:10 | Scan from 9:15
 # ═══════════════════════════════════════════════════════════════
 
 VIX_WARN_LEVEL    = 22

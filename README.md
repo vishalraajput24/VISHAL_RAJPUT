@@ -5,7 +5,7 @@ Algorithmic Nifty 50 options trading bot. Paper mode. Zerodha Kite API.
 ## Strategy: EMA9 Band Breakout (3-min option candles)
 
 ### Entry (6 hard gates, all must pass)
-1. **Time window** 09:45–15:10 IST
+1. **Time window** 09:30–15:10 IST
 2. **Cooldown** 5 min same direction after exit
 3. **Fresh breakout** close > EMA9-high (3-candle lookback)
 4. **Green candle** close > open
@@ -16,17 +16,16 @@ Algorithmic Nifty 50 options trading bot. Paper mode. Zerodha Kite API.
 - **Straddle Δ** — STRONG / NEUTRAL / WEAK / NA
 - **VWAP confluence** — spot vs session VWAP
 
-### Exit chain (priority order)
+### Exit chain (6 rules, priority order)
 1. `EMERGENCY_SL` — pnl ≤ −20 pts
 2. `EOD_EXIT` — 15:30 IST
 3. `STALE_ENTRY` — 5 candles + peak < 3
 4. `VELOCITY_STALL` — 2 consecutive windows no peak growth
-5. `EMA9_LOW_BREAK` — 3-min close < EMA9-low (dynamic trail)
-6. `BREAKEVEN_LOCK` — peak ≥ 10 → SL locks at entry + 2
+5. `EMA1M_BREAK` — 1-min red + close < 1m EMA9 + pnl ≥ 5
+6. `PROFIT_RATCHET` — 5-tier lock (peak ≥10→+2, ≥15→+7, ≥25→+15, ≥35→+25, ≥45→+40)
 
-### Shadow mode (data collection, no live exits)
-- **Profit ratchet** (5 tiers: +10/+15/+25/+35/+45)
-- **1-min EMA9 break** detector
+### Shadow mode (data collection)
+- **1-min A/B strategy** — silent comparison of 1-min vs 3-min EMA9
 - Per-tick CSV + per-trade summary + EOD Telegram comparison
 
 ## Architecture

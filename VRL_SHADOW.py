@@ -207,7 +207,7 @@ def _scan_side(option_type: str, token: int, atm_strike: int,
 
         # Gate 1: market-open time window (only enforced when market open)
         if D.is_market_open():
-            warmup = CFG.entry_ema9_band("warmup_until", "09:45")
+            warmup = CFG.entry_ema9_band("warmup_until", "09:30")
             cutoff = CFG.entry_ema9_band("cutoff_after", "15:10")
             mins = now.hour * 60 + now.minute
             wh, wm = warmup.split(":")

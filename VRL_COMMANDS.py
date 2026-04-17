@@ -326,8 +326,8 @@ def _cmd_help(args):
         + ("PAPER" if D.PAPER_MODE else "LIVE")
         + " | v16.0 EMA9 Band Breakout (3-min)\n"
         + "Entry: close > EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
-        + "Exit: EMA9-low break | BE+2 peak 10 | Emergency -20 | Stale 5c | EOD 15:30\n"
-        + "2 lots fixed | No entry 9:15-9:45 or after 15:10\n"
+        + "Exit: Ratchet 5-tier | 1m EMA9 break | Velocity stall | Emergency -20 | EOD 15:30\n"
+        + "2 lots fixed | No entry before 9:30 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
