@@ -336,49 +336,49 @@ def init_db():
 
         if _schema_v < 15:
             for _tbl, _col, _typ in [
-            ("option_3min",  "ema9_high",       "REAL DEFAULT 0"),
-            ("option_3min",  "ema9_low",        "REAL DEFAULT 0"),
-            ("signal_scans", "ema9_high",       "REAL DEFAULT 0"),
-            ("signal_scans", "ema9_low",        "REAL DEFAULT 0"),
-            ("signal_scans", "band_position",   "TEXT DEFAULT ''"),
-            ("signal_scans", "body_pct",        "REAL DEFAULT 0"),
-            # v15.2 — straddle filter columns
-            ("signal_scans", "straddle_delta",     "REAL DEFAULT 0"),
-            ("signal_scans", "straddle_threshold", "REAL DEFAULT 0"),
-            ("signal_scans", "straddle_period",    "TEXT DEFAULT ''"),
-            ("signal_scans", "atm_strike_used",    "INTEGER DEFAULT 0"),
-            ("signal_scans", "band_width",         "REAL DEFAULT 0"),
-            # v15.2 — VWAP bonus columns
-            ("signal_scans", "spot_vwap",     "REAL DEFAULT 0"),
-            ("signal_scans", "spot_vs_vwap",  "REAL DEFAULT 0"),
-            ("signal_scans", "vwap_bonus",    "TEXT DEFAULT ''"),
-            # BUG-N3 v15.2.5: distinguishes "signal passed all gates"
-            # (fired=1) from "trade was actually opened" (trade_taken=1).
-            ("signal_scans", "trade_taken",   "INTEGER DEFAULT 0"),
-            ("trades",       "entry_ema9_high", "REAL DEFAULT 0"),
-            ("trades",       "entry_ema9_low",  "REAL DEFAULT 0"),
-            ("trades",       "exit_ema9_high",  "REAL DEFAULT 0"),
-            ("trades",       "exit_ema9_low",   "REAL DEFAULT 0"),
-            ("trades",       "entry_band_position", "TEXT DEFAULT ''"),
-            ("trades",       "exit_band_position",  "TEXT DEFAULT ''"),
-            ("trades",       "entry_body_pct",  "REAL DEFAULT 0"),
-            # v15.2 — straddle/VWAP captured at entry (replayed at exit)
-            ("trades",       "entry_straddle_delta",     "REAL DEFAULT 0"),
-            ("trades",       "entry_straddle_threshold", "REAL DEFAULT 0"),
-            ("trades",       "entry_straddle_period",    "TEXT DEFAULT ''"),
-            ("trades",       "entry_atm_strike",         "INTEGER DEFAULT 0"),
-            ("trades",       "entry_band_width",         "REAL DEFAULT 0"),
-            ("trades",       "entry_spot_vwap",          "REAL DEFAULT 0"),
-            ("trades",       "entry_spot_vs_vwap",       "REAL DEFAULT 0"),
-            ("trades",       "entry_vwap_bonus",         "TEXT DEFAULT ''"),
-            # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification
-            ("trades",       "entry_straddle_info",      "TEXT DEFAULT ''"),
-        ]:
-            try:
-                c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
-                logger.info(f"[DB] migrate: added {_tbl}.{_col}")
-            except Exception:
-                pass  # column already exists
+                ("option_3min",  "ema9_high",       "REAL DEFAULT 0"),
+                ("option_3min",  "ema9_low",        "REAL DEFAULT 0"),
+                ("signal_scans", "ema9_high",       "REAL DEFAULT 0"),
+                ("signal_scans", "ema9_low",        "REAL DEFAULT 0"),
+                ("signal_scans", "band_position",   "TEXT DEFAULT ''"),
+                ("signal_scans", "body_pct",        "REAL DEFAULT 0"),
+                # v15.2 — straddle filter columns
+                ("signal_scans", "straddle_delta",     "REAL DEFAULT 0"),
+                ("signal_scans", "straddle_threshold", "REAL DEFAULT 0"),
+                ("signal_scans", "straddle_period",    "TEXT DEFAULT ''"),
+                ("signal_scans", "atm_strike_used",    "INTEGER DEFAULT 0"),
+                ("signal_scans", "band_width",         "REAL DEFAULT 0"),
+                # v15.2 — VWAP bonus columns
+                ("signal_scans", "spot_vwap",     "REAL DEFAULT 0"),
+                ("signal_scans", "spot_vs_vwap",  "REAL DEFAULT 0"),
+                ("signal_scans", "vwap_bonus",    "TEXT DEFAULT ''"),
+                # BUG-N3 v15.2.5: distinguishes "signal passed all gates"
+                # (fired=1) from "trade was actually opened" (trade_taken=1).
+                ("signal_scans", "trade_taken",   "INTEGER DEFAULT 0"),
+                ("trades",       "entry_ema9_high", "REAL DEFAULT 0"),
+                ("trades",       "entry_ema9_low",  "REAL DEFAULT 0"),
+                ("trades",       "exit_ema9_high",  "REAL DEFAULT 0"),
+                ("trades",       "exit_ema9_low",   "REAL DEFAULT 0"),
+                ("trades",       "entry_band_position", "TEXT DEFAULT ''"),
+                ("trades",       "exit_band_position",  "TEXT DEFAULT ''"),
+                ("trades",       "entry_body_pct",  "REAL DEFAULT 0"),
+                # v15.2 — straddle/VWAP captured at entry (replayed at exit)
+                ("trades",       "entry_straddle_delta",     "REAL DEFAULT 0"),
+                ("trades",       "entry_straddle_threshold", "REAL DEFAULT 0"),
+                ("trades",       "entry_straddle_period",    "TEXT DEFAULT ''"),
+                ("trades",       "entry_atm_strike",         "INTEGER DEFAULT 0"),
+                ("trades",       "entry_band_width",         "REAL DEFAULT 0"),
+                ("trades",       "entry_spot_vwap",          "REAL DEFAULT 0"),
+                ("trades",       "entry_spot_vs_vwap",       "REAL DEFAULT 0"),
+                ("trades",       "entry_vwap_bonus",         "TEXT DEFAULT ''"),
+                # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification
+                ("trades",       "entry_straddle_info",      "TEXT DEFAULT ''"),
+            ]:
+                try:
+                    c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
+                    logger.info(f"[DB] migrate: added {_tbl}.{_col}")
+                except Exception:
+                    pass  # column already exists
 
         conn.commit()
         _initialized = True
