@@ -1,8 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v15.2
-#  Master orchestration. Dual EMA9 Band Breakout strategy.
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.0
+#  Master orchestration. EMA9 Band Breakout strategy.
 #  Entry: close > EMA9-high (fresh) + green + body ≥ 30% + band width ≥ 8
-#  Exit: 5-rule chain. BE+2 lock after peak ≥ 5. Primary stop = EMA9-low close break.
+#  Exit: 6-rule chain — Emergency, EOD, Stale, Velocity stall, 1m EMA9 break,
+#  Profit Ratchet 5-tier. Initial SL = entry - 12 pts.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -2383,10 +2384,18 @@ def _strategy_loop(kite):
                             if _peak >= _m and _last_ms < _m:
                                 with _state_lock:
                                     state["_last_milestone"] = _m
-                                _dist = round(option_ltp - _cur_el, 1) if _cur_el > 0 else 0
-                                _tg_send("📈 <b>+" + str(_m) + "pts</b>"
-                                         + " | Trail: EMA9-low ₹" + str(_cur_el)
-                                         + " (" + str(_dist) + "pts away)")
+                                _r_tier = state.get("active_ratchet_tier", "")
+                                _r_sl   = float(state.get("active_ratchet_sl", 0) or 0)
+                                if _r_tier and _r_tier not in ("", "None") and _r_sl > 0:
+                                    _dist_r = round(option_ltp - _r_sl, 1)
+                                    _tg_send("📈 <b>+" + str(_m) + "pts</b>"
+                                             + " | Ratchet " + _r_tier + " Rs"
+                                             + str(round(_r_sl, 1))
+                                             + " (" + str(_dist_r) + "pts away)")
+                                else:
+                                    _init_sl = round(_entry_px - 12, 1)
+                                    _tg_send("📈 <b>+" + str(_m) + "pts</b>"
+                                             + " | Initial SL Rs" + str(_init_sl))
                                 break
                         # Update exchange SL-M trigger to current EMA9-low
                         try:

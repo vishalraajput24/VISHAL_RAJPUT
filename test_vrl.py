@@ -4,7 +4,7 @@
  test_vrl.py — VISHAL RAJPUT TRADE v15.2 Test Suite
  28 focused tests covering:
    Entry gates 1–6 | Straddle Gate 7 tiers | VWAP display
-   Exit chain (5 rules) | BE+2 peak 10 | Validation | Data integrity
+   Exit chain (6 rules) | Profit Ratchet | Validation | Data integrity
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -456,7 +456,7 @@ test("26. test_version_is_v15_2_family",
      D.VERSION.startswith("v1") and ('version: "' + D.VERSION + '"') in _cfg_src,
      "VERSION=" + str(D.VERSION))
 
-# 27. Config uses nested entry:/exit: structure and has BE+2=10
+# 27. Config uses nested entry:/exit: structure and has velocity stall enabled
 import yaml
 _cfg_parsed = yaml.safe_load(_cfg_src)
 _vs = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("velocity_stall_enabled")
