@@ -113,6 +113,7 @@ DEFAULT_STATE = {
     # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
+    "_ratchet_alert_tier": "None",
     # v15.1 BE+2 lock (legacy, kept for state compat)
     "be2_active"         : False,
     "be2_level"          : 0.0,
@@ -745,24 +746,35 @@ def _alert_bot_started():
     _acct = D.get_account_info()
     _acct_line = ""
     if _acct.get("name"):
-        _acct_line = ("Account: " + _acct["name"]
-                      + " (" + _acct.get("user_id", "") + ")\n"
-                      "Balance: ₹" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
+        _acct_line = ("Account : " + _acct["name"] + "\n"
+                      "Balance : Rs" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
     _tg_send(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 <b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Time   : " + _now_str() + "\n"
-        "Mode   : " + _mode_tag() + "\n"
+        "<b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Time    : " + _now_str() + "\n"
+        "Mode    : " + _mode_tag() + "\n"
         + _acct_line +
-        "Web    : " + _web_url + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🤖 <b>VISHAL RAJPUT TRADE v16.0</b>\n"
-        + _mode_tag() + " | EMA9 Band Breakout (3-min option candles)\n"
-        "ENTRY: close &gt; EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
-        "EXIT: Ratchet 5-tier | 1m EMA9 break | Velocity stall | Emergency -20 | EOD 15:30\n"
-        "2 lots fixed | No entry 9:15-9:30 or after 15:10\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Web     : " + _web_url + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout\n"
+        "Entry   : 09:30 - 15:10 IST\n"
+        "Gates   : close &gt; EMA9H, green, body &gt;=30%,\n"
+        "          band &gt;=8pts, fresh breakout\n"
+        "Size    : 2 lots fixed\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>EXITS</b>  (first match wins)\n"
+        "1. Emergency -20pts\n"
+        "2. EOD 15:30\n"
+        "3. Stale entry (5c + peak&lt;3)\n"
+        "4. Velocity stall (2 flat candles)\n"
+        "5. 1-min EMA9 break (pnl&gt;=5)\n"
+        "6. Profit Ratchet T1-T5\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>RATCHET TIERS</b>\n"
+        "+10 -&gt; lock +2    +15 -&gt; lock +7\n"
+        "+25 -&gt; lock +15   +35 -&gt; lock +25\n"
+        "+45 -&gt; lock +40\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
     if not D.PAPER_MODE:
@@ -773,7 +785,6 @@ def _alert_bot_started():
             "Account: " + str(D.get_account_info().get("name", "")) + "\n"
             "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
             "Lots: 2 × " + str(D.get_lot_size()) + " = " + str(D.get_lot_size() * 2) + " qty\n"
-            "Stop: dynamic EMA9-low close break (trail) | Emergency -20pts\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Every order uses REAL money.\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -817,61 +828,53 @@ def _generate_eod_report():
     today  = date.today().strftime("%d %b %Y")
 
     if not trades:
-        _tg_send("📊 <b>EOD REPORT — " + today + "</b>\nNo trades today.")
+        _tg_send(
+            "<b>EOD REPORT " + today + "</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "No trades today.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
         return
 
     total_pts  = sum(float(t.get("pnl_pts", 0)) for t in trades)
-    total_rs   = sum(float(t.get("pnl_rs",  0)) for t in trades)
+    total_rs   = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in trades)
     wins       = [t for t in trades if float(t.get("pnl_pts", 0)) > 0]
     losses     = [t for t in trades if float(t.get("pnl_pts", 0)) <= 0]
     n_trades   = len(trades)
     win_rate   = round(len(wins) / n_trades * 100, 0) if n_trades > 0 else 0
     best       = max((float(t.get("pnl_pts", 0)) for t in trades), default=0)
     worst      = min((float(t.get("pnl_pts", 0)) for t in trades), default=0)
-    convictions = [t for t in trades if t.get("mode") == "CONVICTION"]
 
     sign = "+" if total_pts >= 0 else ""
-    icon = "✅" if total_pts >= 0 else "❌"
 
     trade_lines = ""
-    for i, t in enumerate(trades, 1):
-        pts   = float(t.get("pnl_pts", 0))
-        sign2 = "+" if pts >= 0 else ""
+    for i, t in enumerate(trades[:5], 1):
+        _pts    = float(t.get("pnl_pts", 0))
+        _side   = t.get("direction", "")
+        _strike = t.get("strike", 0)
+        _reason = t.get("exit_reason", "")
         trade_lines += (
-            str(i) + ". " + t.get("direction", "") + " C"
-            + "  " + sign2 + str(round(pts, 1)) + "pts"
-            + "  [" + t.get("exit_reason", "")[:14] + "]\n"
+            str(i) + ". " + _side + " " + str(_strike) + "  "
+            + "{:+.1f}".format(_pts) + "pts  " + _reason + "\n"
         )
-
-    # Calculate charges summary
-    _total_charges = sum(float(t.get("total_charges", 0)) for t in trades)
-    _total_gross   = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in trades)
-    _total_net     = round(_total_gross - _total_charges, 2)
-    _total_brok    = sum(float(t.get("brokerage", 0)) for t in trades)
+    if len(trades) > 5:
+        trade_lines += "+" + str(len(trades) - 5) + " more\n"
 
     _tg_send(
-        icon + " <b>EOD REPORT — " + today + "</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Gross PNL  : " + sign + str(round(total_pts, 1)) + "pts  "
-        + sign + "₹" + "{:,}".format(int(_total_gross)) + "\n"
-        "Trades     : " + str(n_trades) + "  "
-        + "W=" + str(len(wins)) + " L=" + str(len(losses)) + "\n"
-        "Win Rate   : " + str(win_rate) + "%\n"
-        "Best       : +" + str(round(best, 1)) + "pts\n"
-        "Worst      : " + str(round(worst, 1)) + "pts\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💰 <b>P&L BREAKDOWN</b>\n"
-        "Gross    : " + sign + "₹" + "{:,}".format(int(_total_gross)) + "\n"
-        "Charges  : -₹" + "{:,}".format(int(_total_charges)) + "\n"
-        "  Brokerage: ₹" + "{:,}".format(int(_total_brok)) + "\n"
-        "  STT+Other: ₹" + "{:,}".format(int(_total_charges - _total_brok)) + "\n"
-        "Net      : " + ("+" if _total_net >= 0 else "-") + "₹"
-        + "{:,}".format(abs(int(_total_net))) + "\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>TRADES</b>\n"
-        + trade_lines
-        + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + ("Mode: PAPER 📄" if D.PAPER_MODE else "Mode: LIVE 💰")
+        "<b>EOD REPORT " + today + "</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + ("🟢" if total_pts >= 0 else "🔴")
+        + " <b>" + sign + "{:.1f}".format(total_pts) + " pts   "
+        + ("+" if total_rs >= 0 else "-") + "Rs" + "{:,}".format(abs(int(total_rs)))
+        + "</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Trades   " + str(n_trades) + "   (" + str(len(wins)) + "W " + str(len(losses)) + "L)\n"
+        "Win rate " + str(int(win_rate)) + "%\n"
+        "Best     " + "{:+.1f}".format(best) + " pts\n"
+        "Worst    " + "{:+.1f}".format(worst) + " pts\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + trade_lines +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
 # ═══════════════════════════════════════════════════════════════
@@ -1031,59 +1034,75 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     except Exception as _se:
         logger.warning("[MAIN] SL-M place error: " + str(_se))
 
-    # ── v15.2 Entry alert ──
-    _slip_line = ""
-    if _entry_slippage > 0:
-        _slip_line = "Slip: +" + str(_entry_slippage) + "pts\n"
-
-    _emode = entry_result.get("entry_mode", "EMA9_BREAKOUT")
+    # ── v16.0 Batch 7 Entry alert ──
     _close = round(float(entry_result.get("close", actual_price)), 1)
     _ema9h = round(float(entry_result.get("ema9_high", 0)), 1)
-    _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
     _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
-    _dist_to_stop = round(_close - _ema9l, 1) if _ema9l > 0 else 0
 
-    # v15.2.5 Fix 5: straddle is now DISPLAY ONLY. Line shows the
-    # STRONG / NEUTRAL / WEAK / NA classification + period label, no threshold.
-    _sd    = entry_result.get("straddle_delta")
-    _sinfo = entry_result.get("straddle_info", "") or ""
-    _spd   = entry_result.get("straddle_period", "-") or "-"
-    _savail = entry_result.get("straddle_available", True)
-    if not _savail or _sd is None:
-        _straddle_line = "Straddle: DATA UNAVAILABLE [NA]\n"
+    _dir_emoji = "🟢" if option_type == "CE" else "🔴"
+    _sym = _short_sym(symbol, option_type, state.get("strike", 0))
+    _tm = datetime.now().strftime("%H:%M:%S")
+
+    _core = (
+        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
+        "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9H " + "{:.1f}".format(_ema9h) + "\n"
+        "Body    " + str(_body) + "% green\n"
+        "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
+    )
+
+    _initial_sl = round(actual_price - 12, 1)
+    _stop_block = (
+        "<b>STOP</b>\n"
+        "Initial   -12 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
+        "Ratchet   arms at peak +10pts\n"
+    )
+
+    _ctx_lines = []
+    _ehs = entry_result.get("ema9_high_slope_5c", 0)
+    _els = entry_result.get("ema9_low_slope_5c", 0)
+    _bstate = entry_result.get("bands_state", "")
+    if _bstate == "RISING":
+        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  RISING OK")
+    elif _bstate == "FLAT":
+        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  FLAT WARN")
     else:
-        _straddle_line = ("Straddle: \u0394" + "{:+.1f}".format(float(_sd))
-                          + " [" + _sinfo + "] (" + _spd + ")\n")
+        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  WEAK")
 
-    # VWAP bonus line (display only, matches spec)
-    _vwap_line = ""
-    try:
-        _vw   = entry_result.get("spot_vwap")
-        _diff = entry_result.get("spot_vs_vwap")
-        _vbon = entry_result.get("vwap_bonus", "")
-        if _vw and _vw > 0:
-            _spot_disp = round(float(_vw) + float(_diff or 0), 1)
-            _vwap_line = ("VWAP: spot " + "{:.1f}".format(_spot_disp)
-                          + " vs vwap " + "{:.1f}".format(float(_vw))
-                          + " (" + "{:+.0f}".format(float(_diff or 0))
-                          + ") [" + str(_vbon) + "]\n")
-    except Exception:
-        _vwap_line = ""
+    _sinfo = entry_result.get("straddle_info", "") or ""
+    _sd    = entry_result.get("straddle_delta")
+    _savail = entry_result.get("straddle_available", True)
+    if _savail and _sinfo and _sinfo != "NA" and _sd is not None:
+        _ctx_lines.append("Straddle  \u0394" + "{:+.1f}".format(float(_sd)) + "  " + _sinfo)
 
-    _detail = ("Close " + str(_close) + " &gt; EMA9-high " + str(_ema9h) + "\n"
-               + "Body " + str(_body) + "% green\n"
-               + _straddle_line
-               + _vwap_line
-               + "Stop: EMA9-low " + str(_ema9l)
-               + " (" + "{:.1f}".format(_dist_to_stop) + "pts away)\n"
-               + "BE+2 lock: activates after peak +10\n")
+    _vwap_bonus = entry_result.get("vwap_bonus", "") or ""
+    _spot_diff  = entry_result.get("spot_vs_vwap", 0) or 0
+    if _vwap_bonus:
+        _ctx_lines.append("VWAP      spot " + "{:+.0f}".format(float(_spot_diff)) + "  " + _vwap_bonus)
+
+    _ctag = entry_result.get("context_tag", "NORMAL")
+    if _ctag == "TRIPLE_CONFLUENCE":
+        _ctx_header = "<b>CONTEXT  ✓ TRIPLE CONFLUENCE</b>\n"
+    elif _ctag == "MIXED_SIGNALS":
+        _ctx_header = "<b>CONTEXT  ⚠ MIXED SIGNALS</b>\n"
+    else:
+        _ctx_header = "<b>CONTEXT</b>\n"
+
+    _ctx_block = _ctx_header + "\n".join(_ctx_lines) + "\n"
+
+    _slip_block = ""
+    if _entry_slippage and abs(float(_entry_slippage)) > 0.05:
+        _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
+
     _tg_send(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>" + _short_sym(symbol, option_type, state.get("strike", 0))
-        + " x " + str(lot_count) + " LOTS [" + _emode + "]</b>\n"
-        + datetime.now().strftime("%H:%M") + "  \u20B9" + str(round(actual_price, 1)) + "\n"
-        + _detail + _slip_line +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        _dir_emoji + " <b>" + _sym + " x " + str(lot_count) + " LOTS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _core +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _stop_block +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _ctx_block
+        + _slip_block +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     logger.info(
@@ -1285,30 +1304,39 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _ch = {"gross_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
                    "charges_pts": 0}
-        # v15.2 exit alert — 5 data lines, spec-aligned (no confirm-at-entry line)
-        _gross_sign = "+" if _ch["gross_pnl"] >= 0 else "-"
-        _net_sign   = "+" if _ch["net_pnl"]   >= 0 else "-"
-        # v15.2.5: if exit was VELOCITY_STALL, prepend the peak-history context
-        # that explains WHY we bailed (momentum died before price reversed).
-        _extra_line = ""
+        # v16.0 Batch 7 exit alert — reason-specific context line
+        _dir_emoji = "🟢" if direction == "CE" else "🔴"
+        _sym_exit  = _short_sym(symbol, direction, _exit_strike)
+        _sign_pnl  = "+" if pnl >= 0 else ""
+        _net_sign  = "+" if _ch["net_pnl"] >= 0 else "-"
+
+        _reason_line = ""
         if reason == "VELOCITY_STALL":
             _ph = state.get("peak_history") or []
-            _vel = state.get("current_velocity", 0)
-            _extra_line = ("Last 4 peaks: " + str(_ph[-4:] if _ph else [])
-                           + " | velocity=" + "{:+.2f}".format(float(_vel))
-                           + "\nVelocity died — exited before reversal\n")
+            _reason_line = "Last peaks: " + str(_ph[-4:]) + "\n"
+        elif reason == "PROFIT_RATCHET":
+            _tier = state.get("active_ratchet_tier", "")
+            _reason_line = "Ratchet " + _tier + " triggered\n"
+        elif reason == "EMA1M_BREAK":
+            _reason_line = "1-min EMA9 close break\n"
+
         _tg_send(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>" + _sym_short + "</b>  " + "{:+.1f}".format(pnl) + "pts\n"
-            + reason + " | Peak +" + "{:.1f}".format(peak) + " | " + str(candles) + "min\n"
-            + _extra_line +
-            "Entry " + str(round(entry, 1)) + " -> Exit " + str(round(actual_exit, 1)) + "\n"
-            "Gross: " + _gross_sign + "\u20B9" + "{:,}".format(abs(int(_ch["gross_pnl"])))
-            + " | Charges: -\u20B9" + "{:,}".format(int(_ch["total_charges"]))
-            + " | Net: " + _net_sign + "\u20B9" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "\n"
-            "DAY: " + "{:+.1f}".format(_day_pnl) + "pts | "
-            + str(_day_wins) + "W " + str(_day_losses) + "L\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            _dir_emoji + " <b>EXIT " + _sym_exit + "</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>" + reason + "</b>    " + _sign_pnl + "{:.1f}".format(pnl) + " pts\n"
+            + _reason_line +
+            "Entry   Rs" + "{:.1f}".format(entry) + "\n"
+            "Exit    Rs" + "{:.1f}".format(actual_exit) + "\n"
+            "Peak    +" + "{:.1f}".format(peak) + " pts\n"
+            "Hold    " + str(candles) + " min\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Gross   " + ("+" if _ch["gross_pnl"] >= 0 else "-")
+            + "Rs" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
+            "Charges -Rs" + "{:,}".format(int(_ch["total_charges"])) + "\n"
+            "<b>Net     " + _net_sign + "Rs" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "DAY " + "{:+.1f}".format(_day_pnl) + " pts | "
+            + str(_day_wins) + "W " + str(_day_losses) + "L"
         )
     else:
         # Partial exit — update daily PNL for the exited lot
@@ -2582,6 +2610,33 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     _mex_other_tok = state.get("other_token", 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
+
+                    # v16.0 Batch 7 BUG-Q6: ratchet tier upgrade alert
+                    try:
+                        _prev_tier = state.get("_ratchet_alert_tier", "None")
+                        _new_tier  = state.get("active_ratchet_tier", "None")
+                        if state.get("in_trade") and _new_tier != _prev_tier and _new_tier and _new_tier != "None":
+                            _r_sl   = float(state.get("active_ratchet_sl", 0) or 0)
+                            _r_ent  = float(state.get("entry_price", 0) or 0)
+                            _r_lock = round(_r_sl - _r_ent, 1)
+                            _r_peak = float(state.get("peak_pnl", 0) or 0)
+                            _r_emoji = "🟢" if state.get("direction") == "CE" else "🔴"
+                            _r_sym = _short_sym(state.get("symbol", ""),
+                                                 state.get("direction", ""),
+                                                 state.get("strike", 0))
+                            _tg_send(
+                                "🔒 <b>RATCHET " + _new_tier + " ARMED</b>\n"
+                                + _r_emoji + " " + _r_sym + "   Peak +" + "{:.1f}".format(_r_peak) + "\n"
+                                "SL locked Rs" + "{:.1f}".format(_r_sl)
+                                + "   (+" + "{:.1f}".format(_r_lock) + " pts)"
+                            )
+                            with _state_lock:
+                                state["_ratchet_alert_tier"] = _new_tier
+                        if not state.get("in_trade"):
+                            with _state_lock:
+                                state["_ratchet_alert_tier"] = "None"
+                    except Exception as _re:
+                        logger.debug("[MAIN] ratchet tier alert error: " + str(_re))
 
                     # v16.0 Batch 7: refresh bands_state once per new 3-min candle
                     try:
