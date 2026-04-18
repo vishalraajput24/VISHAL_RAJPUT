@@ -396,25 +396,17 @@ def _cmd_status(args):
     peak    = st.get("peak_pnl", 0)
     phase   = st.get("exit_phase", 1)
 
-    # v15.2: live SL = current EMA9-low (dynamic trailing stop)
-    # Falls back to entry-12 if band hasn't been computed yet.
-    sl_val = st.get("current_ema9_low", 0)
-    if not sl_val or sl_val <= 0:
-        sl_val = round(entry - 12, 2)
-    # If BE+2 is armed, the lock floor takes priority
-    if st.get("be2_active") and st.get("be2_level", 0) > sl_val:
-        sl_val = st.get("be2_level")
-    sl_dist = round(ltp - sl_val, 1) if ltp > 0 and sl_val > 0 else "—"
-
-    _be2_line = ""
-    if st.get("be2_active"):
-        _be2_line = "BE+2   : 🔒 ACTIVE @ ₹" + str(round(st.get("be2_level", 0), 1)) + "\n"
+    # v16.0 Batch 7 BUG-Q18: ratchet tier = active stop, else initial -12
+    _tier = st.get("active_ratchet_tier", "None")
+    _rsl  = float(st.get("active_ratchet_sl", 0) or 0)
+    if _tier and _tier not in ("", "None") and _rsl > 0:
+        _stop_line = "Stop   : Ratchet " + _tier + " @ Rs" + str(round(_rsl, 1))
+        _stop_dist = round(ltp - _rsl, 1) if ltp > 0 else "—"
     else:
-        _need = 10 - peak
-        if _need < 0:
-            _need = 0
-        _be2_line = ("BE+2   : INACTIVE (peak +" + str(round(peak, 1))
-                     + ", need +10)\n")
+        _init_sl   = round(entry - 12, 1)
+        _stop_line = "Stop   : Initial @ Rs" + str(_init_sl)
+        _stop_dist = round(ltp - _init_sl, 1) if ltp > 0 else "—"
+
     # v15.2.5: velocity + peak_history for /status
     _vel = round(float(st.get("current_velocity", 0) or 0), 2)
     _ph  = (st.get("peak_history") or [])[-4:]
@@ -430,31 +422,19 @@ def _cmd_status(args):
     _vel_line = ("Vel    : " + _vel_sign + str(_vel) + " pts/candle (" + _vel_tag + ")\n"
                  + "Peaks  : " + str(_ph) + "\n")
 
-    # Effective stop = max(ema9_low, be2_level if armed)
-    _ema9l = round(float(st.get("current_ema9_low", 0) or 0), 2)
-    _stop_label = "EMA9-low"
-    _effective_stop = _ema9l
-    if st.get("be2_active") and float(st.get("be2_level", 0) or 0) > _ema9l:
-        _effective_stop = round(float(st.get("be2_level", 0)), 2)
-        _stop_label = "BE+2 🔒"
-    _stop_dist_v = round(ltp - _effective_stop, 1) if ltp > 0 and _effective_stop > 0 else "—"
-
     _tg_send(
         "📊 <b>STATUS — IN TRADE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Time   : " + _now_str() + "\n"
         "Symbol : " + st.get("symbol", "") + "\n"
-        "Mode   : " + str(st.get("entry_mode", "EMA9_BREAKOUT")) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Entry  : " + str(round(entry, 2)) + "\n"
         "LTP    : " + str(round(ltp, 2)) + "\n"
         "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + _rs(pnl) + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Stop   : " + _stop_label + " ₹" + str(round(_effective_stop, 2))
-        + "  (" + str(_stop_dist_v) + "pts away)\n"
-        "Trail  : EMA9-low ₹" + str(_ema9l) + "\n"
-        + _be2_line + _vel_line +
+        + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
+        + _vel_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
         "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"
