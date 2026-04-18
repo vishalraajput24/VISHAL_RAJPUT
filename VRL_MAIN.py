@@ -334,14 +334,6 @@ def _reset_daily(today_str: str):
     D.reset_daily_warnings()
     _reset_strike_lock()
     logger.info("[MAIN] _eod_exited reset for new day")
-    with _state_lock:
-        state["_shadow_exit_eod_sent"] = False
-    # v15.2 Part 4: reset shadow state on new trading day
-    try:
-        import VRL_SHADOW
-        VRL_SHADOW.reset_day()
-    except Exception:
-        pass
     # v15.2.5: clear pre-entry alert rate-limit history at daily rollover
     with _state_lock:
         state["alert_history"] = {}
@@ -1240,13 +1232,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     _log_trade(state, actual_exit, reason, candles, saved_entry=entry,
                lot_id=lot_id, qty=exit_qty)
 
-    # ── v15.2.5 Batch 3 BUG-R3: shadow trade summary ──
-    try:
-        _log_shadow_trade_summary(state, entry, actual_exit, reason,
-                                  peak, candles)
-    except Exception as _sts:
-        logger.debug("[SHADOW_EXIT] trade summary: " + str(_sts))
-
     # Telegram alert
     if trade_done:
         with _state_lock:
@@ -1494,241 +1479,9 @@ def _compute_bonus(token: int) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════
-#  v15.2.5 Batch 3 BUG-R2 — Shadow exit tick CSV logger
-#  Pure logging — NEVER mutates state, NEVER calls exit functions,
-#  NEVER touches production SL fields.
+#  Shadow CSV logger — REMOVED in v16.0 Batch 7 (BUG-Q9).
+#  Historical shadow CSVs remain on disk in ~/lab_data/shadow_exits/.
 # ═══════════════════════════════════════════════════════════════
-
-_SHADOW_EXIT_DIR = os.path.join(os.path.expanduser("~"), "lab_data", "shadow_exits")
-os.makedirs(_SHADOW_EXIT_DIR, exist_ok=True)
-
-_SHADOW_EXIT_FIELDS = [
-    "timestamp", "symbol", "direction", "entry_price", "current_ltp",
-    "running_pnl", "peak_pnl", "candles_held",
-    "ema9_low_3m", "ratchet_sl", "ratchet_tier",
-    "ema1m_break", "ema1m_close", "ema1m_ema9",
-    "would_exit_ratchet", "would_exit_ema1m", "would_exit_ema9_low",
-    "actual_sl", "actual_exit_reason_pending",
-]
-
-
-def _log_shadow_exit_tick(st: dict, option_ltp: float, now: datetime):
-    """BUG-R2: one row per strategy-loop tick while in_trade. Read-only on st."""
-    if not st.get("in_trade") or option_ltp <= 0:
-        return
-    entry   = float(st.get("entry_price", 0) or 0)
-    pnl     = round(option_ltp - entry, 2)
-    peak    = float(st.get("peak_pnl", 0) or 0)
-    candles = int(st.get("candles_held", 0) or 0)
-    token   = st.get("token")
-    direction = st.get("direction", "")
-    ema9l_3m = float(st.get("current_ema9_low", 0) or 0)
-
-    # Shadow ratchet (pure function — no state mutation)
-    from VRL_ENGINE import compute_ratchet_sl, compute_1min_ema9_break
-    ratchet_sl, ratchet_tier = compute_ratchet_sl(entry, peak, direction)
-
-    # 1-min EMA9 break (pure function — fetches historical_data)
-    ema1m_break, ema1m_close, ema1m_ema9 = (False, 0.0, 0.0)
-    if token:
-        ema1m_break, ema1m_close, ema1m_ema9 = compute_1min_ema9_break(
-            int(token), pnl)
-
-    # Would-exit flags (hypothetical — never executed)
-    would_ratchet = 1 if (ratchet_sl > 0 and option_ltp <= ratchet_sl) else 0
-    would_ema1m   = 1 if ema1m_break else 0
-    would_ema9low = 1 if (ema9l_3m > 0 and option_ltp <= ema9l_3m) else 0
-
-    # Actual SL the bot is using right now (ratchet takes priority)
-    actual_sl = float(st.get("active_ratchet_sl", 0) or 0)
-    if actual_sl <= 0:
-        actual_sl = float(st.get("current_ema9_low", 0) or 0)
-
-    row = {
-        "timestamp":              now.strftime("%Y-%m-%d %H:%M:%S"),
-        "symbol":                 st.get("symbol", ""),
-        "direction":              direction,
-        "entry_price":            round(entry, 2),
-        "current_ltp":            round(option_ltp, 2),
-        "running_pnl":            pnl,
-        "peak_pnl":               round(peak, 2),
-        "candles_held":           candles,
-        "ema9_low_3m":            round(ema9l_3m, 2),
-        "ratchet_sl":             ratchet_sl,
-        "ratchet_tier":           ratchet_tier,
-        "ema1m_break":            1 if ema1m_break else 0,
-        "ema1m_close":            ema1m_close,
-        "ema1m_ema9":             ema1m_ema9,
-        "would_exit_ratchet":     would_ratchet,
-        "would_exit_ema1m":       would_ema1m,
-        "would_exit_ema9_low":    would_ema9low,
-        "actual_sl":              round(actual_sl, 2),
-        "actual_exit_reason_pending": "",
-    }
-    _csv_path = os.path.join(_SHADOW_EXIT_DIR,
-                             "shadow_" + now.strftime("%Y-%m-%d") + ".csv")
-    is_new = not os.path.isfile(_csv_path)
-    try:
-        with open(_csv_path, "a", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=_SHADOW_EXIT_FIELDS,
-                               extrasaction="ignore")
-            if is_new:
-                w.writeheader()
-            w.writerow(row)
-    except Exception as _we:
-        logger.debug("[SHADOW_EXIT] CSV write: " + str(_we))
-
-
-def _send_shadow_exit_eod():
-    """BUG-R4: one Telegram at 15:35 summarizing shadow vs actual exits."""
-    today_str = date.today().strftime("%Y-%m-%d")
-    trades_path = os.path.join(_SHADOW_EXIT_DIR,
-                               "shadow_trades_" + today_str + ".csv")
-    if not os.path.isfile(trades_path):
-        _tg_send("[SHADOW EXIT] No shadow data today.")
-        return
-    rows = []
-    try:
-        with open(trades_path) as f:
-            rows = list(csv.DictReader(f))
-    except Exception:
-        _tg_send("[SHADOW EXIT] CSV read error.")
-        return
-    if not rows:
-        _tg_send("[SHADOW EXIT] No shadow data today.")
-        return
-    n = len(rows)
-    lot = D.get_lot_size()
-    actual_sum = sum(float(r.get("actual_pnl", 0) or 0) for r in rows)
-    ratchet_sum = 0.0
-    ema1m_sum   = 0.0
-    r_count = 0
-    e_count = 0
-    for r in rows:
-        rp = r.get("first_ratchet_pnl_if_exited_here")
-        ep = r.get("first_ema1m_break_pnl_if_exited_here")
-        ap = float(r.get("actual_pnl", 0) or 0)
-        if rp not in (None, ""):
-            ratchet_sum += float(rp); r_count += 1
-        else:
-            ratchet_sum += ap
-        if ep not in (None, ""):
-            ema1m_sum += float(ep); e_count += 1
-        else:
-            ema1m_sum += ap
-    best = max(actual_sum, ratchet_sum, ema1m_sum)
-    saved = round(best - actual_sum, 1)
-    _tg_send(
-        "📊 <b>SHADOW EXIT REPORT — " + today_str + "</b>\n"
-        "Trades: " + str(n) + "\n"
-        "Actual:  " + "{:+.1f}".format(actual_sum) + "pts  (₹"
-        + "{:+,.0f}".format(actual_sum * lot * 2) + ")\n"
-        "Ratchet: " + "{:+.1f}".format(ratchet_sum) + "pts  (₹"
-        + "{:+,.0f}".format(ratchet_sum * lot * 2) + ")  fired " + str(r_count) + "x\n"
-        "EMA1m:   " + "{:+.1f}".format(ema1m_sum) + "pts  (₹"
-        + "{:+,.0f}".format(ema1m_sum * lot * 2) + ")  fired " + str(e_count) + "x\n"
-        "Best:    " + "{:+.1f}".format(best) + "pts\n"
-        "Saved:   " + "{:+.1f}".format(saved) + "pts vs actual"
-    )
-
-
-_SHADOW_TRADE_FIELDS = [
-    "date", "entry_time", "exit_time", "symbol", "direction",
-    "entry_price", "actual_exit_price", "actual_exit_reason", "actual_pnl",
-    "peak_pnl",
-    "first_ratchet_hit_time", "first_ratchet_tier", "first_ratchet_price",
-    "first_ratchet_pnl_if_exited_here",
-    "first_ema1m_break_time", "first_ema1m_break_price",
-    "first_ema1m_break_pnl_if_exited_here",
-    "rule_winner", "rule_winner_pnl", "rule_winner_saved_pts",
-]
-
-
-def _log_shadow_trade_summary(st, entry, exit_price, reason, peak, candles):
-    """BUG-R3: after a real exit, read today's shadow tick CSV and compute
-    what ratchet + ema1m would have done. Pure read + write — no state mutation."""
-    today_str = date.today().strftime("%Y-%m-%d")
-    tick_path = os.path.join(_SHADOW_EXIT_DIR, "shadow_" + today_str + ".csv")
-    if not os.path.isfile(tick_path):
-        return
-    actual_pnl = round(float(exit_price) - float(entry), 2)
-    entry_time = st.get("entry_time", "")
-    exit_time  = datetime.now().strftime("%H:%M:%S")
-    symbol     = st.get("symbol", "")
-    direction  = st.get("direction", "")
-
-    # Scan tick CSV for first ratchet + ema1m triggers
-    first_ratchet = None
-    first_ema1m   = None
-    try:
-        with open(tick_path, "r") as f:
-            for row in csv.DictReader(f):
-                if row.get("symbol") != symbol:
-                    continue
-                if not first_ratchet and row.get("would_exit_ratchet") == "1":
-                    first_ratchet = row
-                if not first_ema1m and row.get("would_exit_ema1m") == "1":
-                    first_ema1m = row
-                if first_ratchet and first_ema1m:
-                    break
-    except Exception:
-        pass
-
-    def _pnl_at(row_or_none):
-        if not row_or_none:
-            return None, "", 0.0
-        ltp = float(row_or_none.get("current_ltp", 0) or 0)
-        ts  = row_or_none.get("timestamp", "")
-        p   = round(ltp - float(entry), 2)
-        return p, ts, ltp
-
-    r_pnl, r_ts, r_price = _pnl_at(first_ratchet)
-    e_pnl, e_ts, e_price = _pnl_at(first_ema1m)
-    r_tier = first_ratchet.get("ratchet_tier", "") if first_ratchet else ""
-
-    # Determine rule winner (earliest trigger)
-    candidates = []
-    if r_pnl is not None:
-        candidates.append(("ratchet", r_pnl, r_ts))
-    if e_pnl is not None:
-        candidates.append(("ema1m", e_pnl, e_ts))
-    if not candidates:
-        winner, winner_pnl = "actual", actual_pnl
-    else:
-        candidates.sort(key=lambda x: x[2])
-        winner, winner_pnl = candidates[0][0], candidates[0][1]
-    saved = round(winner_pnl - actual_pnl, 2)
-
-    out = {
-        "date": today_str, "entry_time": entry_time, "exit_time": exit_time,
-        "symbol": symbol, "direction": direction,
-        "entry_price": round(float(entry), 2),
-        "actual_exit_price": round(float(exit_price), 2),
-        "actual_exit_reason": reason, "actual_pnl": actual_pnl,
-        "peak_pnl": round(float(peak), 2),
-        "first_ratchet_hit_time": r_ts, "first_ratchet_tier": r_tier,
-        "first_ratchet_price": round(r_price, 2) if r_price else "",
-        "first_ratchet_pnl_if_exited_here": r_pnl if r_pnl is not None else "",
-        "first_ema1m_break_time": e_ts,
-        "first_ema1m_break_price": round(e_price, 2) if e_price else "",
-        "first_ema1m_break_pnl_if_exited_here": e_pnl if e_pnl is not None else "",
-        "rule_winner": winner, "rule_winner_pnl": winner_pnl,
-        "rule_winner_saved_pts": saved,
-    }
-    trades_path = os.path.join(_SHADOW_EXIT_DIR,
-                               "shadow_trades_" + today_str + ".csv")
-    is_new = not os.path.isfile(trades_path)
-    try:
-        with open(trades_path, "a", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=_SHADOW_TRADE_FIELDS,
-                               extrasaction="ignore")
-            if is_new:
-                w.writeheader()
-            w.writerow(out)
-        logger.info("[SHADOW_EXIT] trade summary: " + winner + " saved "
-                    + str(saved) + "pts vs actual " + str(actual_pnl))
-    except Exception as _we:
-        logger.debug("[SHADOW_EXIT] trade CSV: " + str(_we))
 
 
 def _update_dashboard_ltp():
@@ -2212,14 +1965,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "rolling": rolling_block,
         }
 
-        # v15.2 Part 4: shadow 1-min head-to-head line
-        try:
-            import VRL_SHADOW
-            dashboard["shadow"] = VRL_SHADOW.day_summary()
-        except Exception:
-            dashboard["shadow"] = {"trades": 0, "wins": 0, "losses": 0,
-                                    "pnl": 0.0, "wr": 0, "avg_peak": 0.0,
-                                    "peaks_over_10": 0}
 
         # Atomic write
         tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
@@ -2455,33 +2200,6 @@ def _strategy_loop(kite):
                     generate_daily_summary()
                 except Exception as e:
                     logger.warning("[MAIN] Daily summary: " + str(e))
-                # ── v15.2 Part 4: emit ONE shadow-vs-live EOD summary ──
-                try:
-                    import VRL_SHADOW
-                    _live_trades_today = _read_today_trades()
-                    _live_n = len(_live_trades_today)
-                    _live_w = sum(1 for t in _live_trades_today
-                                  if float(t.get("pnl_pts", 0)) > 0)
-                    _live_pnl = round(sum(float(t.get("pnl_pts", 0))
-                                           for t in _live_trades_today), 1)
-                    _live_wr = round(_live_w / _live_n * 100) if _live_n else 0
-                    VRL_SHADOW.emit_eod_summary(
-                        _tg_send,
-                        live_stats={"trades": _live_n, "wins": _live_w,
-                                    "pnl": _live_pnl, "wr": _live_wr})
-                except Exception as _se:
-                    logger.warning("[SHADOW] EOD summary: " + str(_se))
-
-            # ── v15.2.5 Batch 3 BUG-R4: EOD shadow exit Telegram ──
-            # One-shot after the existing EOD report, gated by same
-            # _eod_reported flag (fires at 15:35).
-            try:
-                if state.get("_eod_reported") and not state.get("_shadow_exit_eod_sent"):
-                    state["_shadow_exit_eod_sent"] = True
-                    _send_shadow_exit_eod()
-            except Exception as _sre:
-                logger.debug("[SHADOW_EXIT] EOD telegram: " + str(_sre))
-
             # ── BUG-V v15.2.5 Batch 6: daily lab cleanup at 15:45+ IST ──
             # Previously cleanup ran only at bot startup. A process that
             # stays up for a week accumulates 7 days of option_3min /
@@ -2595,17 +2313,6 @@ def _strategy_loop(kite):
                                                 + "Trail widened: keep 65% from +20 🔥")
                                 except Exception as _ue:
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
-
-                    # ── v15.2.5 Batch 3 BUG-R2: shadow exit CSV logger ──
-                    # Runs BEFORE manage_exit so it captures pre-exit state.
-                    # Pure logging — never mutates state or calls exit fns.
-                    try:
-                        _log_shadow_exit_tick(state, option_ltp, now)
-                    except Exception as _se:
-                        if not getattr(_log_shadow_exit_tick, "_warned", False):
-                            logger.warning("[SHADOW_EXIT] tick logger error: "
-                                           + str(_se))
-                            _log_shadow_exit_tick._warned = True
 
                     # v13.0: manage_exit returns list of exit dicts
                     _mex_other_tok = state.get("other_token", 0)
@@ -3031,18 +2738,6 @@ def _strategy_loop(kite):
                 # Runs after live scan on every 1-min boundary. Independent
                 # state, independent cooldown, never touches live state,
                 # never places orders, never alerts during the day.
-                # v15.2.2: heartbeat log proves the call site is reached
-                # before we delegate, and exc_info=True surfaces any error.
-                try:
-                    logger.info("[SHADOW_1MIN] call_site reached at "
-                                + now.strftime("%H:%M:%S")
-                                + " spot=" + str(spot_ltp))
-                    from VRL_ENGINE import shadow_scan_1min
-                    shadow_scan_1min(spot_ltp)
-                except Exception as _shade:
-                    logger.warning("[SHADOW_1MIN] call_site error: "
-                                   + str(_shade), exc_info=True)
-
                 # Write dashboard + cache args for post-exit refresh
                 global _last_dash_args
                 _last_dash_args = {

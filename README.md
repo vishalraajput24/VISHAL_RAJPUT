@@ -32,14 +32,13 @@ Algorithmic Nifty 50 options trading bot. Paper mode. Zerodha Kite API.
 | File | Role |
 |---|---|
 | VRL_MAIN.py | Orchestration, state, Telegram, dashboard |
-| VRL_ENGINE.py | Entry gates + exit chain + shadow pure functions |
+| VRL_ENGINE.py | Entry gates + exit chain + ratchet/1m-break pure functions |
 | VRL_DATA.py | Market data, WebSocket, indicators, Greeks |
 | VRL_CONFIG.py | YAML config accessors |
 | VRL_DB.py | SQLite schema + insert helpers |
 | VRL_LAB.py | Data collection (1m/3m/5m/15m candles + scans) |
 | VRL_TRADE.py | Order execution (paper + live modes) |
 | VRL_COMMANDS.py | Telegram command handlers |
-| VRL_SHADOW.py | Silent 1-min A/B strategy |
 | VRL_ALERTS.py | Pre-entry learning alerts (4 types) |
 | VRL_WEB.py | Dashboard web server |
 | VRL_CHARGES.py | Brokerage calculator |
