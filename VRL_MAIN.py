@@ -90,6 +90,15 @@ DEFAULT_STATE = {
     "entry_spot_vs_vwap"       : 0.0,
     "entry_vwap_bonus"         : "",
     "entry_straddle_info"      : "",
+    # v16.0 Batch 7 context (bands slope + confluence tag)
+    "entry_bands_state"        : "",
+    "entry_context_tag"        : "",
+    "ema9_high_slope_5c"       : 0.0,
+    "ema9_low_slope_5c"        : 0.0,
+    "current_bands_state"      : "",
+    "current_ema9_high_slope"  : 0.0,
+    "current_ema9_low_slope"   : 0.0,
+    "_last_context_ts"         : "",
     # v15.2.5 velocity stall tracking (per 3-min candle)
     "peak_history"       : [],
     "last_peak_candle_ts": "",
@@ -990,6 +999,15 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["entry_vwap_bonus"]         = entry_result.get("vwap_bonus", "")
         # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA straddle classification
         state["entry_straddle_info"]      = entry_result.get("straddle_info", "")
+        # v16.0 Batch 7: band slope + context tag (display only)
+        state["entry_bands_state"]        = entry_result.get("bands_state", "")
+        state["entry_context_tag"]        = entry_result.get("context_tag", "")
+        state["ema9_high_slope_5c"]       = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
+        state["ema9_low_slope_5c"]        = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
+        state["current_bands_state"]      = entry_result.get("bands_state", "")
+        state["current_ema9_high_slope"]  = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
+        state["current_ema9_low_slope"]   = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
+        state["_last_context_ts"]         = ""
         # Counters
         state["daily_trades"]      += 1
 
@@ -1999,6 +2017,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 # v16.0 ratchet state
                 "active_ratchet_tier": st.get("active_ratchet_tier", ""),
                 "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
+                # v16.0 Batch 7 context display (bands + straddle + VWAP)
+                "entry_bands_state":        st.get("entry_bands_state", ""),
+                "entry_context_tag":        st.get("entry_context_tag", ""),
+                "ema9_high_slope_5c":       round(float(st.get("ema9_high_slope_5c", 0) or 0), 1),
+                "ema9_low_slope_5c":        round(float(st.get("ema9_low_slope_5c", 0) or 0), 1),
+                "current_bands_state":      st.get("current_bands_state", ""),
+                "current_ema9_high_slope":  round(float(st.get("current_ema9_high_slope", 0) or 0), 1),
+                "current_ema9_low_slope":   round(float(st.get("current_ema9_low_slope", 0) or 0), 1),
+                "entry_straddle_info":      st.get("entry_straddle_info", ""),
                 # v15.2 entry context (replayed at exit on dashboard)
                 "entry_straddle_delta":     st.get("entry_straddle_delta", 0),
                 "entry_straddle_threshold": st.get("entry_straddle_threshold", 0),
@@ -2122,6 +2149,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "vix": round(vix_ltp, 1),
                 "session": session,
                 "regime": spot_3m.get("regime", ""),
+                "context_tag": state.get("entry_context_tag", "") if state.get("in_trade") else "",
                 "bias": bias,
                 "gap": round(spot_gap, 1),
                 "spot_ema9": spot_3m.get("ema9", 0),
@@ -2554,6 +2582,33 @@ def _strategy_loop(kite):
                     # v13.0: manage_exit returns list of exit dicts
                     _mex_other_tok = state.get("other_token", 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
+
+                    # v16.0 Batch 7: refresh bands_state once per new 3-min candle
+                    try:
+                        _ctx_tok = state.get("token")
+                        if _ctx_tok:
+                            _df_ctx = D.get_option_3min(_ctx_tok, lookback=10)
+                            if _df_ctx is not None and len(_df_ctx) >= 6:
+                                _c_closed = _df_ctx.iloc[:-1]
+                                _c_ts = str(_c_closed.index[-1]) if len(_c_closed) else ""
+                                if _c_ts and state.get("_last_context_ts") != _c_ts:
+                                    _c_tail = _c_closed.tail(6)
+                                    _ehs = round(float(_c_tail.iloc[-1].get("ema9_high", 0))
+                                                 - float(_c_tail.iloc[0].get("ema9_high", 0)), 1)
+                                    _els = round(float(_c_tail.iloc[-1].get("ema9_low", 0))
+                                                 - float(_c_tail.iloc[0].get("ema9_low", 0)), 1)
+                                    with _state_lock:
+                                        state["current_ema9_high_slope"] = _ehs
+                                        state["current_ema9_low_slope"]  = _els
+                                        if _ehs >= 20 and _els >= 20:
+                                            state["current_bands_state"] = "RISING"
+                                        elif _ehs <= 3 and _els <= 3:
+                                            state["current_bands_state"] = "FLAT"
+                                        else:
+                                            state["current_bands_state"] = "WEAK"
+                                        state["_last_context_ts"] = _c_ts
+                    except Exception:
+                        pass
 
                     # v15.0: Peak milestone alerts + exchange SL-M band update
                     if state.get("in_trade"):

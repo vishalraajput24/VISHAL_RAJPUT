@@ -127,6 +127,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "straddle_period": "", "atm_strike_used": 0,
         # v15.2 VWAP bonus (display only)
         "spot_vwap": 0.0, "spot_vs_vwap": 0.0, "vwap_bonus": "",
+        # v16.0 Batch 7 context (display only)
+        "ema9_high_slope_5c": 0.0, "ema9_low_slope_5c": 0.0,
+        "bands_state": "", "context_tag": "",
     }
     if state is None:
         state = {}
@@ -372,6 +375,44 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                                 + " " + result["vwap_bonus"])
         except Exception as e:
             logger.debug("[ENGINE] vwap bonus error: " + str(e))
+
+        # ═══ BUG-Q1: band slope + context_tag (display only) ═══
+        try:
+            _df_ctx = D.get_option_3min(token, lookback=10)
+            if _df_ctx is not None and len(_df_ctx) >= 6:
+                _closed = _df_ctx.iloc[:-1].tail(6)
+                _eh_then = float(_closed.iloc[0].get("ema9_high", 0))
+                _eh_now  = float(_closed.iloc[-1].get("ema9_high", 0))
+                _el_then = float(_closed.iloc[0].get("ema9_low", 0))
+                _el_now  = float(_closed.iloc[-1].get("ema9_low", 0))
+                result["ema9_high_slope_5c"] = round(_eh_now - _eh_then, 1)
+                result["ema9_low_slope_5c"]  = round(_el_now - _el_then, 1)
+            else:
+                result["ema9_high_slope_5c"] = 0.0
+                result["ema9_low_slope_5c"]  = 0.0
+        except Exception:
+            result["ema9_high_slope_5c"] = 0.0
+            result["ema9_low_slope_5c"]  = 0.0
+
+        _ehs = result["ema9_high_slope_5c"]
+        _els = result["ema9_low_slope_5c"]
+        if _ehs >= 20 and _els >= 20:
+            result["bands_state"] = "RISING"
+        elif _ehs <= 3 and _els <= 3:
+            result["bands_state"] = "FLAT"
+        else:
+            result["bands_state"] = "WEAK"
+
+        _straddle_strong = (result.get("straddle_info") == "STRONG")
+        _vwap_confluence = (result.get("vwap_bonus") == "CONFLUENCE")
+        _bands_rising    = (result["bands_state"] == "RISING")
+        if _straddle_strong and _vwap_confluence and _bands_rising:
+            result["context_tag"] = "TRIPLE_CONFLUENCE"
+        elif (result.get("straddle_info") == "WEAK"
+              and result["bands_state"] == "FLAT"):
+            result["context_tag"] = "MIXED_SIGNALS"
+        else:
+            result["context_tag"] = "NORMAL"
 
         # ═══ ALL HARD GATES PASSED — FIRE ═══
         result["fired"] = True

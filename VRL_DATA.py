@@ -135,6 +135,11 @@ STATE_PERSIST_FIELDS = [
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
     "entry_straddle_info",
+    # v16.0 Batch 7 band slope + context tag
+    "entry_bands_state", "entry_context_tag",
+    "ema9_high_slope_5c", "ema9_low_slope_5c",
+    "current_bands_state", "current_ema9_high_slope", "current_ema9_low_slope",
+    "_last_context_ts",
     # v15.2.5 velocity stall tracking
     "peak_history", "last_peak_candle_ts", "current_velocity",
     # v15.2.5 BUG-J sentinel: one-shot peak_history backfill on startup
