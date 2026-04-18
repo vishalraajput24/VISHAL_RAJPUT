@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v15.2</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.0</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -193,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v15.2';
+document.getElementById('ver').textContent=d.version||mk.version||'v16.0';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -201,6 +201,9 @@ tg+='<span class="tag tk">CE '+(mk.locked_ce||mk.atm||0)+' · PE '+(mk.locked_pe
 if(mk.vix>0)tg+='<span class="tag tv">VIX '+mk.vix+'</span>';
 if(mk.bias)tg+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
 if(mk.regime){tg+='<span class="tag '+regC(mk.regime)+'">'+esc(mk.regime)+'</span>';}
+// v16.0 Batch 7: context confluence tag
+if(mk.context_tag==='TRIPLE_CONFLUENCE'){tg+='<span class="tag tg">\u2713 TRIPLE CONFLUENCE</span>';}
+else if(mk.context_tag==='MIXED_SIGNALS'){tg+='<span class="tag ta">\u26A0 MIXED SIGNALS</span>';}
 // v15.2 — period indicator (OPENING / MIDDAY / CLOSING)
 if(d.period){tg+='<span class="tag tpu">'+esc(d.period)+'</span>';}
 if(mk.market_open&&!mk.indicators_warm){var _wtxt='Indicators warming up';if(mk.warmup_progress!=null)_wtxt+=' ('+mk.warmup_progress+'/'+mk.warmup_needed+' candles, ETA '+(mk.warmup_eta||'—')+')';tg+='<span class="tag tw" title="'+_wtxt+'">WARMUP</span>';}
@@ -231,25 +234,26 @@ if(pos.in_trade){
   var sym=shortSym(pos.symbol,pos.direction,pos.strike);
   var pnl=parseFloat(pos.pnl||0),pk=parseFloat(pos.peak||0);
   var entry=parseFloat(pos.entry||0),ltp=parseFloat(pos.ltp||0);
-  var rsi=parseFloat(pos.current_rsi||pos.rsi||0);
   var cn=pos.candles||0;
-  // v16: both lots always exit together at the same SL
+  // v16.0 Batch 7: both lots always exit together at the same SL, color-coded by direction
   var prs=Math.round(pnl*65*2),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
   var sl=parseFloat(pos.stop||0);
   if(sl<=0)sl=Math.round((entry-12)*100)/100;
-  var em=pos.entry_mode||'EMA9_BREAKOUT',bc='bc';
-  pa+='<div class="pos '+pc+'">';
-  pa+='<div class="ph"><div class="ps"><div class="pd g"></div>'+esc(sym)+' IN TRADE</div>';
-  if(em)pa+='<span class="bg '+bc+'">'+esc(em)+'</span>';
+  var _dirTint=pos.direction==='CE'?'rgba(34,197,94,0.04)':'rgba(239,68,68,0.04)';
+  var _emoji=pos.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
+  pa+='<div class="pos '+pc+'" style="background:'+_dirTint+'">';
+  pa+='<div class="ph"><div class="ps">'+_emoji+' '+esc(sym)+' \u00B7 IN TRADE</div>';
   pa+='</div>';
   pa+='<div class="pp mono '+nc+'">'+fmt(pnl)+'<span style="font-size:16px;font-weight:700">pts</span></div>';
   pa+='<div class="pr mono">\u20B9'+prs.toLocaleString('en-IN')+'</div>';
-  pa+='<div class="pe">Entry \u20B9'+entry+' \u2192 \u20B9'+ltp+' · '+cn+' candles</div>';
-  // v16: two lots, same SL, no split display
-  pa+='<div class="pl">';
-  pa+='<div class="lt"><div class="ll">Lot 1 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
-  pa+='<div class="lt"><div class="ll">Lot 2 · 65 qty</div><div class="lv" style="color:var(--gn)">Active \u25CF</div><div class="ls mono">SL \u20B9'+sl+'</div></div>';
-  pa+='</div>';
+  pa+='<div class="pe">Entry \u20B9'+entry+' \u2192 \u20B9'+ltp+' \u00B7 '+cn+' candles</div>';
+  // v16.0 Batch 7 BUG-Q15: single combined position row — ratchet is the active stop
+  pa+='<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;margin-top:12px">'
+    + '<div><div style="font-size:9px;color:var(--tx3)">POSITION</div>'
+    + '<div style="font-size:13px;font-weight:700">2 lots \u00B7 130 qty</div></div>'
+    + '<div style="text-align:right"><div style="font-size:9px;color:var(--tx3)">INITIAL SL</div>'
+    + '<div class="mono" style="font-size:13px;font-weight:700">\u20B9'+sl.toFixed(1)+'</div></div>'
+    + '</div>';
   // v16.0: Profit Ratchet tier display + EMA9 band context
   var _cur_el=parseFloat(pos.current_ema9_low||0);
   var _cur_eh=parseFloat(pos.current_ema9_high||0);
@@ -266,19 +270,39 @@ if(pos.in_trade){
   }else{
     pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">RATCHET INACTIVE (peak '+fmt(pk)+', need +10)</div>';
   }
-  // v15.2: replay the straddle Δ + VWAP that fired this entry
-  var _esd=pos.entry_straddle_delta;
-  var _esp=pos.entry_straddle_period||'';
-  if(_esd!=null||_esp){
-    var _esd_str=(_esd==null)?'n/a':((_esd>=0?'+':'')+parseFloat(_esd).toFixed(1));
-    pa+='<div style="margin-top:6px;padding:6px 10px;border-radius:8px;background:var(--bl-bg);border:1px solid var(--bl-bd);color:var(--bl);font-size:9px;text-align:center">Entry straddle Δ '+_esd_str+'pts ['+esc(_esp)+']</div>';
+  // v16.0 Batch 7 BUG-Q12: Context row (bands + straddle + VWAP display)
+  var _bs   = pos.current_bands_state || pos.entry_bands_state || '';
+  var _ehs  = parseFloat(pos.current_ema9_high_slope || pos.ema9_high_slope_5c || 0);
+  var _els  = parseFloat(pos.current_ema9_low_slope  || pos.ema9_low_slope_5c  || 0);
+  var _si   = pos.entry_straddle_info || '';
+  var _sd   = parseFloat(pos.entry_straddle_delta || 0);
+  var _vb   = pos.entry_vwap_bonus || '';
+  var _svv  = parseFloat(pos.entry_spot_vs_vwap || 0);
+  var _ctag = pos.entry_context_tag || '';
+  var _ctx_html = '<div style="margin-top:14px;padding:12px;border-radius:10px;background:var(--bg);border:1px solid var(--bd)">';
+  if(_ctag==='TRIPLE_CONFLUENCE'){_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--gn);margin-bottom:8px">\u2713 TRIPLE CONFLUENCE</div>';}
+  else if(_ctag==='MIXED_SIGNALS'){_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--am);margin-bottom:8px">\u26A0 MIXED SIGNALS</div>';}
+  else{_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--tx3);margin-bottom:8px">CONTEXT</div>';}
+  if(_bs){
+    var _bc=_bs==='RISING'?'var(--gn)':_bs==='FLAT'?'var(--rd)':'var(--am)';
+    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">Bands</span>'
+      +'<span style="color:var(--tx);font-weight:700">+'+_ehs.toFixed(0)+' / +'+_els.toFixed(0)+'</span>'
+      +'<span style="color:'+_bc+';font-weight:700;margin-left:8px">'+_bs+'</span></div>';
   }
-  var _evb=pos.entry_vwap_bonus||'';
-  if(_evb){
-    var _vwc=_evb==='CONFLUENCE'?'var(--gn2)':'var(--or2)';
-    var _vbg=_evb==='CONFLUENCE'?'var(--gn-bg)':'var(--or-bg)';
-    pa+='<div style="margin-top:6px;padding:6px 10px;border-radius:8px;background:'+_vbg+';color:'+_vwc+';font-size:9px;text-align:center;font-weight:700">VWAP '+esc(_evb)+'</div>';
+  if(_si&&_si!=='NA'){
+    var _ic=_si==='STRONG'?'var(--gn)':_si==='WEAK'?'var(--rd)':'var(--am)';
+    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">Straddle</span>'
+      +'<span style="color:var(--tx);font-weight:700">\u0394'+(_sd>=0?'+':'')+_sd.toFixed(1)+'</span>'
+      +'<span style="color:'+_ic+';font-weight:700;margin-left:8px">'+_si+'</span></div>';
   }
+  if(_vb){
+    var _vc=_vb.indexOf('CONFLUENCE')>=0?'var(--gn)':_vb.indexOf('DIVERGENCE')>=0?'var(--rd)':'var(--am)';
+    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">VWAP</span>'
+      +'<span style="color:var(--tx);font-weight:700">spot '+(_svv>=0?'+':'')+_svv.toFixed(0)+'</span>'
+      +'<span style="color:'+_vc+';font-weight:700;margin-left:8px">'+_vb+'</span></div>';
+  }
+  _ctx_html+='</div>';
+  pa+=_ctx_html;
   // v15.2.5 velocity indicator — smoothed 3-candle growth rate + sparkline
   var _vel=parseFloat(pos.current_velocity||0);
   var _ph=(pos.peak_history||[]);
@@ -296,7 +320,7 @@ if(pos.in_trade){
     + '<span>Velocity: <b style="color:'+_vel_clr+'">'+(_vel>=0?'+':'')+_vel.toFixed(2)+' pts/candle '+_vel_lbl+'</b></span>'
     + '<span style="line-height:24px">'+_spark+'</span>'
     + '</div>';
-  pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span>'+(em?'<span>Mode: <b>'+em+'</b></span>':'')+'</div>';
+  pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span></div>';
   pa+='</div>';
 }
 document.getElementById('pos-area').innerHTML=pa;
