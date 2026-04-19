@@ -235,6 +235,8 @@ def _make_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--fib-filter", choices=["off", "breakout", "pullback", "proximity"],
                    default="off",
                    help="Fibonacci retracement filter mode (default off)")
+    p.add_argument("--timeframe", choices=["3min", "1min"], default="3min",
+                   help="Strategy timeframe: 3min (default, current production) or 1min")
     p.add_argument("--expiry-date", default="2026-04-21",
                    help="(legacy single-date fallback) Nearest expiry date")
     p.add_argument("--expiry-dates", default=",".join(_DEFAULT_EXPIRY_CAL),
@@ -423,9 +425,16 @@ def main():
     print("Indicator cache built: " + str(len(cache_3m)) + " groups (3m), "
           + str(len(cache_1m)) + " groups (1m)")
 
-    # ── Build spot timeline (resample to 3-min for ATM steps) ──
+    # ── Build spot timeline at chosen granularity ──
     spot_ts = spot.set_index("timestamp").sort_index()
-    spot_3m = spot_ts["close"].resample("3min").last().dropna()
+    _tf = args.timeframe
+    if _tf == "1min":
+        spot_timeline = spot_ts["close"].dropna()
+        opt_cache = cache_1m
+    else:
+        spot_timeline = spot_ts["close"].resample("3min").last().dropna()
+        opt_cache = cache_3m
+    print("Timeframe: " + _tf + "  (option cache groups: " + str(len(opt_cache)) + ")")
 
     # ── Determine trading days ──
     trading_days = sorted(spot["timestamp"].dt.date.unique())
@@ -463,7 +472,7 @@ def main():
         day_trades    = 0
         day_pnl       = 0.0
 
-        day_spot = spot_3m[spot_3m.index.date == day]
+        day_spot = spot_timeline[spot_timeline.index.date == day]
         if day_spot.empty:
             continue
 
@@ -496,9 +505,9 @@ def main():
 
                 for otype in ("CE", "PE"):
                     key = (locked_strike, otype)
-                    if key not in cache_3m:
+                    if key not in opt_cache:
                         continue
-                    df_full = cache_3m[key]
+                    df_full = opt_cache[key]
                     df_up = df_full[df_full["timestamp"] <= ts]
                     if len(df_up) < 4:
                         continue
@@ -630,9 +639,9 @@ def main():
                 # ── Exit evaluation ──
                 otype = state["direction"]
                 key = (state["strike"], otype)
-                if key not in cache_3m:
+                if key not in opt_cache:
                     continue
-                df_full = cache_3m[key]
+                df_full = opt_cache[key]
                 df_up = df_full[df_full["timestamp"] <= ts]
                 if len(df_up) < 2:
                     continue
@@ -727,8 +736,8 @@ def main():
     if state["in_trade"]:
         otype = state["direction"]
         key = (state["strike"], otype)
-        if key in cache_3m:
-            df_full = cache_3m[key]
+        if key in opt_cache:
+            df_full = opt_cache[key]
             if not df_full.empty:
                 last_close = float(df_full.iloc[-1]["close"])
                 pnl_pts = round(last_close - state["entry_price"], 2)
