@@ -646,10 +646,24 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 #  BREAKEVEN_LOCK removed — redundant with Ratchet T1 (both +2 at peak≥10).
 # ═══════════════════════════════════════════════════════════════
 
-def manage_exit(state: dict, option_ltp: float, profile: dict,
-                other_token: int = 0) -> list:
-    """v16.0: 6-rule exit chain. Ratchet + 1-min EMA9 break replace
-    EMA9_LOW_BREAK and BREAKEVEN_LOCK."""
+def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
+                               opt_3m_full, now,
+                               ema1m_break_result,
+                               market_open: bool) -> list:
+    """Pure exit-chain evaluator. Mutates `state` exactly as manage_exit did
+    (peak_pnl, trough_pnl, peak_history, current_velocity, current_ema9_high/low,
+    active_ratchet_tier/sl, _peak_history_backfilled, last_peak_candle_ts).
+
+    Parameters:
+        state:              position state dict (mutated in place).
+        option_ltp:         current option LTP (float).
+        opt_3m_full:        pre-fetched 3-min DataFrame with ema9_high/low, or None.
+        now:                datetime — EOD comparison.
+        ema1m_break_result: tuple (would_break, close, ema9_1m) pre-computed.
+        market_open:        bool — gates EOD check exactly like the wrapper.
+
+    Returns: list of exit dicts — same shape as manage_exit's output.
+    """
     if not state.get("in_trade"):
         return []
 
@@ -675,8 +689,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
 
     # ── RULE 2: EOD auto-exit at 15:30 ──
-    now = datetime.now()
-    if D.is_market_open():
+    if market_open:
         eod_h, eod_m = eod_time.split(":")
         eod_mins = int(eod_h) * 60 + int(eod_m)
         if now.hour * 60 + now.minute >= eod_mins:
@@ -688,20 +701,13 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         logger.info("[ENGINE] STALE_ENTRY " + str(candles) + "c peak=" + str(peak))
         return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
 
-    # ── Fetch 3-min bars once (for peak_history + band display) ──
-    token = state.get("token")
+    # ── band + peak_history bookkeeping ──
     last_candle_ts = ""
-    opt_3m_full = None
-    try:
-        opt_3m_full = D.get_option_3min(token, lookback=10)
-        if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
-            last = opt_3m_full.iloc[-2]
-            last_candle_ts = str(last.name) if hasattr(last, "name") else str(last.get("timestamp", ""))
-            # Keep current band in state for dashboard display (entry trigger, not exit)
-            state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
-            state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
-    except Exception as e:
-        logger.warning("[ENGINE] band fetch error: " + str(e))
+    if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
+        last = opt_3m_full.iloc[-2]
+        last_candle_ts = str(last.name) if hasattr(last, "name") else str(last.get("timestamp", ""))
+        state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
+        state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
 
     # ── BUG-J: one-shot peak_history backfill on startup-with-trade ──
     if (not state.get("_peak_history_backfilled")
@@ -763,9 +769,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
 
     # ── RULE 5: EMA1M_BREAK — 1-min red + close < 1m EMA9 + in profit ──
     running_pnl = round(option_ltp - entry, 2)
-    would_break, ema1m_close, ema1m_ema9 = compute_1min_ema9_break(
-        option_token=int(token) if token else 0,
-        running_pnl=running_pnl, min_pnl_guard=5.0)
+    would_break, ema1m_close, ema1m_ema9 = ema1m_break_result
     if would_break:
         logger.info("[ENGINE] EMA1M_BREAK close=" + str(ema1m_close)
                     + " ema9_1m=" + str(ema1m_ema9)
@@ -785,6 +789,37 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         return [{"lot_id": "ALL", "reason": "PROFIT_RATCHET", "price": ratchet_sl}]
 
     return []
+
+
+def manage_exit(state: dict, option_ltp: float, profile: dict,
+                other_token: int = 0) -> list:
+    """v16.0 thin wrapper: fetches 3-min bars + 1-min EMA9 break result,
+    then delegates to the pure exit-chain evaluator. All exit-chain logic
+    lives in _evaluate_exit_chain_pure."""
+    if not state.get("in_trade"):
+        return []
+
+    token = state.get("token")
+    opt_3m_full = None
+    try:
+        opt_3m_full = D.get_option_3min(token, lookback=10)
+    except Exception as e:
+        logger.warning("[ENGINE] band fetch error: " + str(e))
+
+    entry = state.get("entry_price", 0)
+    running_pnl = round(option_ltp - entry, 2)
+    ema1m_break_result = compute_1min_ema9_break(
+        option_token=int(token) if token else 0,
+        running_pnl=running_pnl, min_pnl_guard=5.0)
+
+    market_open = D.is_market_open()
+    now = datetime.now()
+
+    return _evaluate_exit_chain_pure(
+        state=state, option_ltp=option_ltp,
+        opt_3m_full=opt_3m_full, now=now,
+        ema1m_break_result=ema1m_break_result,
+        market_open=market_open)
 
 
 # Shadow 1-min API — REMOVED in v16.0 Batch 7 (BUG-Q9).
