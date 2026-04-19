@@ -166,14 +166,124 @@ def load_historical_data(start_date: str, end_date: str) -> dict:
 
 def _make_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="VRL v16.0.1 strategy backtest — Part 1 (data loader)")
+        description="VRL v16.0.1 strategy backtest")
     p.add_argument("--start-date", default=DEFAULT_START,
                    help="ISO date YYYY-MM-DD inclusive (default: " + DEFAULT_START + ")")
     p.add_argument("--end-date", default=DEFAULT_END,
                    help="ISO date YYYY-MM-DD inclusive (default: " + DEFAULT_END + ")")
     p.add_argument("--verbose", action="store_true",
                    help="Enable INFO-level logging")
+    # Batch 9C sweep parameters
+    p.add_argument("--body-min", type=float, default=30.0,
+                   help="Body gate minimum %% of range (default 30)")
+    p.add_argument("--band-min", type=float, default=8.0,
+                   help="EMA9 band width minimum pts (default 8)")
+    p.add_argument("--stale-candles", type=int, default=5,
+                   help="Stale exit candle count (default 5)")
+    p.add_argument("--dte-filter", choices=["off", "on"], default="off",
+                   help="Skip trading days with DTE <= 1 (default off)")
+    p.add_argument("--ema-filter", choices=["off", "on"], default="off",
+                   help="Reject entries where bands_state=FLAT (default off)")
+    p.add_argument("--expiry-date", default="2026-04-21",
+                   help="Nearest expiry date for DTE filter (default 2026-04-21)")
+    p.add_argument("--classify-csv", default=None,
+                   help="Read an existing trades CSV and print NORMAL vs DRIFT KILL breakdown, then exit")
+    p.add_argument("--tag", default="",
+                   help="Optional suffix for output CSV filenames")
     return p
+
+
+def _classify_trades_csv(csv_path: str) -> None:
+    """Read a trades CSV and print NORMAL vs DRIFT KILL breakdown."""
+    import csv as _csv
+    path = os.path.expanduser(csv_path)
+    if not os.path.isfile(path):
+        print("ERROR: CSV not found: " + path)
+        return
+
+    normal = []
+    drift = []
+    with open(path) as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            try:
+                pnl = float(row.get("pnl_pts", 0) or 0)
+                entry = float(row.get("entry_price", 0) or 0)
+                exit_px = float(row.get("exit_price", 0) or 0)
+            except Exception:
+                continue
+            # Drift kill: big loss + premium collapsed below half of entry
+            if pnl < -50 and entry > 0 and exit_px < entry * 0.5:
+                drift.append(row)
+            else:
+                normal.append(row)
+
+    total = len(normal) + len(drift)
+    print("=" * 55)
+    print("TRADE CLASSIFICATION: " + csv_path)
+    print("=" * 55)
+    print("Total trades:  " + str(total))
+
+    def _stats(rows):
+        n = len(rows)
+        if n == 0:
+            return 0, 0, 0.0, 0.0, 0
+        pnls = [float(r["pnl_pts"]) for r in rows]
+        wins = sum(1 for p in pnls if p > 0)
+        avg = sum(pnls) / n
+        net_rs = sum(float(r.get("pnl_rupees_net", 0) or 0) for r in rows)
+        wr = round(wins / n * 100, 1)
+        return n, wins, round(avg, 2), round(net_rs, 0), wr
+
+    n_n, w_n, avg_n, net_n, wr_n = _stats(normal)
+    n_d, w_d, avg_d, net_d, wr_d = _stats(drift)
+
+    print("")
+    print("NORMAL trades:      " + str(n_n) + "  avg pnl: "
+          + "{:+.2f}".format(avg_n) + " pts  win rate: " + str(wr_n) + "%"
+          + "  net: Rs" + "{:,}".format(int(net_n)))
+    print("DRIFT KILL trades:  " + str(n_d) + "  avg pnl: "
+          + "{:+.2f}".format(avg_d) + " pts  win rate: " + str(wr_d) + "%"
+          + "  net: Rs" + "{:,}".format(int(net_d)))
+    print("")
+    print("=== CLEAN BASELINE (excluding drift kills) ===")
+    print("Trades:       " + str(n_n))
+    print("Wins:         " + str(w_n))
+    print("Win rate:     " + str(wr_n) + "%")
+    print("Expectancy:   " + "{:+.2f}".format(avg_n) + " pts/trade")
+    print("Net PnL:      Rs" + "{:,}".format(int(net_n)))
+    print("=" * 55)
+
+
+def _apply_config_overrides(args) -> dict:
+    """Monkey-patch VRL_CONFIG's cached YAML so the pure functions pick up
+    sweep parameters at read time. Returns a dict with the original values
+    so the caller can restore later (we don't bother — single-shot process)."""
+    overrides = {
+        "body_min": args.body_min,
+        "band_min": args.band_min,
+        "stale_candles": args.stale_candles,
+        "dte_filter": args.dte_filter == "on",
+        "ema_filter": args.ema_filter == "on",
+        "expiry_date": args.expiry_date,
+    }
+    try:
+        import VRL_CONFIG as CFG  # type: ignore
+        try:
+            cfg = CFG.get()
+        except Exception:
+            cfg = getattr(CFG, "_cfg", None) or {}
+        if isinstance(cfg, dict):
+            entry = cfg.setdefault("entry", {}).setdefault("ema9_band", {})
+            entry["body_pct_min"] = args.body_min
+            entry["min_band_width_pts"] = args.band_min
+            exit_ = cfg.setdefault("exit", {}).setdefault("ema9_band", {})
+            exit_["stale_candles"] = args.stale_candles
+    except Exception as e:
+        print("WARNING: CFG override failed (" + str(e) + ") — "
+              + "default CFG values will apply to pure gates; "
+              + "post-filter still enforces overrides.")
+    return overrides
 
 
 def main():
@@ -182,8 +292,19 @@ def main():
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    if args.classify_csv:
+        _classify_trades_csv(args.classify_csv)
+        return
+
+    overrides = _apply_config_overrides(args)
+
     print("═══ BATCH 9 — STRATEGY BACKTEST ═══")
     print("Date range: " + args.start_date + " to " + args.end_date)
+    print("Params: body_min=" + str(args.body_min)
+          + " band_min=" + str(args.band_min)
+          + " stale=" + str(args.stale_candles)
+          + " DTE=" + args.dte_filter
+          + " EMA=" + args.ema_filter)
 
     data = load_historical_data(args.start_date, args.end_date)
     meta = data["meta"]
@@ -320,6 +441,35 @@ def main():
                         atm_strike=atm,
                         silent=True,
                     )
+
+                    # ── Post-filter: sweep parameter enforcement ──
+                    if result.get("fired"):
+                        _body = float(result.get("body_pct", 0) or 0)
+                        _band = float(result.get("band_width", 0) or 0)
+                        _bands_state = result.get("bands_state", "")
+                        _rejected_by_post = None
+
+                        if _body < overrides["body_min"]:
+                            _rejected_by_post = ("post_body_"
+                                + str(int(_body)) + "<" + str(int(overrides["body_min"])))
+                        elif _band < overrides["band_min"]:
+                            _rejected_by_post = ("post_band_"
+                                + str(round(_band, 1)) + "<" + str(overrides["band_min"]))
+                        elif overrides["ema_filter"] and _bands_state == "FLAT":
+                            _rejected_by_post = "post_ema_flat"
+                        elif overrides["dte_filter"]:
+                            try:
+                                _exp = datetime.strptime(
+                                    overrides["expiry_date"], "%Y-%m-%d").date()
+                                _dte = (_exp - now.date()).days
+                                if _dte <= 1:
+                                    _rejected_by_post = ("post_dte_" + str(_dte))
+                            except Exception:
+                                pass
+
+                        if _rejected_by_post:
+                            result["fired"] = False
+                            result["reject_reason"] = _rejected_by_post
 
                     if result.get("fired"):
                         entry_price = float(result.get("entry_price", 0))
