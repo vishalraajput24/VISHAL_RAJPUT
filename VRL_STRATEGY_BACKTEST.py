@@ -269,6 +269,7 @@ def _apply_config_overrides(args) -> dict:
     }
     try:
         import VRL_CONFIG as CFG  # type: ignore
+        # Patch 1: mutate the cached YAML dict (for code paths that read it)
         try:
             cfg = CFG.get()
         except Exception:
@@ -279,6 +280,26 @@ def _apply_config_overrides(args) -> dict:
             entry["min_band_width_pts"] = args.band_min
             exit_ = cfg.setdefault("exit", {}).setdefault("ema9_band", {})
             exit_["stale_candles"] = args.stale_candles
+
+        # Patch 2: intercept the lookup functions themselves. This is the
+        # one that actually works — _evaluate_exit_chain_pure calls
+        # CFG.exit_ema9_band(key, default) and we replace that call.
+        _orig_entry = getattr(CFG, "entry_ema9_band", None)
+        _orig_exit  = getattr(CFG, "exit_ema9_band", None)
+        if _orig_entry:
+            def _patched_entry(key, default=None, _orig=_orig_entry):
+                if key == "body_pct_min":
+                    return args.body_min
+                if key == "min_band_width_pts":
+                    return args.band_min
+                return _orig(key, default)
+            CFG.entry_ema9_band = _patched_entry
+        if _orig_exit:
+            def _patched_exit(key, default=None, _orig=_orig_exit):
+                if key == "stale_candles":
+                    return args.stale_candles
+                return _orig(key, default)
+            CFG.exit_ema9_band = _patched_exit
     except Exception as e:
         print("WARNING: CFG override failed (" + str(e) + ") — "
               + "default CFG values will apply to pure gates; "
