@@ -191,6 +191,27 @@ def _compute_dte(current_dt, expiry_cal) -> int:
     return 999
 
 
+def _compute_fib_levels(df, lookback: int = 20) -> dict:
+    """Compute fib retracement levels from recent option premium swing."""
+    if df is None or len(df) < 5:
+        return None
+    recent = df.tail(lookback)
+    sh = float(recent["high"].max())
+    sl = float(recent["low"].min())
+    sr = sh - sl
+    if sr < 2:
+        return None
+    return {
+        "swing_high": sh,
+        "swing_low": sl,
+        "swing_range": sr,
+        "fib_236": round(sh - sr * 0.236, 2),
+        "fib_382": round(sh - sr * 0.382, 2),
+        "fib_500": round(sh - sr * 0.500, 2),
+        "fib_618": round(sh - sr * 0.618, 2),
+    }
+
+
 def _make_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="VRL v16.0.1 strategy backtest")
@@ -211,6 +232,9 @@ def _make_arg_parser() -> argparse.ArgumentParser:
                    help="Skip trading days with DTE <= 1 (default off)")
     p.add_argument("--ema-filter", choices=["off", "on"], default="off",
                    help="Reject entries where bands_state=FLAT (default off)")
+    p.add_argument("--fib-filter", choices=["off", "breakout", "pullback", "proximity"],
+                   default="off",
+                   help="Fibonacci retracement filter mode (default off)")
     p.add_argument("--expiry-date", default="2026-04-21",
                    help="(legacy single-date fallback) Nearest expiry date")
     p.add_argument("--expiry-dates", default=",".join(_DEFAULT_EXPIRY_CAL),
@@ -298,6 +322,7 @@ def _apply_config_overrides(args) -> dict:
         "stale_candles": args.stale_candles,
         "dte_filter": args.dte_filter == "on",
         "ema_filter": args.ema_filter == "on",
+        "fib_filter": args.fib_filter,
         "expiry_date": args.expiry_date,     # legacy single-date
         "expiry_cal": _expiry_cal,           # new calendar
     }
@@ -545,6 +570,26 @@ def main():
                             el_then = float(df_up.iloc[-6].get("ema9_low", 0))
                             if (ema9h - eh_then) <= 3 and (ema9l - el_then) <= 3:
                                 fired = False; reject = "ema_flat"
+
+                    # Fibonacci retracement filter (optional)
+                    fib_mode = overrides.get("fib_filter", "off")
+                    if fired and fib_mode != "off":
+                        fibs = _compute_fib_levels(df_up, lookback=20)
+                        if fibs is not None:
+                            if fib_mode == "breakout":
+                                if close < fibs["fib_236"]:
+                                    fired = False; reject = "fib_below_236"
+                            elif fib_mode == "pullback":
+                                near_382 = abs(close - fibs["fib_382"]) < 3
+                                near_500 = abs(close - fibs["fib_500"]) < 3
+                                if not (near_382 or near_500):
+                                    fired = False; reject = "fib_not_at_pullback"
+                            elif fib_mode == "proximity":
+                                for lvl in (fibs["fib_382"], fibs["fib_500"], fibs["fib_618"]):
+                                    if abs(close - lvl) < 3:
+                                        fired = False
+                                        reject = "fib_proximity_" + str(round(lvl, 1))
+                                        break
 
                     if not fired:
                         rejections.append({
