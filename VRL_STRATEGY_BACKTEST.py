@@ -164,6 +164,33 @@ def load_historical_data(start_date: str, end_date: str) -> dict:
 #  MAIN STUB
 # ═══════════════════════════════════════════════════════════════
 
+# Known Nifty weekly expiries. Normally Tuesday; shifts to prior working
+# day if Tuesday is a holiday. For Apr 2026: Apr 14 Tue was a holiday so
+# that week's expiry moved to Apr 13 Mon.
+_DEFAULT_EXPIRY_CAL = [
+    "2026-04-07",  # Tue
+    "2026-04-13",  # Mon (shift from Apr 14 holiday)
+    "2026-04-21",  # Tue
+    "2026-04-28",  # Tue
+    "2026-05-05",  # Tue
+]
+
+
+def _compute_dte(current_dt, expiry_cal) -> int:
+    """Return calendar days to the NEXT expiry on or after current_dt.date().
+    Returns 999 if no expiry found ahead."""
+    from datetime import date as _date
+    cd = current_dt.date() if hasattr(current_dt, "date") else current_dt
+    for s in expiry_cal:
+        try:
+            exp = datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if exp >= cd:
+            return (exp - cd).days
+    return 999
+
+
 def _make_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="VRL v16.0.1 strategy backtest")
@@ -185,7 +212,10 @@ def _make_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--ema-filter", choices=["off", "on"], default="off",
                    help="Reject entries where bands_state=FLAT (default off)")
     p.add_argument("--expiry-date", default="2026-04-21",
-                   help="Nearest expiry date for DTE filter (default 2026-04-21)")
+                   help="(legacy single-date fallback) Nearest expiry date")
+    p.add_argument("--expiry-dates", default=",".join(_DEFAULT_EXPIRY_CAL),
+                   help="Comma-separated weekly expiry dates (YYYY-MM-DD,...). "
+                        "Default covers Apr-May 2026 with Apr 13 shift for holiday.")
     p.add_argument("--classify-csv", default=None,
                    help="Read an existing trades CSV and print NORMAL vs DRIFT KILL breakdown, then exit")
     p.add_argument("--tag", default="",
@@ -259,13 +289,17 @@ def _apply_config_overrides(args) -> dict:
     """Monkey-patch VRL_CONFIG's cached YAML so the pure functions pick up
     sweep parameters at read time. Returns a dict with the original values
     so the caller can restore later (we don't bother — single-shot process)."""
+    _expiry_cal = [s.strip() for s in (args.expiry_dates or "").split(",") if s.strip()]
+    if not _expiry_cal:
+        _expiry_cal = list(_DEFAULT_EXPIRY_CAL)
     overrides = {
         "body_min": args.body_min,
         "band_min": args.band_min,
         "stale_candles": args.stale_candles,
         "dte_filter": args.dte_filter == "on",
         "ema_filter": args.ema_filter == "on",
-        "expiry_date": args.expiry_date,
+        "expiry_date": args.expiry_date,     # legacy single-date
+        "expiry_cal": _expiry_cal,           # new calendar
     }
     try:
         import VRL_CONFIG as CFG  # type: ignore
@@ -495,11 +529,10 @@ def main():
                     if fired and band_width < overrides["band_min"]:
                         fired = False; reject = "band_" + str(round(band_width, 1))
 
-                    # DTE filter (optional)
+                    # DTE filter (optional) — uses weekly expiry calendar
                     if fired and overrides["dte_filter"]:
                         try:
-                            exp = datetime.strptime(overrides["expiry_date"], "%Y-%m-%d").date()
-                            dte = (exp - now.date()).days
+                            dte = _compute_dte(now, overrides["expiry_cal"])
                             if dte <= 1:
                                 fired = False; reject = "dte_" + str(dte)
                         except Exception:
