@@ -2292,7 +2292,7 @@ def ensure_option_history(kite_inst, strike: int, expiry,
     import sqlite3
     k = kite_inst or _kite
     result = {"strike": strike, "ce_candles": 0, "pe_candles": 0,
-              "fetched": False, "error": None}
+              "fetched": False, "api_calls": 0, "error": None}
     if k is None:
         result["error"] = "kite not initialised"
         return result
@@ -2339,6 +2339,7 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                 from_dt = datetime.now() - timedelta(days=lookback_days)
                 to_dt = datetime.now()
                 time.sleep(0.5)
+                result["api_calls"] += 1
                 raw = k.historical_data(
                     instrument_token=int(token),
                     from_date=from_dt, to_date=to_dt,

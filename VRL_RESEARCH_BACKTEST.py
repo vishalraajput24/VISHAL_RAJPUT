@@ -288,17 +288,48 @@ def run_backtest(days: int = 30):
                     if c["cluster_state"] == "ACTIVE":
                         l_active += 1
 
+        # Edge detection with pre-set promotion criteria
         print("=== EDGE DETECTION ===")
+        sig_p50 = thresholds.get("sigma_p50", 1.0)
+        sig_gap_thresh = sig_p50 * 0.5   # 50% of sigma_p50
         sig_diff = abs(np.mean(w_sigs) - np.mean(l_sigs)) if w_sigs and l_sigs else 0
-        print("GARCH predictive (>10pt difference):",
-              "YES" if sig_diff > 10 else "NO",
-              "(diff=" + str(round(sig_diff, 2)) + ")")
+        sig_pass = sig_diff > sig_gap_thresh
+        print("GARCH sigma gap: " + str(round(sig_diff, 2))
+              + " (threshold: " + str(round(sig_gap_thresh, 2))
+              + " = 50% of sigma_p50=" + str(round(sig_p50, 2)) + ")")
+        print("  Winners avg sigma:", round(float(np.mean(w_sigs)), 4) if w_sigs else 0)
+        print("  Losers  avg sigma:", round(float(np.mean(l_sigs)), 4) if l_sigs else 0)
+        print("  GARCH predictive:", "YES" if sig_pass else "NO")
+
         w_act_pct = w_active / max(1, len(winners)) * 100
         l_act_pct = l_active / max(1, len(losers)) * 100
         act_diff = abs(w_act_pct - l_act_pct)
-        print("Hawkes predictive (>15% ACTIVE diff):",
-              "YES" if act_diff > 15 else "NO",
-              "(diff=" + str(round(act_diff, 1)) + "%)")
+        act_pass = act_diff > 20
+        print("Hawkes ACTIVE gap: " + str(round(act_diff, 1))
+              + "% (threshold: 20%)")
+        print("  Winners ACTIVE%:", round(w_act_pct, 1))
+        print("  Losers  ACTIVE%:", round(l_act_pct, 1))
+        print("  Hawkes predictive:", "YES" if act_pass else "NO")
+
+        # T-test (scipy) — only if sufficient samples
+        t_stat, t_pval = 0.0, 1.0
+        if len(w_sigs) >= 5 and len(l_sigs) >= 5:
+            try:
+                from scipy.stats import ttest_ind
+                t_stat, t_pval = ttest_ind(w_sigs, l_sigs, equal_var=False)
+                t_stat = round(float(t_stat), 3)
+                t_pval = round(float(t_pval), 4)
+            except Exception:
+                pass
+        print("T-test sigma (win vs loss): t=" + str(t_stat)
+              + " p=" + str(t_pval)
+              + (" (significant)" if t_pval < 0.05 else " (not significant)"))
+        n_trades_total = len(trades)
+        n_min_pass = n_trades_total >= 100
+        print("Sample size: N=" + str(n_trades_total)
+              + " (threshold: 100, "
+              + ("PASS" if n_min_pass else "INSUFFICIENT — need more data")
+              + ")")
         print()
 
     # Checklist. garch_fail now excludes warmup_first_30 (expected behavior),

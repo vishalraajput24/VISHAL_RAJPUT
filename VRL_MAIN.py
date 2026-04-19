@@ -363,9 +363,8 @@ def _reset_daily(today_str: str):
     logger.info("[MAIN] Daily reset")
     _save_state()
 
-    # BUG-R10: pre-load ATM option history at daily reset (before 09:15).
-    # Uses previous day's close to compute provisional ATM. Fetch 5 days
-    # of 3-min candles for ATM strike CE+PE so GARCH has warm data.
+    # BUG-R10: pre-load 5-strike window at daily reset (before 09:15).
+    # Fetch 5 days of 3-min + 1-min candles for ATM±100 so GARCH is warm.
     try:
         from datetime import date as _dr10
         if state.get("_preload_done_today") != _dr10.today().isoformat():
@@ -376,13 +375,19 @@ def _reset_daily(today_str: str):
                 _atm_prov = D.resolve_atm_strike(_spot_close)
                 _expiry_prov = D.get_nearest_expiry(_kite)
                 if _atm_prov and _expiry_prov:
-                    _r10 = D.ensure_option_history(
-                        _kite, _atm_prov, _expiry_prov,
-                        min_candles=30, timeframes=("3minute", "minute"))
-                    logger.info("[PRELOAD] Market-open ATM " + str(_atm_prov)
-                                + " CE=" + str(_r10.get("ce_candles", 0))
-                                + " PE=" + str(_r10.get("pe_candles", 0))
-                                + " fetched=" + str(_r10.get("fetched")))
+                    _r10_strikes = [_atm_prov + _off
+                                    for _off in (-100, -50, 0, 50, 100)]
+                    _r10_total = 0
+                    for _r10_sk in _r10_strikes:
+                        _r10_res = D.ensure_option_history(
+                            _kite, _r10_sk, _expiry_prov,
+                            min_candles=30, timeframes=("3minute", "minute"))
+                        if _r10_res.get("fetched"):
+                            _r10_total += (_r10_res.get("ce_candles", 0)
+                                           + _r10_res.get("pe_candles", 0))
+                    logger.info("[PRELOAD] Market-open 5-strike window ATM="
+                                + str(_atm_prov) + " total_candles="
+                                + str(_r10_total))
                     with _state_lock:
                         state["_preload_done_today"] = _dr10.today().isoformat()
                     _save_state()

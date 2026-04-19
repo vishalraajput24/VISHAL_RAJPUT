@@ -332,3 +332,6 @@
 6. **Check function signatures after refactoring** — v12→v13 broke signal scans for 5 days
 7. **Auth token expires after 24h** — bot must self-heal, not depend on cron timing
 8. **Dual-write errors must be visible** — SQLite failures should log at WARNING level
+9. **Backtest-First Development** — Any new module that consumes historical data MUST be validated via backtest on existing DB before deploying to live bot. Required: pure functions → dedicated backtest runner → report with edge cases + calibration + trade-level analysis → approval.
+9b. **Data Availability Before Analysis** — Before any module reads option_3min or option_1min for analysis, it MUST call `ensure_option_history()` to guarantee data presence. Never assume indicator-ready data exists — always check + fetch.
+9c. **Pre-Set Promotion Criteria** — When deploying a research module in shadow mode, the criteria for promoting to live gate MUST be committed to VRL_BUGS.md BEFORE collecting any live data. Prevents confirmation bias. For GJR-GARCH + Hawkes: min N=100 trades, sigma gap > 50% of sigma_p50, Hawkes ACTIVE gap > 20%, t-test p < 0.05.

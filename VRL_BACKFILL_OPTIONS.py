@@ -46,18 +46,19 @@ def _get_spot_close_for_date(d):
             return float(row[0])
     except Exception:
         pass
-    try:
-        conn = sqlite3.connect(db_path)
-        row = conn.execute(
-            "SELECT close FROM spot_1min WHERE date(timestamp)=? "
-            "ORDER BY timestamp DESC LIMIT 1",
-            (d.isoformat(),)
-        ).fetchone()
-        conn.close()
-        if row and float(row[0]) > 0:
-            return float(row[0])
-    except Exception:
-        pass
+    for table in ("spot_3min", "spot_1min"):
+        try:
+            conn = sqlite3.connect(db_path)
+            row = conn.execute(
+                "SELECT close FROM " + table + " WHERE date(timestamp)=? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (d.isoformat(),)
+            ).fetchone()
+            conn.close()
+            if row and float(row[0]) > 0:
+                return float(row[0])
+        except Exception:
+            pass
     return 0.0
 
 
@@ -71,7 +72,7 @@ def run_backfill():
     if not kite:
         print("ERROR: Could not authenticate with Kite. Run manually.")
         sys.exit(1)
-    D.set_kite(kite)
+    D.init(kite)
 
     expiry = D.get_nearest_expiry(kite)
     if not expiry:
