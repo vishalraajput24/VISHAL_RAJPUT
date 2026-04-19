@@ -2271,3 +2271,122 @@ def cleanup_old_lab_data(retention_days: int = None):
     if removed > 0:
         logger.info("[DATA] Lab cleanup: removed " + str(removed)
                     + " files older than " + str(retention_days) + " days")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  BUG-R13: ensure_option_history() — single entry point for any
+#  module that needs option candle history. Checks DB first, fetches
+#  from Kite API if insufficient. Never raises on network errors.
+# ═══════════════════════════════════════════════════════════════
+
+def ensure_option_history(kite_inst, strike: int, expiry,
+                          min_candles: int = 30,
+                          timeframes: tuple = ("3minute",),
+                          lookback_days: int = 5) -> dict:
+    """Ensure DB has at least min_candles of history for given strike
+    (both CE and PE) across each requested timeframe.
+
+    Returns: {"strike": int, "ce_candles": int, "pe_candles": int,
+              "fetched": bool, "error": str or None}
+    """
+    import sqlite3
+    k = kite_inst or _kite
+    result = {"strike": strike, "ce_candles": 0, "pe_candles": 0,
+              "fetched": False, "error": None}
+    if k is None:
+        result["error"] = "kite not initialised"
+        return result
+
+    db_path = os.path.expanduser("~/lab_data/vrl_data.db")
+    cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    table_map = {"minute": "option_1min", "3minute": "option_3min",
+                 "5minute": "option_5min", "15minute": "option_15min"}
+    tokens = get_option_tokens(k, strike, expiry)
+    if not tokens:
+        result["error"] = "no tokens for strike " + str(strike)
+        return result
+
+    fetched_any = False
+    for tf in timeframes:
+        table = table_map.get(tf)
+        if not table:
+            continue
+        for side in ("CE", "PE"):
+            info = tokens.get(side, {})
+            token = info.get("token")
+            if not token:
+                continue
+            try:
+                conn = sqlite3.connect(db_path)
+                cnt = conn.execute(
+                    "SELECT COUNT(*) FROM " + table
+                    + " WHERE strike=? AND type=? AND date(timestamp)>=?",
+                    (strike, side, cutoff)
+                ).fetchone()[0]
+                conn.close()
+            except Exception:
+                cnt = 0
+
+            if side == "CE":
+                result["ce_candles"] = max(result["ce_candles"], cnt)
+            else:
+                result["pe_candles"] = max(result["pe_candles"], cnt)
+
+            if cnt >= min_candles:
+                continue
+
+            try:
+                from_dt = datetime.now() - timedelta(days=lookback_days)
+                to_dt = datetime.now()
+                time.sleep(0.5)
+                raw = k.historical_data(
+                    instrument_token=int(token),
+                    from_date=from_dt, to_date=to_dt,
+                    interval=tf, continuous=False, oi=False)
+                if not raw:
+                    continue
+                import VRL_DB as DB
+                rows = []
+                for r in raw:
+                    ts = r.get("date")
+                    if ts and hasattr(ts, "strftime"):
+                        ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+                    rows.append({
+                        "timestamp": str(ts),
+                        "strike": strike,
+                        "type": side,
+                        "open": float(r.get("open", 0)),
+                        "high": float(r.get("high", 0)),
+                        "low": float(r.get("low", 0)),
+                        "close": float(r.get("close", 0)),
+                        "volume": float(r.get("volume", 0)),
+                    })
+                if rows:
+                    if tf == "3minute":
+                        DB.insert_option_3min_many(rows)
+                    elif tf == "minute":
+                        DB.insert_option_1min_many(rows)
+                    elif tf == "5minute":
+                        DB.insert_option_5min_many(rows)
+                    elif tf == "15minute":
+                        DB.insert_option_15min_many(rows)
+                    fetched_any = True
+                    new_cnt = cnt + len(rows)
+                    if side == "CE":
+                        result["ce_candles"] = new_cnt
+                    else:
+                        result["pe_candles"] = new_cnt
+                    logger.info("[PRELOAD] " + side + " " + str(strike)
+                                + " " + tf + ": fetched " + str(len(rows))
+                                + " candles (had " + str(cnt) + ")")
+            except Exception as e:
+                err = str(e)[:100]
+                if "incorrect api_key" in err.lower() or "access_token" in err.lower():
+                    _set_auth_rejected()
+                    result["error"] = "auth rejected"
+                    return result
+                logger.warning("[PRELOAD] fetch error " + side + " "
+                               + str(strike) + " " + tf + ": " + err)
+
+    result["fetched"] = fetched_any
+    return result

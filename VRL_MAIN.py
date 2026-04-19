@@ -202,6 +202,19 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
                 + " PE=" + str(_locked_pe_strike)
                 + " at spot=" + str(round(spot, 1)))
 
+    # BUG-R11: ensure history exists for locked strike before strategy runs.
+    if kite and expiry and _locked_ce_strike:
+        try:
+            _r11 = D.ensure_option_history(
+                kite, _locked_ce_strike, expiry,
+                min_candles=30, timeframes=("3minute",))
+            if _r11.get("fetched"):
+                logger.info("[PRELOAD] Strike lock " + str(_locked_ce_strike)
+                            + " CE=" + str(_r11["ce_candles"])
+                            + " PE=" + str(_r11["pe_candles"]))
+        except Exception as _r11e:
+            logger.debug("[PRELOAD] strike lock error: " + str(_r11e))
+
 def _reset_strike_lock():
     """Reset lock after trade exit or session start."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
@@ -349,6 +362,32 @@ def _reset_daily(today_str: str):
         pass
     logger.info("[MAIN] Daily reset")
     _save_state()
+
+    # BUG-R10: pre-load ATM option history at daily reset (before 09:15).
+    # Uses previous day's close to compute provisional ATM. Fetch 5 days
+    # of 3-min candles for ATM strike CE+PE so GARCH has warm data.
+    try:
+        from datetime import date as _dr10
+        if state.get("_preload_done_today") != _dr10.today().isoformat():
+            _spot_close = float(state.get("prev_close", 0) or 0)
+            if _spot_close <= 0:
+                _spot_close = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            if _spot_close > 0:
+                _atm_prov = D.resolve_atm_strike(_spot_close)
+                _expiry_prov = D.get_nearest_expiry(_kite)
+                if _atm_prov and _expiry_prov:
+                    _r10 = D.ensure_option_history(
+                        _kite, _atm_prov, _expiry_prov,
+                        min_candles=30, timeframes=("3minute", "minute"))
+                    logger.info("[PRELOAD] Market-open ATM " + str(_atm_prov)
+                                + " CE=" + str(_r10.get("ce_candles", 0))
+                                + " PE=" + str(_r10.get("pe_candles", 0))
+                                + " fetched=" + str(_r10.get("fetched")))
+                    with _state_lock:
+                        state["_preload_done_today"] = _dr10.today().isoformat()
+                    _save_state()
+    except Exception as _r10e:
+        logger.warning("[PRELOAD] market-open error: " + str(_r10e))
 
 # ═══════════════════════════════════════════════════════════════
 #  PID FILE
