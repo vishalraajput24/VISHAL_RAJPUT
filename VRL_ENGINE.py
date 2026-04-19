@@ -106,12 +106,31 @@ def loss_streak_gate(state: dict) -> bool:
 #    5. Body ≥ 30% of candle range
 # ═══════════════════════════════════════════════════════════════
 
-def check_entry(token: int, option_type: str, spot_ltp: float = 0,
-                dte: int = 99, expiry_date=None, kite=None,
-                other_token: int = 0, silent: bool = False,
-                state: dict = None) -> dict:
-    """v15.2: Buy option whose 3-min just broke fresh above its own EMA9-high,
-    confirmed by a tiered straddle expansion gate. VWAP shown for context."""
+def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
+                                now, market_open: bool, state: dict,
+                                straddle_delta, spot_vwap, spot_for_vwap: float,
+                                atm_strike: int, silent: bool = False) -> dict:
+    """Pure entry-gate evaluator. All I/O lives in the check_entry wrapper.
+
+    Parameters:
+        opt_3m:         pandas DataFrame with columns open/high/low/close/volume
+                        and indicator columns ema9_high, ema9_low (rolling 3-min
+                        option candles, most recent LIVE bar at iloc[-1], last
+                        CLOSED bar at iloc[-2]).
+        option_type:    "CE" or "PE".
+        spot_ltp:       current spot LTP (float, may be 0).
+        now:            datetime-like for time-window + cooldown math.
+        market_open:    bool — if False the time window gate is skipped (tests).
+        state:          dict with last_exit_time / last_exit_direction.
+        straddle_delta: pre-fetched straddle delta or None.
+        spot_vwap:      pre-fetched session VWAP value (display only).
+        spot_for_vwap:  pre-fetched spot LTP used for VWAP diff.
+        atm_strike:     pre-computed ATM strike for display.
+        silent:         suppress INFO logs when True.
+
+    Returns: same dict shape as check_entry (fired/reject_reason/metrics).
+    Behaviour identical to the inline body it replaces (extracted 1:1).
+    """
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "entry_mode": "",
@@ -122,12 +141,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         "band_width": 0,
         "cooldown_ok": False, "reject_reason": "",
         "band_position": "",
-        # v15.2 tiered straddle filter
         "straddle_delta": None, "straddle_threshold": 0,
         "straddle_period": "", "atm_strike_used": 0,
-        # v15.2 VWAP bonus (display only)
         "spot_vwap": 0.0, "spot_vs_vwap": 0.0, "vwap_bonus": "",
-        # v16.0 Batch 7 context (display only)
         "ema9_high_slope_5c": 0.0, "ema9_low_slope_5c": 0.0,
         "bands_state": "", "context_tag": "",
     }
@@ -135,19 +151,17 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         state = {}
     try:
         body_min       = CFG.entry_ema9_band("body_pct_min", 30)
-        cd_min         = CFG.entry_ema9_band("cooldown_minutes", 5)   # back-compat alias
+        cd_min         = CFG.entry_ema9_band("cooldown_minutes", 5)
         warmup_until   = CFG.entry_ema9_band("warmup_until", "09:30")
         cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
         min_band_width = CFG.entry_ema9_band("min_band_width_pts", 8)
 
-        # ── Fetch 3-min option data ──
-        opt_3m = D.get_option_3min(token, lookback=15)
         if opt_3m is None or opt_3m.empty or len(opt_3m) < 4:
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
-        last = opt_3m.iloc[-2]   # last CLOSED 3-min candle
-        prev = opt_3m.iloc[-3]   # candle before that
+        last = opt_3m.iloc[-2]
+        prev = opt_3m.iloc[-3]
 
         close = float(last["close"])
         open_ = float(last["open"])
@@ -158,7 +172,6 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         prev_close = float(prev["close"])
         prev_ema9_high = float(prev.get("ema9_high", 0))
 
-        # Band position label for dashboard
         if close > ema9_high:
             band_position = "ABOVE"
         elif close < ema9_low:
@@ -166,7 +179,6 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         else:
             band_position = "IN"
 
-        # v15.2: band width (for chop filter + dashboard display)
         band_width = round(ema9_high - ema9_low, 2)
 
         result.update({
@@ -184,9 +196,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         })
 
         # ── GATE 1: Time window 9:30 — 15:10 ──
-        # Only enforced when market is actually open (so tests at night pass)
-        if D.is_market_open():
-            now = datetime.now()
+        if market_open:
             mins = now.hour * 60 + now.minute
             warmup_h, warmup_m = warmup_until.split(":")
             cutoff_h, cutoff_m = cutoff_after.split(":")
@@ -204,7 +214,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         last_exit_dir = state.get("last_exit_direction", "")
         if last_exit_ts and last_exit_dir == option_type:
             try:
-                elapsed = (datetime.now() - datetime.fromisoformat(last_exit_ts)).total_seconds() / 60
+                elapsed = (now - datetime.fromisoformat(last_exit_ts)).total_seconds() / 60
                 if elapsed < cd_min:
                     result["reject_reason"] = "cooldown_" + str(round(cd_min - elapsed, 1)) + "min"
                     return result
@@ -212,19 +222,11 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 pass
         result["cooldown_ok"] = True
 
-        # ── GATE 3 (v15.2.4): Fresh breakout above EMA9-high ──
-        # Relaxed from the original strict 1-candle check so the bot can
-        # recover after a restart that happened mid-move. Fires when:
-        #   close > ema9_high  AND  some candle in the last N bars had
-        #   close <= its ema9_high (i.e. we WERE below the band recently).
-        # Controlled by config: entry.ema9_band.fresh_breakout_lookback
-        # (default 3). Setting it to 1 restores the strict v15.2 rule.
+        # ── GATE 3: Fresh breakout above EMA9-high ──
         fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
         if fb_lookback < 1:
             fb_lookback = 1
 
-        # Walk back from iloc[-3] up to `fb_lookback` candles looking for
-        # "was below its own ema9_high".
         was_below_in_lookback = False
         for _k in range(3, 3 + fb_lookback):
             if len(opt_3m) < _k:
@@ -239,19 +241,13 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         is_fresh_breakout = (close > ema9_high) and was_below_in_lookback
 
         if not is_fresh_breakout:
-            # v15.2.4: precise block-reason categorization. Lets us tell
-            # stale post-restart state from pure chop in the log.
             if close <= ema9_high and prev_close > prev_ema9_high:
                 reason_code = "just_crossed_down"
             elif close <= ema9_high:
                 reason_code = "below_band"
             elif close > ema9_high and not was_below_in_lookback:
-                # Above band for > fb_lookback candles — this is the
-                # "bot restarted mid-move" case.
                 reason_code = "already_above_band"
             else:
-                # Logic says this branch shouldn't run (covered by the
-                # fresh_breakout=True path). Log it so we can investigate.
                 reason_code = "fresh_cross_up_but_missed_fire"
 
             result["reject_reason"] = (reason_code
@@ -299,23 +295,10 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                             + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
             return result
 
-        # ── GATE 7 (v15.2.5 Fix 5): straddle = DISPLAY ONLY, never blocks ──
-        # Earlier versions hard-rejected on straddle_bleed / straddle_data_unavailable.
-        # April 16 evidence: PE 24300 09:51 fresh breakout was blocked by the
-        # NA bug and would have been +22pts. Even fully fixed, the delta can
-        # underread real breakouts in fast moves. Policy decision: treat
-        # straddle as contextual telemetry like VWAP. Classify into
-        # STRONG (Δ≥+5) / NEUTRAL (0≤Δ<+5) / WEAK (Δ<0) / NA (no data),
-        # log + annotate result, but NEVER reject.
+        # ── GATE 7: straddle DISPLAY ONLY ──
         if CFG.straddle_filter("enabled", True):
-            atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
             result["atm_strike_used"] = atm_strike
-            lookback_min = int(CFG.straddle_filter("lookback_minutes", 15))
-
-            # Period label kept for the Telegram display + DB column, even
-            # though no tier-specific threshold applies any more.
-            now_for_period = datetime.now()
-            mod = now_for_period.hour * 60 + now_for_period.minute
+            mod = now.hour * 60 + now.minute
             if 585 <= mod < 630:
                 period = "OPENING"
             elif 630 <= mod < 840:
@@ -323,15 +306,9 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
             else:
                 period = "CLOSING"
             result["straddle_period"]    = period
-            result["straddle_threshold"] = 0   # deprecated; kept for back-compat
+            result["straddle_threshold"] = 0
 
-            sd = None
-            try:
-                sd = D.get_straddle_delta(
-                    atm_strike, lookback_minutes=lookback_min)
-            except Exception as e:
-                logger.warning("[ENGINE] straddle delta error: " + str(e))
-
+            sd = straddle_delta
             result["straddle_delta"]     = sd if sd is not None else 0
             result["straddle_available"] = sd is not None
 
@@ -352,22 +329,19 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 result["straddle_info"] = "WEAK"
                 logger.info("[ENGINE] " + option_type + " STRADDLE_WEAK "
                             + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
-            # NO return here — straddle is display-only in v15.2.5 Fix 5.
 
-        # ── BONUS (v15.2): VWAP confluence — display only, never blocks ──
-        # This block must NEVER set reject_reason or return — it only logs
-        # and populates display fields.
+        # ── VWAP confluence (display only) ──
         try:
             if CFG.vwap_bonus("enabled", True):
-                vwap_val = D.get_spot_vwap()
-                _spot = D.get_spot_ltp() or spot_ltp
+                vwap_val = spot_vwap
+                _spot = spot_for_vwap or spot_ltp
                 if vwap_val and _spot:
                     diff = round(_spot - vwap_val, 2)
                     result["spot_vwap"]    = round(vwap_val, 1)
                     result["spot_vs_vwap"] = round(diff, 1)
                     if option_type == "CE":
                         result["vwap_bonus"] = "CONFLUENCE" if diff > 0 else "AGAINST"
-                    else:  # PE
+                    else:
                         result["vwap_bonus"] = "CONFLUENCE" if diff < 0 else "AGAINST"
                     logger.info("[ENGINE] VWAP_INFO spot=" + str(round(_spot, 1))
                                 + " vwap=" + "{:.1f}".format(vwap_val)
@@ -376,11 +350,10 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         except Exception as e:
             logger.debug("[ENGINE] vwap bonus error: " + str(e))
 
-        # ═══ BUG-Q1: band slope + context_tag (display only) ═══
+        # ═══ band slope + context_tag (display only) ═══
         try:
-            _df_ctx = D.get_option_3min(token, lookback=10)
-            if _df_ctx is not None and len(_df_ctx) >= 6:
-                _closed = _df_ctx.iloc[:-1].tail(6)
+            if opt_3m is not None and len(opt_3m) >= 6:
+                _closed = opt_3m.iloc[:-1].tail(6)
                 _eh_then = float(_closed.iloc[0].get("ema9_high", 0))
                 _eh_now  = float(_closed.iloc[-1].get("ema9_high", 0))
                 _el_then = float(_closed.iloc[0].get("ema9_low", 0))
@@ -430,9 +403,53 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         return result
 
     except Exception as e:
-        logger.error("[ENGINE] check_entry error: " + str(e))
+        logger.error("[ENGINE] _evaluate_entry_gates_pure error: " + str(e))
         result["reject_reason"] = "error_" + str(e)[:50]
         return result
+
+
+def check_entry(token: int, option_type: str, spot_ltp: float = 0,
+                dte: int = 99, expiry_date=None, kite=None,
+                other_token: int = 0, silent: bool = False,
+                state: dict = None) -> dict:
+    """v16.0 thin wrapper: fetches live data and delegates to the pure
+    gate evaluator. All entry-gate logic lives in _evaluate_entry_gates_pure.
+    """
+    if state is None:
+        state = {}
+    # Fetch 3-min option data up front.
+    opt_3m = D.get_option_3min(token, lookback=15)
+    market_open = D.is_market_open()
+    now = datetime.now()
+    atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
+
+    # Straddle delta (display only — pre-fetch here so the pure function
+    # never does I/O).
+    straddle_delta = None
+    if CFG.straddle_filter("enabled", True) and atm_strike:
+        try:
+            lookback_min = int(CFG.straddle_filter("lookback_minutes", 15))
+            straddle_delta = D.get_straddle_delta(
+                atm_strike, lookback_minutes=lookback_min)
+        except Exception as e:
+            logger.warning("[ENGINE] straddle delta error: " + str(e))
+
+    # VWAP (display only) — pre-fetch.
+    spot_vwap = None
+    spot_for_vwap = 0.0
+    if CFG.vwap_bonus("enabled", True):
+        try:
+            spot_vwap = D.get_spot_vwap()
+            spot_for_vwap = D.get_spot_ltp() or spot_ltp
+        except Exception as e:
+            logger.debug("[ENGINE] vwap fetch: " + str(e))
+
+    return _evaluate_entry_gates_pure(
+        opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp,
+        now=now, market_open=market_open, state=state,
+        straddle_delta=straddle_delta, spot_vwap=spot_vwap,
+        spot_for_vwap=spot_for_vwap, atm_strike=atm_strike,
+        silent=silent)
 
 
 # ═══════════════════════════════════════════════════════════════
