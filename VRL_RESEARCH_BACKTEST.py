@@ -76,39 +76,50 @@ def run_backtest(days: int = 30):
     print("Date range:", date_range)
     print()
 
-    groups = df.groupby([df["timestamp"].dt.date, "strike", "type"])
+    # v2: group by (strike, type) and process chronologically so the
+    # rolling 30-candle GARCH window spans day boundaries (FIX 1 warmup).
+    # Hawkes still resets per day (decay makes prior-day jumps irrelevant).
+    groups = df.groupby(["strike", "type"])
 
     sigma_vals = []
     lambda_vals = []
     gamma_vals = []
     garch_ok = 0
     garch_fail = 0
+    garch_insuf = 0         # separate bucket: waiting for first 30 bars
     hawkes_ok = 0
     hawkes_fail = 0
     edge_reasons = defaultdict(int)
     candles_processed = 0
     results_csv = []
 
-    for (d, strike, otype), gdf in groups:
-        gdf = gdf.sort_values("timestamp").reset_index(drop=True)
-        if len(gdf) < 5:
+    for (strike, otype), sdf in groups:
+        sdf = sdf.sort_values("timestamp").reset_index(drop=True)
+        if len(sdf) < 5:
             edge_reasons["group_too_small"] += 1
             continue
 
+        current_date = None
         day_candles = []
-        for i in range(len(gdf)):
+        for i in range(len(sdf)):
             candles_processed += 1
-            row = gdf.iloc[i]
+            row = sdf.iloc[i]
+            row_date = row["timestamp"].date()
+            if row_date != current_date:
+                current_date = row_date
+                day_candles = []   # Hawkes day-local
 
-            # GARCH: rolling 30-candle window
+            # GARCH: rolling 30-candle window across day boundaries (FIX 1).
+            # FIX 3: feed Garman-Klass realized vol instead of log-returns.
             if i >= 29:
-                window = gdf.iloc[i - 29:i + 1]["close"]
-                g_out = R.gjr_garch_forecast(window, min_candles=30)
+                window_ohlc = sdf.iloc[i - 29:i + 1][["open", "high", "low", "close"]]
+                g_out = R.gjr_garch_forecast_gk(window_ohlc, min_candles=30)
             else:
                 g_out = {"sigma_forecast": 0, "vol_regime": "INSUFFICIENT",
                          "gjr_asymmetry": 0, "fit_success": False,
                          "error": "window_" + str(i + 1)}
-                edge_reasons["window_too_small"] += 1
+                edge_reasons["warmup_first_30"] += 1
+                garch_insuf += 1
 
             if g_out["fit_success"]:
                 garch_ok += 1
@@ -116,7 +127,8 @@ def run_backtest(days: int = 30):
                 gamma_vals.append(g_out["gjr_asymmetry"])
             elif g_out["vol_regime"] != "INSUFFICIENT":
                 garch_ok += 1
-            else:
+            elif i >= 29:
+                # Only count as "fail" if we had enough data and still failed.
                 garch_fail += 1
                 if g_out.get("error"):
                     edge_reasons["garch_" + g_out["error"][:30]] += 1
@@ -139,7 +151,7 @@ def run_backtest(days: int = 30):
 
             results_csv.append({
                 "timestamp": str(row["timestamp"]),
-                "date": str(d),
+                "date": str(row_date),
                 "strike": strike,
                 "type": otype,
                 "close": float(row["close"]),
@@ -152,9 +164,12 @@ def run_backtest(days: int = 30):
 
     print("=== RAW DATA SUMMARY ===")
     print("Total candles processed:", candles_processed)
-    garch_pct = round(garch_ok / max(1, candles_processed) * 100, 1)
+    print("Warmup candles (first 30 per strike):", garch_insuf)
+    eligible_candles = max(1, candles_processed - garch_insuf)
+    garch_pct = round(garch_ok / eligible_candles * 100, 1)
     hawkes_pct = round(hawkes_ok / max(1, candles_processed) * 100, 1)
-    print("Candles with valid GARCH fit:", garch_ok, "(" + str(garch_pct) + "%)")
+    print("GARCH-eligible candles:", eligible_candles)
+    print("Candles with valid GARCH fit:", garch_ok, "(" + str(garch_pct) + "% of eligible)")
     print("Candles with valid Hawkes:", hawkes_ok, "(" + str(hawkes_pct) + "%)")
     skip_total = sum(edge_reasons.values())
     print("Skipped (edge cases):", skip_total, "— breakdown:")
@@ -286,12 +301,14 @@ def run_backtest(days: int = 30):
               "(diff=" + str(round(act_diff, 1)) + "%)")
         print()
 
-    # Checklist
+    # Checklist. garch_fail now excludes warmup_first_30 (expected behavior),
+    # so "All edge cases handled" only fails if post-warmup fits actually crash.
+    eligible = max(1, candles_processed - garch_insuf)
     print("=== LIVE DEPLOY CHECKLIST ===")
     checks = {
         "Code runs end-to-end": True,
         "Thresholds JSON written": os.path.isfile(thresh_path),
-        "All edge cases handled": garch_fail < candles_processed * 0.5,
+        "All edge cases handled": garch_fail < eligible * 0.5,
         "No NaN propagation": not any(np.isnan(v) for v in sigma_vals + lambda_vals),
         "Sample size sufficient (N >= 500)": candles_processed >= 500,
     }

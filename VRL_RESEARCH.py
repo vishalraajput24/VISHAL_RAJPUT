@@ -74,6 +74,86 @@ def classify_cluster_state(lambda_now: float, recent_lambdas: list = None,
     return "CALM"
 
 
+def _gk_realized_variance(o, h, l, c):
+    """Garman-Klass realized variance per candle.
+    RV = 0.5 * (log(H/L))^2 - (2*log(2) - 1) * (log(C/O))^2
+    All inputs are arrays of equal length (open, high, low, close).
+    Rows with non-positive values are filtered upstream.
+    """
+    term1 = 0.5 * (np.log(h / l)) ** 2
+    term2 = (2.0 * np.log(2.0) - 1.0) * (np.log(c / o)) ** 2
+    rv = term1 - term2
+    # GK can be slightly negative on pathological bars; clip to tiny positive
+    return np.maximum(rv, 1e-12)
+
+
+def gjr_garch_forecast_gk(ohlc_df: pd.DataFrame,
+                          min_candles: int = 30) -> dict:
+    """v2: GJR-GARCH on Garman-Klass realized vol instead of log-returns.
+    Captures intrabar movement — works for option premium series where
+    close-to-close variance is too stable to fit.
+
+    ohlc_df: DataFrame with columns open, high, low, close (last row is
+    the bar we forecast FROM; horizon-1 sigma is the forecast AT/AFTER).
+    """
+    result = {
+        "sigma_forecast": 0.0,
+        "vol_regime": "INSUFFICIENT",
+        "gjr_asymmetry": 0.0,
+        "fit_success": False,
+        "error": None,
+    }
+
+    if ohlc_df is None or len(ohlc_df) < min_candles:
+        result["error"] = "insufficient data: " + str(len(ohlc_df) if ohlc_df is not None else 0)
+        return result
+
+    try:
+        d = ohlc_df[["open", "high", "low", "close"]].dropna()
+        d = d[(d["open"] > 0) & (d["high"] > 0) & (d["low"] > 0) & (d["close"] > 0)]
+        if len(d) < min_candles:
+            result["error"] = "insufficient after filter: " + str(len(d))
+            return result
+
+        o = d["open"].values.astype(float)
+        h = d["high"].values.astype(float)
+        l = d["low"].values.astype(float)
+        c = d["close"].values.astype(float)
+
+        gk = _gk_realized_variance(o, h, l, c)
+        # Signed realized return: magnitude from GK sqrt, sign from candle body.
+        # Flat candles (close==open) get zero sign → replace with tiny noise to
+        # keep GARCH fit numerically stable.
+        sign = np.sign(c - o)
+        sign = np.where(sign == 0, 1.0, sign)
+        signed_rv = sign * np.sqrt(gk) * 100.0   # scale to percent for fit
+
+        if np.std(signed_rv) == 0 or np.unique(signed_rv).size == 1:
+            result["vol_regime"] = "LOW"
+            result["sigma_forecast"] = 0.0
+            result["fit_success"] = True
+            return result
+
+        series = pd.Series(signed_rv)
+        from arch import arch_model
+        model = arch_model(series, vol="GARCH", p=1, o=1, q=1, dist="t", rescale=False)
+        res = model.fit(disp="off", show_warning=False)
+        fcst = res.forecast(horizon=1, reindex=False)
+        sigma = float(np.sqrt(fcst.variance.iloc[-1, 0]))
+        gamma = float(res.params.get("gamma[1]", 0.0))
+
+        thresholds = load_thresholds()
+        result["sigma_forecast"] = round(sigma, 4)
+        result["gjr_asymmetry"] = round(gamma, 4)
+        result["vol_regime"] = classify_vol_regime(sigma, thresholds)
+        result["fit_success"] = True
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)[:200]
+        return result
+
+
 def gjr_garch_forecast(premium_series: pd.Series,
                        min_candles: int = 30) -> dict:
     result = {
@@ -132,8 +212,12 @@ def gjr_garch_forecast(premium_series: pd.Series,
         return result
 
 
-def hawkes_intensity(candle_history: list, jump_threshold_pct: float = 15.0,
+def hawkes_intensity(candle_history: list, jump_threshold_pct: float = 8.0,
                      alpha: float = 0.4, beta: float = 0.3) -> dict:
+    """v2: threshold lowered 15 → 8%, jumps now size-weighted.
+    λ(t) = μ + Σ (range_pct_i / threshold) * α * exp(−β(t − t_i))
+    A 16% candle contributes 2x a single 8% candle.
+    """
     result = {
         "lambda_now": 0.0,
         "baseline_mu": 0.1,
@@ -150,7 +234,8 @@ def hawkes_intensity(candle_history: list, jump_threshold_pct: float = 15.0,
     result["baseline_mu"] = mu
 
     try:
-        jump_times = []
+        # jumps[i] = (timestamp, range_pct) for bars exceeding threshold
+        jumps = []
         now_ts = None
         for c in candle_history:
             close = float(c.get("close", 0) or 0)
@@ -185,21 +270,22 @@ def hawkes_intensity(candle_history: list, jump_threshold_pct: float = 15.0,
             now_ts = ts
             range_pct = (high - low) / close * 100.0
             if range_pct > jump_threshold_pct:
-                jump_times.append(ts)
+                jumps.append((ts, range_pct))
 
         if now_ts is None:
             result["error"] = "no valid timestamps"
             return result
 
         lambda_now = mu
-        for jt in jump_times:
+        for jt, rpct in jumps:
             dt_minutes = (now_ts - jt).total_seconds() / 60.0
             if dt_minutes < 0:
                 continue
-            lambda_now += alpha * np.exp(-beta * dt_minutes)
+            weight = rpct / jump_threshold_pct  # size-weighted contribution
+            lambda_now += weight * alpha * np.exp(-beta * dt_minutes)
 
         thirty_ago = now_ts - timedelta(minutes=30)
-        recent = sum(1 for jt in jump_times if jt >= thirty_ago)
+        recent = sum(1 for jt, _ in jumps if jt >= thirty_ago)
 
         thresholds = load_thresholds()
         result["lambda_now"] = round(float(lambda_now), 4)
