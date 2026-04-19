@@ -423,86 +423,109 @@ def main():
                     if len(df_up) < 4:
                         continue
 
-                    # Append dummy "in-progress" row for iloc[-2] semantics
-                    dummy = df_up.iloc[-1:].copy()
-                    dummy.index = [df_up.index[-1] + 1]
-                    eval_df = pd.concat([df_up, dummy])
+                    # ── INLINE ENTRY GATES (parameterizable) ──
+                    last = df_up.iloc[-1]
+                    prev = df_up.iloc[-2]
+                    close = float(last["close"])
+                    open_ = float(last["open"])
+                    high = float(last["high"])
+                    low = float(last["low"])
+                    ema9h = float(last.get("ema9_high", 0))
+                    ema9l = float(last.get("ema9_low", 0))
+                    prev_close = float(prev["close"])
+                    prev_ema9h = float(prev.get("ema9_high", 0))
 
-                    result = _evaluate_entry_gates_pure(
-                        opt_3m=eval_df,
-                        option_type=otype,
-                        spot_ltp=float(spot_close),
-                        now=now,
-                        market_open=True,
-                        state=state,
-                        straddle_delta=None,
-                        spot_vwap=None,
-                        spot_for_vwap=0.0,
-                        atm_strike=atm,
-                        silent=True,
-                    )
+                    fired = True
+                    reject = None
 
-                    # ── Post-filter: sweep parameter enforcement ──
-                    if result.get("fired"):
-                        _body = float(result.get("body_pct", 0) or 0)
-                        _band = float(result.get("band_width", 0) or 0)
-                        _bands_state = result.get("bands_state", "")
-                        _rejected_by_post = None
+                    # Gate 2: Cooldown
+                    if state.get("last_exit_time") and state.get("last_exit_direction") == otype:
+                        try:
+                            elapsed = (now - datetime.fromisoformat(state["last_exit_time"])).total_seconds() / 60
+                            if elapsed < 5:
+                                fired = False; reject = "cooldown_" + str(round(5 - elapsed, 1))
+                        except Exception:
+                            pass
 
-                        if _body < overrides["body_min"]:
-                            _rejected_by_post = ("post_body_"
-                                + str(int(_body)) + "<" + str(int(overrides["body_min"])))
-                        elif _band < overrides["band_min"]:
-                            _rejected_by_post = ("post_band_"
-                                + str(round(_band, 1)) + "<" + str(overrides["band_min"]))
-                        elif overrides["ema_filter"] and _bands_state == "FLAT":
-                            _rejected_by_post = "post_ema_flat"
-                        elif overrides["dte_filter"]:
-                            try:
-                                _exp = datetime.strptime(
-                                    overrides["expiry_date"], "%Y-%m-%d").date()
-                                _dte = (_exp - now.date()).days
-                                if _dte <= 1:
-                                    _rejected_by_post = ("post_dte_" + str(_dte))
-                            except Exception:
-                                pass
+                    # Gate 3: Fresh breakout with lookback=3
+                    if fired:
+                        was_below = False
+                        for k in range(2, 2 + 3):
+                            if len(df_up) <= k:
+                                break
+                            bar = df_up.iloc[-k-1]
+                            if float(bar.get("ema9_high", 0)) > 0 and float(bar.get("close", 0)) <= float(bar.get("ema9_high", 0)):
+                                was_below = True; break
+                        if not (close > ema9h and was_below):
+                            fired = False; reject = "fresh_breakout"
 
-                        if _rejected_by_post:
-                            result["fired"] = False
-                            result["reject_reason"] = _rejected_by_post
+                    # Gate 4: Green candle
+                    if fired and close <= open_:
+                        fired = False; reject = "green_candle"
 
-                    if result.get("fired"):
-                        entry_price = float(result.get("entry_price", 0))
-                        if entry_price <= 0:
-                            continue
-                        state.update({
-                            "in_trade": True,
-                            "entry_price": entry_price,
-                            "direction": otype,
-                            "strike": locked_strike,
-                            "entry_time": str(now),
-                            "token": None,
-                            "peak_pnl": 0.0,
-                            "trough_pnl": 0.0,
-                            "candles_held": 0,
-                            "peak_history": [],
-                            "last_peak_candle_ts": "",
-                            "current_velocity": 0.0,
-                            "active_ratchet_tier": "",
-                            "active_ratchet_sl": 0.0,
-                            "_peak_history_backfilled": True,
-                            "current_ema9_high": 0.0,
-                            "current_ema9_low": 0.0,
-                        })
-                        break
-                    else:
+                    # Gate 5: Body >= body_min (SWEEP)
+                    cr = high - low
+                    body_pct = (abs(close - open_) / cr * 100) if cr > 0 else 0
+                    if fired and body_pct < overrides["body_min"]:
+                        fired = False; reject = "body_" + str(int(body_pct))
+
+                    # Gate 6: Band width >= band_min (SWEEP)
+                    band_width = ema9h - ema9l
+                    if fired and band_width < overrides["band_min"]:
+                        fired = False; reject = "band_" + str(round(band_width, 1))
+
+                    # DTE filter (optional)
+                    if fired and overrides["dte_filter"]:
+                        try:
+                            exp = datetime.strptime(overrides["expiry_date"], "%Y-%m-%d").date()
+                            dte = (exp - now.date()).days
+                            if dte <= 1:
+                                fired = False; reject = "dte_" + str(dte)
+                        except Exception:
+                            pass
+
+                    # EMA bands rising filter (optional)
+                    if fired and overrides["ema_filter"]:
+                        if len(df_up) >= 6:
+                            eh_then = float(df_up.iloc[-6].get("ema9_high", 0))
+                            el_then = float(df_up.iloc[-6].get("ema9_low", 0))
+                            if (ema9h - eh_then) <= 3 and (ema9l - el_then) <= 3:
+                                fired = False; reject = "ema_flat"
+
+                    if not fired:
                         rejections.append({
                             "timestamp": str(now),
                             "day": day_str,
                             "strike": locked_strike,
                             "type": otype,
-                            "reason": result.get("reject_reason", ""),
+                            "reason": reject or "",
                         })
+                        continue
+
+                    # Entry fires
+                    entry_price = round(close, 2)
+                    if entry_price <= 0:
+                        continue
+                    state.update({
+                        "in_trade": True,
+                        "entry_price": entry_price,
+                        "direction": otype,
+                        "strike": locked_strike,
+                        "entry_time": str(now),
+                        "token": None,
+                        "peak_pnl": 0.0,
+                        "trough_pnl": 0.0,
+                        "candles_held": 0,
+                        "peak_history": [],
+                        "last_peak_candle_ts": "",
+                        "current_velocity": 0.0,
+                        "active_ratchet_tier": "",
+                        "active_ratchet_sl": 0.0,
+                        "_peak_history_backfilled": True,
+                        "current_ema9_high": 0.0,
+                        "current_ema9_low": 0.0,
+                    })
+                    break
 
             else:
                 # ── Exit evaluation ──
