@@ -182,22 +182,498 @@ def main():
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    print("═══ BATCH 9 BACKTEST — PART 1 (data loader only) ═══")
-    print("Date range requested: " + args.start_date + " to " + args.end_date)
+    print("═══ BATCH 9 — STRATEGY BACKTEST ═══")
+    print("Date range: " + args.start_date + " to " + args.end_date)
 
     data = load_historical_data(args.start_date, args.end_date)
     meta = data["meta"]
+    print("Spot 1-min:   " + str(meta["rows_spot"]))
+    print("Option 3-min: " + str(meta["rows_opt_3m"]))
+    print("Option 1-min: " + str(meta["rows_opt_1m"]))
+    print("Strikes (3m): " + str(meta["unique_strikes_3m"]))
+    print("Live trades:  " + str(meta["rows_trades"]))
+    print()
 
-    actual = meta["date_range_actual"]
-    print("Actual data range:    " + str(actual[0]) + " to " + str(actual[1]))
-    print("")
-    print("Spot 1-min candles:   " + str(meta["rows_spot"]))
-    print("Option 3-min candles: " + str(meta["rows_opt_3m"]))
-    print("Option 1-min candles: " + str(meta["rows_opt_1m"]))
-    print("Unique strikes (3m):  " + str(meta["unique_strikes_3m"]))
-    print("Live trades loaded:   " + str(meta["rows_trades"]))
-    print("")
-    print("Part 1 complete. Ready for Part 2 (event loop).")
+    # ── Precompute indicators per (strike, type) ──
+    from VRL_DATA import add_indicators
+    opt_3m = data["option_3min"]
+    opt_1m = data["option_1min"]
+    spot   = data["spot_1min"]
+
+    if opt_3m.empty or spot.empty:
+        print("ERROR: insufficient data for backtest.")
+        return
+
+    cache_3m = {}
+    for (strike, otype), grp in opt_3m.groupby(["strike", "type"]):
+        g = grp.sort_values("timestamp").reset_index(drop=True)
+        g = g.set_index("timestamp")
+        g = add_indicators(g)
+        cache_3m[(int(strike), otype)] = g.reset_index()
+
+    cache_1m = {}
+    if not opt_1m.empty:
+        for (strike, otype), grp in opt_1m.groupby(["strike", "type"]):
+            g = grp.sort_values("timestamp").reset_index(drop=True)
+            g = g.set_index("timestamp")
+            g = add_indicators(g)
+            cache_1m[(int(strike), otype)] = g.reset_index()
+
+    print("Indicator cache built: " + str(len(cache_3m)) + " groups (3m), "
+          + str(len(cache_1m)) + " groups (1m)")
+
+    # ── Build spot timeline (resample to 3-min for ATM steps) ──
+    spot_ts = spot.set_index("timestamp").sort_index()
+    spot_3m = spot_ts["close"].resample("3min").last().dropna()
+
+    # ── Determine trading days ──
+    trading_days = sorted(spot["timestamp"].dt.date.unique())
+    print("Trading days: " + str([str(d) for d in trading_days]))
+    print()
+
+    # ── Import pure functions ──
+    from VRL_ENGINE import (
+        _evaluate_entry_gates_pure,
+        _evaluate_exit_chain_pure,
+        _compute_1min_ema9_break_pure,
+        compute_ratchet_sl,
+    )
+
+    # ── Run simulation ──
+    LOT_SIZE   = 65
+    LOT_COUNT  = 2
+    TOTAL_QTY  = LOT_SIZE * LOT_COUNT
+    COOLDOWN   = 5  # minutes
+
+    trades     = []
+    rejections = []
+    daily_stats = {}
+
+    state = {
+        "in_trade": False,
+        "last_exit_time": "",
+        "last_exit_direction": "",
+    }
+
+    for day in trading_days:
+        day_str = str(day)
+        locked_strike = None
+        locked_spot   = None
+        day_trades    = 0
+        day_pnl       = 0.0
+
+        day_spot = spot_3m[spot_3m.index.date == day]
+        if day_spot.empty:
+            continue
+
+        for ts, spot_close in day_spot.items():
+            atm = int(round(float(spot_close) / 50) * 50)
+            now = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+            mins = now.hour * 60 + now.minute
+
+            # Time window check: 09:30 – 15:30
+            if mins < 570 or mins > 930:
+                continue
+
+            # Strike lock logic
+            if locked_strike is None:
+                locked_strike = atm
+                locked_spot = float(spot_close)
+            else:
+                drift = abs(float(spot_close) - locked_spot)
+                if drift >= 75:
+                    locked_strike = atm
+                    locked_spot = float(spot_close)
+                elif drift >= 50:
+                    locked_strike = atm
+                    locked_spot = float(spot_close)
+
+            if not state["in_trade"]:
+                # ── Entry evaluation ──
+                if mins < 570 or mins >= 910:
+                    continue  # outside 09:30 – 15:10
+
+                for otype in ("CE", "PE"):
+                    key = (locked_strike, otype)
+                    if key not in cache_3m:
+                        continue
+                    df_full = cache_3m[key]
+                    df_up = df_full[df_full["timestamp"] <= ts]
+                    if len(df_up) < 4:
+                        continue
+
+                    # Append dummy "in-progress" row for iloc[-2] semantics
+                    dummy = df_up.iloc[-1:].copy()
+                    dummy.index = [df_up.index[-1] + 1]
+                    eval_df = pd.concat([df_up, dummy])
+
+                    result = _evaluate_entry_gates_pure(
+                        opt_3m=eval_df,
+                        option_type=otype,
+                        spot_ltp=float(spot_close),
+                        now=now,
+                        market_open=True,
+                        state=state,
+                        straddle_delta=None,
+                        spot_vwap=None,
+                        spot_for_vwap=0.0,
+                        atm_strike=atm,
+                        silent=True,
+                    )
+
+                    if result.get("fired"):
+                        entry_price = float(result.get("entry_price", 0))
+                        if entry_price <= 0:
+                            continue
+                        state.update({
+                            "in_trade": True,
+                            "entry_price": entry_price,
+                            "direction": otype,
+                            "strike": locked_strike,
+                            "entry_time": str(now),
+                            "token": None,
+                            "peak_pnl": 0.0,
+                            "trough_pnl": 0.0,
+                            "candles_held": 0,
+                            "peak_history": [],
+                            "last_peak_candle_ts": "",
+                            "current_velocity": 0.0,
+                            "active_ratchet_tier": "",
+                            "active_ratchet_sl": 0.0,
+                            "_peak_history_backfilled": True,
+                            "current_ema9_high": 0.0,
+                            "current_ema9_low": 0.0,
+                        })
+                        break
+                    else:
+                        rejections.append({
+                            "timestamp": str(now),
+                            "day": day_str,
+                            "strike": locked_strike,
+                            "type": otype,
+                            "reason": result.get("reject_reason", ""),
+                        })
+
+            else:
+                # ── Exit evaluation ──
+                otype = state["direction"]
+                key = (state["strike"], otype)
+                if key not in cache_3m:
+                    continue
+                df_full = cache_3m[key]
+                df_up = df_full[df_full["timestamp"] <= ts]
+                if len(df_up) < 2:
+                    continue
+
+                dummy = df_up.iloc[-1:].copy()
+                dummy.index = [df_up.index[-1] + 1]
+                eval_3m = pd.concat([df_up, dummy])
+
+                option_ltp = float(df_up.iloc[-1]["close"])
+                state["candles_held"] = state.get("candles_held", 0) + 1
+
+                # 1-min EMA9 break check
+                ema1m_result = (False, 0.0, 0.0)
+                key_1m = (state["strike"], otype)
+                if key_1m in cache_1m:
+                    df_1m_full = cache_1m[key_1m]
+                    df_1m_up = df_1m_full[df_1m_full["timestamp"] <= ts]
+                    if len(df_1m_up) >= 10:
+                        dummy_1m = df_1m_up.iloc[-1:].copy()
+                        dummy_1m.index = [df_1m_up.index[-1] + 1]
+                        eval_1m = pd.concat([df_1m_up, dummy_1m])
+                        running_pnl = round(option_ltp - state["entry_price"], 2)
+                        ema1m_result = _compute_1min_ema9_break_pure(
+                            eval_1m, running_pnl, min_pnl_guard=5.0)
+
+                exit_list = _evaluate_exit_chain_pure(
+                    state=state,
+                    option_ltp=option_ltp,
+                    opt_3m_full=eval_3m,
+                    now=now,
+                    ema1m_break_result=ema1m_result,
+                    market_open=True,
+                )
+
+                if exit_list:
+                    exit_info = exit_list[0]
+                    exit_price = float(exit_info.get("price", option_ltp))
+                    pnl_pts = round(exit_price - state["entry_price"], 2)
+                    peak = state.get("peak_pnl", 0)
+                    giveback = round(peak - pnl_pts, 2) if peak > 0 else 0
+                    ratchet_tier = state.get("active_ratchet_tier", "None")
+
+                    # Charges
+                    try:
+                        from VRL_CHARGES import calculate_charges
+                        ch = calculate_charges(
+                            state["entry_price"], exit_price, TOTAL_QTY, 1)
+                        charges = ch.get("total_charges", 0)
+                        net_rs = ch.get("net_pnl", pnl_pts * TOTAL_QTY)
+                    except Exception:
+                        charges = 50
+                        net_rs = pnl_pts * TOTAL_QTY - charges
+
+                    trade = {
+                        "day": day_str,
+                        "entry_time": state["entry_time"],
+                        "exit_time": str(now),
+                        "strike": state["strike"],
+                        "type": otype,
+                        "entry_price": round(state["entry_price"], 2),
+                        "exit_price": round(exit_price, 2),
+                        "pnl_pts": pnl_pts,
+                        "pnl_rupees_gross": round(pnl_pts * TOTAL_QTY, 0),
+                        "peak_pnl": round(peak, 2),
+                        "giveback": giveback,
+                        "exit_reason": exit_info.get("reason", "UNKNOWN"),
+                        "ratchet_tier": ratchet_tier if ratchet_tier else "None",
+                        "candles_held": state.get("candles_held", 0),
+                        "charges": round(charges, 0),
+                        "pnl_rupees_net": round(net_rs, 0),
+                    }
+                    trades.append(trade)
+                    day_trades += 1
+                    day_pnl += pnl_pts
+
+                    state.update({
+                        "in_trade": False,
+                        "last_exit_time": str(now),
+                        "last_exit_direction": otype,
+                    })
+
+        daily_stats[day_str] = {"trades": day_trades, "pnl": round(day_pnl, 2)}
+
+    # ── Force EOD exit if still in position ──
+    if state["in_trade"]:
+        otype = state["direction"]
+        key = (state["strike"], otype)
+        if key in cache_3m:
+            df_full = cache_3m[key]
+            if not df_full.empty:
+                last_close = float(df_full.iloc[-1]["close"])
+                pnl_pts = round(last_close - state["entry_price"], 2)
+                peak = state.get("peak_pnl", 0)
+                trades.append({
+                    "day": str(trading_days[-1]) if trading_days else "",
+                    "entry_time": state["entry_time"],
+                    "exit_time": "EOD_FORCED",
+                    "strike": state["strike"],
+                    "type": otype,
+                    "entry_price": round(state["entry_price"], 2),
+                    "exit_price": round(last_close, 2),
+                    "pnl_pts": pnl_pts,
+                    "pnl_rupees_gross": round(pnl_pts * TOTAL_QTY, 0),
+                    "peak_pnl": round(peak, 2),
+                    "giveback": round(peak - pnl_pts, 2) if peak > 0 else 0,
+                    "exit_reason": "EOD_FORCED",
+                    "ratchet_tier": state.get("active_ratchet_tier", "None"),
+                    "candles_held": state.get("candles_held", 0),
+                    "charges": 50,
+                    "pnl_rupees_net": round(pnl_pts * TOTAL_QTY - 50, 0),
+                })
+                state["in_trade"] = False
+
+    # ═══════════════════════════════════════════════════════════
+    #  REPORT
+    # ═══════════════════════════════════════════════════════════
+    print("=" * 55)
+    print("  BATCH 9 — STRATEGY BACKTEST REPORT")
+    print("=" * 55)
+    print("Run date:    " + date.today().isoformat())
+    print("Sample:      " + str(len(trading_days)) + " trading days, "
+          + str(len(trades)) + " simulated trades")
+    print("Date range:  " + args.start_date + " to " + args.end_date)
+    print()
+
+    if not trades:
+        print("NO TRADES generated. Check data + gate parameters.")
+        print("Rejections logged: " + str(len(rejections)))
+        if rejections:
+            reasons = {}
+            for r in rejections:
+                rr = str(r.get("reason", ""))[:30]
+                reasons[rr] = reasons.get(rr, 0) + 1
+            print("Top rejection reasons:")
+            for rr, cnt in sorted(reasons.items(), key=lambda x: -x[1])[:10]:
+                print("  " + rr + ": " + str(cnt))
+        return
+
+    # ── Overall ──
+    n = len(trades)
+    winners = [t for t in trades if t["pnl_pts"] > 0]
+    losers  = [t for t in trades if t["pnl_pts"] <= 0]
+    w, l = len(winners), len(losers)
+    wr = round(w / n * 100, 1) if n else 0
+    total_gross = sum(t["pnl_rupees_gross"] for t in trades)
+    total_net   = sum(t["pnl_rupees_net"] for t in trades)
+    total_pts   = sum(t["pnl_pts"] for t in trades)
+    avg_pts     = round(total_pts / n, 2) if n else 0
+    best  = max(trades, key=lambda t: t["pnl_pts"])
+    worst = min(trades, key=lambda t: t["pnl_pts"])
+
+    print("=== OVERALL PERFORMANCE ===")
+    print("Total trades:    " + str(n))
+    print("Winners:         " + str(w) + " (" + str(wr) + "%)")
+    print("Losers:          " + str(l))
+    print("Gross PnL:       Rs" + "{:,}".format(int(total_gross)))
+    print("Net PnL:         Rs" + "{:,}".format(int(total_net)))
+    print("Expectancy:      " + "{:+.2f}".format(avg_pts) + " pts/trade")
+    print("Best trade:      " + "{:+.1f}".format(best["pnl_pts"]) + " pts (" + best["day"] + ")")
+    print("Worst trade:     " + "{:.1f}".format(worst["pnl_pts"]) + " pts (" + worst["day"] + ")")
+    print()
+
+    # ── Win/Loss ──
+    avg_win  = round(np.mean([t["pnl_pts"] for t in winners]), 2) if winners else 0
+    avg_loss = round(np.mean([t["pnl_pts"] for t in losers]), 2) if losers else 0
+    wl_ratio = round(abs(avg_win / avg_loss), 2) if avg_loss != 0 else float("inf")
+    print("=== WIN/LOSS DISTRIBUTION ===")
+    print("Avg winner:      " + "{:+.2f}".format(avg_win) + " pts")
+    print("Avg loser:       " + "{:.2f}".format(avg_loss) + " pts")
+    print("Win/loss ratio:  " + str(wl_ratio))
+    print()
+
+    # ── Peak/Giveback ──
+    avg_peak = round(np.mean([t["peak_pnl"] for t in trades]), 2)
+    avg_exit = round(np.mean([t["pnl_pts"] for t in trades]), 2)
+    avg_give = round(np.mean([t["giveback"] for t in trades]), 2)
+    peak_10  = [t for t in trades if t["peak_pnl"] >= 10]
+    p10_good = [t for t in peak_10 if t["pnl_pts"] >= 5]
+    print("=== PEAK / GIVEBACK ===")
+    print("Avg peak PnL:    " + "{:+.2f}".format(avg_peak) + " pts")
+    print("Avg exit PnL:    " + "{:+.2f}".format(avg_exit) + " pts")
+    print("Avg giveback:    " + "{:.2f}".format(avg_give) + " pts")
+    if peak_10:
+        print("Trades peak>10:  " + str(len(peak_10))
+              + " (exited>5: " + str(len(p10_good))
+              + ", exited<5: " + str(len(peak_10) - len(p10_good)) + ")")
+    print()
+
+    # ── Ratchet ──
+    tier_buckets = {}
+    for t in trades:
+        tier = t.get("ratchet_tier", "None")
+        if tier not in tier_buckets:
+            tier_buckets[tier] = []
+        tier_buckets[tier].append(t["pnl_pts"])
+    print("=== RATCHET TIER BREAKDOWN ===")
+    for tier in ["None", "T1", "T2", "T3", "T4", "T5"]:
+        pts_list = tier_buckets.get(tier, [])
+        if pts_list:
+            avg = round(np.mean(pts_list), 2)
+            print("  " + tier + ": " + str(len(pts_list)) + " trades, avg "
+                  + "{:+.2f}".format(avg) + " pts")
+    print()
+
+    # ── Exit reason ──
+    reason_buckets = {}
+    for t in trades:
+        r = t["exit_reason"]
+        if r not in reason_buckets:
+            reason_buckets[r] = []
+        reason_buckets[r].append(t["pnl_pts"])
+    print("=== EXIT REASON BREAKDOWN ===")
+    for reason, pts_list in sorted(reason_buckets.items(),
+                                    key=lambda x: -len(x[1])):
+        avg = round(np.mean(pts_list), 2)
+        print("  " + reason + ": " + str(len(pts_list)) + " trades, avg "
+              + "{:+.2f}".format(avg) + " pts")
+    print()
+
+    # ── Daily ──
+    print("=== DAILY BREAKDOWN ===")
+    for day_str in sorted(daily_stats.keys()):
+        ds = daily_stats[day_str]
+        print("  " + day_str + ": " + str(ds["trades"]) + " trades, "
+              + "{:+.1f}".format(ds["pnl"]) + " pts")
+    print()
+
+    # ── Gate rejections ──
+    print("=== GATE REJECTION ANALYSIS ===")
+    print("Total candles examined: " + str(len(rejections)))
+    reason_counts = {}
+    for r in rejections:
+        rr = str(r.get("reason", ""))
+        # Categorize by gate
+        if "before_" in rr or "after_" in rr:
+            gate = "time_window"
+        elif "cooldown" in rr:
+            gate = "cooldown"
+        elif "below_band" in rr or "above_band" in rr or "crossed_down" in rr or "missed_fire" in rr:
+            gate = "fresh_breakout"
+        elif "red_candle" in rr:
+            gate = "green_candle"
+        elif "weak_body" in rr:
+            gate = "body_30pct"
+        elif "narrow_band" in rr:
+            gate = "band_width_8pts"
+        elif "insufficient" in rr:
+            gate = "data_insufficient"
+        else:
+            gate = "other"
+        reason_counts[gate] = reason_counts.get(gate, 0) + 1
+    for gate, cnt in sorted(reason_counts.items(), key=lambda x: -x[1]):
+        print("  " + gate + ": " + str(cnt))
+    print()
+
+    # ── Cross-validation ──
+    live_trades = data["trades_live"]
+    print("=== CROSS-VALIDATION VS LIVE TRADES ===")
+    if live_trades.empty:
+        print("  No live trades in DB for comparison.")
+    else:
+        print("  Live trades in range: " + str(len(live_trades)))
+        print("  Backtest trades:      " + str(n))
+        matches = 0
+        for _, lt in live_trades.iterrows():
+            lt_strike = int(lt.get("strike", 0))
+            lt_dir = lt.get("direction", "")
+            lt_date = str(lt.get("date", ""))
+            for bt in trades:
+                if (bt["strike"] == lt_strike
+                        and bt["type"] == lt_dir
+                        and bt["day"] == lt_date):
+                    matches += 1
+                    break
+        print("  Date+strike+direction matches: " + str(matches))
+    print()
+
+    # ── Verdict ──
+    print("=== VERDICT ===")
+    if avg_pts > 0:
+        monthly = round(avg_pts * (n / max(1, len(trading_days))) * 22, 1)
+        monthly_rs = int(monthly * TOTAL_QTY)
+        print("STRATEGY HAS POSITIVE EDGE (sample-limited)")
+        print("Per-trade expectancy: " + "{:+.2f}".format(avg_pts) + " pts")
+        print("Monthly projection:   " + "{:+.1f}".format(monthly) + " pts  Rs"
+              + "{:,}".format(monthly_rs) + " @ " + str(LOT_COUNT) + " lots")
+    else:
+        print("STRATEGY HAS NEGATIVE EDGE (current form)")
+        print("Per-trade expectancy: " + "{:.2f}".format(avg_pts) + " pts")
+        print("Investigate: which gates/exits lose most? See breakdowns above.")
+    print()
+    print("WARNING: N=" + str(n) + " trades on " + str(len(trading_days))
+          + " days. Statistical confidence is LOW.")
+    print("Extend backfill to 30 days for reliable conclusions.")
+    print("=" * 55)
+
+    # ── Save CSV ──
+    today_str = date.today().isoformat()
+    csv_path = os.path.expanduser(
+        "~/lab_data/strategy_backtest_" + today_str + ".csv")
+    try:
+        pd.DataFrame(trades).to_csv(csv_path, index=False)
+        print("Trades CSV: " + csv_path)
+    except Exception as e:
+        print("CSV write error: " + str(e))
+
+    rej_path = os.path.expanduser(
+        "~/lab_data/strategy_backtest_rejections_" + today_str + ".csv")
+    try:
+        pd.DataFrame(rejections).to_csv(rej_path, index=False)
+        print("Rejections CSV: " + rej_path)
+    except Exception as e:
+        print("Rejections CSV error: " + str(e))
 
 
 if __name__ == "__main__":
