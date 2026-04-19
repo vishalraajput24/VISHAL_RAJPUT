@@ -808,6 +808,87 @@ test("49. test_reset_exit_command_clears_flag",
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Section 10 — Research module (Batch 8, 8 tests)
+# ═══════════════════════════════════════════════════════════════
+
+section("RESEARCH MODULE (BATCH 8)")
+
+import VRL_RESEARCH as RESEARCH
+
+# 50. GARCH: insufficient data returns INSUFFICIENT
+_short_series = pd.Series([100.0, 101.0, 102.0])
+_g_insuf = RESEARCH.gjr_garch_forecast(_short_series, min_candles=30)
+test("50. test_gjr_garch_insufficient_data",
+     _g_insuf["vol_regime"] == "INSUFFICIENT" and not _g_insuf["fit_success"],
+     "regime=" + _g_insuf["vol_regime"])
+
+# 51. GARCH: zero variance returns LOW with sigma=0
+_zero_var = pd.Series([100.0] * 35)
+_g_zero = RESEARCH.gjr_garch_forecast(_zero_var, min_candles=30)
+test("51. test_gjr_garch_zero_variance",
+     _g_zero["vol_regime"] == "LOW" and _g_zero["sigma_forecast"] == 0.0,
+     "regime=" + _g_zero["vol_regime"] + " sigma=" + str(_g_zero["sigma_forecast"]))
+
+# 52. GARCH: valid series returns dict with all keys
+import numpy as _np
+_np.random.seed(42)
+_valid = pd.Series(100 + _np.cumsum(_np.random.randn(50) * 0.5))
+_valid = _valid[_valid > 0]
+_g_valid = RESEARCH.gjr_garch_forecast(_valid, min_candles=30)
+_all_keys = all(k in _g_valid for k in ("sigma_forecast", "vol_regime",
+                                          "gjr_asymmetry", "fit_success"))
+test("52. test_gjr_garch_valid_series",
+     _all_keys and _g_valid["vol_regime"] in ("LOW", "NORMAL", "HIGH", "EXTREME"),
+     "keys=" + str(_all_keys) + " regime=" + _g_valid["vol_regime"])
+
+# 53. Hawkes: no jumps returns baseline_mu, CALM
+_calm_candles = [{"timestamp": datetime(2026, 4, 16, 10, i * 3),
+                  "close": 100.0, "high": 101.0, "low": 99.5}
+                 for i in range(10)]
+_h_calm = RESEARCH.hawkes_intensity(_calm_candles)
+test("53. test_hawkes_no_jumps",
+     _h_calm["cluster_state"] == "CALM"
+     and abs(_h_calm["lambda_now"] - 0.1) < 0.01,
+     "state=" + _h_calm["cluster_state"]
+     + " lambda=" + str(_h_calm["lambda_now"]))
+
+# 54. Hawkes: after jump, lambda > baseline
+_jump_candles = [{"timestamp": datetime(2026, 4, 16, 10, i * 3),
+                  "close": 100.0, "high": 100 + (25 if i == 5 else 1),
+                  "low": 100.0 - (0.5 if i != 5 else 0.5)}
+                 for i in range(10)]
+_h_jump = RESEARCH.hawkes_intensity(_jump_candles)
+test("54. test_hawkes_after_jump",
+     _h_jump["lambda_now"] > 0.1,
+     "lambda=" + str(_h_jump["lambda_now"]))
+
+# 55. Hawkes: decay over time
+_old_jump = [{"timestamp": datetime(2026, 4, 16, 9, 15),
+              "close": 100.0, "high": 125.0, "low": 99.5}]
+_old_jump += [{"timestamp": datetime(2026, 4, 16, 10, i * 3),
+               "close": 100.0, "high": 101.0, "low": 99.5}
+              for i in range(20)]
+_h_decay = RESEARCH.hawkes_intensity(_old_jump)
+test("55. test_hawkes_decay_over_time",
+     _h_decay["lambda_now"] < 0.15,
+     "lambda=" + str(_h_decay["lambda_now"]))
+
+# 56. Research: empty candle history handled
+_h_empty = RESEARCH.hawkes_intensity([])
+test("56. test_hawkes_empty_history",
+     _h_empty["cluster_state"] == "INSUFFICIENT"
+     and _h_empty["error"] is not None,
+     "state=" + _h_empty["cluster_state"])
+
+# 57. Research: GARCH None input handled
+_g_none = RESEARCH.gjr_garch_forecast(None)
+test("57. test_garch_none_input",
+     _g_none["vol_regime"] == "INSUFFICIENT"
+     and not _g_none["fit_success"],
+     "regime=" + _g_none["vol_regime"])
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Summary
 # ═══════════════════════════════════════════════════════════════
 
