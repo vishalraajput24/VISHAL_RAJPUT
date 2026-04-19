@@ -545,22 +545,20 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
 #  for the shadow CSV logger to record. Analysis only.
 # ═══════════════════════════════════════════════════════════════
 
-def is_setup_building(token: int, direction: str) -> bool:
-    """BUG-S2: Returns True if the locked strike is close to firing.
-    Used by VRL_MAIN to defer ATM relock when a setup is 75%+ formed.
-    Pure function — no state mutation.
-
-    Criteria (all must hold):
-      - close > ema9_high (breakout valid)
-      - green candle (close > open)
-      - body_pct >= 25 (near the 30% threshold)
-      - band_width >= 6.0 (near the 8pt threshold — 75%)
+def _is_setup_building_pure(df_3min, direction: str) -> bool:
+    """Pure: evaluate the setup-building check on a pre-fetched 3-min
+    DataFrame (with ema9_high / ema9_low indicator columns). Matches
+    the production criteria exactly:
+      - close > ema9_high
+      - green candle
+      - body_pct >= 25
+      - band_width >= 6.0
+    Returns False on any error / insufficient data.
     """
     try:
-        df = D.get_option_3min(token, lookback=10)
-        if df is None or df.empty or len(df) < 3:
+        if df_3min is None or df_3min.empty or len(df_3min) < 3:
             return False
-        last = df.iloc[-2]
+        last = df_3min.iloc[-2]
         close    = float(last["close"])
         open_    = float(last["open"])
         high     = float(last["high"])
@@ -577,6 +575,17 @@ def is_setup_building(token: int, direction: str) -> bool:
         band_near = band_width >= 6.0
 
         return bool(breakout and green and body_near and band_near)
+    except Exception:
+        return False
+
+
+def is_setup_building(token: int, direction: str) -> bool:
+    """BUG-S2: thin wrapper. Used by VRL_MAIN to defer ATM relock when a
+    setup is 75%+ formed. Fetches 3-min bars and delegates to the pure
+    evaluator."""
+    try:
+        df = D.get_option_3min(token, lookback=10)
+        return _is_setup_building_pure(df, direction)
     except Exception:
         return False
 
