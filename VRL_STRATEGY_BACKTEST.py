@@ -642,7 +642,14 @@ def main():
                 eval_3m = pd.concat([df_up, dummy])
 
                 option_ltp = float(df_up.iloc[-1]["close"])
-                state["candles_held"] = state.get("candles_held", 0) + 1
+                # v16: candles_held = MINUTES elapsed since entry (matches
+                # production increment per 1-min boundary). At each 3-min
+                # exit check this advances by 3 (0 → 3 → 6 → 9 ...).
+                try:
+                    _ent_dt = datetime.fromisoformat(state["entry_time"])
+                    state["candles_held"] = int((now - _ent_dt).total_seconds() / 60)
+                except Exception:
+                    state["candles_held"] = state.get("candles_held", 0) + 3
 
                 # 1-min EMA9 break check
                 ema1m_result = (False, 0.0, 0.0)
