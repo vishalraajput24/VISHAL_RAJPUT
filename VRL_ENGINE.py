@@ -600,23 +600,39 @@ def compute_ratchet_sl(entry_price: float, peak_pnl: float,
     return round(entry_price + lock, 2), tier
 
 
-def compute_1min_ema9_break(option_token: int, running_pnl: float,
-                             min_pnl_guard: float = 5.0) -> tuple:
-    """Returns (would_break, close_price, ema9_1m).
-    Checks last CLOSED 1-min candle: red + close < EMA9 + in profit.
-    Pure function — no side effects. Returns (False, 0, 0) on error."""
+def _compute_1min_ema9_break_pure(df_1min, running_pnl: float,
+                                   min_pnl_guard: float = 5.0) -> tuple:
+    """Pure: evaluate the 1-min EMA9 break rule on a pre-fetched DataFrame.
+
+    df_1min must have indicator columns (add_indicators already applied).
+    Returns (would_break, close_price, ema9_1m). Same contract as
+    compute_1min_ema9_break — the thin wrapper just fetches + calls this.
+    """
     try:
-        df = D.get_historical_data(int(option_token), "minute", 15)
-        if df is None or df.empty or len(df) < 10:
+        if df_1min is None or df_1min.empty or len(df_1min) < 10:
             return False, 0.0, 0.0
-        df = D.add_indicators(df)
-        last = df.iloc[-2]
+        last = df_1min.iloc[-2]
         ema9 = float(last.get("EMA_9", last["close"]))
         close = float(last["close"])
         is_red = close < float(last["open"])
         below_ema = close < ema9
         pnl_ok = running_pnl >= min_pnl_guard
         return bool(is_red and below_ema and pnl_ok), round(close, 2), round(ema9, 2)
+    except Exception as e:
+        logger.debug("[ENGINE] 1m EMA9 break calc error: " + str(e))
+        return False, 0.0, 0.0
+
+
+def compute_1min_ema9_break(option_token: int, running_pnl: float,
+                             min_pnl_guard: float = 5.0) -> tuple:
+    """Thin wrapper: fetches 1-min data and delegates to the pure evaluator.
+    Returns (would_break, close_price, ema9_1m). Returns (False, 0, 0) on error."""
+    try:
+        df = D.get_historical_data(int(option_token), "minute", 15)
+        if df is None or df.empty or len(df) < 10:
+            return False, 0.0, 0.0
+        df = D.add_indicators(df)
+        return _compute_1min_ema9_break_pure(df, running_pnl, min_pnl_guard)
     except Exception as e:
         logger.debug("[ENGINE] 1m EMA9 break calc error: " + str(e))
         return False, 0.0, 0.0
