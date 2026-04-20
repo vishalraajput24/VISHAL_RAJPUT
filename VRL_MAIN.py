@@ -2426,9 +2426,11 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier in ("T2_GAP8",):
+                            if _new_tier in ("LOCK_5",):
+                                _icon = "🔒"
+                            elif _new_tier in ("LOCK_10",):
                                 _icon = "🔒🔒"
-                            elif _new_tier in ("T3_GAP8", "TRAIL_1to1"):
+                            elif _new_tier in ("TRAIL_70",):
                                 _icon = "🔒🔒🔒"
                             _tg_send(
                                 _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"

@@ -265,8 +265,8 @@ if(pos.in_trade){
   var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
   pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
   // Trail badge (v16.2) — color scales with tier
-  var _trail_color={'INITIAL':'var(--tx3)','T1_GAP9':'var(--yl2)','T2_GAP8':'var(--or2)','T3_GAP8':'var(--gn2)','TRAIL_1to1':'var(--gn)'}[_trail_tier]||'var(--tx3)';
-  var _trail_bg={'INITIAL':'var(--bg2)','T1_GAP9':'var(--yl-bg)','T2_GAP8':'var(--or-bg)','T3_GAP8':'var(--gn-bg)','TRAIL_1to1':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
+  var _trail_color={'INITIAL':'var(--tx3)','BREAKEVEN':'var(--yl2)','LOCK_5':'var(--or2)','LOCK_10':'var(--gn2)','TRAIL_70':'var(--gn)'}[_trail_tier]||'var(--tx3)';
+  var _trail_bg={'INITIAL':'var(--bg2)','BREAKEVEN':'var(--yl-bg)','LOCK_5':'var(--or-bg)','LOCK_10':'var(--gn-bg)','TRAIL_70':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
   if(_trail_tier && _trail_tier!=='INITIAL' && _trail_tier!=='None'){
     pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:'+_trail_bg+';border:1px solid var(--bd);color:'+_trail_color+';font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 TRAIL '+esc(_trail_tier)+' @ \u20B9'+_trail_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
   }else{
