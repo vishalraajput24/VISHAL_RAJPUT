@@ -652,20 +652,21 @@ compute_ratchet_sl = _old_ratchet_sl
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """v16.3 Vishal Trail SL — simplified 5-tier ladder.
+    """v16.3.1 Vishal Trail SL — fixed tiers then 70% adaptive trail.
 
     Returns (sl_price, tier_label).
 
     Tier ladder:
-      peak  < 8      → INITIAL     SL = entry − 10  (hard stop)
-      peak >= 8      → BREAKEVEN   SL = entry + 0   (risk-free)
+      peak  < 8      → INITIAL     SL = entry − 10
+      peak >= 8      → BREAKEVEN   SL = entry + 0
       peak >= 12     → LOCK_5      SL = entry + 5
       peak >= 18     → LOCK_10     SL = entry + 10
-      peak >= 25     → TRAIL_1to1  SL = peak − 7    (1:1 trail, 7pt gap)
+      peak >= 25     → TRAIL_70    SL = max(entry+10, entry + peak×0.70)
+                                   keeps 70% of peak, gives back 30%
     """
     if peak_pnl >= 25:
-        sl = entry_price + (peak_pnl - 7)
-        tier = "TRAIL_1to1"
+        sl = max(entry_price + 10, entry_price + peak_pnl * 0.70)
+        tier = "TRAIL_70"
     elif peak_pnl >= 18:
         sl = entry_price + 10
         tier = "LOCK_10"
