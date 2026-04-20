@@ -109,7 +109,8 @@ def loss_streak_gate(state: dict) -> bool:
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                                 now, market_open: bool, state: dict,
                                 straddle_delta, spot_vwap, spot_for_vwap: float,
-                                atm_strike: int, silent: bool = False) -> dict:
+                                atm_strike: int, silent: bool = False,
+                                other_opt_3m=None) -> dict:
     """Pure entry-gate evaluator. All I/O lives in the check_entry wrapper.
 
     Parameters:
@@ -222,7 +223,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 pass
         result["cooldown_ok"] = True
 
-        # ── GATE 3: Fresh breakout above EMA9-high ──
+        # ── GATE 3 (v16.2): Fresh breakout above EMA9-LOW ──
+        # v16.2 change: entry triggers on close > ema9_LOW (not ema9_HIGH).
+        # Catches the move sooner as price clears the lower band. Still
+        # requires a recent bar below ema9_low (fresh cross, not already-above).
         fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
         if fb_lookback < 1:
             fb_lookback = 1
@@ -233,34 +237,31 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 break
             _bar = opt_3m.iloc[-_k]
             _bar_close  = float(_bar.get("close", 0))
-            _bar_ema9h  = float(_bar.get("ema9_high", 0))
-            if _bar_ema9h > 0 and _bar_close <= _bar_ema9h:
+            _bar_ema9l  = float(_bar.get("ema9_low", 0))
+            if _bar_ema9l > 0 and _bar_close <= _bar_ema9l:
                 was_below_in_lookback = True
                 break
 
-        is_fresh_breakout = (close > ema9_high) and was_below_in_lookback
+        is_fresh_breakout = (close > ema9_low) and was_below_in_lookback
 
         if not is_fresh_breakout:
-            if close <= ema9_high and prev_close > prev_ema9_high:
-                reason_code = "just_crossed_down"
-            elif close <= ema9_high:
-                reason_code = "below_band"
-            elif close > ema9_high and not was_below_in_lookback:
-                reason_code = "already_above_band"
+            if close <= ema9_low:
+                reason_code = "below_ema9_low"
+            elif close > ema9_low and not was_below_in_lookback:
+                reason_code = "already_above_ema9_low"
             else:
                 reason_code = "fresh_cross_up_but_missed_fire"
 
             result["reject_reason"] = (reason_code
                                        + "_close=" + str(round(close, 1))
-                                       + "_ema9h=" + str(round(ema9_high, 1))
+                                       + "_ema9l=" + str(round(ema9_low, 1))
                                        + "_lookback=" + str(fb_lookback) + "c")
             if not silent:
                 logger.info("[ENGINE] " + option_type
                             + " NO_BREAKOUT [" + reason_code + "]"
                             + " close=" + str(round(close, 1))
-                            + " ema9h=" + str(round(ema9_high, 1))
+                            + " ema9l=" + str(round(ema9_low, 1))
                             + " prev_close=" + str(round(prev_close, 1))
-                            + " prev_ema9h=" + str(round(prev_ema9_high, 1))
                             + " lookback=" + str(fb_lookback) + "c"
                             + " was_below=" + str(was_below_in_lookback))
             return result
@@ -295,7 +296,58 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                             + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
             return result
 
-        # ── GATE 7: straddle DISPLAY ONLY ──
+        # ── GATE 7 (v16.2): EMA FLAT filter ──
+        # If both EMA9-high and EMA9-low have moved less than 3 pts over the
+        # last 5 closed candles, the market is flat / chop — skip entry.
+        if opt_3m is not None and len(opt_3m) >= 7:
+            _ema9h_now = float(opt_3m.iloc[-2].get("ema9_high", 0))
+            _ema9h_5ago = float(opt_3m.iloc[-7].get("ema9_high", 0))
+            _ema9l_now = float(opt_3m.iloc[-2].get("ema9_low", 0))
+            _ema9l_5ago = float(opt_3m.iloc[-7].get("ema9_low", 0))
+            _slope_high = abs(_ema9h_now - _ema9h_5ago)
+            _slope_low  = abs(_ema9l_now - _ema9l_5ago)
+            if _slope_high < 3 and _slope_low < 3:
+                result["reject_reason"] = ("ema_flat_slopes_"
+                    + str(round(_slope_high, 1)) + "/" + str(round(_slope_low, 1)))
+                if not silent:
+                    logger.info("[ENGINE] " + option_type + " EMA_FLAT slopes="
+                                + str(round(_slope_high, 1)) + "/"
+                                + str(round(_slope_low, 1)) + " < 3 (chop)")
+                return result
+
+        # ── GATE 8 (v16.2): BACKBONE confirmation ──
+        # The OTHER side (opposite CE/PE at same strike) must be:
+        #   (a) RED  (close < open)  AND
+        #   (b) CLOSE BELOW its own EMA9-high
+        # This confirms the directional bias — we only enter one side when
+        # the other side is weak, avoiding chop-whipsaw entries.
+        # If other_opt_3m is missing / too short, we proceed without blocking.
+        if other_opt_3m is not None and len(other_opt_3m) >= 3:
+            try:
+                _ob = other_opt_3m.iloc[-2]
+                _o_close = float(_ob.get("close", 0))
+                _o_open  = float(_ob.get("open", 0))
+                _o_ema9h = float(_ob.get("ema9_high", 0))
+                _o_red = _o_close < _o_open
+                _o_below = _o_close < _o_ema9h
+                _backbone_ok = _o_red and _o_below
+                other_side = "PE" if option_type == "CE" else "CE"
+                if not _backbone_ok:
+                    result["reject_reason"] = ("backbone_mismatch_" + other_side
+                        + "_red=" + str(_o_red) + "_below=" + str(_o_below))
+                    if not silent:
+                        logger.info("[ENGINE] " + option_type
+                                    + " BACKBONE MISMATCH " + other_side
+                                    + " red=" + str(_o_red)
+                                    + " below_ema9h=" + str(_o_below))
+                    return result
+            except Exception as _be:
+                logger.debug("[ENGINE] backbone check error: " + str(_be))
+        else:
+            logger.info("[ENGINE] BACKBONE data unavailable for "
+                        + option_type + " — proceeding without")
+
+        # ── GATE 9: straddle DISPLAY ONLY ──
         if CFG.straddle_filter("enabled", True):
             result["atm_strike_used"] = atm_strike
             mod = now.hour * 60 + now.minute
@@ -444,12 +496,25 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         except Exception as e:
             logger.debug("[ENGINE] vwap fetch: " + str(e))
 
+    # v16.2 BACKBONE: fetch the OTHER side's 3-min df for cross-confirmation.
+    # Prefer state's locked_ce/pe_token; fall back to other_token argument.
+    other_opt_3m = None
+    try:
+        if option_type == "CE":
+            _other_tok = state.get("locked_pe_token") or other_token
+        else:
+            _other_tok = state.get("locked_ce_token") or other_token
+        if _other_tok:
+            other_opt_3m = D.get_option_3min(int(_other_tok), lookback=5)
+    except Exception as _oe:
+        logger.debug("[ENGINE] backbone fetch: " + str(_oe))
+
     return _evaluate_entry_gates_pure(
         opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp,
         now=now, market_open=market_open, state=state,
         straddle_delta=straddle_delta, spot_vwap=spot_vwap,
         spot_for_vwap=spot_for_vwap, atm_strike=atm_strike,
-        silent=silent)
+        silent=silent, other_opt_3m=other_opt_3m)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -590,10 +655,10 @@ def is_setup_building(token: int, direction: str) -> bool:
         return False
 
 
-def compute_ratchet_sl(entry_price: float, peak_pnl: float,
-                       direction: str) -> tuple:
-    """Returns (sl_price, tier_label). sl_price=0 if no tier crossed.
-    Pure function — no side effects."""
+def _old_ratchet_sl(entry_price: float, peak_pnl: float,
+                     direction: str) -> tuple:
+    """LEGACY v16.0 ratchet. Kept for rollback reference only.
+    Not called by the live exit chain any more — see compute_trail_sl."""
     if peak_pnl >= 45:
         lock, tier = 40, "T5"
     elif peak_pnl >= 35:
@@ -607,6 +672,43 @@ def compute_ratchet_sl(entry_price: float, peak_pnl: float,
     else:
         return 0.0, "None"
     return round(entry_price + lock, 2), tier
+
+
+# Back-compat alias so any stray importer still resolves the symbol.
+compute_ratchet_sl = _old_ratchet_sl
+
+
+def compute_trail_sl(entry_price: float, peak_pnl: float,
+                     direction: str = "") -> tuple:
+    """v16.2 Vishal Trail SL. Returns (sl_price, tier_label).
+
+    Hard initial SL:  -10 pts (tier "INITIAL")
+    Peak >= 12:       SL = entry + 3   (T1_GAP9)
+    Peak >= 15:       SL = entry + 7   (T2_GAP8)
+    Peak >= 20:       SL = entry + 12  (T3_GAP8)
+    Peak >= 21:       SL = entry + 14 + (peak - 21)   (TRAIL_1to1)
+
+    The trailing branch adds +1 pt to the SL for every +1 pt the peak
+    advances beyond 21 — a 1:1 trail following the peak with a fixed
+    -7 pt gap (peak - SL_offset = peak - (14 + peak - 21) = 7).
+    """
+    if peak_pnl >= 21:
+        sl_offset = 14 + (peak_pnl - 21)
+        sl = entry_price + sl_offset
+        tier = "TRAIL_1to1"
+    elif peak_pnl >= 20:
+        sl = entry_price + 12
+        tier = "T3_GAP8"
+    elif peak_pnl >= 15:
+        sl = entry_price + 7
+        tier = "T2_GAP8"
+    elif peak_pnl >= 12:
+        sl = entry_price + 3
+        tier = "T1_GAP9"
+    else:
+        sl = entry_price - 10
+        tier = "INITIAL"
+    return round(sl, 2), tier
 
 
 def _compute_1min_ema9_break_pure(df_1min, running_pnl: float,
@@ -658,17 +760,16 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v16.0 EXIT CHAIN — 6 rules, priority order
+#  v16.2 EXIT CHAIN — 5 rules, priority order
 #
-#    1. EMERGENCY_SL     → pnl ≤ -20
-#    2. EOD_EXIT         → time ≥ 15:30
-#    3. STALE_ENTRY      → 5 candles held AND peak < 3
+#    1. EMERGENCY_SL     → pnl ≤ -10 (was -20)
+#    2. EOD_EXIT         → time ≥ 15:20 (was 15:30)
+#    3. STALE_ENTRY      → 5 candles held AND peak < 5 (was peak < 3)
 #    4. VELOCITY_STALL   → 2 consecutive 3-candle windows no growth
-#    5. EMA1M_BREAK      → 1-min red + close < 1m EMA9 + pnl ≥ 5
-#    6. PROFIT_RATCHET   → 5-tier lock based on peak
+#    5. VISHAL_TRAIL     → Vishal trail SL (replaces PROFIT_RATCHET)
 #
-#  EMA9_LOW_BREAK removed — too slow (−84% capture in backtest).
-#  BREAKEVEN_LOCK removed — redundant with Ratchet T1 (both +2 at peak≥10).
+#  EMA1M_BREAK removed in v16.2 — was noisy mid-trade exit.
+#  Old PROFIT_RATCHET kept as _old_ratchet_sl for reference only.
 # ═══════════════════════════════════════════════════════════════
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
@@ -701,10 +802,10 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
 
     candles = state.get("candles_held", 0)
 
-    emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -20)
+    emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -10)   # v16.2: was -20
     stale_candles = CFG.exit_ema9_band("stale_candles", 5)
-    stale_peak_max= CFG.exit_ema9_band("stale_peak_max", 3)
-    eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:30")
+    stale_peak_max= CFG.exit_ema9_band("stale_peak_max", 5)        # v16.2: was 3
+    eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:20")   # v16.2: was 15:30
     vs_enabled    = bool(CFG.exit_ema9_band("velocity_stall_enabled", True))
     vs_min_peak   = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
 
@@ -792,26 +893,18 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
                         + " peak=" + str(round(peak, 1)) + " → exit")
             return [{"lot_id": "ALL", "reason": "VELOCITY_STALL", "price": option_ltp}]
 
-    # ── RULE 5: EMA1M_BREAK — 1-min red + close < 1m EMA9 + in profit ──
-    running_pnl = round(option_ltp - entry, 2)
-    would_break, ema1m_close, ema1m_ema9 = ema1m_break_result
-    if would_break:
-        logger.info("[ENGINE] EMA1M_BREAK close=" + str(ema1m_close)
-                    + " ema9_1m=" + str(ema1m_ema9)
-                    + " pnl=" + str(running_pnl))
-        return [{"lot_id": "ALL", "reason": "EMA1M_BREAK", "price": option_ltp}]
+    # RULE 5 EMA1M_BREAK removed in v16.2 — was noisy mid-trade exit.
 
-    # ── RULE 6: PROFIT_RATCHET — 5-tier lock based on peak ──
-    ratchet_sl, ratchet_tier = compute_ratchet_sl(entry, peak,
-                                                   state.get("direction", ""))
-    state["active_ratchet_tier"] = ratchet_tier
-    state["active_ratchet_sl"]   = ratchet_sl
-    if ratchet_sl > 0 and option_ltp <= ratchet_sl:
-        logger.info("[ENGINE] PROFIT_RATCHET tier=" + ratchet_tier
+    # ── RULE 5 (v16.2): VISHAL_TRAIL — Vishal trail SL (replaces ratchet) ──
+    trail_sl, trail_tier = compute_trail_sl(entry, peak,
+                                             state.get("direction", ""))
+    state["active_ratchet_tier"] = trail_tier   # reuse key for dashboard compat
+    state["active_ratchet_sl"]   = trail_sl
+    if trail_sl > 0 and option_ltp <= trail_sl:
+        logger.info("[ENGINE] VISHAL_TRAIL tier=" + trail_tier
                     + " peak=" + str(round(peak, 1))
-                    + " lock=+" + str(round(ratchet_sl - entry, 1))
-                    + " sl=" + str(ratchet_sl))
-        return [{"lot_id": "ALL", "reason": "PROFIT_RATCHET", "price": ratchet_sl}]
+                    + " sl=" + str(trail_sl))
+        return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
 
     return []
 

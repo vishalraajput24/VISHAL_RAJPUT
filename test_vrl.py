@@ -54,10 +54,10 @@ def section(name):
 # ── Fixture builders ──────────────────────────────────────────
 
 def _make_opt_3m(n=20,
-                 ema9_high=100.0, ema9_low=91.0,
+                 ema9_high=109.0, ema9_low=100.0,
                  last_close=103.0, last_open=98.0,
                  last_high=104.0, last_low=97.5,
-                 prev_close=99.0, prev_ema9_high=100.0):
+                 prev_close=99.0, prev_ema9_high=109.0):
     """Build a 3-min option DataFrame with controlled last + prev rows.
     Default band width = 9 (satisfies min_band_width_pts=8)."""
     rows = []
@@ -79,7 +79,7 @@ def _make_opt_3m(n=20,
     df.iloc[-2, df.columns.get_loc("ema9_high")] = ema9_high
     df.iloc[-2, df.columns.get_loc("ema9_low")]  = ema9_low
     df.iloc[-3, df.columns.get_loc("ema9_high")] = prev_ema9_high
-    df.iloc[-3, df.columns.get_loc("ema9_low")]  = ema9_low - 2
+    df.iloc[-3, df.columns.get_loc("ema9_low")]  = ema9_low + 2
     return df
 
 
@@ -155,33 +155,33 @@ test("1. test_breakout_fires",
      r["fired"] is True and r["entry_mode"] == "EMA9_BREAKOUT",
      "fired=" + str(r["fired"]) + " reject=" + r.get("reject_reason", ""))
 
-# 2. v15.2.4: SUSTAINED above-band (entire 3-candle lookback above)
-#    → BLOCKED with the new "already_above_band" reject code.
+# 2. v16.2: SUSTAINED above ema9_low (entire 3-candle lookback above)
+#    → BLOCKED with "already_above_ema9_low" reject code.
 #    The relaxed fresh-breakout rule fires when ANY of the last N bars
-#    was below the band, so this test forces ALL lookback bars above.
+#    closed <= its own ema9_low. Force ALL lookback bars above ema9_low.
 import pandas as _pd
 _rows_above = []
 for _i in range(20):
-    _rows_above.append({"open": 101.0, "high": 103.0, "low": 100.0,
-                        "close": 102.0, "volume": 1000})
+    _rows_above.append({"open": 101.0, "high": 112.0, "low": 100.5,
+                        "close": 110.0, "volume": 1000})
 _df_stale = _pd.DataFrame(_rows_above)
 _base_ts = datetime(2026, 4, 16, 10, 0)
 _df_stale.index = [_base_ts + timedelta(minutes=i * 3) for i in range(len(_rows_above))]
-# Hand-set indicators so EVERY row has close > ema9_high (sustained above).
-_df_stale["EMA_9"]     = 101.0
-_df_stale["EMA_21"]    = 101.0
+# EVERY row has close > ema9_low (sustained above).
+_df_stale["EMA_9"]     = 105.0
+_df_stale["EMA_21"]    = 105.0
 _df_stale["RSI"]       = 50.0
-_df_stale["ema9_high"] = 100.0
-_df_stale["ema9_low"]  = 91.0
+_df_stale["ema9_high"] = 109.0
+_df_stale["ema9_low"]  = 100.0
 r = _run_entry(df=_df_stale)
 test("2. test_no_fresh_breakout_blocked",
-     r["fired"] is False and "already_above_band" in r.get("reject_reason", ""),
+     r["fired"] is False and "already_above_ema9_low" in r.get("reject_reason", ""),
      "reject=" + r.get("reject_reason", ""))
 
-# 3. Red candle → BLOCKED
+# 3. Red candle → BLOCKED (Gate 4 after Gate 3 passes on ema9_low)
 _df_red = _make_opt_3m(last_close=101.0, last_open=103.0, last_high=103.5,
-                       last_low=100.5, ema9_high=100.0,
-                       prev_close=99.0, prev_ema9_high=100.0)
+                       last_low=100.5, ema9_high=109.0, ema9_low=100.0,
+                       prev_close=99.0, prev_ema9_high=109.0)
 r = _run_entry(df=_df_red)
 test("3. test_red_candle_blocked",
      r["fired"] is False and "red_candle" in r.get("reject_reason", ""),
@@ -189,8 +189,8 @@ test("3. test_red_candle_blocked",
 
 # 4. Weak body (body 10% of range) → BLOCKED
 _df_weak = _make_opt_3m(last_close=103.0, last_open=102.0, last_high=108.0,
-                        last_low=98.0, ema9_high=100.0,
-                        prev_close=99.0, prev_ema9_high=100.0)
+                        last_low=98.0, ema9_high=109.0, ema9_low=100.0,
+                        prev_close=99.0, prev_ema9_high=109.0)
 r = _run_entry(df=_df_weak)
 test("4. test_weak_body_blocked",
      r["fired"] is False and "weak_body" in r.get("reject_reason", ""),
@@ -329,28 +329,28 @@ test("16. test_stale_exit",
      len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY",
      "got " + str(ex))
 
-# 17. PROFIT_RATCHET — peak=15 → T2 lock at entry+7, ltp below lock → exit
+# 17. v16.2 VISHAL_TRAIL — peak=15 → T2_GAP8 lock at entry+7, ltp below lock → exit
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=15, candles=3)
     ex = E.manage_exit(st, 106, {})
-test("17. test_profit_ratchet_exit",
-     len(ex) == 1 and ex[0]["reason"] == "PROFIT_RATCHET",
+test("17. test_vishal_trail_exit",
+     len(ex) == 1 and ex[0]["reason"] == "VISHAL_TRAIL",
      "got " + str(ex))
 
-# 18. PROFIT_RATCHET — peak=10 → T1 lock at entry+2, ltp above lock → hold
+# 18. v16.2 VISHAL_TRAIL — peak=12 → T1_GAP9 lock at entry+3, ltp above lock → hold
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
-    st = _make_state(entry=100, peak=10, candles=3)
+    st = _make_state(entry=100, peak=12, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("18. test_ratchet_t1_hold",
-     len(ex) == 0 and st.get("active_ratchet_tier") == "T1",
+test("18. test_trail_t1_hold",
+     len(ex) == 0 and st.get("active_ratchet_tier") == "T1_GAP9",
      "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
-# 19. PROFIT_RATCHET — peak=9 → no tier armed, no exit
+# 19. v16.2 VISHAL_TRAIL — peak=9 → INITIAL (sl=entry-10), ltp 108 above -10 → hold
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=9, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("19. test_ratchet_no_tier_at_peak_9",
-     st.get("active_ratchet_tier") == "None" and len(ex) == 0,
+test("19. test_trail_initial_at_peak_9",
+     st.get("active_ratchet_tier") == "INITIAL" and len(ex) == 0,
      "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
 
@@ -367,9 +367,10 @@ test("20. test_validate_entry_mode_accepted",
      "EMA9_BREAKOUT" in VALID_ENTRY_MODES and "FAST" in LEGACY_MODES,
      "valid=" + str(VALID_ENTRY_MODES) + " legacy=" + str(LEGACY_MODES))
 
-# 21. All v16.0 exit reasons accepted (6 live + historical)
+# 21. All v16.2 exit reasons accepted (5 live + historical)
 _expected = ("EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
-             "VELOCITY_STALL", "EMA1M_BREAK", "PROFIT_RATCHET")
+             "VELOCITY_STALL", "VISHAL_TRAIL",
+             "EMA1M_BREAK", "PROFIT_RATCHET")  # historical
 _missing = [r for r in _expected if r not in VALID_EXIT_REASONS]
 test("21. test_validate_exit_reason_accepted",
      len(_missing) == 0,
