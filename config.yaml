@@ -3,7 +3,7 @@
 #  EMA9 Band Breakout + Velocity Stall + Straddle Display + VWAP
 # ═══════════════════════════════════════════════════════════════
 
-version: "v16.0.1"
+version: "v16.2"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
@@ -29,7 +29,7 @@ lots:
   count: 2
   size: 65
 
-# ── v15.2 Entry configuration (nested structure) ──────────────
+# ── v16.2 Entry configuration (nested structure) ──────────────
 entry:
   ema9_band:
     body_pct_min: 30
@@ -37,10 +37,19 @@ entry:
     warmup_until: "09:30"
     cutoff_after: "15:10"
     min_band_width_pts: 8
+    # v16.2: entry signal now breaks above EMA9_LOW (was EMA9_HIGH).
+    # Catches the move sooner when price clears the lower band.
+    entry_signal: "ema9_low"
+    # v16.2: EMA flat filter — reject entries when both ema9_high and
+    # ema9_low slopes over last 5 candles are below this threshold.
+    ema_flat_slope_min: 3
+    # v16.2: backbone confirmation — require the OTHER side (CE/PE at
+    # same strike) to be RED and closed below its own ema9_high.
+    backbone_enabled: true
     # v15.2.4: fresh-breakout lookback window (3-min candles).
-    # Fires entry if ANY of the last N bars had close <= its ema9_high
-    # AND the current bar's close > its ema9_high. N=3 recovers from
-    # a restart that lands mid-move; N=1 is the strict immediate cross.
+    # Fires entry if ANY of the last N bars had close <= its ema9_low
+    # (after v16.2 change). N=3 recovers from a restart that lands
+    # mid-move; N=1 is the strict immediate cross.
     fresh_breakout_lookback: 3
     # v15.2.5: multi-candidate strike scanning (ATM-50/ATM/ATM+50).
     # When enabled, every scan cycle evaluates all 6 CE/PE candidates
@@ -62,13 +71,14 @@ entry:
       enabled: true
       mode: display_only
 
-# ── v15.2 Exit configuration (nested structure) ──────────────
+# ── v16.2 Exit configuration (nested structure) ──────────────
 exit:
   ema9_band:
-    emergency_sl_pts: -20
+    emergency_sl_pts: -10          # v16.2: was -20 (tighter catastrophic stop)
     stale_candles: 5
-    stale_peak_max: 3
-    eod_exit_time: "15:30"
+    stale_peak_max: 5              # v16.2: was 3 (more room for warmup)
+    eod_exit_time: "15:20"         # v16.2: was 15:30 (earlier square-off)
+    trail_sl_enabled: true         # v16.2: new Vishal Trail SL replaces ratchet
     # v15.2.5: VELOCITY_STALL — exit when peak stops growing for N consecutive
     # 3-min candles. Catches momentum death BEFORE price reversal, unlike BE+2
     # which only fires after a pullback that reaches entry+offset. Observation

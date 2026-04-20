@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.0</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.2</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -193,7 +193,7 @@ function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 
-document.getElementById('ver').textContent=d.version||mk.version||'v16.0';
+document.getElementById('ver').textContent=d.version||mk.version||'v16.2';
 var tg='';
 tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
 tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
@@ -254,21 +254,30 @@ if(pos.in_trade){
     + '<div style="text-align:right"><div style="font-size:9px;color:var(--tx3)">INITIAL SL</div>'
     + '<div class="mono" style="font-size:13px;font-weight:700">\u20B9'+sl.toFixed(1)+'</div></div>'
     + '</div>';
-  // v16.0: Profit Ratchet tier display + EMA9 band context
+  // v16.2: Vishal Trail tier display + EMA9 band context
   var _cur_el=parseFloat(pos.current_ema9_low||0);
   var _cur_eh=parseFloat(pos.current_ema9_high||0);
-  var _ratchet_tier=pos.active_ratchet_tier||'';
-  var _ratchet_sl=parseFloat(pos.active_ratchet_sl||0);
-  var _dist_rsl=_ratchet_sl>0?(ltp-_ratchet_sl):0;
+  var _trail_tier=pos.active_ratchet_tier||pos.trail_tier||'';
+  var _trail_sl=parseFloat(pos.active_ratchet_sl||pos.trail_sl||0);
+  var _dist_rsl=_trail_sl>0?(ltp-_trail_sl):0;
   pa+='<div class="rb"><div class="rl"><span>EMA9 band \u20B9'+_cur_el.toFixed(1)+' — \u20B9'+_cur_eh.toFixed(1)+'</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
   var _band_range=Math.max(1,_cur_eh-_cur_el);
   var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
   pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
-  // Ratchet badge (v16.0)
-  if(_ratchet_tier){
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--gn-bg);border:1px solid var(--gn-bd);color:var(--gn2);font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 RATCHET '+esc(_ratchet_tier)+' @ \u20B9'+_ratchet_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
+  // Trail badge (v16.2) — color scales with tier
+  var _trail_color={'INITIAL':'var(--tx3)','T1_GAP9':'var(--yl2)','T2_GAP8':'var(--or2)','T3_GAP8':'var(--gn2)','TRAIL_1to1':'var(--gn)'}[_trail_tier]||'var(--tx3)';
+  var _trail_bg={'INITIAL':'var(--bg2)','T1_GAP9':'var(--yl-bg)','T2_GAP8':'var(--or-bg)','T3_GAP8':'var(--gn-bg)','TRAIL_1to1':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
+  if(_trail_tier && _trail_tier!=='INITIAL' && _trail_tier!=='None'){
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:'+_trail_bg+';border:1px solid var(--bd);color:'+_trail_color+';font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 TRAIL '+esc(_trail_tier)+' @ \u20B9'+_trail_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
   }else{
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">RATCHET INACTIVE (peak '+fmt(pk)+', need +10)</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">TRAIL INITIAL (peak '+fmt(pk)+', arms at +12)</div>';
+  }
+  // Backbone indicator (v16.2)
+  var _backbone=pos.backbone_status||'';
+  if(_backbone){
+    var _bb_color=_backbone==='CONFIRMED'?'var(--gn2)':(_backbone==='MISMATCH'?'var(--rd)':'var(--tx3)');
+    var _bb_icon=_backbone==='CONFIRMED'?'\u2705':(_backbone==='MISMATCH'?'\u274C':'\u26AA');
+    pa+='<div style="margin-top:6px;padding:4px 10px;border-radius:6px;background:var(--bg2);color:'+_bb_color+';font-size:9px;text-align:center;font-weight:700">'+_bb_icon+' BACKBONE '+_backbone+'</div>';
   }
   // v16.0 Batch 7 BUG-Q12: Context row (bands + straddle + VWAP display)
   var _bs   = pos.current_bands_state || pos.entry_bands_state || '';

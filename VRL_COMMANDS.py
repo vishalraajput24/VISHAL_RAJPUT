@@ -326,7 +326,7 @@ def _cmd_help(args):
         + ("PAPER" if D.PAPER_MODE else "LIVE")
         + " | v16.0 EMA9 Band Breakout (3-min)\n"
         + "Entry: close > EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
-        + "Exit: Ratchet 5-tier | 1m EMA9 break | Velocity stall | Emergency -20 | EOD 15:30\n"
+        + "Exit: Vishal Trail (T1-T3+trail) | Velocity stall | Emergency -10 | EOD 15:20\n"
         + "2 lots fixed | No entry before 9:30 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
@@ -396,15 +396,15 @@ def _cmd_status(args):
     peak    = st.get("peak_pnl", 0)
     phase   = st.get("exit_phase", 1)
 
-    # v16.0 Batch 7 BUG-Q18: ratchet tier = active stop, else initial -12
+    # v16.2: trail tier = active stop, else initial -10
     _tier = st.get("active_ratchet_tier", "None")
     _rsl  = float(st.get("active_ratchet_sl", 0) or 0)
-    if _tier and _tier not in ("", "None") and _rsl > 0:
-        _stop_line = "Stop   : Ratchet " + _tier + " @ Rs" + str(round(_rsl, 1))
+    if _tier and _tier not in ("", "None", "INITIAL") and _rsl > 0:
+        _stop_line = "Trail  : " + _tier + " @ Rs" + str(round(_rsl, 1))
         _stop_dist = round(ltp - _rsl, 1) if ltp > 0 else "—"
     else:
-        _init_sl   = round(entry - 12, 1)
-        _stop_line = "Stop   : Initial @ Rs" + str(_init_sl)
+        _init_sl   = round(entry - 10, 1)    # v16.2: was -12
+        _stop_line = "Trail  : INITIAL @ Rs" + str(_init_sl)
         _stop_dist = round(ltp - _init_sl, 1) if ltp > 0 else "—"
 
     # v15.2.5: velocity + peak_history for /status

@@ -1071,9 +1071,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     except Exception as _se:
         logger.warning("[MAIN] SL-M place error: " + str(_se))
 
-    # ── v16.0 Batch 7 Entry alert ──
+    # ── v16.2 Entry alert ──
     _close = round(float(entry_result.get("close", actual_price)), 1)
-    _ema9h = round(float(entry_result.get("ema9_high", 0)), 1)
+    _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
     _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
 
     _dir_emoji = "🟢" if option_type == "CE" else "🔴"
@@ -1082,17 +1082,30 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _core = (
         "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
-        "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9H " + "{:.1f}".format(_ema9h) + "\n"
+        "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
         "Body    " + str(_body) + "% green\n"
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
     )
 
-    _initial_sl = round(actual_price - 12, 1)
+    _initial_sl = round(actual_price - 10, 1)       # v16.2: -10 (was -12)
     _stop_block = (
         "<b>STOP</b>\n"
-        "Initial   -12 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
-        "Ratchet   arms at peak +10pts\n"
+        "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
+        "Trail arms at peak +12\n"
     )
+
+    # v16.2 backbone block — pure entry gate check passed, show confirmation
+    _backbone_block = ""
+    try:
+        _other_side = "PE" if option_type == "CE" else "CE"
+        # Entry only fires when backbone confirms, so it's always ✅ here.
+        # Keep the block informational — shows the other side is weak.
+        _backbone_block = (
+            "<b>BACKBONE</b> \u2705 CONFIRMED\n"
+            + _other_side + " closed RED &amp; below EMA9H\n"
+        )
+    except Exception:
+        pass
 
     _ctx_lines = []
     _ehs = entry_result.get("ema9_high_slope_5c", 0)
@@ -1103,7 +1116,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     elif _bstate == "FLAT":
         _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  FLAT WARN")
     else:
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  WEAK")
+        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  OK")
 
     _sinfo = entry_result.get("straddle_info", "") or ""
     _sd    = entry_result.get("straddle_delta")
@@ -1118,9 +1131,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _ctag = entry_result.get("context_tag", "NORMAL")
     if _ctag == "TRIPLE_CONFLUENCE":
-        _ctx_header = "<b>CONTEXT  ✓ TRIPLE CONFLUENCE</b>\n"
+        _ctx_header = "<b>CONTEXT  \u2713 TRIPLE CONFLUENCE</b>\n"
     elif _ctag == "MIXED_SIGNALS":
-        _ctx_header = "<b>CONTEXT  ⚠ MIXED SIGNALS</b>\n"
+        _ctx_header = "<b>CONTEXT  \u26A0 MIXED SIGNALS</b>\n"
     else:
         _ctx_header = "<b>CONTEXT</b>\n"
 
@@ -1136,6 +1149,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         + _core +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_block +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _backbone_block +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _ctx_block
         + _slip_block +
@@ -1341,14 +1356,25 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _net_sign  = "+" if _ch["net_pnl"] >= 0 else "-"
 
         _reason_line = ""
+        _tier = state.get("active_ratchet_tier", "") or "INITIAL"
         if reason == "VELOCITY_STALL":
             _ph = state.get("peak_history") or []
             _reason_line = "Last peaks: " + str(_ph[-4:]) + "\n"
-        elif reason == "PROFIT_RATCHET":
-            _tier = state.get("active_ratchet_tier", "")
+        elif reason == "VISHAL_TRAIL":
+            _reason_line = "Trail " + _tier + " triggered\n"
+        elif reason == "PROFIT_RATCHET":       # historical / legacy
             _reason_line = "Ratchet " + _tier + " triggered\n"
-        elif reason == "EMA1M_BREAK":
+        elif reason == "EMA1M_BREAK":           # historical (v16.2 removed)
             _reason_line = "1-min EMA9 close break\n"
+        # capture percentage (v16.2 display)
+        _capture_line = ""
+        try:
+            _peak_f = float(peak) if peak else 0
+            if _peak_f > 0:
+                _cap = int(round(pnl / _peak_f * 100))
+                _capture_line = "Capture " + str(_cap) + "%\n"
+        except Exception:
+            pass
 
         _tg_send(
             _dir_emoji + " <b>EXIT " + _sym_exit + "</b>\n"
@@ -1358,7 +1384,9 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             "Entry   Rs" + "{:.1f}".format(entry) + "\n"
             "Exit    Rs" + "{:.1f}".format(actual_exit) + "\n"
             "Peak    +" + "{:.1f}".format(peak) + " pts\n"
+            + _capture_line +
             "Hold    " + str(candles) + " min\n"
+            "Trail   " + _tier + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Gross   " + ("+" if _ch["gross_pnl"] >= 0 else "-")
             + "Rs" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
@@ -1840,9 +1868,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "stop": _stop_price,
                 "stop_dist": round(opt_ltp - _stop_price, 2)
                               if opt_ltp > 0 and _stop_price > 0 else 0,
-                # v16.0 ratchet state
+                # v16.2 trail state (state key preserved for back-compat)
                 "active_ratchet_tier": st.get("active_ratchet_tier", ""),
                 "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
+                "trail_tier":          st.get("active_ratchet_tier", ""),
+                "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
+                "backbone_status":     st.get("backbone_status", "CONFIRMED"),
                 # v16.0 Batch 7 context display (bands + straddle + VWAP)
                 "entry_bands_state":        st.get("entry_bands_state", ""),
                 "entry_context_tag":        st.get("entry_context_tag", ""),
@@ -2363,24 +2394,36 @@ def _strategy_loop(kite):
                     _mex_other_tok = state.get("other_token", 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # v16.0 Batch 7 BUG-Q6: ratchet tier upgrade alert
+                    # v16.2: trail tier upgrade alert (was v16.0 ratchet)
                     try:
                         _prev_tier = state.get("_ratchet_alert_tier", "None")
                         _new_tier  = state.get("active_ratchet_tier", "None")
-                        if state.get("in_trade") and _new_tier != _prev_tier and _new_tier and _new_tier != "None":
+                        # Alert only on transitions to an ARMED tier (skip INITIAL).
+                        _armed = _new_tier not in ("None", "", "INITIAL")
+                        if (state.get("in_trade") and _new_tier != _prev_tier
+                                and _new_tier and _armed):
                             _r_sl   = float(state.get("active_ratchet_sl", 0) or 0)
                             _r_ent  = float(state.get("entry_price", 0) or 0)
                             _r_lock = round(_r_sl - _r_ent, 1)
                             _r_peak = float(state.get("peak_pnl", 0) or 0)
+                            _r_ltp  = float(option_ltp or 0)
+                            _r_room = round(_r_ltp - _r_sl, 1) if _r_ltp > 0 else 0
                             _r_emoji = "🟢" if state.get("direction") == "CE" else "🔴"
                             _r_sym = _short_sym(state.get("symbol", ""),
                                                  state.get("direction", ""),
                                                  state.get("strike", 0))
+                            # Lock icon escalates with tier strength
+                            _icon = "🔒"
+                            if _new_tier in ("T2_GAP8",):
+                                _icon = "🔒🔒"
+                            elif _new_tier in ("T3_GAP8", "TRAIL_1to1"):
+                                _icon = "🔒🔒🔒"
                             _tg_send(
-                                "🔒 <b>RATCHET " + _new_tier + " ARMED</b>\n"
+                                _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"
                                 + _r_emoji + " " + _r_sym + "   Peak +" + "{:.1f}".format(_r_peak) + "\n"
-                                "SL locked Rs" + "{:.1f}".format(_r_sl)
-                                + "   (+" + "{:.1f}".format(_r_lock) + " pts)"
+                                "SL Rs" + "{:.1f}".format(_r_sl)
+                                + "   (+" + "{:.1f}".format(_r_lock) + " pts lock, "
+                                + "{:.1f}".format(_r_room) + " pts room)"
                             )
                             with _state_lock:
                                 state["_ratchet_alert_tier"] = _new_tier
@@ -2388,7 +2431,7 @@ def _strategy_loop(kite):
                             with _state_lock:
                                 state["_ratchet_alert_tier"] = "None"
                     except Exception as _re:
-                        logger.debug("[MAIN] ratchet tier alert error: " + str(_re))
+                        logger.debug("[MAIN] trail tier alert error: " + str(_re))
 
                     # v16.0 Batch 7: refresh bands_state once per new 3-min candle
                     try:
