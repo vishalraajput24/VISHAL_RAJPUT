@@ -153,10 +153,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         state = {}
     try:
         body_min       = CFG.entry_ema9_band("body_pct_min", 30)
-        cd_min         = CFG.entry_ema9_band("cooldown_minutes", 5)
         warmup_until   = CFG.entry_ema9_band("warmup_until", "09:30")
         cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
-        min_band_width = CFG.entry_ema9_band("min_band_width_pts", 8)
 
         if opt_3m is None or opt_3m.empty or len(opt_3m) < 4:
             result["reject_reason"] = "insufficient_3m_data"
@@ -627,29 +625,6 @@ def is_setup_building(token: int, direction: str) -> bool:
         return False
 
 
-def _old_ratchet_sl(entry_price: float, peak_pnl: float,
-                     direction: str) -> tuple:
-    """LEGACY v16.0 ratchet. Kept for rollback reference only.
-    Not called by the live exit chain any more — see compute_trail_sl."""
-    if peak_pnl >= 45:
-        lock, tier = 40, "T5"
-    elif peak_pnl >= 35:
-        lock, tier = 25, "T4"
-    elif peak_pnl >= 25:
-        lock, tier = 15, "T3"
-    elif peak_pnl >= 15:
-        lock, tier = 7, "T2"
-    elif peak_pnl >= 10:
-        lock, tier = 2, "T1"
-    else:
-        return 0.0, "None"
-    return round(entry_price + lock, 2), tier
-
-
-# Back-compat alias so any stray importer still resolves the symbol.
-compute_ratchet_sl = _old_ratchet_sl
-
-
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
     """v16.3.1 Vishal Trail SL — fixed tiers then 70% adaptive trail.
@@ -682,44 +657,6 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
     return round(sl, 2), tier
 
 
-def _compute_1min_ema9_break_pure(df_1min, running_pnl: float,
-                                   min_pnl_guard: float = 5.0) -> tuple:
-    """Pure: evaluate the 1-min EMA9 break rule on a pre-fetched DataFrame.
-
-    df_1min must have indicator columns (add_indicators already applied).
-    Returns (would_break, close_price, ema9_1m). Same contract as
-    compute_1min_ema9_break — the thin wrapper just fetches + calls this.
-    """
-    try:
-        if df_1min is None or df_1min.empty or len(df_1min) < 10:
-            return False, 0.0, 0.0
-        last = df_1min.iloc[-2]
-        ema9 = float(last.get("EMA_9", last["close"]))
-        close = float(last["close"])
-        is_red = close < float(last["open"])
-        below_ema = close < ema9
-        pnl_ok = running_pnl >= min_pnl_guard
-        return bool(is_red and below_ema and pnl_ok), round(close, 2), round(ema9, 2)
-    except Exception as e:
-        logger.debug("[ENGINE] 1m EMA9 break calc error: " + str(e))
-        return False, 0.0, 0.0
-
-
-def compute_1min_ema9_break(option_token: int, running_pnl: float,
-                             min_pnl_guard: float = 5.0) -> tuple:
-    """Thin wrapper: fetches 1-min data and delegates to the pure evaluator.
-    Returns (would_break, close_price, ema9_1m). Returns (False, 0, 0) on error."""
-    try:
-        df = D.get_historical_data(int(option_token), "minute", 15)
-        if df is None or df.empty or len(df) < 10:
-            return False, 0.0, 0.0
-        df = D.add_indicators(df)
-        return _compute_1min_ema9_break_pure(df, running_pnl, min_pnl_guard)
-    except Exception as e:
-        logger.debug("[ENGINE] 1m EMA9 break calc error: " + str(e))
-        return False, 0.0, 0.0
-
-
 def check_profit_lock(state: dict, daily_pnl: float) -> bool:
     if state.get("profit_locked"):
         return False
@@ -743,7 +680,6 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
                                opt_3m_full, now,
-                               ema1m_break_result,
                                market_open: bool) -> list:
     """Pure exit-chain evaluator. Mutates `state` exactly as manage_exit did
     (peak_pnl, trough_pnl, peak_history, current_velocity, current_ema9_high/low,
@@ -754,7 +690,6 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
         option_ltp:         current option LTP (float).
         opt_3m_full:        pre-fetched 3-min DataFrame with ema9_high/low, or None.
         now:                datetime — EOD comparison.
-        ema1m_break_result: tuple (would_break, close, ema9_1m) pre-computed.
         market_open:        bool — gates EOD check exactly like the wrapper.
 
     Returns: list of exit dicts — same shape as manage_exit's output.
@@ -771,19 +706,15 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
 
     candles = state.get("candles_held", 0)
 
-    emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -10)   # v16.2: was -20
-    stale_candles = CFG.exit_ema9_band("stale_candles", 5)
-    stale_peak_max= CFG.exit_ema9_band("stale_peak_max", 5)        # v16.2: was 3
-    eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:20")   # v16.2: was 15:30
-    vs_enabled    = bool(CFG.exit_ema9_band("velocity_stall_enabled", True))
-    vs_min_peak   = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
+    emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -10)
+    eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:20")
 
     # ── RULE 1: EMERGENCY catastrophic ──
     if pnl <= emergency_sl:
         logger.info("[ENGINE] EMERGENCY_SL pnl=" + str(pnl))
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
 
-    # ── RULE 2: EOD auto-exit at 15:30 ──
+    # ── RULE 2: EOD auto-exit at 15:20 ──
     if market_open:
         eod_h, eod_m = eod_time.split(":")
         eod_mins = int(eod_h) * 60 + int(eod_m)
@@ -791,10 +722,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
             logger.info("[ENGINE] EOD_EXIT at " + now.strftime("%H:%M"))
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # v16.3: STALE_ENTRY removed — trail alone decides when a trade dies.
-
-
-    # ── band + peak_history bookkeeping ──
+    # ── EMA9 band bookkeeping for dashboard ──
     last_candle_ts = ""
     if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
         last = opt_3m_full.iloc[-2]
@@ -802,37 +730,9 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
         state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
         state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
 
-    # ── BUG-J: one-shot peak_history backfill on startup-with-trade ──
-    if (not state.get("_peak_history_backfilled")
-            and not state.get("peak_history")
-            and opt_3m_full is not None
-            and not opt_3m_full.empty
-            and entry > 0):
-        try:
-            closed = opt_3m_full.iloc[:-1]
-            recent = closed.tail(6)
-            running = 0.0
-            seeded  = []
-            for _i, _r in recent.iterrows():
-                _h = float(_r.get("high", _r.get("close", 0) or 0))
-                _p = max(_h - float(entry), 0.0)
-                if _p > running:
-                    running = _p
-                seeded.append(round(running, 2))
-            vs_min_peak_for_seed = float(CFG.exit_ema9_band("velocity_stall_min_peak", 3))
-            if seeded and max(seeded) >= vs_min_peak_for_seed:
-                state["peak_history"] = seeded
-                last_seed_ts = str(recent.index[-1]) if len(recent) else ""
-                state["last_peak_candle_ts"] = last_seed_ts
-                state["_peak_history_backfilled"] = True
-                logger.info("[ENGINE] peak_history backfilled from "
-                            + str(len(seeded)) + " bars: " + str(seeded))
-            elif seeded:
-                state["_peak_history_backfilled"] = True
-        except Exception as _bf:
-            logger.warning("[ENGINE] peak_history backfill error: " + str(_bf))
-
-    # ── Update peak_history once per NEW 3-min candle ──
+    # ── peak_history update once per new 3-min candle (dashboard display) ──
+    # No backfill: fresh entries start with [] and grow naturally. Old backfill
+    # caused a spurious flat-peaks sequence that killed winners via VELOCITY_STALL.
     if last_candle_ts and state.get("last_peak_candle_ts") != last_candle_ts:
         ph = list(state.get("peak_history") or [])
         ph.append(round(peak, 2))
@@ -846,10 +746,6 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
         state["current_velocity"] = round(ph[-1] - ph[-2], 2)
     else:
         state["current_velocity"] = 0.0
-
-    # v16.3: VELOCITY_STALL removed — was cutting winners short via a
-    # spurious peak_history backfill on fresh trades. Trail carries all
-    # mid-trade exit responsibility.
 
     # ── RULE 3 (v16.3): VISHAL_TRAIL — sole mid-trade exit ──
     trail_sl, trail_tier = compute_trail_sl(entry, peak,
@@ -880,19 +776,12 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
     except Exception as e:
         logger.warning("[ENGINE] band fetch error: " + str(e))
 
-    entry = state.get("entry_price", 0)
-    running_pnl = round(option_ltp - entry, 2)
-    ema1m_break_result = compute_1min_ema9_break(
-        option_token=int(token) if token else 0,
-        running_pnl=running_pnl, min_pnl_guard=5.0)
-
     market_open = D.is_market_open()
     now = datetime.now()
 
     return _evaluate_exit_chain_pure(
         state=state, option_ltp=option_ltp,
         opt_3m_full=opt_3m_full, now=now,
-        ema1m_break_result=ema1m_break_result,
         market_open=market_open)
 
 

@@ -461,16 +461,18 @@ test("26. test_version_is_v15_2_family",
 # 27. Config uses nested entry:/exit: structure and has velocity stall enabled
 import yaml
 _cfg_parsed = yaml.safe_load(_cfg_src)
-_vs = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("velocity_stall_enabled")
+# v16.3: required exit keys present, display filters still configured.
+_emsl = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("emergency_sl_pts")
+_eod  = _cfg_parsed.get("exit", {}).get("ema9_band", {}).get("eod_exit_time")
 _filters_block = _cfg_parsed.get("entry", {}).get("filters", {})
 _has_straddle  = (_filters_block.get("straddle_display", {}).get("enabled")
                   or _filters_block.get("straddle_expansion", {}).get("enabled"))
 _has_vwap = (_cfg_parsed.get("entry", {}).get("filters", {})
              .get("vwap_bonus", {}).get("enabled"))
 test("27. test_config_v16_structure",
-     _vs is True and _has_straddle is True and _has_vwap is True,
-     "vs=" + str(_vs) + " straddle=" + str(_has_straddle)
-     + " vwap=" + str(_has_vwap))
+     _emsl == -10 and _eod == "15:20" and _has_straddle is True and _has_vwap is True,
+     "emsl=" + str(_emsl) + " eod=" + str(_eod)
+     + " straddle=" + str(_has_straddle) + " vwap=" + str(_has_vwap))
 
 # 28. Deleted config keys are actually gone
 _dead = ["profit_floors:", "rsi_exit:",

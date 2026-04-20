@@ -452,8 +452,7 @@ def main():
     from VRL_ENGINE import (
         _evaluate_entry_gates_pure,
         _evaluate_exit_chain_pure,
-        _compute_1min_ema9_break_pure,
-        compute_ratchet_sl,
+        compute_trail_sl,
     )
 
     # ── Run simulation ──
@@ -673,25 +672,11 @@ def main():
                     state["candles_held"] = state.get("candles_held", 0) + 3
 
                 # 1-min EMA9 break check
-                ema1m_result = (False, 0.0, 0.0)
-                key_1m = (state["strike"], otype)
-                if key_1m in cache_1m:
-                    df_1m_full = cache_1m[key_1m]
-                    df_1m_up = df_1m_full[df_1m_full["timestamp"] <= ts]
-                    if len(df_1m_up) >= 10:
-                        dummy_1m = df_1m_up.iloc[-1:].copy()
-                        dummy_1m.index = [df_1m_up.index[-1] + 1]
-                        eval_1m = pd.concat([df_1m_up, dummy_1m])
-                        running_pnl = round(option_ltp - state["entry_price"], 2)
-                        ema1m_result = _compute_1min_ema9_break_pure(
-                            eval_1m, running_pnl, min_pnl_guard=5.0)
-
                 exit_list = _evaluate_exit_chain_pure(
                     state=state,
                     option_ltp=option_ltp,
                     opt_3m_full=eval_3m,
                     now=now,
-                    ema1m_break_result=ema1m_result,
                     market_open=True,
                 )
 

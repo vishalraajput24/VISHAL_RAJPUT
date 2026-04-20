@@ -63,14 +63,13 @@ def _validate(cfg: dict):
             raise ConfigError("instrument." + k + " is required")
     if not isinstance(inst["lot_size"], int) or inst["lot_size"] <= 0:
         raise ConfigError("instrument.lot_size must be a positive integer")
+    # v16.3 validation: only the keys the engine actually reads.
     eb = (cfg.get("entry") or {}).get("ema9_band") or {}
     for k in ("body_pct_min", "warmup_until", "cutoff_after"):
         if k not in eb:
             raise ConfigError("entry.ema9_band." + k + " is required")
-    if "cooldown_minutes_same_dir" not in eb and "cooldown_minutes" not in eb:
-        raise ConfigError("entry.ema9_band.cooldown_minutes_same_dir is required")
     xb = (cfg.get("exit") or {}).get("ema9_band") or {}
-    for k in ("emergency_sl_pts", "stale_candles", "stale_peak_max", "eod_exit_time"):
+    for k in ("emergency_sl_pts", "eod_exit_time"):
         if k not in xb:
             raise ConfigError("exit.ema9_band." + k + " is required")
 
