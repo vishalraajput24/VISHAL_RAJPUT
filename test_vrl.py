@@ -217,8 +217,9 @@ _state_cd = {
     "last_exit_direction": "CE",
 }
 r = _run_entry(state=_state_cd)
-test("7. test_cooldown_blocked",
-     r["fired"] is False and "cooldown" in r.get("reject_reason", ""),
+# v16.3: cooldown gate REMOVED. Recent exit no longer blocks a fresh entry.
+test("7. test_cooldown_gate_removed",
+     r["fired"] is True or "cooldown" not in r.get("reject_reason", ""),
      "reject=" + r.get("reject_reason", ""))
 
 
@@ -321,36 +322,36 @@ test("15. test_eod_exit",
      len(ex) == 1 and ex[0]["reason"] == "EOD_EXIT",
      "got " + str(ex))
 
-# 16. Stale — 5 candles, peak < 3 → STALE_ENTRY
+# 16. v16.3: STALE_ENTRY rule REMOVED — trail alone decides when a trade dies.
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(200, peak=2, candles=5)
     ex = E.manage_exit(st, 201, {})
-test("16. test_stale_exit",
-     len(ex) == 1 and ex[0]["reason"] == "STALE_ENTRY",
+test("16. test_stale_exit_removed",
+     len(ex) == 0,
      "got " + str(ex))
 
-# 17. v16.2 VISHAL_TRAIL — peak=15 → T2_GAP8 lock at entry+7, ltp below lock → exit
+# 17. v16.3 VISHAL_TRAIL — peak=15 → LOCK_5 at entry+5, ltp 104 below lock → exit
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=15, candles=3)
-    ex = E.manage_exit(st, 106, {})
+    ex = E.manage_exit(st, 104, {})
 test("17. test_vishal_trail_exit",
      len(ex) == 1 and ex[0]["reason"] == "VISHAL_TRAIL",
      "got " + str(ex))
 
-# 18. v16.2 VISHAL_TRAIL — peak=12 → T1_GAP9 lock at entry+3, ltp above lock → hold
+# 18. v16.3 VISHAL_TRAIL — peak=12 → LOCK_5 at entry+5, ltp 108 above lock → hold
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=12, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("18. test_trail_t1_hold",
-     len(ex) == 0 and st.get("active_ratchet_tier") == "T1_GAP9",
+test("18. test_trail_lock5_hold",
+     len(ex) == 0 and st.get("active_ratchet_tier") == "LOCK_5",
      "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
-# 19. v16.2 VISHAL_TRAIL — peak=9 → INITIAL (sl=entry-10), ltp 108 above -10 → hold
+# 19. v16.3 VISHAL_TRAIL — peak=9 → BREAKEVEN (sl=entry+0), ltp 108 above → hold
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=9, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("19. test_trail_initial_at_peak_9",
-     st.get("active_ratchet_tier") == "INITIAL" and len(ex) == 0,
+test("19. test_trail_breakeven_at_peak_9",
+     st.get("active_ratchet_tier") == "BREAKEVEN" and len(ex) == 0,
      "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
 
@@ -502,43 +503,41 @@ def _vs_state(peak_history, peak=None, entry=100, candles=4):
     }
 
 
-# 32. VELOCITY_STALL fires when 3-candle-avg velocity <= 0 for two windows.
-#     Needs 5 flat slots: ph[-5..-1]=15 → v=(15-15)/3=0, prev_v=(15-15)/3=0. EXIT.
-#     candles=3 so STALE_ENTRY (5c+peak<3) doesn't fire first.
+# 32. v16.3: VELOCITY_STALL rule REMOVED. Even with flat peak history,
+#     the trade holds as long as LTP is above the active trail SL.
+#     peak=15 → LOCK_5 (entry+5=105). ltp=115 well above → HOLD.
 _ph_stalled = [10, 15, 15, 15, 15, 15]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _vs_state(_ph_stalled, peak=15.0, candles=3)
     ex = E.manage_exit(st, 115.0, {})
-test("32. test_velocity_stall_exits",
-     len(ex) == 1 and ex[0]["reason"] == "VELOCITY_STALL",
+test("32. test_velocity_stall_removed",
+     len(ex) == 0,
      "got " + str(ex))
 
-# 33. Only latest window stalled but prior window still had growth → no exit.
-#     ph=[5, 10, 15, 15, 15] → v=(15-10)/3=1.67 (>0), prev_v=(15-5)/3=3.3 (>0). HOLD.
+# 33. Legacy scenario: trail LOCK_5 active, ltp still above → HOLD.
 _ph_one_window = [5, 10, 15, 15, 15]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _vs_state(_ph_one_window, peak=15.0, candles=5)
     ex = E.manage_exit(st, 115.0, {})
-test("33. test_velocity_stall_needs_2_consecutive",
+test("33. test_trail_holds_while_above_sl",
      len(ex) == 0,
      "got " + str(ex))
 
-# 34. Stall at tiny peaks is ignored (peak < vs_min_peak=3).
-#     candles=3 so STALE_ENTRY (5c+peak<3) doesn't fire first.
+# 34. Tiny peak → INITIAL trail at entry-10, ltp far above → HOLD.
 _ph_tiny = [0, 1, 1, 1, 1, 1]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _vs_state(_ph_tiny, peak=1.0, candles=3)
     ex = E.manage_exit(st, 101.0, {})
-test("34. test_velocity_stall_ignores_tiny_peaks",
+test("34. test_trail_initial_holds_at_tiny_peak",
      len(ex) == 0,
      "got " + str(ex))
 
-# 35. Healthy growth → no exit. Each candle adds peak, both velocities > 0.
+# 35. Healthy growth: peak=20 → LOCK_10 (entry+10=110). ltp=120 above → HOLD.
 _ph_growing = [5, 8, 11, 14, 17, 20]
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _vs_state(_ph_growing, peak=20.0, candles=6)
     ex = E.manage_exit(st, 120.0, {})
-test("35. test_velocity_still_alive",
+test("35. test_trail_lock10_holds_above",
      len(ex) == 0,
      "got " + str(ex))
 

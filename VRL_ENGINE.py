@@ -211,20 +211,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 result["reject_reason"] = "after_" + cutoff_after + "_cutoff"
                 return result
 
-        # ── GATE 2: Cooldown 5min same direction ──
-        last_exit_ts = state.get("last_exit_time")
-        last_exit_dir = state.get("last_exit_direction", "")
-        if last_exit_ts and last_exit_dir == option_type:
-            try:
-                elapsed = (now - datetime.fromisoformat(last_exit_ts)).total_seconds() / 60
-                if elapsed < cd_min:
-                    result["reject_reason"] = "cooldown_" + str(round(cd_min - elapsed, 1)) + "min"
-                    return result
-            except Exception:
-                pass
+        # v16.3: Gate 2 (cooldown) removed — let good setups fire back-to-back.
         result["cooldown_ok"] = True
 
-        # ── GATE 3 (v16.2): Fresh breakout above EMA9-LOW ──
+        # ── GATE 2 (v16.3): Fresh breakout above EMA9-LOW ──
         # v16.2 change: entry triggers on close > ema9_LOW (not ema9_HIGH).
         # Catches the move sooner as price clears the lower band. Still
         # requires a recent bar below ema9_low (fresh cross, not already-above).
@@ -289,32 +279,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                             + "% < " + str(body_min) + "%")
             return result
 
-        # ── GATE 6: Narrow band chop filter ──
-        if band_width < min_band_width:
-            result["reject_reason"] = "narrow_band_" + str(round(band_width, 1)) + "pts"
-            if not silent:
-                logger.info("[ENGINE] " + option_type + " NARROW_BAND width="
-                            + str(round(band_width, 1)) + " < " + str(min_band_width) + " (chop)")
-            return result
-
-        # ── GATE 7 (v16.2): EMA FLAT filter ──
-        # If both EMA9-high and EMA9-low have moved less than 3 pts over the
-        # last 5 closed candles, the market is flat / chop — skip entry.
-        if opt_3m is not None and len(opt_3m) >= 7:
-            _ema9h_now = float(opt_3m.iloc[-2].get("ema9_high", 0))
-            _ema9h_5ago = float(opt_3m.iloc[-7].get("ema9_high", 0))
-            _ema9l_now = float(opt_3m.iloc[-2].get("ema9_low", 0))
-            _ema9l_5ago = float(opt_3m.iloc[-7].get("ema9_low", 0))
-            _slope_high = abs(_ema9h_now - _ema9h_5ago)
-            _slope_low  = abs(_ema9l_now - _ema9l_5ago)
-            if _slope_high < 3 and _slope_low < 3:
-                result["reject_reason"] = ("ema_flat_slopes_"
-                    + str(round(_slope_high, 1)) + "/" + str(round(_slope_low, 1)))
-                if not silent:
-                    logger.info("[ENGINE] " + option_type + " EMA_FLAT slopes="
-                                + str(round(_slope_high, 1)) + "/"
-                                + str(round(_slope_low, 1)) + " < 3 (chop)")
-                return result
+        # v16.3: Gate 6 (band width) and Gate 7 (EMA flat) removed.
+        # Green + body + fresh EMA9-LOW break IS the edge — no chop filter.
 
         # ── BACKBONE check (v16.2): DISPLAY ONLY — never blocks ──
         # Classifies the OTHER side (opposite CE/PE at same strike) into
@@ -686,31 +652,29 @@ compute_ratchet_sl = _old_ratchet_sl
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """v16.2 Vishal Trail SL. Returns (sl_price, tier_label).
+    """v16.3 Vishal Trail SL — simplified 5-tier ladder.
 
-    Hard initial SL:  -10 pts (tier "INITIAL")
-    Peak >= 12:       SL = entry + 3   (T1_GAP9)
-    Peak >= 15:       SL = entry + 7   (T2_GAP8)
-    Peak >= 20:       SL = entry + 12  (T3_GAP8)
-    Peak >= 21:       SL = entry + 14 + (peak - 21)   (TRAIL_1to1)
+    Returns (sl_price, tier_label).
 
-    The trailing branch adds +1 pt to the SL for every +1 pt the peak
-    advances beyond 21 — a 1:1 trail following the peak with a fixed
-    -7 pt gap (peak - SL_offset = peak - (14 + peak - 21) = 7).
+    Tier ladder:
+      peak  < 8      → INITIAL     SL = entry − 10  (hard stop)
+      peak >= 8      → BREAKEVEN   SL = entry + 0   (risk-free)
+      peak >= 12     → LOCK_5      SL = entry + 5
+      peak >= 18     → LOCK_10     SL = entry + 10
+      peak >= 25     → TRAIL_1to1  SL = peak − 7    (1:1 trail, 7pt gap)
     """
-    if peak_pnl >= 21:
-        sl_offset = 14 + (peak_pnl - 21)
-        sl = entry_price + sl_offset
+    if peak_pnl >= 25:
+        sl = entry_price + (peak_pnl - 7)
         tier = "TRAIL_1to1"
-    elif peak_pnl >= 20:
-        sl = entry_price + 12
-        tier = "T3_GAP8"
-    elif peak_pnl >= 15:
-        sl = entry_price + 7
-        tier = "T2_GAP8"
+    elif peak_pnl >= 18:
+        sl = entry_price + 10
+        tier = "LOCK_10"
     elif peak_pnl >= 12:
-        sl = entry_price + 3
-        tier = "T1_GAP9"
+        sl = entry_price + 5
+        tier = "LOCK_5"
+    elif peak_pnl >= 8:
+        sl = entry_price + 0
+        tier = "BREAKEVEN"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
@@ -766,16 +730,14 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v16.2 EXIT CHAIN — 5 rules, priority order
+#  v16.3 EXIT CHAIN — 3 rules, priority order
 #
-#    1. EMERGENCY_SL     → pnl ≤ -10 (was -20)
-#    2. EOD_EXIT         → time ≥ 15:20 (was 15:30)
-#    3. STALE_ENTRY      → 5 candles held AND peak < 5 (was peak < 3)
-#    4. VELOCITY_STALL   → 2 consecutive 3-candle windows no growth
-#    5. VISHAL_TRAIL     → Vishal trail SL (replaces PROFIT_RATCHET)
+#    1. EMERGENCY_SL     → pnl ≤ -10
+#    2. EOD_EXIT         → time ≥ 15:20
+#    3. VISHAL_TRAIL     → 5-tier ladder (INITIAL/BREAKEVEN/LOCK_5/LOCK_10/TRAIL_1to1)
 #
-#  EMA1M_BREAK removed in v16.2 — was noisy mid-trade exit.
-#  Old PROFIT_RATCHET kept as _old_ratchet_sl for reference only.
+#  Removed in v16.3: STALE_ENTRY, VELOCITY_STALL (cut winners short).
+#  Removed in v16.2: EMA1M_BREAK, BREAKEVEN_LOCK, EMA9_LOW_BREAK.
 # ═══════════════════════════════════════════════════════════════
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
@@ -828,10 +790,8 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
             logger.info("[ENGINE] EOD_EXIT at " + now.strftime("%H:%M"))
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # ── RULE 3: STALE entry — 5 candles, peak < 3 ──
-    if candles >= stale_candles and peak < stale_peak_max:
-        logger.info("[ENGINE] STALE_ENTRY " + str(candles) + "c peak=" + str(peak))
-        return [{"lot_id": "ALL", "reason": "STALE_ENTRY", "price": option_ltp}]
+    # v16.3: STALE_ENTRY removed — trail alone decides when a trade dies.
+
 
     # ── band + peak_history bookkeeping ──
     last_candle_ts = ""
@@ -886,22 +846,11 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
     else:
         state["current_velocity"] = 0.0
 
-    # ── RULE 4: VELOCITY_STALL — 3-candle-avg velocity ≤ 0 for 2 windows ──
-    if vs_enabled and len(ph) >= 5 and peak >= vs_min_peak:
-        velocity      = (ph[-1] - ph[-4]) / 3.0
-        prev_velocity = (ph[-2] - ph[-5]) / 3.0
-        state["current_velocity"] = round(velocity, 2)
-        if velocity <= 0 and prev_velocity <= 0:
-            logger.info("[ENGINE] VELOCITY_STALL peak_hist="
-                        + str(ph[-5:])
-                        + " v=" + "{:+.2f}".format(velocity)
-                        + " prev_v=" + "{:+.2f}".format(prev_velocity)
-                        + " peak=" + str(round(peak, 1)) + " → exit")
-            return [{"lot_id": "ALL", "reason": "VELOCITY_STALL", "price": option_ltp}]
+    # v16.3: VELOCITY_STALL removed — was cutting winners short via a
+    # spurious peak_history backfill on fresh trades. Trail carries all
+    # mid-trade exit responsibility.
 
-    # RULE 5 EMA1M_BREAK removed in v16.2 — was noisy mid-trade exit.
-
-    # ── RULE 5 (v16.2): VISHAL_TRAIL — Vishal trail SL (replaces ratchet) ──
+    # ── RULE 3 (v16.3): VISHAL_TRAIL — sole mid-trade exit ──
     trail_sl, trail_tier = compute_trail_sl(entry, peak,
                                              state.get("direction", ""))
     state["active_ratchet_tier"] = trail_tier   # reuse key for dashboard compat
