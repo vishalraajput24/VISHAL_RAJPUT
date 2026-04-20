@@ -147,6 +147,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         "spot_vwap": 0.0, "spot_vs_vwap": 0.0, "vwap_bonus": "",
         "ema9_high_slope_5c": 0.0, "ema9_low_slope_5c": 0.0,
         "bands_state": "", "context_tag": "",
+        "backbone_status": "N/A",
     }
     if state is None:
         state = {}
@@ -315,13 +316,11 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                                 + str(round(_slope_low, 1)) + " < 3 (chop)")
                 return result
 
-        # ── GATE 8 (v16.2): BACKBONE confirmation ──
-        # The OTHER side (opposite CE/PE at same strike) must be:
-        #   (a) RED  (close < open)  AND
-        #   (b) CLOSE BELOW its own EMA9-high
-        # This confirms the directional bias — we only enter one side when
-        # the other side is weak, avoiding chop-whipsaw entries.
-        # If other_opt_3m is missing / too short, we proceed without blocking.
+        # ── BACKBONE check (v16.2): DISPLAY ONLY — never blocks ──
+        # Classifies the OTHER side (opposite CE/PE at same strike) into
+        # CONFIRMED / MISMATCH / N/A and annotates the result dict for
+        # the Telegram alert + dashboard. No entries are rejected here.
+        result["backbone_status"] = "N/A"
         if other_opt_3m is not None and len(other_opt_3m) >= 3:
             try:
                 _ob = other_opt_3m.iloc[-2]
@@ -332,20 +331,27 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 _o_below = _o_close < _o_ema9h
                 _backbone_ok = _o_red and _o_below
                 other_side = "PE" if option_type == "CE" else "CE"
-                if not _backbone_ok:
-                    result["reject_reason"] = ("backbone_mismatch_" + other_side
-                        + "_red=" + str(_o_red) + "_below=" + str(_o_below))
+                result["backbone_other_close"] = round(_o_close, 2)
+                result["backbone_other_ema9h"] = round(_o_ema9h, 2)
+                result["backbone_other_red"]   = bool(_o_red)
+                if _backbone_ok:
+                    result["backbone_status"] = "CONFIRMED"
+                    logger.info("[ENGINE] " + option_type
+                                + " BACKBONE CONFIRMED " + other_side
+                                + " red+below_ema9h")
+                else:
+                    result["backbone_status"] = "MISMATCH"
                     if not silent:
                         logger.info("[ENGINE] " + option_type
                                     + " BACKBONE MISMATCH " + other_side
                                     + " red=" + str(_o_red)
-                                    + " below_ema9h=" + str(_o_below))
-                    return result
+                                    + " below_ema9h=" + str(_o_below)
+                                    + " — INFO ONLY, proceeding")
             except Exception as _be:
                 logger.debug("[ENGINE] backbone check error: " + str(_be))
         else:
             logger.info("[ENGINE] BACKBONE data unavailable for "
-                        + option_type + " — proceeding without")
+                        + option_type + " — N/A")
 
         # ── GATE 9: straddle DISPLAY ONLY ──
         if CFG.straddle_filter("enabled", True):

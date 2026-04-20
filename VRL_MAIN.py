@@ -1042,6 +1042,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         # v16.0 Batch 7: band slope + context tag (display only)
         state["entry_bands_state"]        = entry_result.get("bands_state", "")
         state["entry_context_tag"]        = entry_result.get("context_tag", "")
+        state["backbone_status"]          = entry_result.get("backbone_status", "N/A")
         state["ema9_high_slope_5c"]       = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
         state["ema9_low_slope_5c"]        = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
         state["current_bands_state"]      = entry_result.get("bands_state", "")
@@ -1094,16 +1095,27 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Trail arms at peak +12\n"
     )
 
-    # v16.2 backbone block — pure entry gate check passed, show confirmation
+    # v16.2 backbone block — DISPLAY ONLY, never blocks entry
     _backbone_block = ""
     try:
+        _bb_status = entry_result.get("backbone_status", "N/A")
         _other_side = "PE" if option_type == "CE" else "CE"
-        # Entry only fires when backbone confirms, so it's always ✅ here.
-        # Keep the block informational — shows the other side is weak.
-        _backbone_block = (
-            "<b>BACKBONE</b> \u2705 CONFIRMED\n"
-            + _other_side + " closed RED &amp; below EMA9H\n"
-        )
+        if _bb_status == "CONFIRMED":
+            _backbone_block = (
+                "<b>BACKBONE</b> \u2705 CONFIRMED\n"
+                + _other_side + " closed RED &amp; below EMA9H\n"
+            )
+        elif _bb_status == "MISMATCH":
+            _bb_red = entry_result.get("backbone_other_red", False)
+            _backbone_block = (
+                "<b>BACKBONE</b> \u26A0 MISMATCH (info only)\n"
+                + _other_side + " not confirming — "
+                + ("not RED" if not _bb_red else "above EMA9H") + "\n"
+            )
+        else:
+            _backbone_block = (
+                "<b>BACKBONE</b> \u26AA N/A (no data)\n"
+            )
     except Exception:
         pass
 

@@ -43,8 +43,9 @@ entry:
     # v16.2: EMA flat filter — reject entries when both ema9_high and
     # ema9_low slopes over last 5 candles are below this threshold.
     ema_flat_slope_min: 3
-    # v16.2: backbone confirmation — require the OTHER side (CE/PE at
-    # same strike) to be RED and closed below its own ema9_high.
+    # v16.2: backbone is DISPLAY ONLY — classifies CE/PE cross-confirmation
+    # into CONFIRMED / MISMATCH / N/A but never blocks entries. Shown in
+    # Telegram entry alert + dashboard for awareness.
     backbone_enabled: true
     # v15.2.4: fresh-breakout lookback window (3-min candles).
     # Fires entry if ANY of the last N bars had close <= its ema9_low
