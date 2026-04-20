@@ -1,9 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.0
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.3
 #  Master orchestration. EMA9 Band Breakout strategy.
-#  Entry: close > EMA9-high (fresh) + green + body ≥ 30% + band width ≥ 8
-#  Exit: 6-rule chain — Emergency, EOD, Stale, Velocity stall, 1m EMA9 break,
-#  Profit Ratchet 5-tier. Initial SL = entry - 12 pts.
+#  Entry: close > EMA9-low (fresh) + green + body ≥ 30%
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (70% capture).
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -793,24 +792,22 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.3\n"
         "Entry   : 09:30 - 15:10 IST\n"
-        "Gates   : close &gt; EMA9H, green, body &gt;=30%,\n"
-        "          band &gt;=8pts, fresh breakout\n"
+        "Gates   : close &gt; EMA9L, green, body &gt;=30%\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
-        "1. Emergency -20pts\n"
-        "2. EOD 15:30\n"
-        "3. Stale entry (5c + peak&lt;3)\n"
-        "4. Velocity stall (2 flat candles)\n"
-        "5. 1-min EMA9 break (pnl&gt;=5)\n"
-        "6. Profit Ratchet T1-T5\n"
+        "1. Emergency -10pts\n"
+        "2. EOD 15:20\n"
+        "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RATCHET TIERS</b>\n"
-        "+10 -&gt; lock +2    +15 -&gt; lock +7\n"
-        "+25 -&gt; lock +15   +35 -&gt; lock +25\n"
-        "+45 -&gt; lock +40\n"
+        "<b>VISHAL TRAIL</b>\n"
+        "peak &lt;8   SL = entry-10 (INITIAL)\n"
+        "peak  8   SL = entry+0  (BREAKEVEN)\n"
+        "peak 12   SL = entry+5  (LOCK_5)\n"
+        "peak 18   SL = entry+10 (LOCK_10)\n"
+        "peak 25+  SL = 70% of peak (TRAIL_70)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )

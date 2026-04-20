@@ -325,8 +325,8 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("PAPER" if D.PAPER_MODE else "LIVE")
         + " | v16.0 EMA9 Band Breakout (3-min)\n"
-        + "Entry: close > EMA9-high (fresh) + green + body 30% + Straddle tiered\n"
-        + "Exit: Vishal Trail (T1-T3+trail) | Velocity stall | Emergency -10 | EOD 15:20\n"
+        + "Entry: close &gt; EMA9L + green + body 30%\n"
+        + "Exit: Vishal Trail (70% capture) | Emergency -10 | EOD 15:20\n"
         + "2 lots fixed | No entry before 9:30 or after 15:10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
