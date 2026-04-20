@@ -226,6 +226,11 @@ def _make_arg_parser() -> argparse.ArgumentParser:
                    help="Body gate minimum %% of range (default 30)")
     p.add_argument("--band-min", type=float, default=8.0,
                    help="EMA9 band width minimum pts (default 8)")
+    p.add_argument("--fresh-lookback", type=int, default=3,
+                   help="Gate 3 fresh-breakout lookback (default 3)")
+    p.add_argument("--entry-signal", choices=["ema9_low", "ema9_high"],
+                   default="ema9_low",
+                   help="Which band close must break (default ema9_low, v16.2)")
     p.add_argument("--stale-candles", type=int, default=5,
                    help="Stale exit candle count (default 5)")
     p.add_argument("--dte-filter", choices=["off", "on"], default="off",
@@ -325,6 +330,8 @@ def _apply_config_overrides(args) -> dict:
         "dte_filter": args.dte_filter == "on",
         "ema_filter": args.ema_filter == "on",
         "fib_filter": args.fib_filter,
+        "fresh_lookback": args.fresh_lookback,
+        "entry_signal": args.entry_signal,
         "expiry_date": args.expiry_date,     # legacy single-date
         "expiry_cal": _expiry_cal,           # new calendar
     }
@@ -536,17 +543,22 @@ def main():
                         except Exception:
                             pass
 
-                    # Gate 3: Fresh breakout with lookback=3
+                    # Gate 3: Fresh breakout — ema9_low (v16.2) or ema9_high (legacy)
                     if fired:
+                        _fb_lb = int(overrides.get("fresh_lookback", 3) or 3)
+                        _band_col = "ema9_low" if overrides.get("entry_signal") == "ema9_low" else "ema9_high"
+                        _band_val = ema9l if _band_col == "ema9_low" else ema9h
                         was_below = False
-                        for k in range(2, 2 + 3):
+                        for k in range(2, 2 + _fb_lb):
                             if len(df_up) <= k:
                                 break
                             bar = df_up.iloc[-k-1]
-                            if float(bar.get("ema9_high", 0)) > 0 and float(bar.get("close", 0)) <= float(bar.get("ema9_high", 0)):
+                            _bar_band = float(bar.get(_band_col, 0))
+                            _bar_close = float(bar.get("close", 0))
+                            if _bar_band > 0 and _bar_close <= _bar_band:
                                 was_below = True; break
-                        if not (close > ema9h and was_below):
-                            fired = False; reject = "fresh_breakout"
+                        if not (close > _band_val and was_below):
+                            fired = False; reject = "fresh_breakout_lb" + str(_fb_lb)
 
                     # Gate 4: Green candle
                     if fired and close <= open_:
