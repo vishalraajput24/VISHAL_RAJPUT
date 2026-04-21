@@ -2634,7 +2634,8 @@ def _strategy_loop(kite):
                     _is_initial_lock = True
                 else:
                     _target_atm = int(round(spot_ltp / 50) * 50)
-                    if _target_atm != _locked_ce_strike:
+                    _drift_from_lock = abs(spot_ltp - _locked_at_spot) if _locked_at_spot else 999
+                    if _target_atm != _locked_ce_strike and _drift_from_lock >= 100:
                         _relock = True
                         _spot_move = round(spot_ltp - _locked_at_spot, 1)
                         _old_ce = _locked_ce_strike
@@ -2652,7 +2653,7 @@ def _strategy_loop(kite):
                 # (premium too far OTM to be reliable at that distance).
                 _spot_drift = abs(spot_ltp - _locked_at_spot) if _locked_at_spot else 0
                 _setup_building = False
-                if _relock and not _is_initial_lock and _spot_drift <= 75:
+                if _relock and not _is_initial_lock and _spot_drift <= 150:
                     try:
                         _building_ce = False
                         _building_pe = False
@@ -2671,7 +2672,7 @@ def _strategy_loop(kite):
                     except Exception as _sbe:
                         logger.debug("[MAIN] setup_building check: " + str(_sbe))
 
-                if _relock and _setup_building and _spot_drift <= 75:
+                if _relock and _setup_building and _spot_drift <= 150:
                     _skip_count = state.get("_relock_skip_count", 0) + 1
                     state["_relock_skip_count"] = _skip_count
                     if _skip_count <= 2:
