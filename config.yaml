@@ -34,7 +34,7 @@ lots:
 # Backbone + straddle + VWAP are DISPLAY ONLY (never block entries).
 entry:
   ema9_band:
-    body_pct_min: 30
+    body_pct_min: 40
     warmup_until: "09:30"
     cutoff_after: "15:10"
     # Fresh-breakout lookback window (3-min candles). Fires entry if ANY

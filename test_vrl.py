@@ -350,8 +350,8 @@ test("18. test_trail_lock5_hold",
 with patch.object(D, "get_historical_data", return_value=MagicMock(empty=True)):
     st = _make_state(entry=100, peak=9, candles=3)
     ex = E.manage_exit(st, 108, {})
-test("19. test_trail_breakeven_at_peak_9",
-     st.get("active_ratchet_tier") == "BREAKEVEN" and len(ex) == 0,
+test("19. test_trail_initial_below_10",
+     st.get("active_ratchet_tier") == "INITIAL" and len(ex) == 0,
      "tier=" + str(st.get("active_ratchet_tier")) + " ex=" + str(ex))
 
 

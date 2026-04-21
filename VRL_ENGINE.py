@@ -152,7 +152,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
     if state is None:
         state = {}
     try:
-        body_min       = CFG.entry_ema9_band("body_pct_min", 30)
+        body_min       = CFG.entry_ema9_band("body_pct_min", 40)
         warmup_until   = CFG.entry_ema9_band("warmup_until", "09:30")
         cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
 
@@ -212,50 +212,56 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         # v16.3: Gate 2 (cooldown) removed — let good setups fire back-to-back.
         result["cooldown_ok"] = True
 
-        # ── GATE 2 (v16.3): Fresh breakout above EMA9-LOW ──
-        # v16.2 change: entry triggers on close > ema9_LOW (not ema9_HIGH).
-        # Catches the move sooner as price clears the lower band. Still
-        # requires a recent bar below ema9_low (fresh cross, not already-above).
-        fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
-        if fb_lookback < 1:
-            fb_lookback = 1
+        # v16.3.2: continuation re-entry — if last exit was a profitable
+        # VISHAL_TRAIL, skip the fresh-breakout requirement. The trend is
+        # still alive; we just got shaken out by the trail pullback.
+        _continuation = (state.get("last_exit_reason") == "VISHAL_TRAIL"
+                         and float(state.get("last_exit_peak", 0) or 0) > 0)
 
-        was_below_in_lookback = False
-        for _k in range(3, 3 + fb_lookback):
-            if len(opt_3m) < _k:
-                break
-            _bar = opt_3m.iloc[-_k]
-            _bar_close  = float(_bar.get("close", 0))
-            _bar_ema9l  = float(_bar.get("ema9_low", 0))
-            if _bar_ema9l > 0 and _bar_close <= _bar_ema9l:
-                was_below_in_lookback = True
-                break
-
-        is_fresh_breakout = (close > ema9_low) and was_below_in_lookback
-
-        if not is_fresh_breakout:
+        # ── GATE 2: Fresh breakout above EMA9-LOW (skipped in continuation) ──
+        if not _continuation:
+            fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
+            if fb_lookback < 1:
+                fb_lookback = 1
+            was_below_in_lookback = False
+            for _k in range(3, 3 + fb_lookback):
+                if len(opt_3m) < _k:
+                    break
+                _bar = opt_3m.iloc[-_k]
+                _bar_close  = float(_bar.get("close", 0))
+                _bar_ema9l  = float(_bar.get("ema9_low", 0))
+                if _bar_ema9l > 0 and _bar_close <= _bar_ema9l:
+                    was_below_in_lookback = True
+                    break
+            is_fresh_breakout = (close > ema9_low) and was_below_in_lookback
+            if not is_fresh_breakout:
+                if close <= ema9_low:
+                    reason_code = "below_ema9_low"
+                elif close > ema9_low and not was_below_in_lookback:
+                    reason_code = "already_above_ema9_low"
+                else:
+                    reason_code = "fresh_cross_up_but_missed_fire"
+                result["reject_reason"] = (reason_code
+                                           + "_close=" + str(round(close, 1))
+                                           + "_ema9l=" + str(round(ema9_low, 1))
+                                           + "_lookback=" + str(fb_lookback) + "c")
+                if not silent:
+                    logger.info("[ENGINE] " + option_type
+                                + " NO_BREAKOUT [" + reason_code + "]"
+                                + " close=" + str(round(close, 1))
+                                + " ema9l=" + str(round(ema9_low, 1))
+                                + " lookback=" + str(fb_lookback) + "c"
+                                + " was_below=" + str(was_below_in_lookback))
+                return result
+        else:
+            # Continuation: just need close > ema9_low (still above floor)
             if close <= ema9_low:
-                reason_code = "below_ema9_low"
-            elif close > ema9_low and not was_below_in_lookback:
-                reason_code = "already_above_ema9_low"
-            else:
-                reason_code = "fresh_cross_up_but_missed_fire"
+                result["reject_reason"] = "continuation_below_ema9_low"
+                return result
+            logger.info("[ENGINE] " + option_type + " CONTINUATION re-entry"
+                        + " (last trail exit profitable)")
 
-            result["reject_reason"] = (reason_code
-                                       + "_close=" + str(round(close, 1))
-                                       + "_ema9l=" + str(round(ema9_low, 1))
-                                       + "_lookback=" + str(fb_lookback) + "c")
-            if not silent:
-                logger.info("[ENGINE] " + option_type
-                            + " NO_BREAKOUT [" + reason_code + "]"
-                            + " close=" + str(round(close, 1))
-                            + " ema9l=" + str(round(ema9_low, 1))
-                            + " prev_close=" + str(round(prev_close, 1))
-                            + " lookback=" + str(fb_lookback) + "c"
-                            + " was_below=" + str(was_below_in_lookback))
-            return result
-
-        # ── GATE 4: Green candle ──
+        # ── GATE 3: Green candle ──
         candle_green = close > open_
         result["candle_green"] = candle_green
         if not candle_green:
@@ -277,8 +283,20 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                             + "% < " + str(body_min) + "%")
             return result
 
-        # v16.3: Gate 6 (band width) and Gate 7 (EMA flat) removed.
-        # Green + body + fresh EMA9-LOW break IS the edge — no chop filter.
+        # ── GATE 5 (v16.3.2): ANTI-CHOP — premium must be rising ──
+        # close > close_3_candles_ago: if premium isn't actually higher than
+        # 9 min ago, the "breakout" is fake chop / time decay crossing a flat
+        # EMA. Reject immediately.
+        if len(opt_3m) >= 5:
+            _close_3ago = float(opt_3m.iloc[-4].get("close", 0))
+            if _close_3ago > 0 and close <= _close_3ago:
+                result["reject_reason"] = ("chop_close=" + str(round(close, 1))
+                    + "_vs_3ago=" + str(round(_close_3ago, 1)))
+                if not silent:
+                    logger.info("[ENGINE] " + option_type + " ANTI_CHOP close="
+                                + str(round(close, 1)) + " <= 3ago="
+                                + str(round(_close_3ago, 1)))
+                return result
 
         # ── BACKBONE check (v16.2): DISPLAY ONLY — never blocks ──
         # Classifies the OTHER side (opposite CE/PE at same strike) into
@@ -627,17 +645,16 @@ def is_setup_building(token: int, direction: str) -> bool:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """v16.3.1 Vishal Trail SL — fixed tiers then 70% adaptive trail.
+    """v16.3.2 Vishal Trail SL — 4-tier lock + 70% adaptive trail.
 
     Returns (sl_price, tier_label).
 
+    Below peak 10: only emergency −10 SL applies (no tier).
     Tier ladder:
-      peak  < 8      → INITIAL     SL = entry − 10
-      peak >= 8      → BREAKEVEN   SL = entry + 0
+      peak >= 10     → LOCK_2      SL = entry + 2
       peak >= 12     → LOCK_5      SL = entry + 5
       peak >= 18     → LOCK_10     SL = entry + 10
       peak >= 25     → TRAIL_70    SL = max(entry+10, entry + peak×0.70)
-                                   keeps 70% of peak, gives back 30%
     """
     if peak_pnl >= 25:
         sl = max(entry_price + 10, entry_price + peak_pnl * 0.70)
@@ -648,9 +665,9 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
     elif peak_pnl >= 12:
         sl = entry_price + 5
         tier = "LOCK_5"
-    elif peak_pnl >= 8:
-        sl = entry_price + 0
-        tier = "BREAKEVEN"
+    elif peak_pnl >= 10:
+        sl = entry_price + 2
+        tier = "LOCK_2"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
