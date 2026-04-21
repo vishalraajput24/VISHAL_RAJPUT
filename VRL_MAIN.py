@@ -179,7 +179,7 @@ _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
-    """Lock CE/PE strikes and subscribe tokens. Only called on relock."""
+    """Lock CE/PE strikes (ATM + OTM) and subscribe 4 tokens."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     _locked_ce_strike = D.resolve_strike_for_direction(spot, "CE", dte)
     _locked_pe_strike = D.resolve_strike_for_direction(spot, "PE", dte)
@@ -187,18 +187,33 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     _locked_tokens = {}
 
     if kite and expiry:
+        # v16.3.2: subscribe ATM + OTM for each side (4 tokens total)
+        # CE: ATM + ATM+50 (OTM call)
+        # PE: ATM + ATM-50 (OTM put)
+        _ce_otm_strike = _locked_ce_strike + 50
+        _pe_otm_strike = _locked_pe_strike - 50
+
         for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
 
-        # Subscribe tokens permanently — no unsub/resub flicker
+        # OTM tokens
+        _ce_otm_tk = D.get_option_tokens(kite, _ce_otm_strike, expiry)
+        if _ce_otm_tk.get("CE"):
+            _locked_tokens["CE_OTM"] = _ce_otm_tk["CE"]
+        _pe_otm_tk = D.get_option_tokens(kite, _pe_otm_strike, expiry)
+        if _pe_otm_tk.get("PE"):
+            _locked_tokens["PE_OTM"] = _pe_otm_tk["PE"]
+
         _sub_tokens = [v["token"] for v in _locked_tokens.values() if v.get("token")]
         if _sub_tokens:
             D.subscribe_tokens(_sub_tokens)
 
     logger.info("[MAIN] Strikes LOCKED: CE=" + str(_locked_ce_strike)
+                + "+" + str(_locked_ce_strike + 50)
                 + " PE=" + str(_locked_pe_strike)
+                + "+" + str(_locked_pe_strike - 50)
                 + " at spot=" + str(round(spot, 1)))
 
     # BUG-R11: ensure history exists for locked strike before strategy runs.
@@ -1068,10 +1083,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     except Exception as _se:
         logger.warning("[MAIN] SL-M place error: " + str(_se))
 
-    # ── v16.2 Entry alert ──
+    # ── v16.3.2 Entry alert ──
     _close = round(float(entry_result.get("close", actual_price)), 1)
     _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
     _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
+    _strike_label = entry_result.get("_strike_label", "ATM")
+    _entry_score = entry_result.get("_entry_score", 0)
 
     _dir_emoji = "🟢" if option_type == "CE" else "🔴"
     _sym = _short_sym(symbol, option_type, state.get("strike", 0))
@@ -1152,15 +1169,14 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
 
     _tg_send(
-        _dir_emoji + " <b>" + _sym + " x " + str(lot_count) + " LOTS</b>\n"
+        _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
+        + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _core +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_block +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _backbone_block +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _ctx_block
+        + _backbone_block
         + _slip_block +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -2743,40 +2759,68 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # v13.5: extract both tokens for divergence check
+                # v16.3.2: dual-strike evaluation (ATM + OTM per side)
+                # CE candidates: ATM CE + ATM+50 CE (OTM)
+                # PE candidates: ATM PE + ATM-50 PE (OTM)
+                # Score = body_pct × (close - ema9_low). Best wins.
                 _ce_info_v15 = _locked_tokens.get("CE") if _locked_tokens else None
                 _pe_info_v15 = _locked_tokens.get("PE") if _locked_tokens else None
                 _ce_tok_v15 = _ce_info_v15.get("token", 0) if _ce_info_v15 else 0
                 _pe_tok_v15 = _pe_info_v15.get("token", 0) if _pe_info_v15 else 0
 
+                _candidates = []
                 for opt_type in ("CE", "PE"):
-                    opt_info = dir_tokens.get(opt_type)
-                    if not opt_info:
-                        continue
-
                     _other_tok = _pe_tok_v15 if opt_type == "CE" else _ce_tok_v15
-                    result = check_entry(
-                        token=opt_info["token"],
-                        option_type=opt_type,
-                        spot_ltp=spot_ltp,
-                        dte=dte,
-                        expiry_date=expiry,
-                        kite=kite,
-                        other_token=_other_tok,
-                        state=state,
-                    )
-                    result["_strike"] = dir_strikes.get(opt_type, atm_strike)
-                    # Bonus indicators — info only, never block
-                    try:
-                        result["bonus"] = _compute_bonus(opt_info["token"])
-                    except Exception:
-                        result["bonus"] = {}
-                    all_results[opt_type] = result
+                    _otm_key = opt_type + "_OTM"
+                    _atm_info = dir_tokens.get(opt_type)
+                    _otm_info = _locked_tokens.get(_otm_key)
+                    for _label, _oi in [("ATM", _atm_info), ("OTM", _otm_info)]:
+                        if not _oi:
+                            continue
+                        result = check_entry(
+                            token=_oi["token"],
+                            option_type=opt_type,
+                            spot_ltp=spot_ltp,
+                            dte=dte,
+                            expiry_date=expiry,
+                            kite=kite,
+                            other_token=_other_tok,
+                            state=state,
+                        )
+                        _strike_val = _oi.get("strike", dir_strikes.get(opt_type, atm_strike))
+                        if not _strike_val:
+                            _strike_val = dir_strikes.get(opt_type, atm_strike)
+                        result["_strike"] = _strike_val
+                        result["_strike_label"] = _label
+                        all_results[opt_type + "_" + _label] = result
+                        if not result["fired"]:
+                            continue
+                        _body = float(result.get("body_pct", 0) or 0)
+                        _gap = float(result.get("close", 0) or 0) - float(result.get("ema9_low", 0) or 0)
+                        _score = round(_body * max(_gap, 0.1), 2)
+                        _candidates.append({
+                            "type": opt_type, "label": _label,
+                            "info": _oi, "result": result,
+                            "score": _score, "strike": _strike_val,
+                        })
 
-                    if not result["fired"]:
-                        continue
+                # Pick best candidate by score
+                if _candidates:
+                    _candidates.sort(key=lambda c: c["score"], reverse=True)
+                    _winner = _candidates[0]
+                    opt_type = _winner["type"]
+                    opt_info = _winner["info"]
+                    result = _winner["result"]
+                    _win_label = _winner["label"]
+                    _win_score = _winner["score"]
+                    result["_strike"] = _winner["strike"]
+                    result["_strike_label"] = _win_label
+                    result["_entry_score"] = _win_score
+                    logger.info("[MAIN] BEST CANDIDATE: " + opt_type + " " + _win_label
+                                + " strike=" + str(_winner["strike"])
+                                + " score=" + str(_win_score)
+                                + " (of " + str(len(_candidates)) + " fired)")
 
-                    # Pre-entry checks (cooldown, margin, etc)
                     option_ltp_now = D.get_ltp(opt_info["token"])
                     if option_ltp_now <= 0:
                         try:
@@ -2788,14 +2832,20 @@ def _strategy_loop(kite):
                         kite, opt_info["token"], state,
                         option_ltp_now, profile, session,
                         direction=opt_type)
-                    if not ok:
-                        logger.info("[MAIN] Entry blocked (" + opt_type + "): " + reason)
-                        continue
+                    if ok:
+                        best_result = result
+                        best_type = opt_type
+                        best_opt_info = opt_info
+                    else:
+                        logger.info("[MAIN] Entry blocked (" + opt_type
+                                    + " " + _win_label + "): " + reason)
 
-                    best_result = result
-                    best_type = opt_type
-                    best_opt_info = opt_info
-                    break  # First to pass → enters (no scoring comparison)
+                # Populate all_results for dashboard (keep CE/PE keys for compat)
+                for _k, _v in list(all_results.items()):
+                    if _k.startswith("CE_ATM"):
+                        all_results["CE"] = _v
+                    elif _k.startswith("PE_ATM"):
+                        all_results["PE"] = _v
 
                 try:
                     vix_ltp = D.get_vix()
