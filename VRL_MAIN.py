@@ -792,9 +792,9 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.3\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.3.2\n"
         "Entry   : 09:30 - 15:10 IST\n"
-        "Gates   : close &gt; EMA9L, green, body &gt;=30%\n"
+        "Gates   : close &gt; EMA9L, green, body &gt;=40%, rising\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -803,8 +803,7 @@ def _alert_bot_started():
         "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>VISHAL TRAIL</b>\n"
-        "peak &lt;8   SL = entry-10 (INITIAL)\n"
-        "peak  8   SL = entry+0  (BREAKEVEN)\n"
+        "peak 10   SL = entry+2  (LOCK_2)\n"
         "peak 12   SL = entry+5  (LOCK_5)\n"
         "peak 18   SL = entry+10 (LOCK_10)\n"
         "peak 25+  SL = 70% of peak (TRAIL_70)\n"
@@ -1089,7 +1088,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +12\n"
+        "Trail arms at peak +10 (LOCK_2)\n"
     )
 
     # v16.2 backbone block — DISPLAY ONLY, never blocks entry
@@ -2423,7 +2422,9 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier in ("LOCK_5",):
+                            if _new_tier in ("LOCK_2",):
+                                _icon = "🔒"
+                            elif _new_tier in ("LOCK_5",):
                                 _icon = "🔒"
                             elif _new_tier in ("LOCK_10",):
                                 _icon = "🔒🔒"
