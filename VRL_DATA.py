@@ -422,6 +422,9 @@ _tick_lock        = threading.Lock()
 _subscribed       = set()
 _subscribed_lock  = threading.Lock()
 _ws_connected     = False
+_ws_reconnect_attempts = 0
+_ws_reconnect_delay = 1
+_ws_max_delay = 60
 
 # ── BUG-N1 v15.2.5: auth-rejection backoff ───────────────────
 # When Kite's nightly 03:30 session invalidation kills the token,
@@ -582,33 +585,40 @@ def _on_ticks(ws, ticks):
                 _ticks[token] = {"ltp": float(ltp), "ts": time.time()}
 
 def _on_connect(ws, response):
-    global _ws_connected
+    global _ws_connected, _ws_reconnect_attempts, _ws_reconnect_delay
     _ws_connected = True
+    _ws_reconnect_attempts = 0
+    _ws_reconnect_delay = 1
     logger.info("[WS] Connected")
     with _subscribed_lock:
         if _subscribed:
             ws.subscribe(list(_subscribed))
             ws.set_mode(ws.MODE_FULL, list(_subscribed))
-
+    return
 def _on_close(ws, code, reason):
-    global _ws_connected, _ticker
+    global _ws_connected, _ticker, _ws_reconnect_attempts, _ws_reconnect_delay
     _ws_connected = False
     reason_str = str(reason or "")
     logger.warning("[WS] Closed: " + str(code) + " " + reason_str)
-    # BUG-N2: if Kite returned 403, the token is dead. Don't let
-    # KiteTicker's auto-reconnect hammer a dead endpoint every minute.
-    # Set the auth-rejection flag so historical_data also pauses.
-    # notify_auth_refreshed() (from VRL_AUTH at 08:00) re-enables both.
     if "403" in reason_str or "Forbidden" in reason_str:
-        logger.warning("[WS] 403 Forbidden — auth required, stopping WS "
-                       "reconnect. Will resume after next VRL_AUTH refresh.")
+        logger.warning("[WS] 403 Forbidden — auth required")
         _set_auth_rejected()
         try:
-            if _ticker:
-                _ticker.close()
-        except Exception:
-            pass
-
+            if _ticker: _ticker.close()
+        except: pass
+        return
+    if _ws_reconnect_attempts < 10:
+        delay = min(_ws_reconnect_delay * (2 ** _ws_reconnect_attempts), _ws_max_delay)
+        _ws_reconnect_attempts += 1
+        logger.info(f"[WS] Reconnecting in {delay}s (attempt {_ws_reconnect_attempts})")
+        time.sleep(delay)
+        try:
+            start_websocket()
+        except Exception as e:
+            logger.error("[WS] Reconnect failed: " + str(e))
+    else:
+        logger.critical("[WS] Max reconnect attempts reached")
+    return
 def _on_error(ws, code, reason):
     reason_str = str(reason or "")
     logger.error("[WS] Error: " + str(code) + " " + reason_str)
