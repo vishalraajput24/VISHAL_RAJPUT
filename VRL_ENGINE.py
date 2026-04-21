@@ -1,27 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.0
-#  EMA9 Band Breakout + Ratchet Exit + 1-min EMA9 Break.
-#
-#  ENTRY (7 hard gates, all must pass + VWAP bonus shown but never blocks):
-#    1. Time window 9:30 – 15:10 IST
-#    2. Cooldown 5min same direction
-#    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
-#    4. Green candle
-#    5. Body ≥ 30% of range
-#    6. Band width ≥ 8 pts (chop filter)
-#    7. Tiered straddle Δ (v15.2):
-#         Open  9:30-10:30  Δ ≥ +1
-#         Mid  10:30-14:00  Δ ≥ +5
-#         Close 14:00-15:10 Δ ≥ +3
-#    BONUS: VWAP confluence (display only, never blocks)
-#
-#  EXIT (6-rule priority chain, v16.0):
-#    1. EMERGENCY_SL    pnl ≤ -20
-#    2. EOD_EXIT        15:30 IST
-#    3. STALE_ENTRY     5 candles + peak < 3
-#    4. VELOCITY_STALL  2 consecutive no-growth windows
-#    5. EMA1M_BREAK     1-min red + close < 1m EMA9 + pnl ≥ 5
-#    6. PROFIT_RATCHET  5-tier lock based on peak
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.4
+#  EMA9 Band Breakout + Balanced Trail (60%→70%→80%)
+#  Simplified Entry: Time, Close>EMA9L, Green, Body≥30%
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -51,7 +31,7 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PRE-ENTRY GUARDS (keeps existing market-open/cooldown/paused checks)
+#  PRE-ENTRY GUARDS
 # ═══════════════════════════════════════════════════════════════
 
 def pre_entry_checks(kite, token: int, state: dict,
@@ -96,14 +76,7 @@ def loss_streak_gate(state: dict) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v15.0 ENTRY — Dual EMA9 Band Breakout
-#
-#  Five gates (all must pass):
-#    1. Time window: 9:30 ≤ now < 15:10
-#    2. Cooldown: 5 min same direction
-#    3. Fresh breakout: close > ema9_high AND prev_close ≤ prev_ema9_high
-#    4. Green candle: close > open
-#    5. Body ≥ 30% of candle range
+#  PURE ENTRY GATE EVALUATOR
 # ═══════════════════════════════════════════════════════════════
 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
@@ -111,27 +84,6 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                                 straddle_delta, spot_vwap, spot_for_vwap: float,
                                 atm_strike: int, silent: bool = False,
                                 other_opt_3m=None) -> dict:
-    """Pure entry-gate evaluator. All I/O lives in the check_entry wrapper.
-
-    Parameters:
-        opt_3m:         pandas DataFrame with columns open/high/low/close/volume
-                        and indicator columns ema9_high, ema9_low (rolling 3-min
-                        option candles, most recent LIVE bar at iloc[-1], last
-                        CLOSED bar at iloc[-2]).
-        option_type:    "CE" or "PE".
-        spot_ltp:       current spot LTP (float, may be 0).
-        now:            datetime-like for time-window + cooldown math.
-        market_open:    bool — if False the time window gate is skipped (tests).
-        state:          dict with last_exit_time / last_exit_direction.
-        straddle_delta: pre-fetched straddle delta or None.
-        spot_vwap:      pre-fetched session VWAP value (display only).
-        spot_for_vwap:  pre-fetched spot LTP used for VWAP diff.
-        atm_strike:     pre-computed ATM strike for display.
-        silent:         suppress INFO logs when True.
-
-    Returns: same dict shape as check_entry (fired/reject_reason/metrics).
-    Behaviour identical to the inline body it replaces (extracted 1:1).
-    """
     result = {
         "fired": False, "option_type": option_type,
         "entry_price": 0, "entry_mode": "",
@@ -152,7 +104,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
     if state is None:
         state = {}
     try:
-        body_min       = CFG.entry_ema9_band("body_pct_min", 40)
+        body_min       = CFG.entry_ema9_band("body_pct_min", 30)
         warmup_until   = CFG.entry_ema9_band("warmup_until", "09:30")
         cutoff_after   = CFG.entry_ema9_band("cutoff_after", "15:10")
 
@@ -195,7 +147,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
             "band_width": band_width,
         })
 
-        # ── GATE 1: Time window 9:30 — 15:10 ──
+        # ── GATE 1: Time window ──
         if market_open:
             mins = now.hour * 60 + now.minute
             warmup_h, warmup_m = warmup_until.split(":")
@@ -209,57 +161,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 result["reject_reason"] = "after_" + cutoff_after + "_cutoff"
                 return result
 
-        # v16.3: Gate 2 (cooldown) removed — let good setups fire back-to-back.
         result["cooldown_ok"] = True
 
-        # v16.3.2: continuation re-entry — if last exit was a profitable
-        # VISHAL_TRAIL, skip the fresh-breakout requirement. The trend is
-        # still alive; we just got shaken out by the trail pullback.
-        _continuation = (state.get("last_exit_reason") == "VISHAL_TRAIL"
-                         and float(state.get("last_exit_peak", 0) or 0) > 0)
-
-        # ── GATE 2: Fresh breakout above EMA9-LOW (skipped in continuation) ──
-        if not _continuation:
-            fb_lookback = int(CFG.entry_ema9_band("fresh_breakout_lookback", 3) or 3)
-            if fb_lookback < 1:
-                fb_lookback = 1
-            was_below_in_lookback = False
-            for _k in range(3, 3 + fb_lookback):
-                if len(opt_3m) < _k:
-                    break
-                _bar = opt_3m.iloc[-_k]
-                _bar_close  = float(_bar.get("close", 0))
-                _bar_ema9l  = float(_bar.get("ema9_low", 0))
-                if _bar_ema9l > 0 and _bar_close <= _bar_ema9l:
-                    was_below_in_lookback = True
-                    break
-            is_fresh_breakout = (close > ema9_low) and was_below_in_lookback
-            if not is_fresh_breakout:
-                if close <= ema9_low:
-                    reason_code = "below_ema9_low"
-                elif close > ema9_low and not was_below_in_lookback:
-                    reason_code = "already_above_ema9_low"
-                else:
-                    reason_code = "fresh_cross_up_but_missed_fire"
-                result["reject_reason"] = (reason_code
-                                           + "_close=" + str(round(close, 1))
-                                           + "_ema9l=" + str(round(ema9_low, 1))
-                                           + "_lookback=" + str(fb_lookback) + "c")
-                if not silent:
-                    logger.info("[ENGINE] " + option_type
-                                + " NO_BREAKOUT [" + reason_code + "]"
-                                + " close=" + str(round(close, 1))
-                                + " ema9l=" + str(round(ema9_low, 1))
-                                + " lookback=" + str(fb_lookback) + "c"
-                                + " was_below=" + str(was_below_in_lookback))
-                return result
-        else:
-            # Continuation: just need close > ema9_low (still above floor)
-            if close <= ema9_low:
-                result["reject_reason"] = "continuation_below_ema9_low"
-                return result
-            logger.info("[ENGINE] " + option_type + " CONTINUATION re-entry"
-                        + " (last trail exit profitable)")
+        # ── GATE 2: Fresh breakout (DISABLED – always pass) ──
+        is_fresh_breakout = True
 
         # ── GATE 3: Green candle ──
         candle_green = close > open_
@@ -267,11 +172,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         if not candle_green:
             result["reject_reason"] = "red_candle_close=" + str(round(close, 1)) + "_open=" + str(round(open_, 1))
             if not silent:
-                logger.info("[ENGINE] " + option_type + " RED_CANDLE close="
-                            + str(round(close, 1)) + " open=" + str(round(open_, 1)))
+                logger.info("[ENGINE] " + option_type + " RED_CANDLE")
             return result
 
-        # ── GATE 4: Body ≥ 40% of range ──
+        # ── GATE 4: Body ≥ 30% ──
         candle_range = high - low
         body = abs(close - open_)
         body_pct = round((body / candle_range * 100) if candle_range > 0 else 0, 1)
@@ -279,58 +183,14 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         if body_pct < body_min:
             result["reject_reason"] = "weak_body_" + str(int(body_pct)) + "pct_<_" + str(body_min)
             if not silent:
-                logger.info("[ENGINE] " + option_type + " WEAK_BODY " + str(int(body_pct))
-                            + "% < " + str(body_min) + "%")
+                logger.info("[ENGINE] " + option_type + " WEAK_BODY")
             return result
 
-        # ── GATE 5 (v16.4): FLOOR TEST — candle must have dipped to EMA9_LOW ──
-        # The candle's low must be within 3 pts of ema9_low. This confirms
-        # premium actually TESTED support and bounced, not just floating above.
-        if not _continuation:
-            _floor_gap = low - ema9_low
-            if _floor_gap > 3:
-                result["reject_reason"] = ("no_floor_test_low=" + str(round(low, 1))
-                    + "_ema9l=" + str(round(ema9_low, 1))
-                    + "_gap=" + str(round(_floor_gap, 1)))
-                if not silent:
-                    logger.info("[ENGINE] " + option_type + " NO_FLOOR_TEST low="
-                                + str(round(low, 1)) + " ema9l="
-                                + str(round(ema9_low, 1))
-                                + " gap=" + str(round(_floor_gap, 1)) + " > 3")
-                return result
+        # ── GATE 5 (REMOVED) Floor test – disabled ──
+        # ── GATE 6 (REMOVED) Close near high – disabled ──
+        # ── GATE 7 (REMOVED) Anti‑chop – disabled ──
 
-        # ── GATE 6 (v16.4): CLOSE NEAR HIGH — buyers in control ──
-        # Close must be in the top 30% of the candle range.
-        if candle_range > 0:
-            _close_position = (close - low) / candle_range
-            if _close_position < 0.70:
-                result["reject_reason"] = ("close_not_near_high_pos="
-                    + str(round(_close_position * 100)) + "pct")
-                if not silent:
-                    logger.info("[ENGINE] " + option_type
-                                + " CLOSE_NOT_NEAR_HIGH pos="
-                                + str(round(_close_position * 100)) + "%  < 70%")
-                return result
-
-        # ── GATE 7: ANTI-CHOP — premium must be rising ──
-        # close > close_3_candles_ago: if premium isn't actually higher than
-        # 9 min ago, the "breakout" is fake chop / time decay crossing a flat
-        # EMA. Reject immediately.
-        if len(opt_3m) >= 5:
-            _close_3ago = float(opt_3m.iloc[-4].get("close", 0))
-            if _close_3ago > 0 and close <= _close_3ago:
-                result["reject_reason"] = ("chop_close=" + str(round(close, 1))
-                    + "_vs_3ago=" + str(round(_close_3ago, 1)))
-                if not silent:
-                    logger.info("[ENGINE] " + option_type + " ANTI_CHOP close="
-                                + str(round(close, 1)) + " <= 3ago="
-                                + str(round(_close_3ago, 1)))
-                return result
-
-        # ── BACKBONE check (v16.2): DISPLAY ONLY — never blocks ──
-        # Classifies the OTHER side (opposite CE/PE at same strike) into
-        # CONFIRMED / MISMATCH / N/A and annotates the result dict for
-        # the Telegram alert + dashboard. No entries are rejected here.
+        # ── BACKBONE check (display only) ──
         result["backbone_status"] = "N/A"
         if other_opt_3m is not None and len(other_opt_3m) >= 3:
             try:
@@ -347,24 +207,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                 result["backbone_other_red"]   = bool(_o_red)
                 if _backbone_ok:
                     result["backbone_status"] = "CONFIRMED"
-                    logger.info("[ENGINE] " + option_type
-                                + " BACKBONE CONFIRMED " + other_side
-                                + " red+below_ema9h")
-                else:
-                    result["backbone_status"] = "MISMATCH"
-                    if not silent:
-                        logger.info("[ENGINE] " + option_type
-                                    + " BACKBONE MISMATCH " + other_side
-                                    + " red=" + str(_o_red)
-                                    + " below_ema9h=" + str(_o_below)
-                                    + " — INFO ONLY, proceeding")
             except Exception as _be:
                 logger.debug("[ENGINE] backbone check error: " + str(_be))
-        else:
-            logger.info("[ENGINE] BACKBONE data unavailable for "
-                        + option_type + " — N/A")
 
-        # ── GATE 9: straddle DISPLAY ONLY ──
+        # ── Straddle DISPLAY ONLY ──
         if CFG.straddle_filter("enabled", True):
             result["atm_strike_used"] = atm_strike
             mod = now.hour * 60 + now.minute
@@ -383,21 +229,12 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
 
             if sd is None:
                 result["straddle_info"] = "NA"
-                logger.info("[ENGINE] " + option_type
-                            + " STRADDLE_NA atm=" + str(atm_strike)
-                            + " (" + period + ") — informational, proceeding")
             elif sd >= 5:
                 result["straddle_info"] = "STRONG"
-                logger.info("[ENGINE] " + option_type + " STRADDLE_STRONG "
-                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
             elif sd >= 0:
                 result["straddle_info"] = "NEUTRAL"
-                logger.info("[ENGINE] " + option_type + " STRADDLE_NEUTRAL "
-                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
             else:
                 result["straddle_info"] = "WEAK"
-                logger.info("[ENGINE] " + option_type + " STRADDLE_WEAK "
-                            + "Δ" + "{:+.1f}".format(sd) + " (" + period + ")")
 
         # ── VWAP confluence (display only) ──
         try:
@@ -412,65 +249,17 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                         result["vwap_bonus"] = "CONFLUENCE" if diff > 0 else "AGAINST"
                     else:
                         result["vwap_bonus"] = "CONFLUENCE" if diff < 0 else "AGAINST"
-                    logger.info("[ENGINE] VWAP_INFO spot=" + str(round(_spot, 1))
-                                + " vwap=" + "{:.1f}".format(vwap_val)
-                                + " diff=" + "{:+.1f}".format(diff)
-                                + " " + result["vwap_bonus"])
         except Exception as e:
             logger.debug("[ENGINE] vwap bonus error: " + str(e))
 
-        # ═══ band slope + context_tag (display only) ═══
-        try:
-            if opt_3m is not None and len(opt_3m) >= 6:
-                _closed = opt_3m.iloc[:-1].tail(6)
-                _eh_then = float(_closed.iloc[0].get("ema9_high", 0))
-                _eh_now  = float(_closed.iloc[-1].get("ema9_high", 0))
-                _el_then = float(_closed.iloc[0].get("ema9_low", 0))
-                _el_now  = float(_closed.iloc[-1].get("ema9_low", 0))
-                result["ema9_high_slope_5c"] = round(_eh_now - _eh_then, 1)
-                result["ema9_low_slope_5c"]  = round(_el_now - _el_then, 1)
-            else:
-                result["ema9_high_slope_5c"] = 0.0
-                result["ema9_low_slope_5c"]  = 0.0
-        except Exception:
-            result["ema9_high_slope_5c"] = 0.0
-            result["ema9_low_slope_5c"]  = 0.0
-
-        _ehs = result["ema9_high_slope_5c"]
-        _els = result["ema9_low_slope_5c"]
-        if _ehs >= 20 and _els >= 20:
-            result["bands_state"] = "RISING"
-        elif _ehs <= 3 and _els <= 3:
-            result["bands_state"] = "FLAT"
-        else:
-            result["bands_state"] = "WEAK"
-
-        _straddle_strong = (result.get("straddle_info") == "STRONG")
-        _vwap_confluence = (result.get("vwap_bonus") == "CONFLUENCE")
-        _bands_rising    = (result["bands_state"] == "RISING")
-        if _straddle_strong and _vwap_confluence and _bands_rising:
-            result["context_tag"] = "TRIPLE_CONFLUENCE"
-        elif (result.get("straddle_info") == "WEAK"
-              and result["bands_state"] == "FLAT"):
-            result["context_tag"] = "MIXED_SIGNALS"
-        else:
-            result["context_tag"] = "NORMAL"
-
-        # ═══ ALL HARD GATES PASSED — FIRE (Stage 1) ═══
+        # ═══ ALL HARD GATES PASSED – FIRE ═══
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
-        # v16.4: Stage 2 check — is close already above ema9_high?
-        # If yes: momentum confirmed instantly. If no: VRL_MAIN monitors
-        # next 3 candles. If ema9_high not broken → exit quickly.
         result["ema9h_confirmed"] = bool(close > ema9_high)
         if not silent:
-            _confirm_tag = "CONFIRMED" if result["ema9h_confirmed"] else "PENDING"
-            logger.info("[ENGINE] " + option_type + " ENTRY [EMA9_BREAKOUT " + _confirm_tag + "]"
+            logger.info("[ENGINE] " + option_type + " ENTRY [EMA9_BREAKOUT]"
                         + " close=" + str(round(close, 1))
-                        + " ema9h=" + str(round(ema9_high, 1))
-                        + " ema9l=" + str(round(ema9_low, 1))
-                        + " body=" + str(int(body_pct)) + "% green=Y"
-                        + " floor_test=Y close_near_high=Y")
+                        + " body=" + str(int(body_pct)) + "%")
         return result
 
     except Exception as e:
@@ -483,29 +272,21 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
                 dte: int = 99, expiry_date=None, kite=None,
                 other_token: int = 0, silent: bool = False,
                 state: dict = None) -> dict:
-    """v16.0 thin wrapper: fetches live data and delegates to the pure
-    gate evaluator. All entry-gate logic lives in _evaluate_entry_gates_pure.
-    """
     if state is None:
         state = {}
-    # Fetch 3-min option data up front.
     opt_3m = D.get_option_3min(token, lookback=15)
     market_open = D.is_market_open()
     now = datetime.now()
     atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
 
-    # Straddle delta (display only — pre-fetch here so the pure function
-    # never does I/O).
     straddle_delta = None
     if CFG.straddle_filter("enabled", True) and atm_strike:
         try:
             lookback_min = int(CFG.straddle_filter("lookback_minutes", 15))
-            straddle_delta = D.get_straddle_delta(
-                atm_strike, lookback_minutes=lookback_min)
+            straddle_delta = D.get_straddle_delta(atm_strike, lookback_minutes=lookback_min)
         except Exception as e:
             logger.warning("[ENGINE] straddle delta error: " + str(e))
 
-    # VWAP (display only) — pre-fetch.
     spot_vwap = None
     spot_for_vwap = 0.0
     if CFG.vwap_bonus("enabled", True):
@@ -515,8 +296,6 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         except Exception as e:
             logger.debug("[ENGINE] vwap fetch: " + str(e))
 
-    # v16.2 BACKBONE: fetch the OTHER side's 3-min df for cross-confirmation.
-    # Prefer state's locked_ce/pe_token; fall back to other_token argument.
     other_opt_3m = None
     try:
         if option_type == "CE":
@@ -536,169 +315,26 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0,
         silent=silent, other_opt_3m=other_opt_3m)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  v15.2.5 MULTI-CANDIDATE STRIKE SCANNER
-#  Scans ATM-50, ATM, ATM+50 (×CE+PE = 6 candidates) every call.
-#  Picks the best fired candidate by score:
-#      (straddle_delta, body_pct, -abs(strike - center_atm))
-#  Higher straddle expansion wins; tiebreaker is body strength, then
-#  closeness to the true ATM.
-#  Opt-in via config (entry.ema9_band.multi_candidate.enabled).
-# ═══════════════════════════════════════════════════════════════
-
-def scan_all_candidates(kite, spot_ltp: float, atm_strike: int,
-                        expiry, dte: int = 0,
-                        state: dict = None) -> dict:
-    """Scan 3 neighboring strikes (ATM-50, ATM, ATM+50) × (CE, PE).
-    Returns the best fired candidate dict (with keys: strike, side,
-    token, symbol, result) or None if nothing fired. Never raises —
-    any per-strike error is logged and skipped.
-
-    Callers should use this INSTEAD of a single check_entry() call
-    when `entry.ema9_band.multi_candidate.enabled=true`. When disabled
-    (default), the caller's existing locked-strike path remains in use.
-    """
-    if state is None:
-        state = {}
-    if not atm_strike or expiry is None:
-        return None
-
-    step = int(CFG.entry_ema9_band("multi_candidate_strike_range", 50) or 50)
-    strikes = [atm_strike - step, atm_strike, atm_strike + step]
-    fired = []
-    for strike in strikes:
-        try:
-            tokens = D.get_option_tokens(kite, int(strike), expiry) or {}
-        except Exception as e:
-            logger.debug("[ENGINE] multi_candidate token resolve "
-                         + str(strike) + " err: " + str(e))
-            continue
-        for side in ("CE", "PE"):
-            info = tokens.get(side)
-            if not info:
-                continue
-            tok = int(info.get("token") or 0)
-            if not tok:
-                continue
-            try:
-                r = check_entry(
-                    tok, side, spot_ltp, dte, expiry, kite,
-                    silent=True, state=state)
-            except Exception as e:
-                logger.debug("[ENGINE] multi_candidate check_entry "
-                             + str(strike) + side + " err: " + str(e))
-                continue
-            if r.get("fired"):
-                fired.append({
-                    "strike": int(strike),
-                    "side":   side,
-                    "token":  tok,
-                    "symbol": info.get("symbol", ""),
-                    "result": r,
-                })
-
-    if not fired:
-        return None
-
-    def _score(c):
-        r = c["result"]
-        sd = float(r.get("straddle_delta") or 0)
-        body = float(r.get("body_pct") or 0)
-        dist = -abs(c["strike"] - atm_strike)
-        return (sd, body, dist)
-
-    fired.sort(key=_score, reverse=True)
-    best = fired[0]
-    logger.info("[ENGINE] MULTI_CANDIDATE fired=" + str(len(fired))
-                + " chose=" + str(best["strike"]) + best["side"]
-                + " Δ=" + str(best["result"].get("straddle_delta"))
-                + " body=" + str(best["result"].get("body_pct")) + "%")
-    return best
-
-
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
-    """v15.0: legacy compat. Initial SL placed at entry-12 by VRL_TRADE
-    as a static safety net while the dynamic band trail takes over."""
     return round(entry_price - hard_sl, 2)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  v15.2.5 Batch 3 BUG-R1 — Shadow-mode pure functions.
-#  These NEVER mutate state, NEVER call exit functions, NEVER
-#  touch production SL fields. They compute hypothetical values
-#  for the shadow CSV logger to record. Analysis only.
-# ═══════════════════════════════════════════════════════════════
-
-def _is_setup_building_pure(df_3min, direction: str) -> bool:
-    """Pure: evaluate the setup-building check on a pre-fetched 3-min
-    DataFrame (with ema9_high / ema9_low indicator columns). Matches
-    the production criteria exactly:
-      - close > ema9_high
-      - green candle
-      - body_pct >= 25
-      - band_width >= 6.0
-    Returns False on any error / insufficient data.
-    """
-    try:
-        if df_3min is None or df_3min.empty or len(df_3min) < 3:
-            return False
-        last = df_3min.iloc[-2]
-        close    = float(last["close"])
-        open_    = float(last["open"])
-        high     = float(last["high"])
-        low      = float(last["low"])
-        ema9_high = float(last.get("ema9_high", 0))
-        ema9_low  = float(last.get("ema9_low", 0))
-        band_width = ema9_high - ema9_low
-        candle_range = high - low
-        body_pct = (abs(close - open_) / candle_range * 100) if candle_range > 0 else 0
-
-        breakout  = close > ema9_high
-        green     = close > open_
-        body_near = body_pct >= 25
-        band_near = band_width >= 6.0
-
-        return bool(breakout and green and body_near and band_near)
-    except Exception:
-        return False
-
-
 def is_setup_building(token: int, direction: str) -> bool:
-    """BUG-S2: thin wrapper. Used by VRL_MAIN to defer ATM relock when a
-    setup is 75%+ formed. Fetches 3-min bars and delegates to the pure
-    evaluator."""
-    try:
-        df = D.get_option_3min(token, lookback=10)
-        return _is_setup_building_pure(df, direction)
-    except Exception:
-        return False
+    return False
 
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """v16.3.2 Vishal Trail SL — 4-tier lock + 70% adaptive trail.
-
-    Returns (sl_price, tier_label).
-
-    Below peak 10: only emergency −10 SL applies (no tier).
-    Tier ladder:
-      peak >= 10     → LOCK_2      SL = entry + 2
-      peak >= 12     → LOCK_5      SL = entry + 5
-      peak >= 18     → LOCK_10     SL = entry + 10
-      peak >= 25     → TRAIL_70    SL = max(entry+10, entry + peak×0.70)
-    """
-    if peak_pnl >= 25:
-        sl = max(entry_price + 10, entry_price + peak_pnl * 0.70)
+    """Balanced trail: 60% → 70% → 80% as peak grows."""
+    if peak_pnl >= 40:
+        sl = entry_price + peak_pnl * 0.80
+        tier = "TRAIL_80"
+    elif peak_pnl >= 25:
+        sl = entry_price + peak_pnl * 0.70
         tier = "TRAIL_70"
-    elif peak_pnl >= 18:
-        sl = entry_price + 10
-        tier = "LOCK_10"
-    elif peak_pnl >= 12:
-        sl = entry_price + 5
-        tier = "LOCK_5"
     elif peak_pnl >= 10:
-        sl = entry_price + 2
-        tier = "LOCK_2"
+        sl = entry_price + peak_pnl * 0.60
+        tier = "TRAIL_60"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
@@ -716,32 +352,12 @@ def check_profit_lock(state: dict, daily_pnl: float) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  v16.3 EXIT CHAIN — 3 rules, priority order
-#
-#    1. EMERGENCY_SL     → pnl ≤ -10
-#    2. EOD_EXIT         → time ≥ 15:20
-#    3. VISHAL_TRAIL     → 5-tier ladder (INITIAL/BREAKEVEN/LOCK_5/LOCK_10/TRAIL_1to1)
-#
-#  Removed in v16.3: STALE_ENTRY, VELOCITY_STALL (cut winners short).
-#  Removed in v16.2: EMA1M_BREAK, BREAKEVEN_LOCK, EMA9_LOW_BREAK.
+#  EXIT CHAIN
 # ═══════════════════════════════════════════════════════════════
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
                                opt_3m_full, now,
                                market_open: bool) -> list:
-    """Pure exit-chain evaluator. Mutates `state` exactly as manage_exit did
-    (peak_pnl, trough_pnl, peak_history, current_velocity, current_ema9_high/low,
-    active_ratchet_tier/sl, _peak_history_backfilled, last_peak_candle_ts).
-
-    Parameters:
-        state:              position state dict (mutated in place).
-        option_ltp:         current option LTP (float).
-        opt_3m_full:        pre-fetched 3-min DataFrame with ema9_high/low, or None.
-        now:                datetime — EOD comparison.
-        market_open:        bool — gates EOD check exactly like the wrapper.
-
-    Returns: list of exit dicts — same shape as manage_exit's output.
-    """
     if not state.get("in_trade"):
         return []
 
@@ -752,17 +368,13 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
     if pnl < state.get("trough_pnl", 0):
         state["trough_pnl"] = pnl
 
-    candles = state.get("candles_held", 0)
-
     emergency_sl  = CFG.exit_ema9_band("emergency_sl_pts", -10)
     eod_time      = CFG.exit_ema9_band("eod_exit_time", "15:20")
 
-    # ── RULE 1: EMERGENCY catastrophic ──
     if pnl <= emergency_sl:
         logger.info("[ENGINE] EMERGENCY_SL pnl=" + str(pnl))
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
 
-    # ── RULE 2: EOD auto-exit at 15:20 ──
     if market_open:
         eod_h, eod_m = eod_time.split(":")
         eod_mins = int(eod_h) * 60 + int(eod_m)
@@ -770,40 +382,30 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
             logger.info("[ENGINE] EOD_EXIT at " + now.strftime("%H:%M"))
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # ── EMA9 band bookkeeping for dashboard ──
+    # Update EMA9 bands for dashboard
+    if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
+        last = opt_3m_full.iloc[-2]
+        state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
+        state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
+
+    # Update peak history
     last_candle_ts = ""
     if opt_3m_full is not None and not opt_3m_full.empty and len(opt_3m_full) >= 2:
         last = opt_3m_full.iloc[-2]
         last_candle_ts = str(last.name) if hasattr(last, "name") else str(last.get("timestamp", ""))
-        state["current_ema9_high"] = round(float(last.get("ema9_high", 0)), 2)
-        state["current_ema9_low"]  = round(float(last.get("ema9_low", 0)), 2)
-
-    # ── peak_history update once per new 3-min candle (dashboard display) ──
-    # No backfill: fresh entries start with [] and grow naturally. Old backfill
-    # caused a spurious flat-peaks sequence that killed winners via VELOCITY_STALL.
     if last_candle_ts and state.get("last_peak_candle_ts") != last_candle_ts:
         ph = list(state.get("peak_history") or [])
         ph.append(round(peak, 2))
         ph = ph[-6:]
         state["peak_history"] = ph
         state["last_peak_candle_ts"] = last_candle_ts
-    ph = list(state.get("peak_history") or [])
-    if len(ph) >= 4:
-        state["current_velocity"] = round((ph[-1] - ph[-4]) / 3.0, 2)
-    elif len(ph) >= 2:
-        state["current_velocity"] = round(ph[-1] - ph[-2], 2)
-    else:
-        state["current_velocity"] = 0.0
 
-    # ── RULE 3 (v16.3): VISHAL_TRAIL — sole mid-trade exit ──
-    trail_sl, trail_tier = compute_trail_sl(entry, peak,
-                                             state.get("direction", ""))
-    state["active_ratchet_tier"] = trail_tier   # reuse key for dashboard compat
+    # Compute trail SL
+    trail_sl, trail_tier = compute_trail_sl(entry, peak, state.get("direction", ""))
+    state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"]   = trail_sl
     if trail_sl > 0 and option_ltp <= trail_sl:
-        logger.info("[ENGINE] VISHAL_TRAIL tier=" + trail_tier
-                    + " peak=" + str(round(peak, 1))
-                    + " sl=" + str(trail_sl))
+        logger.info("[ENGINE] VISHAL_TRAIL tier=" + trail_tier + " sl=" + str(trail_sl))
         return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
 
     return []
@@ -811,9 +413,6 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float,
 
 def manage_exit(state: dict, option_ltp: float, profile: dict,
                 other_token: int = 0) -> list:
-    """v16.0 thin wrapper: fetches 3-min bars + 1-min EMA9 break result,
-    then delegates to the pure exit-chain evaluator. All exit-chain logic
-    lives in _evaluate_exit_chain_pure."""
     if not state.get("in_trade"):
         return []
 
@@ -831,6 +430,3 @@ def manage_exit(state: dict, option_ltp: float, profile: dict,
         state=state, option_ltp=option_ltp,
         opt_3m_full=opt_3m_full, now=now,
         market_open=market_open)
-
-
-# Shadow 1-min API — REMOVED in v16.0 Batch 7 (BUG-Q9).
