@@ -3,7 +3,7 @@
 #  EMA9 Band Breakout + Velocity Stall + Straddle Display + VWAP
 # ═══════════════════════════════════════════════════════════════
 
-version: "v16.3"
+version: "v16.4"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2

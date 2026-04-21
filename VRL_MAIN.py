@@ -807,9 +807,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.3.2\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.4\n"
         "Entry   : 09:30 - 15:10 IST\n"
-        "Gates   : close &gt; EMA9L, green, body &gt;=40%, rising\n"
+        "Gates   : EMA9L bounce + floor test + near high\n"
+        "Confirm : EMA9H break within 3 candles (or cut)\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -1030,6 +1031,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_rsi"]        = 0
         # v15.0 entry context — band values at entry
         state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
+        # v16.4: Stage 2 confirmation tracking
+        state["_ema9h_confirmed"]   = bool(entry_result.get("ema9h_confirmed", False))
+        state["_confirm_candles"]   = 0  # counts candles since entry for 3-candle window
         state["entry_ema9_high"]    = round(float(entry_result.get("ema9_high", 0)), 2)
         state["entry_ema9_low"]     = round(float(entry_result.get("ema9_low", 0)), 2)
         state["entry_band_position"] = entry_result.get("band_position", "ABOVE")
@@ -1106,6 +1110,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
         "Trail arms at peak +10 (LOCK_2)\n"
+        + ("✅ EMA9H CONFIRMED — trail active\n" if entry_result.get("ema9h_confirmed")
+           else "⏳ Watching 3 candles for EMA9H confirm\n")
     )
 
     # v16.2 backbone block — DISPLAY ONLY, never blocks entry
@@ -2414,9 +2420,34 @@ def _strategy_loop(kite):
                                 except Exception as _ue:
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
+                    exit_list = []
+
+                    # v16.4: Stage 2 confirmation monitor — if ema9h not confirmed
+                    # at entry, check each candle. If confirmed → switch to normal
+                    # trail. If 3 candles pass without confirmation → force exit.
+                    if state.get("in_trade") and not state.get("_ema9h_confirmed"):
+                        _cc = state.get("_confirm_candles", 0) + 1
+                        state["_confirm_candles"] = _cc
+                        _cur_ema9h = float(state.get("current_ema9_high", 0) or 0)
+                        if option_ltp > _cur_ema9h and _cur_ema9h > 0:
+                            state["_ema9h_confirmed"] = True
+                            logger.info("[MAIN] Stage 2 CONFIRMED — close > ema9h "
+                                        + str(round(_cur_ema9h, 1))
+                                        + " on candle " + str(_cc))
+                            _tg_send("✅ <b>STAGE 2 CONFIRMED</b>\n"
+                                     "Premium broke EMA9-HIGH — trail active")
+                        elif _cc >= 3:
+                            logger.info("[MAIN] Stage 2 FAILED — 3 candles, no ema9h break. Exiting.")
+                            _tg_send("⚠️ <b>STAGE 2 FAILED</b>\n"
+                                     "3 candles, no EMA9-HIGH break — cutting position")
+                            exit_list = [{"lot_id": "ALL",
+                                          "reason": "STAGE2_UNCONFIRMED",
+                                          "price": option_ltp}]
+
                     # v13.0: manage_exit returns list of exit dicts
-                    _mex_other_tok = state.get("other_token", 0)
-                    exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
+                    if not exit_list:
+                        _mex_other_tok = state.get("other_token", 0)
+                        exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
                     # v16.2: trail tier upgrade alert (was v16.0 ratchet)
                     try:

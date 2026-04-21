@@ -33,7 +33,7 @@ LEGACY_MODES = (
 VALID_EXIT_REASONS = (
     # v16.2 primary exits
     "EMERGENCY_SL", "STALE_ENTRY", "EOD_EXIT",
-    "VELOCITY_STALL", "VISHAL_TRAIL",
+    "VELOCITY_STALL", "VISHAL_TRAIL", "STAGE2_UNCONFIRMED",
     # v16.0 historical (kept for back-compat with old trade log rows)
     "EMA1M_BREAK", "PROFIT_RATCHET",
     # v15.x historical (kept for back-compat with old trade log rows)

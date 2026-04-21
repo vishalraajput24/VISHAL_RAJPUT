@@ -271,7 +271,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                             + str(round(close, 1)) + " open=" + str(round(open_, 1)))
             return result
 
-        # ── GATE 5: Body ≥ 30% of range ──
+        # ── GATE 4: Body ≥ 40% of range ──
         candle_range = high - low
         body = abs(close - open_)
         body_pct = round((body / candle_range * 100) if candle_range > 0 else 0, 1)
@@ -283,7 +283,36 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
                             + "% < " + str(body_min) + "%")
             return result
 
-        # ── GATE 5 (v16.3.2): ANTI-CHOP — premium must be rising ──
+        # ── GATE 5 (v16.4): FLOOR TEST — candle must have dipped to EMA9_LOW ──
+        # The candle's low must be within 3 pts of ema9_low. This confirms
+        # premium actually TESTED support and bounced, not just floating above.
+        if not _continuation:
+            _floor_gap = low - ema9_low
+            if _floor_gap > 3:
+                result["reject_reason"] = ("no_floor_test_low=" + str(round(low, 1))
+                    + "_ema9l=" + str(round(ema9_low, 1))
+                    + "_gap=" + str(round(_floor_gap, 1)))
+                if not silent:
+                    logger.info("[ENGINE] " + option_type + " NO_FLOOR_TEST low="
+                                + str(round(low, 1)) + " ema9l="
+                                + str(round(ema9_low, 1))
+                                + " gap=" + str(round(_floor_gap, 1)) + " > 3")
+                return result
+
+        # ── GATE 6 (v16.4): CLOSE NEAR HIGH — buyers in control ──
+        # Close must be in the top 30% of the candle range.
+        if candle_range > 0:
+            _close_position = (close - low) / candle_range
+            if _close_position < 0.70:
+                result["reject_reason"] = ("close_not_near_high_pos="
+                    + str(round(_close_position * 100)) + "pct")
+                if not silent:
+                    logger.info("[ENGINE] " + option_type
+                                + " CLOSE_NOT_NEAR_HIGH pos="
+                                + str(round(_close_position * 100)) + "%  < 70%")
+                return result
+
+        # ── GATE 7: ANTI-CHOP — premium must be rising ──
         # close > close_3_candles_ago: if premium isn't actually higher than
         # 9 min ago, the "breakout" is fake chop / time decay crossing a flat
         # EMA. Reject immediately.
@@ -427,19 +456,21 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float,
         else:
             result["context_tag"] = "NORMAL"
 
-        # ═══ ALL HARD GATES PASSED — FIRE ═══
+        # ═══ ALL HARD GATES PASSED — FIRE (Stage 1) ═══
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
+        # v16.4: Stage 2 check — is close already above ema9_high?
+        # If yes: momentum confirmed instantly. If no: VRL_MAIN monitors
+        # next 3 candles. If ema9_high not broken → exit quickly.
+        result["ema9h_confirmed"] = bool(close > ema9_high)
         if not silent:
-            logger.info("[ENGINE] " + option_type + " ENTRY [EMA9_BREAKOUT]"
+            _confirm_tag = "CONFIRMED" if result["ema9h_confirmed"] else "PENDING"
+            logger.info("[ENGINE] " + option_type + " ENTRY [EMA9_BREAKOUT " + _confirm_tag + "]"
                         + " close=" + str(round(close, 1))
                         + " ema9h=" + str(round(ema9_high, 1))
                         + " ema9l=" + str(round(ema9_low, 1))
-                        + " width=" + str(round(band_width, 1))
                         + " body=" + str(int(body_pct)) + "% green=Y"
-                        + " straddleΔ=" + str(result.get("straddle_delta"))
-                        + " (" + str(result.get("straddle_period", "-")) + ")"
-                        + " vwap=" + str(result.get("vwap_bonus", "-")))
+                        + " floor_test=Y close_near_high=Y")
         return result
 
     except Exception as e:
