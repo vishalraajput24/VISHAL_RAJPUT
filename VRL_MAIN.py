@@ -2423,26 +2423,29 @@ def _strategy_loop(kite):
                     exit_list = []
 
                     # v16.4: Stage 2 confirmation monitor — if ema9h not confirmed
-                    # at entry, check each candle. If confirmed → switch to normal
-                    # trail. If 3 candles pass without confirmation → force exit.
+                    # at entry, watch for 9 minutes (3 real 3-min candles).
+                    # If confirmed → trail runs. If 9 min pass → cut position.
                     if state.get("in_trade") and not state.get("_ema9h_confirmed"):
-                        _cc = state.get("_confirm_candles", 0) + 1
-                        state["_confirm_candles"] = _cc
                         _cur_ema9h = float(state.get("current_ema9_high", 0) or 0)
                         if option_ltp > _cur_ema9h and _cur_ema9h > 0:
                             state["_ema9h_confirmed"] = True
                             logger.info("[MAIN] Stage 2 CONFIRMED — close > ema9h "
-                                        + str(round(_cur_ema9h, 1))
-                                        + " on candle " + str(_cc))
+                                        + str(round(_cur_ema9h, 1)))
                             _tg_send("✅ <b>STAGE 2 CONFIRMED</b>\n"
                                      "Premium broke EMA9-HIGH — trail active")
-                        elif _cc >= 3:
-                            logger.info("[MAIN] Stage 2 FAILED — 3 candles, no ema9h break. Exiting.")
-                            _tg_send("⚠️ <b>STAGE 2 FAILED</b>\n"
-                                     "3 candles, no EMA9-HIGH break — cutting position")
-                            exit_list = [{"lot_id": "ALL",
-                                          "reason": "STAGE2_UNCONFIRMED",
-                                          "price": option_ltp}]
+                        else:
+                            try:
+                                _ent_dt = datetime.fromisoformat(state.get("entry_time", ""))
+                                _elapsed = (datetime.now() - _ent_dt).total_seconds() / 60
+                            except Exception:
+                                _elapsed = 0
+                            if _elapsed >= 9:
+                                logger.info("[MAIN] Stage 2 FAILED — 9 min, no ema9h break. Exiting.")
+                                _tg_send("⚠️ <b>STAGE 2 FAILED</b>\n"
+                                         "9 min, no EMA9-HIGH break — cutting position")
+                                exit_list = [{"lot_id": "ALL",
+                                              "reason": "STAGE2_UNCONFIRMED",
+                                              "price": option_ltp}]
 
                     # v13.0: manage_exit returns list of exit dicts
                     if not exit_list:
