@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.4
-#  Original stable gates + Minimum 3pt gap above EMA9‑low
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.5
+#  Vishal Close Trail: exit on candle close, 85% trail for peaks ≥25
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -170,19 +170,18 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
 def is_setup_building(token: int, direction: str) -> bool:
     return False
 
-def compute_trail_sl(entry_price: float, peak_pnl: float, direction: str = "") -> tuple:
-    if peak_pnl >= 25:
-        sl = max(entry_price + 10, entry_price + peak_pnl * 0.70)
-        tier = "TRAIL_70"
-    elif peak_pnl >= 18:
-        sl = entry_price + 10
-        tier = "LOCK_10"
-    elif peak_pnl >= 12:
-        sl = entry_price + 5
-        tier = "LOCK_5"
+def compute_trail_sl(entry_price: float, peak_pnl: float,
+                     direction: str = "") -> tuple:
+    """Vishal Close Trail: 60% → 85% → 80%, exit on candle close."""
+    if peak_pnl >= 40:
+        sl = entry_price + peak_pnl * 0.80
+        tier = "TRAIL_80"
+    elif peak_pnl >= 25:
+        sl = entry_price + peak_pnl * 0.85
+        tier = "VISHAL_MAX"
     elif peak_pnl >= 10:
-        sl = entry_price + 2
-        tier = "LOCK_2"
+        sl = entry_price + peak_pnl * 0.60
+        tier = "TRAIL_60"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
@@ -211,8 +210,10 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
-    if trail_sl > 0 and option_ltp <= trail_sl:
-        return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
+    if trail_sl > 0:
+        last_close = opt_3m_full.iloc[-2]["close"] if opt_3m_full is not None and len(opt_3m_full) >= 2 else option_ltp
+        if last_close <= trail_sl:
+            return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
     return []
 
 def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int = 0) -> list:
