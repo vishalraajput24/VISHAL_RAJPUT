@@ -26,7 +26,7 @@ from VRL_DATA   import setup_logger
 from VRL_CONFIG import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
-    loss_streak_gate, check_profit_lock,
+    check_profit_lock,
     compute_entry_sl,
     get_option_ema_spread,
 )
@@ -147,7 +147,6 @@ DEFAULT_STATE = {
     "_last_dash_scan_min": "",
     "_last_warmup_log"   : "",
     "_last_scan"         : {},
-    "_relock_skip_count" : 0,
     "prev_close"         : 0.0,
     # ── Exchange order tracking (live mode — legacy compat) ──
     "_sl_order_id"       : "",
@@ -2693,58 +2692,8 @@ def _strategy_loop(kite):
                                     + " target=" + str(_target_atm)
                                     + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
 
-                # BUG-S2 v15.2.5: defer relock when a setup is building
-                # on the locked strike. Replaces the dead v13 momentum_pts
-                # check (always 0 in v15.2 — never fired). New check uses
-                # is_setup_building() which looks at close>ema9h, green,
-                # body≥25, band≥6 — all the gates at ≥75% threshold.
-                # Hard override: spot drift > 75pts forces relock regardless
-                # (premium too far OTM to be reliable at that distance).
-                _spot_drift = abs(spot_ltp - _locked_at_spot) if _locked_at_spot else 0
-                _setup_building = False
-                if _relock and not _is_initial_lock and _spot_drift <= 75:
-                    try:
-                        _building_ce = False
-                        _building_pe = False
-                        if _locked_tokens:
-                            _ce_info = _locked_tokens.get("CE")
-                            _pe_info = _locked_tokens.get("PE")
-                            if _ce_info:
-                                from VRL_ENGINE import is_setup_building
-                                _building_ce = is_setup_building(
-                                    int(_ce_info["token"]), "CE")
-                            if _pe_info:
-                                from VRL_ENGINE import is_setup_building
-                                _building_pe = is_setup_building(
-                                    int(_pe_info["token"]), "PE")
-                        _setup_building = _building_ce or _building_pe
-                    except Exception as _sbe:
-                        logger.debug("[MAIN] setup_building check: " + str(_sbe))
-
-                if _relock and _setup_building and _spot_drift <= 75:
-                    _skip_count = state.get("_relock_skip_count", 0) + 1
-                    state["_relock_skip_count"] = _skip_count
-                    if _skip_count <= 2:
-                        _which = ("CE" if _building_ce else "PE")
-                        logger.info("[MAIN] ATM drift but setup BUILDING on "
-                                    + _which + " " + str(_locked_ce_strike)
-                                    + " — deferring relock ("
-                                    + str(_skip_count) + "/2)"
-                                    + " spot_drift=" + str(round(_spot_drift, 1)))
-                        _relock = False
-                    else:
-                        logger.info("[MAIN] Relock FORCED after "
-                                    + str(_skip_count)
-                                    + " setup-building skips")
-                        state["_relock_skip_count"] = 0
-                elif _relock and _spot_drift > 75:
-                    logger.info("[MAIN] Relock FORCED — spot drift "
-                                + str(round(_spot_drift, 1))
-                                + "pts > 75pt hard override")
-                    state["_relock_skip_count"] = 0
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
-                    state["_relock_skip_count"] = 0  # BUG-021: reset on successful relock
                     # Telegram alert on relock (not initial lock)
                     if False:  # v13.3: relock alerts silenced — dashboard shows current strike
                         _tg_send(

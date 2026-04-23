@@ -14,6 +14,19 @@ import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
 
+
+def get_margin_available(kite) -> float:
+    """Return available cash margin. Returns -1.0 on error.
+    (Inlined from VRL_TRADE so pre_entry_checks can call it without
+    a lazy cross-module import.)"""
+    try:
+        margins = kite.margins(segment="equity")
+        return float(margins.get("net", 0))
+    except Exception as e:
+        logger.error("[TRADE] Margin fetch error: " + str(e))
+        return -1.0
+
+
 def get_option_ema_spread(token: int, dte: int = 99) -> float:
     try:
         df = D.get_historical_data(token, "3minute", D.LOOKBACK_3M)
@@ -49,16 +62,12 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
     if state.get("paused"):                  return False, "Bot paused"
     if not D.PAPER_MODE and kite is not None:
         try:
-            from VRL_TRADE import get_margin_available
             avail = get_margin_available(kite)
             if avail < option_ltp * D.get_lot_size() * 1.2:
                 return False, "Insufficient margin"
         except Exception:
             return False, "Margin check failed"
     return True, ""
-
-def loss_streak_gate(state: dict) -> bool:
-    return True
 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, market_open: bool,
                                state: dict, straddle_delta, spot_vwap, spot_for_vwap: float,
@@ -177,9 +186,6 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
     return round(entry_price - hard_sl, 2)
-
-def is_setup_building(token: int, direction: str) -> bool:
-    return False
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
