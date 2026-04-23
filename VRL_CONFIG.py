@@ -287,6 +287,16 @@ def _auto_login(kite) -> str:
     return access_token
 
 
+def _notify_auth_refreshed():
+    """Reset VRL_DATA's auth-rejection flag so historical_data and
+    WebSocket retries resume after a successful login / refresh."""
+    try:
+        import VRL_DATA as _D_auth
+        _D_auth.notify_auth_refreshed()
+    except Exception:
+        pass
+
+
 def get_kite():
     import VRL_DATA as D
     kite      = KiteConnect(api_key=D.KITE_API_KEY)
@@ -304,12 +314,7 @@ def get_kite():
         try:
             kite.profile()
             logger.info("[AUTH] Token valid ✓")
-            # BUG-N1: reset the auth-rejection flag so DATA resumes retries.
-            try:
-                import VRL_DATA as _D_auth
-                _D_auth.notify_auth_refreshed()
-            except Exception:
-                pass
+            _notify_auth_refreshed()
             return kite
         except Exception:
             logger.warning("[AUTH] Saved token expired")
@@ -320,12 +325,7 @@ def get_kite():
             kite.set_access_token(token)
             _write_token({"date": today_str, "access_token": token})
             logger.info("[AUTH] Auto-login successful ✓")
-            # BUG-N1: reset the auth-rejection flag so DATA resumes retries.
-            try:
-                import VRL_DATA as _D_auth
-                _D_auth.notify_auth_refreshed()
-            except Exception:
-                pass
+            _notify_auth_refreshed()
             return kite
         except Exception as e:
             logger.error("[AUTH] Attempt " + str(attempt + 1) + " failed: " + str(e))
