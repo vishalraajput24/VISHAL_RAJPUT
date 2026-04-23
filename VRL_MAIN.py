@@ -23,7 +23,7 @@ import VRL_DATA as D
 D.ensure_dirs()
 
 from VRL_DATA   import setup_logger
-from VRL_AUTH   import get_kite
+from VRL_CONFIG import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     loss_streak_gate, check_profit_lock,
@@ -1215,7 +1215,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             pass
     # ── Live validation: 10 entry checks (silent on PASS, alerts on FAIL) ──
     try:
-        from VRL_VALIDATE import validate_entry
+        from VRL_DB import validate_entry
         with _state_lock:
             _vstate = dict(state)
         _failures = validate_entry(_vstate, entry_result, kite)
@@ -1475,7 +1475,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     # ── Live validation: 10 exit checks (only on full close) ──
     if trade_done:
         try:
-            from VRL_VALIDATE import validate_exit
+            from VRL_DB import validate_exit
             with _state_lock:
                 _vstate = dict(state)
             _failures = validate_exit(

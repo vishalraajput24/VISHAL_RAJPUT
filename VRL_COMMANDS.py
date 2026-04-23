@@ -1374,7 +1374,7 @@ def _cmd_trades(args):
 def _cmd_validate(args):
     """Manual system validation — runs 10 ad-hoc health checks."""
     try:
-        from VRL_VALIDATE import manual_validate
+        from VRL_DB import manual_validate
         with _state_lock:
             st = dict(state)
         result = manual_validate(st)

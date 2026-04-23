@@ -431,7 +431,7 @@ _ws_max_delay = 60
 # every historical_data / quote / LTP call raises "Incorrect
 # api_key or access_token". Without a guard, the bot retries
 # every 1-2 seconds for hours, flooding the log with 13K+ warnings.
-# This flag stops all retries until VRL_AUTH refreshes the token
+# This flag stops all retries until VRL_CONFIG refreshes the token
 # and calls notify_auth_refreshed().
 _auth_rejected = False
 _auth_rejected_lock = threading.Lock()
@@ -447,7 +447,7 @@ def _set_auth_rejected():
     with _auth_rejected_lock:
         if not _auth_rejected:
             logger.warning("[DATA] Auth token rejected — pausing retries "
-                           "until re-auth via VRL_AUTH.")
+                           "until re-auth via VRL_CONFIG.")
         _auth_rejected = True
 
 
@@ -514,7 +514,7 @@ def get_active_trade() -> dict:
 
 
 def notify_auth_refreshed():
-    """Called by VRL_AUTH on successful login / token refresh.
+    """Called by VRL_CONFIG on successful login / token refresh.
     Resets the auth-rejection flag so historical_data and WS
     resume normal operation."""
     global _auth_rejected
@@ -708,7 +708,7 @@ def check_and_reconnect():
     global _last_reconnect_attempt, _kite, _ticker
     if not is_market_open():
         return
-    # BUG-N2: if auth is known-rejected, auto-heal can't help — VRL_AUTH
+    # BUG-N2: if auth is known-rejected, auto-heal can't help — VRL_CONFIG
     # must refresh the token first. Skip to avoid pointless reconnect.
     if _is_auth_rejected():
         return
@@ -728,7 +728,7 @@ def check_and_reconnect():
     except Exception:
         pass
     try:
-        from VRL_AUTH import get_kite
+        from VRL_CONFIG import get_kite
         new_kite = get_kite()
         if not new_kite:
             logger.error("[DATA] Re-auth returned None")
