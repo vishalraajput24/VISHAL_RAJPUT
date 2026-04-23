@@ -211,7 +211,17 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        last_close = opt_3m_full.iloc[-2]["close"] if opt_3m_full is not None and len(opt_3m_full) >= 2 else option_ltp
+        last_close = option_ltp  # fallback default
+    if opt_3m_full is not None and len(opt_3m_full) >= 2:
+        last_close = opt_3m_full.iloc[-2]["close"]
+    else:
+        import time
+        for _ in range(7):
+            time.sleep(5)
+            opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
+            if opt_3m_full is not None and len(opt_3m_full) >= 2:
+                last_close = opt_3m_full.iloc[-2]["close"]
+                break
         if last_close <= trail_sl:
             return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
     return []

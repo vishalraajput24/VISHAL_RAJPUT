@@ -1095,7 +1095,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _entry_score = entry_result.get("_entry_score", 0)
 
     _dir_emoji = "🟢" if option_type == "CE" else "🔴"
-    _sym = _short_sym(symbol, option_type, state.get("strike", 0))
+    _sym = _short_sym(symbol, option_type, entry_result.get("_strike", state.get("strike", 0)))
     _tm = datetime.now().strftime("%H:%M:%S")
 
     _core = (
