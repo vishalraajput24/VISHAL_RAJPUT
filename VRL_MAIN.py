@@ -838,12 +838,6 @@ def _alert_bot_started():
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
-def _alert_profit_lock(daily_pnl: float):
-    _tg_send(
-        "🔒 <b>PROFIT LOCK — +" + str(round(daily_pnl,1)) + "pts  " + _rs(daily_pnl) + "</b>\n"
-        "New entries still open but protected mode on."
-    )
-
 def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
     """v15.2.5 BUG-A: richer CRITICAL alert — names the blocked trade,
     tells the operator exactly which Telegram command clears the lock
@@ -1487,22 +1481,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             logger.warning("[VALIDATE] Exit validation error: " + str(_ve))
 
 
-def _execute_exit(kite, option_ltp: float, reason: str,
-                  saved_entry_price: float = None):
-    """Legacy wrapper — exits all lots.
-
-    BUG-D fix: now forwards `saved_entry_price` so callers (FORCE_EXIT,
-    other legacy paths) can capture the entry price BEFORE any state
-    mutation and guarantee correct PNL even if state["entry_price"]
-    has been touched between capture and exit. Without this, the
-    FORCE_EXIT path at line ~2100 captured _entry_px locally but the
-    thin wrapper dropped it, forcing _execute_exit_v13 to re-read
-    state — defeating the whole point of the capture.
-    """
-    _execute_exit_v13(kite, {"lots": "ALL", "lot_id": "ALL",
-                             "reason": reason, "price": option_ltp},
-                      saved_entry_price=saved_entry_price)
-
 # ═══════════════════════════════════════════════════════════════
 #  CANDLE BOUNDARY
 # ═══════════════════════════════════════════════════════════════
@@ -1625,31 +1603,6 @@ def _warmup_info(now, dte):
     return is_warm, int(done), needed, eta
 
 
-def _warmup_signal(opt_type, strike, progress, needed, eta):
-    """Build a signal block with WARMUP status for the dashboard."""
-    return {
-        "status": "WARMUP",
-        "warmup_progress": progress,
-        "warmup_needed": needed,
-        "warmup_eta": eta,
-        "message": "Indicators warming up — trades blocked until stable",
-        "strike": strike,
-        "ltp": 0,
-        "ema9": 0, "ema21": 0, "ema_gap": 0, "rsi": 0, "rsi_prev": 0,
-        "ema_ok": False, "rsi_ok": False,
-        "candle_green": False, "gap_widening": False,
-        "fired": False, "verdict": "WARMUP " + str(progress) + "/" + str(needed),
-        "path_a": False, "path_b": False,
-        "momentum_pts": 0, "momentum_threshold": 0, "momentum_tf": "",
-        "rsi_rising": False, "spot_confirms": False, "spot_move": 0,
-        "other_falling": False, "other_move": 0,
-        "two_green_above": False, "other_below_ema": False,
-        "breakout_confirmed": False, "spot_slope": 0,
-        "rsi_cap_active": 0, "spot_aligned": False,
-        "entry_mode": "",
-    }
-
-
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
@@ -1746,14 +1699,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "rsi": 0, "ema9": round(_eh, 2), "ema21": 0,
             }
 
-        # BUG-030: compute warmup state and use WARMUP placeholder during warmup
+        # Warmup metadata is still consumed by the dashboard header
+        # (market-context block). During warmup the per-side blocks now
+        # fall through to _build_signal's "NO DATA" fallback.
         _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
-        if not _is_warm and D.is_market_open():
-            ce_signal = _warmup_signal("CE", dir_strikes.get("CE", atm_strike), _w_done, _w_need, _w_eta)
-            pe_signal = _warmup_signal("PE", dir_strikes.get("PE", atm_strike), _w_done, _w_need, _w_eta)
-        else:
-            ce_signal = _build_signal("CE", all_results.get("CE"))
-            pe_signal = _build_signal("PE", all_results.get("PE"))
+        ce_signal = _build_signal("CE", all_results.get("CE"))
+        pe_signal = _build_signal("PE", all_results.get("PE"))
 
         # ── Fix LTP=0 when gate blocks early ──
         try:
@@ -2110,7 +2061,6 @@ def _strategy_loop(kite):
             with _state_lock:
                 _pnl_snapshot = state.get("daily_pnl", 0)
             if check_profit_lock(state, _pnl_snapshot):
-                _alert_profit_lock(_pnl_snapshot)
                 _save_state()
 
             # v13.8 Change 3: Straddle decay aggressive mode
@@ -2257,8 +2207,10 @@ def _strategy_loop(kite):
                 _exit_px = option_ltp if option_ltp > 0 else max(_entry_px, _floor_sl)
                 # BUG-D fix: thread the pre-captured entry through so PNL is
                 # computed against the REAL entry — not a race-stale state read.
-                _execute_exit(kite, _exit_px, "FORCE_EXIT",
-                              saved_entry_price=_entry_px)
+                _execute_exit_v13(kite,
+                                  {"lots": "ALL", "lot_id": "ALL",
+                                   "reason": "FORCE_EXIT", "price": _exit_px},
+                                  saved_entry_price=_entry_px)
                 time.sleep(1)
                 continue
 
@@ -2804,7 +2756,10 @@ def _strategy_loop(kite):
                         try:
                             cb_ltp = D.get_ltp(state.get('token', 0))
                             if cb_ltp > 0:
-                                _execute_exit(kite, cb_ltp, 'CIRCUIT_BREAKER_EXIT')
+                                _execute_exit_v13(kite,
+                                                  {"lots": "ALL", "lot_id": "ALL",
+                                                   "reason": "CIRCUIT_BREAKER_EXIT",
+                                                   "price": cb_ltp})
                                 logger.warning('[MAIN] Circuit breaker: emergency exit executed')
                             else:
                                 logger.critical('[MAIN] Circuit breaker: LTP=0, manual exit required')
