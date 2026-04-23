@@ -178,7 +178,7 @@ def init_db():
             score REAL, fired TEXT, reject_reason TEXT,
             vix REAL,
             spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT,
-            bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
+            straddle_decay_pct REAL,
             fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT)""")
 
         # ── TRADES ──
@@ -422,16 +422,9 @@ _SCAN_LIVE_COLS = [
     "band_position TEXT DEFAULT ''", "body_pct REAL DEFAULT 0",
     "body_pct_3m REAL DEFAULT 0", "ema_spread_3m REAL DEFAULT 0",
     "mode_3m TEXT DEFAULT ''",
-    # v15.2 straddle + VWAP (display-only after Fix 5)
-    "straddle_delta REAL DEFAULT 0", "straddle_period TEXT DEFAULT ''",
-    "atm_strike_used INTEGER DEFAULT 0", "band_width REAL DEFAULT 0",
-    "spot_vwap REAL DEFAULT 0", "spot_vs_vwap REAL DEFAULT 0",
-    "vwap_bonus TEXT DEFAULT ''",
     # Market context
     "vix REAL DEFAULT 0", "spot_rsi_3m REAL DEFAULT 0",
     "spot_ema_spread_3m REAL DEFAULT 0", "spot_regime TEXT DEFAULT ''",
-    "bias TEXT DEFAULT ''",
-    "hourly_rsi REAL DEFAULT 0",
     # Result
     "fired TEXT DEFAULT '0'", "trade_taken INTEGER DEFAULT 0",
     "reject_reason TEXT DEFAULT ''",
@@ -650,7 +643,8 @@ def migrate_drop_greeks():
 
 def migrate_drop_dead_indicators():
     """v16.6: idempotent migration to drop dead indicator columns
-    (Fib pivots, volume spike, PDH/PDL, spot gap) from signal_scans.
+    (Fib pivots, volume spike, PDH/PDL, spot gap, straddle/VWAP
+    display-only columns, bias, hourly_rsi) from signal_scans.
     Same idempotency guarantees as migrate_drop_greeks."""
     conn = get_conn()
     c = conn.cursor()
@@ -663,6 +657,12 @@ def migrate_drop_dead_indicators():
             "vol_spike", "vol_ratio",
             "pdh_break", "pdl_break",
             "prev_high", "prev_low",
+            # v16.6 Part 10: display-only columns retired with the
+            # signal scan log removal.
+            "bias", "hourly_rsi",
+            "straddle_delta", "straddle_period",
+            "atm_strike_used", "band_width",
+            "spot_vwap", "spot_vs_vwap", "vwap_bonus",
         ]),
     ]
     for table, cols in migrations:
@@ -779,11 +779,7 @@ _SCAN_FIELDS = [
     "direction", "entry_price",
     "ema9_high", "ema9_low", "band_position", "body_pct",
     "body_pct_3m", "ema_spread_3m", "mode_3m",
-    "straddle_delta", "straddle_period",
-    "atm_strike_used", "band_width",
-    "spot_vwap", "spot_vs_vwap", "vwap_bonus",
     "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
-    "bias", "hourly_rsi",
     "fired", "trade_taken", "reject_reason",
     "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]

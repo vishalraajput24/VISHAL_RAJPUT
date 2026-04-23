@@ -2210,11 +2210,6 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
-                try:
-                    from VRL_LAB import generate_daily_summary
-                    generate_daily_summary()
-                except Exception as e:
-                    logger.warning("[MAIN] Daily summary: " + str(e))
             # ── BUG-V v15.2.5 Batch 6: daily lab cleanup at 15:45+ IST ──
             # Previously cleanup ran only at bot startup. A process that
             # stays up for a week accumulates 7 days of option_3min /
