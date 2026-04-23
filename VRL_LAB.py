@@ -26,10 +26,9 @@ FIELDNAMES_3M = [
     "timestamp", "strike", "type",
     "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte",
-    "session_block", "iv_vs_open",
+    "session_block",
     "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap", "volume_ratio",
     "ema9_high", "ema9_low",   # v15.0: dual EMA9 bands for band-breakout strategy
-    "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
 
@@ -39,7 +38,7 @@ FIELDNAMES_1M = [
     "spot_ref", "atm_distance", "dte",
     "session_block",
     "body_pct", "rsi", "ema9", "ema9_gap", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
@@ -72,7 +71,6 @@ FIELDNAMES_SCAN = [
 _current_atm_strike = None
 _current_atm_tokens = None
 _current_expiry     = None
-_session_open_iv    = {}
 _lab_lock           = threading.Lock()   # protects the globals above
 
 _lab_running  = False
@@ -111,7 +109,7 @@ FIELDNAMES_5M = [
     "open", "high", "low", "close", "volume",
     "spot_ref", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema21", "ema_spread", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
 ]
 
 FIELDNAMES_15M = [
@@ -120,7 +118,7 @@ FIELDNAMES_15M = [
     "spot_ref", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema21", "ema_spread",
     "macd_hist", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
 ]
 
 FIELDNAMES_SPOT_5M = [
@@ -511,12 +509,11 @@ def _fetch_candles(kite, token: int, from_dt: datetime,
 # ─── RESET ────────────────────────────────────────────────────
 
 def reset_session():
-    global _current_atm_strike, _current_atm_tokens, _current_expiry, _session_open_iv
+    global _current_atm_strike, _current_atm_tokens, _current_expiry
     with _lab_lock:
         _current_atm_strike = None
         _current_atm_tokens = None
         _current_expiry     = None
-        _session_open_iv    = {}
     logger.info("[LAB] Session reset")
 
 
@@ -528,7 +525,7 @@ def collect_option_3min(kite, spot_ltp: float):
     Uses candles[-2] (last closed), not candles[-1] (still forming).
     Call at HH:MM:30 — 30s after each 3-min boundary.
     """
-    global _current_atm_strike, _current_atm_tokens, _current_expiry, _session_open_iv
+    global _current_atm_strike, _current_atm_tokens, _current_expiry
 
     now = datetime.now()
     cur_mins   = now.hour * 60 + now.minute
@@ -608,16 +605,6 @@ def collect_option_3min(kite, spot_ltp: float):
         except Exception:
             indic = {}
 
-        greeks = D.get_full_greeks(
-            last["close"], spot_ltp, _current_atm_strike,
-            _current_expiry, opt_type
-        )
-
-        if opt_type not in _session_open_iv and greeks.get("iv_pct", 0) > 0:
-            _session_open_iv[opt_type] = greeks["iv_pct"]
-        open_iv    = _session_open_iv.get(opt_type, greeks.get("iv_pct", 0))
-        iv_vs_open = round(greeks.get("iv_pct", 0) - open_iv, 2)
-
         ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
                   if hasattr(last["date"], "strftime") else str(last["date"]))
 
@@ -638,7 +625,6 @@ def collect_option_3min(kite, spot_ltp: float):
             "atm_distance" : round(abs(spot_ltp - _current_atm_strike), 0),
             "dte"          : dte,
             "session_block": session,
-            "iv_vs_open"   : iv_vs_open,
             "body_pct"     : indic.get("body_pct", 0),
             "adx"          : indic.get("adx", 0),
             "rsi"          : indic.get("rsi", 50),
@@ -649,11 +635,6 @@ def collect_option_3min(kite, spot_ltp: float):
             "volume_ratio" : indic.get("volume_ratio", 1),
             "ema9_high"    : indic.get("ema9_high", 0),
             "ema9_low"     : indic.get("ema9_low", 0),
-            "iv_pct"       : greeks.get("iv_pct", 0),
-            "delta"        : greeks.get("delta",  0),
-            "gamma"        : greeks.get("gamma",  0),
-            "theta"        : greeks.get("theta",  0),
-            "vega"         : greeks.get("vega",   0),
             "fwd_3c": "", "fwd_6c": "", "fwd_9c": "", "fwd_outcome": "",
         })
         today_ts.add(key)
@@ -836,11 +817,6 @@ def collect_option_1min(kite, spot_ltp: float):
         except Exception:
             indic = {}
 
-        greeks = D.get_full_greeks(
-            last["close"], spot_ltp, _current_atm_strike,
-            _current_expiry, opt_type
-        )
-
         ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
                   if hasattr(last["date"], "strftime") else str(last["date"]))
 
@@ -867,8 +843,6 @@ def collect_option_1min(kite, spot_ltp: float):
             "ema9_gap"     : indic.get("ema9_gap", 0),
             "adx"          : indic.get("adx", 0),
             "volume_ratio" : indic.get("volume_ratio", 1),
-            "iv_pct"       : greeks.get("iv_pct", 0),
-            "delta"        : greeks.get("delta",  0),
             "fwd_1c": "", "fwd_3c": "", "fwd_5c": "", "fwd_outcome": "",
         })
         today_ts.add(key)
@@ -1426,7 +1400,6 @@ def collect_option_5min(kite, spot_ltp: float):
                 pass
             vols = [df.iloc[i]["volume"] for i in range(-7, -2) if i >= -len(df) and df.iloc[i]["volume"] > 0]
             avg_v = sum(vols) / len(vols) if vols else 1
-            greeks = D.get_full_greeks(c, spot_ltp, _current_atm_strike, _current_expiry, opt_type)
             ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
                       if hasattr(last["date"], "strftime") else str(last["date"]))
             all_rows.append({
@@ -1439,7 +1412,6 @@ def collect_option_5min(kite, spot_ltp: float):
                 "ema9": round(e9, 2), "ema21": round(e21, 2),
                 "ema_spread": round(e9 - e21, 2), "adx": adx_val_5m,
                 "volume_ratio": round(last["volume"] / avg_v if avg_v > 0 else 1, 2),
-                "iv_pct": greeks.get("iv_pct", 0), "delta": greeks.get("delta", 0),
             })
         except Exception as e:
             logger.debug("[LAB] 5m error " + opt_type + ": " + str(e))
@@ -1516,7 +1488,6 @@ def collect_option_15min(kite, spot_ltp: float):
                 pass
             vols = [df.iloc[i]["volume"] for i in range(-5, -2) if i >= -len(df) and df.iloc[i]["volume"] > 0]
             avg_v = sum(vols) / len(vols) if vols else 1
-            greeks = D.get_full_greeks(c, spot_ltp, _current_atm_strike, _current_expiry, opt_type)
             ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
                       if hasattr(last["date"], "strftime") else str(last["date"]))
             all_rows.append({
@@ -1530,7 +1501,6 @@ def collect_option_15min(kite, spot_ltp: float):
                 "ema_spread": round(e9 - e21, 2),
                 "macd_hist": macd_hist, "adx": adx_val,
                 "volume_ratio": round(last["volume"] / avg_v if avg_v > 0 else 1, 2),
-                "iv_pct": greeks.get("iv_pct", 0), "delta": greeks.get("delta", 0),
             })
         except Exception as e:
             logger.debug("[LAB] 15m error " + opt_type + ": " + str(e))
