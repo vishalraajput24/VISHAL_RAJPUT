@@ -1456,10 +1456,6 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                         DB.insert_option_3min_many(rows)
                     elif tf == "minute":
                         DB.insert_option_1min_many(rows)
-                    elif tf == "5minute":
-                        DB.insert_option_5min_many(rows)
-                    elif tf == "15minute":
-                        DB.insert_option_15min_many(rows)
                     fetched_any = True
                     new_cnt = cnt + len(rows)
                     if side == "CE":

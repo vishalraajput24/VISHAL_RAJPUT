@@ -1400,10 +1400,6 @@ def collect_option_5min(kite, spot_ltp: float):
         time.sleep(0.35)
     if all_rows:
         _append_rows(_csv_path_5m(today), FIELDNAMES_5M, all_rows)
-        try:
-            DB.insert_option_5min_many(all_rows)
-        except Exception:
-            pass
         logger.debug("[LAB] 5m wrote=" + str(len(all_rows)))
 
 
@@ -1489,10 +1485,6 @@ def collect_option_15min(kite, spot_ltp: float):
         time.sleep(0.35)
     if all_rows:
         _append_rows(_csv_path_15m(today), FIELDNAMES_15M, all_rows)
-        try:
-            DB.insert_option_15min_many(all_rows)
-        except Exception:
-            pass
         logger.debug("[LAB] 15m wrote=" + str(len(all_rows)))
 
 
@@ -1557,10 +1549,6 @@ def collect_spot_5min(kite):
             }
             w.writerow(_s5_row)
             f.flush()
-        try:
-            DB.insert_spot_5min(_s5_row)
-        except Exception:
-            pass
     except Exception as e:
         logger.debug("[LAB] Spot 5m: " + str(e))
 
@@ -1626,10 +1614,6 @@ def collect_spot_15min(kite):
             }
             w.writerow(_s15_row)
             f.flush()
-        try:
-            DB.insert_spot_15min(_s15_row)
-        except Exception:
-            pass
     except Exception as e:
         logger.debug("[LAB] Spot 15m: " + str(e))
 
@@ -1698,10 +1682,6 @@ def collect_spot_60min(kite):
             }
             w.writerow(_s60_row)
             f.flush()
-        try:
-            DB.insert_spot_60min(_s60_row)
-        except Exception:
-            pass
         logger.debug("[LAB] Spot 60m wrote @" + ts_str[-5:])
     except Exception as e:
         logger.debug("[LAB] Spot 60m: " + str(e))
@@ -1781,10 +1761,6 @@ def collect_spot_daily(kite):
             }
             w.writerow(_sd_row)
             f.flush()
-        try:
-            DB.insert_spot_daily(_sd_row)
-        except Exception:
-            pass
         logger.info("[LAB] Daily spot wrote " + dt_str)
     except Exception as e:
         logger.debug("[LAB] Spot daily: " + str(e))
