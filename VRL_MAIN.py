@@ -2904,9 +2904,9 @@ def _strategy_loop(kite):
 
                 # ── v15.2.5: pre-entry awareness alerts (learning mode) ──
                 # Non-blocking. Only runs during the trading window (outer
-                # if-gate guarantees that). Rate-limited inside VRL_ALERTS.
+                # if-gate guarantees that). Rate-limited inside VRL_ENGINE.
                 try:
-                    import VRL_ALERTS
+                    import VRL_ENGINE as VRL_ALERTS
                     with _state_lock:
                         _alert_state = {
                             "pre_entry_alerts_enabled":
