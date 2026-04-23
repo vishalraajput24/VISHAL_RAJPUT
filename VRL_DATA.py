@@ -4,7 +4,6 @@
 # ═══════════════════════════════════════════════════════════════
 
 import os
-import math
 import time
 import logging
 import threading
@@ -90,7 +89,6 @@ STRIKE_STEP         = CFG.strike_cfg("step", 100)
 STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
-RISK_FREE_RATE   = CFG.risk("risk_free_rate", 0.065)
 
 MAX_DAILY_TRADES        = CFG.risk("max_daily_trades", 999)
 MAX_DAILY_LOSSES        = CFG.risk("max_daily_losses", 999)
@@ -1423,112 +1421,6 @@ def clear_token_cache():
     with _token_cache_lock:
         _token_cache.clear()
     logger.info("[DATA] Token cache cleared")
-
-def _norm_cdf(x: float) -> float:
-    if x < -8.0: return 0.0
-    if x > 8.0:  return 1.0
-    a1,a2,a3,a4,a5,p = 0.319381530,-0.356563782,1.781477937,-1.821255978,1.330274429,0.2316419
-    k    = 1.0 / (1.0 + p * abs(x))
-    poly = k * (a1 + k * (a2 + k * (a3 + k * (a4 + k * a5))))
-    cdf  = 1.0 - _norm_pdf(x) * poly
-    return cdf if x >= 0 else 1.0 - cdf
-
-def _norm_pdf(x: float) -> float:
-    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
-
-def _bs_price(S, K, T, r, sigma, option_type: str) -> float:
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return 0.0
-    try:
-        sqrt_T = math.sqrt(T)
-        d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        d2 = d1 - sigma*sqrt_T
-        if option_type == "CE":
-            return S*_norm_cdf(d1) - K*math.exp(-r*T)*_norm_cdf(d2)
-        else:
-            return K*math.exp(-r*T)*_norm_cdf(-d2) - S*_norm_cdf(-d1)
-    except Exception:
-        return 0.0
-
-def _bs_vega(S, K, T, r, sigma) -> float:
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return 0.0
-    try:
-        sqrt_T = math.sqrt(T)
-        d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        return S * _norm_pdf(d1) * sqrt_T
-    except Exception:
-        return 0.0
-
-def calculate_iv(market_price, S, K, T, r, option_type, max_iter=100, tol=0.01):
-    if not market_price or market_price <= 0 or T <= 0 or S <= 0 or K <= 0:
-        return 0.0
-    sigma = 0.20
-    for _ in range(max_iter):
-        price = _bs_price(S, K, T, r, sigma, option_type)
-        vega  = _bs_vega(S, K, T, r, sigma)
-        diff  = price - market_price
-        if abs(diff) < tol:
-            return round(sigma, 6)
-        if abs(vega) < 1e-10:
-            break
-        sigma -= diff / vega
-        sigma = max(0.001, min(sigma, 10.0))
-    lo, hi = 0.001, 5.0
-    for _ in range(100):
-        mid   = (lo + hi) / 2.0
-        price = _bs_price(S, K, T, r, mid, option_type)
-        if abs(price - market_price) < 0.01:
-            return round(mid, 6)
-        if price < market_price:
-            lo = mid
-        else:
-            hi = mid
-    return 0.0
-
-def calculate_greeks(S, K, T, r, sigma, option_type):
-    empty = {"delta":0.0,"gamma":0.0,"theta":0.0,"vega":0.0,"iv_pct":0.0,"price":0.0}
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return empty
-    try:
-        sqrt_T = math.sqrt(T)
-        d1     = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        d2     = d1 - sigma*sqrt_T
-        pdf_d1 = _norm_pdf(d1)
-        exp_rT = math.exp(-r*T)
-        delta  = _norm_cdf(d1) if option_type == "CE" else _norm_cdf(d1) - 1.0
-        gamma  = pdf_d1 / (S * sigma * sqrt_T)
-        if option_type == "CE":
-            theta = ((-S*pdf_d1*sigma/(2*sqrt_T)) - r*K*exp_rT*_norm_cdf(d2)) / 365.0
-        else:
-            theta = ((-S*pdf_d1*sigma/(2*sqrt_T)) + r*K*exp_rT*_norm_cdf(-d2)) / 365.0
-        vega  = S * pdf_d1 * sqrt_T / 100.0
-        price = _bs_price(S, K, T, r, sigma, option_type)
-        return {"delta":round(delta,4),"gamma":round(gamma,6),"theta":round(theta,4),
-                "vega":round(vega,4),"iv_pct":round(sigma*100,2),"price":round(price,2)}
-    except Exception as e:
-        logger.error("[GREEKS] Calculation error: " + str(e))
-        return empty
-
-def get_full_greeks(market_price, spot_ltp, strike, expiry_date, option_type, r=None):
-    if r is None:
-        r = RISK_FREE_RATE
-    empty = {"delta":0.0,"gamma":0.0,"theta":0.0,"vega":0.0,"iv_pct":0.0,"dte":0,"ok":False}
-    try:
-        dte   = max((expiry_date - date.today()).days, 0)
-        T     = dte / 365.0 if dte > 0 else 0.5 / 365.0
-        P     = float(market_price) if market_price else 0.0
-        iv    = calculate_iv(P, float(spot_ltp), float(strike), T, r, option_type) if P > 0 else 0.0
-        if iv <= 0:
-            return {**empty, "dte": dte}
-        greeks        = calculate_greeks(float(spot_ltp), float(strike), T, r, iv, option_type)
-        greeks["dte"] = dte
-        greeks["ok"]  = True
-        return greeks
-    except Exception as e:
-        logger.error("[GREEKS] get_full_greeks error: " + str(e))
-        return empty
-
 
 # ═══════════════════════════════════════════════════════════════
 #  SPOT INTELLIGENCE LAYER (v12.11)
