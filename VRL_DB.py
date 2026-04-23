@@ -1278,7 +1278,7 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
 
     # CHECK 13: Charges calculator returns sensible numbers (if module exists)
     try:
-        import VRL_CHARGES as CH  # type: ignore
+        import VRL_ENGINE as CH  # type: ignore
         try:
             charges = CH.calculate_charges(
                 float(entry_price), float(exit_price), int(qty_exited), 1)

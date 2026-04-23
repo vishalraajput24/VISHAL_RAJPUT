@@ -35,7 +35,7 @@ import VRL_CONFIG as CFG
 from VRL_TRADE import place_entry, place_exit
 
 from VRL_LAB    import start_lab
-import VRL_CHARGES as CHARGES
+import VRL_ENGINE as CHARGES
 
 # ── Loggers ─────────────────────────────────────────────────────
 logger     = setup_logger("vrl_live", D.LIVE_LOG_FILE)
