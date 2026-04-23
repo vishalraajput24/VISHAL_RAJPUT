@@ -282,14 +282,6 @@ def _send_today_download(target_date: str = None):
 def _why_blocked(st: dict) -> str:
     if st.get("paused"):
         return "⏸ PAUSED"
-    if st.get("daily_trades", 0) >= D.MAX_DAILY_TRADES:
-        return "🚫 Max trades hit (" + str(D.MAX_DAILY_TRADES) + ")"
-    if st.get("daily_losses", 0) >= D.MAX_DAILY_LOSSES:
-        return "🚫 Max losses hit (" + str(D.MAX_DAILY_LOSSES) + ")"
-    if st.get("profit_locked"):
-        return "🔒 Profit locked — trailing only"
-    if st.get("consecutive_losses", 0) >= 2:
-        return "⚠️ Streak=" + str(st["consecutive_losses"]) + " — score≥" + str(6) + " needed"
     return "✅ Ready to enter"
 
 def _cmd_help(args):
@@ -335,9 +327,6 @@ def _cmd_status(args):
     with _state_lock:
         st = dict(state)
 
-    streak     = st.get("consecutive_losses", 0)
-    streak_str = str(streak) + (" 🔴" if streak >= 2 else " ✅" if streak == 0 else "")
-
     if not st.get("in_trade"):
         last_scan = st.get("_last_scan", {})
         # BUG-030: Read warmup state from dashboard JSON (written by VRL_MAIN)
@@ -364,11 +353,7 @@ def _cmd_status(args):
             "📊 <b>STATUS — NO TRADE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + _warmup_line +
-            "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
-            "Losses : " + str(st.get("daily_losses", 0)) + "/" + str(D.MAX_DAILY_LOSSES) + "\n"
-            "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"
             "PNL    : " + str(round(st.get("daily_pnl", 0), 1)) + "pts\n"
-            "Streak : " + streak_str + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Last scan : " + last_scan.get("time", "—") + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -434,10 +419,7 @@ def _cmd_status(args):
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
         + _vel_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Trades : " + str(st.get("daily_trades", 0)) + "/" + str(D.MAX_DAILY_TRADES) + "\n"
-        "Wins   : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0)) + "\n"
-        "Day PNL: " + str(round(st.get("daily_pnl", 0), 1)) + "pts\n"
-        "Streak : " + streak_str
+        "Day PNL: " + str(round(st.get("daily_pnl", 0), 1)) + "pts"
     )
 
 def _cmd_pnl(args):
@@ -445,7 +427,6 @@ def _cmd_pnl(args):
         st = dict(state)
     pnl    = st.get("daily_pnl", 0)
     sign   = "+" if pnl >= 0 else ""
-    streak = st.get("consecutive_losses", 0)
 
     # Read today's trades for charges breakdown
     _today_trades = []
@@ -485,9 +466,6 @@ def _cmd_pnl(args):
         "💰 <b>TODAY P&amp;L</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "PNL    : " + sign + str(round(pnl, 1)) + "pts  " + _rs(pnl) + "\n"
-        "Trades : " + str(st.get("daily_trades", 0)) + "\n"
-        "W/L    : " + str(st.get("daily_trades", 0) - st.get("daily_losses", 0))
-        + "W " + str(st.get("daily_losses", 0)) + "L\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + (_trd_lines if _trd_lines else "No trades\n")
         + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -567,9 +545,7 @@ def _cmd_score(args):
         if dte <= 1:   dte_str += " 🔥 EXPIRY"
         elif dte <= 2: dte_str += " ⚠️ NEAR"
 
-    streak = st.get("consecutive_losses", 0)
-    gate_str = ("⚠️ Streak=" + str(streak) + " — score≥" + str(6) + " needed"
-                if streak >= 2 else "✅ Clear")
+    gate_str = "✅ Clear"
 
     result_str = ("→ " + f_type + " " + fired + " ⚡ ENTERING"
                   if fired != "No" else "→ No entry this scan")
@@ -693,8 +669,6 @@ def _cmd_health(args):
     vix_ltp  = D.get_vix()
     ws_ok    = D.is_tick_live(D.NIFTY_SPOT_TOKEN)
     market   = D.is_market_open()
-    circuit  = state.get("_circuit_breaker", False)
-    errors   = state.get("_error_count", 0)
 
     disk_free_mb = 0
     try:
@@ -712,8 +686,6 @@ def _cmd_health(args):
         "Spot LTP   : " + (str(round(spot_ltp, 1)) if spot_ltp > 0 else ("⏸ N/A" if not market else "❌ Missing")) + "\n"
         "VIX        : " + (str(round(vix_ltp, 1)) if vix_ltp > 0 else ("⏸ N/A" if not market else "❌ Missing")) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Circuit    : " + ("🚨 TRIGGERED — use /resume" if circuit else "✅ Clear") + "\n"
-        "Errors     : " + str(errors) + " consecutive\n"
         "In trade   : " + str(state.get("in_trade", False)) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Disk free  : " + str(disk_free_mb) + " MB\n"
@@ -764,11 +736,9 @@ def _cmd_pause(args):
 
 def _cmd_resume(args):
     with _state_lock:
-        state["paused"]           = False
-        state["_circuit_breaker"] = False
-        state["_error_count"]     = 0
-    _tg_send("▶️ Resumed. Circuit breaker cleared.")
-    logger.info("[CTRL] Resumed + circuit breaker reset")
+        state["paused"] = False
+    _tg_send("▶️ Resumed.")
+    logger.info("[CTRL] Resumed")
 
 def _cmd_forceexit(args):
     with _state_lock:

@@ -80,9 +80,6 @@ strike:
 
 # ── Risk ───────────────────────────────────────────────────────
 risk:
-  max_daily_trades: 999
-  max_daily_losses: 999
-  profit_lock_pts: 150
   reentry_cooldown_min: 5
   max_positions: 1
 

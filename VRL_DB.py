@@ -1346,30 +1346,19 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
     if float(state.get("peak_pnl", 0) or 0) != 0:
         failures.append("STATE: peak_pnl not reset")
 
-    # CHECK 18: Daily counters updated
-    daily_trades = int(state.get("daily_trades", 0) or 0)
-    if daily_trades < 1:
-        failures.append("STATE: daily_trades=0 after exit")
-
-    # CHECK 19: Exchange SL cancelled (live mode only)
+    # CHECK 18: Exchange SL cancelled (live mode only)
     if not D.PAPER_MODE:
         sl_id = state.get("_sl_order_id")
         if sl_id and sl_id != "PAPER_SL":
             failures.append("EXCHANGE_SL: SL order_id=" + str(sl_id)
                             + " not cleared after exit")
 
-    # CHECK 20: Dashboard JSON reflects the same trade count + PNL
+    # CHECK 19: Dashboard JSON reflects PNL
     try:
         if os.path.isfile(_DASH_PATH):
             with open(_DASH_PATH) as f:
                 dash = json.load(f)
             today_block = dash.get("today", {}) or {}
-            dash_trades = int(today_block.get("trades", 0) or 0)
-            if dash_trades != daily_trades:
-                failures.append("DASHBOARD: trades=" + str(dash_trades)
-                                + " state=" + str(daily_trades))
-
-            # Alignment cross-checks (Telegram == Dashboard == State)
             try:
                 tg_pnl   = round(float(state.get("daily_pnl", 0) or 0), 1)
                 dash_pnl = round(float(today_block.get("pnl", 0) or 0), 1)
@@ -1378,16 +1367,8 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
                                     + " dashboard=" + str(dash_pnl))
             except Exception:
                 pass
-            try:
-                tg_wins   = daily_trades - int(state.get("daily_losses", 0) or 0)
-                dash_wins = int(today_block.get("wins", 0) or 0)
-                if tg_wins != dash_wins:
-                    failures.append("ALIGN_WINS: state=" + str(tg_wins)
-                                    + " dashboard=" + str(dash_wins))
-            except Exception:
-                pass
     except Exception as e:
-        failures.append("CHECK20_ERR: " + str(e))
+        failures.append("CHECK19_ERR: " + str(e))
 
     _log_result("EXIT ", 10, failures)
     return failures
@@ -1522,21 +1503,6 @@ def manual_validate(state):
         checks.append(("Config", True, ver))
     except Exception as e:
         checks.append(("Config", False, str(e)))
-
-    # 10. Daily reconcile — state vs CSV trade count
-    try:
-        today = date.today().isoformat()
-        csv_today = 0
-        if os.path.isfile(_CSV_PATH):
-            with open(_CSV_PATH) as f:
-                csv_today = sum(1 for r in csv.DictReader(f)
-                                if r.get("date") == today)
-        state_today = int(state.get("daily_trades", 0) or 0)
-        ok = csv_today == state_today
-        checks.append(("Reconcile", ok,
-                       "state=" + str(state_today) + " csv=" + str(csv_today)))
-    except Exception as e:
-        checks.append(("Reconcile", False, str(e)))
 
     passed = sum(1 for _n, ok, _d in checks if ok)
     return {"checks": checks, "passed": passed, "total": len(checks)}

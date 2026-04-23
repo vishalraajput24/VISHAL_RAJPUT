@@ -86,9 +86,6 @@ STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
 
-MAX_DAILY_TRADES        = CFG.risk("max_daily_trades", 999)
-MAX_DAILY_LOSSES        = CFG.risk("max_daily_losses", 999)
-PROFIT_LOCK_PTS         = CFG.risk("profit_lock_pts", 150)
 PROFIT_LOCK_TRAIL_TF    = "3minute"
 
 # v16: RSI constants kept for shadow analysis
@@ -150,8 +147,7 @@ STATE_PERSIST_FIELDS = [
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",
     # Daily
-    "daily_trades", "daily_losses", "daily_pnl",
-    "consecutive_losses", "profit_locked",
+    "daily_pnl",
     # Bot control
     "paused", "prev_close",
     # v15.2.5 BUG-A: persist _exit_failed so a crash mid-manual-resolution

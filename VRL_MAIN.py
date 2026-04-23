@@ -26,7 +26,6 @@ from VRL_DATA   import setup_logger
 from VRL_CONFIG import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
-    check_profit_lock,
     compute_entry_sl,
     get_option_ema_spread,
 )
@@ -125,15 +124,9 @@ DEFAULT_STATE = {
     "last_exit_peak"     : 0.0,
     "last_exit_reason"   : "",
     # ── Daily counters ─────────────────────────────────────
-    "daily_trades"       : 0,
-    "daily_losses"       : 0,
     "daily_pnl"          : 0.0,
-    "consecutive_losses" : 0,
-    "profit_locked"      : False,
     # ── Bot control ────────────────────────────────────────
     "paused"             : False,
-    "_circuit_breaker"   : False,
-    "_error_count"       : 0,
     # ── Daily reset flags ──────────────────────────────────
     "_eod_reported"      : False,
     "_eod_exited"        : False,
@@ -344,10 +337,7 @@ def _reconcile_positions(kite):
 
 def _reset_daily(today_str: str):
     with _state_lock:
-        state["daily_trades"]          = 0
-        state["daily_losses"]          = 0
         state["daily_pnl"]             = 0.0
-        state["profit_locked"]         = False
         state["_eod_reported"]         = False
         state["_eod_exited"]           = False
         state["aggressive_mode"]       = False
@@ -1057,8 +1047,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_ema9_high_slope"]  = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
         state["current_ema9_low_slope"]   = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
         state["_last_context_ts"]         = ""
-        # Counters
-        state["daily_trades"]      += 1
 
     _save_state()
 
@@ -1314,11 +1302,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     if trade_done:
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl_lots, 2)
-            if pnl < 0:
-                state["daily_losses"]       = state.get("daily_losses", 0) + 1
-                state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
-            else:
-                state["consecutive_losses"] = 0
             state["last_exit_time"] = datetime.now().isoformat()
             state["last_exit_direction"] = direction
             state["last_exit_peak"] = peak
@@ -1350,9 +1333,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             D.unsubscribe_tokens([old_token])
         _reset_strike_lock()
         _day_pnl    = state.get("daily_pnl", 0)
-        _day_trades = state.get("daily_trades", 0)
-        _day_losses = state.get("daily_losses", 0)
-        _day_wins   = _day_trades - _day_losses
         _sym_short  = _short_sym(symbol, direction, _exit_strike)
         _pnl_sign   = "+" if pnl >= 0 else ""
         _day_rs     = int(_day_pnl * D.get_lot_size())
@@ -1411,8 +1391,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             "Charges -Rs" + "{:,}".format(int(_ch["total_charges"])) + "\n"
             "<b>Net     " + _net_sign + "Rs" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "DAY " + "{:+.1f}".format(_day_pnl) + " pts | "
-            + str(_day_wins) + "W " + str(_day_losses) + "L"
+            "DAY " + "{:+.1f}".format(_day_pnl) + " pts"
         )
     else:
         # Partial exit — update daily PNL for the exited lot
@@ -1823,9 +1802,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "trades": len(_today_trades),
             "wins": _today_wins,
             "losses": _today_losses,
-            "streak": st.get("consecutive_losses", 0),
             "paused": st.get("paused", False),
-            "profit_locked": st.get("profit_locked", False),
         }
 
         # ── Today charges from trade log ──
@@ -2054,14 +2031,6 @@ def _strategy_loop(kite):
                     _tg_send(_wm)
             except Exception as _we:
                 logger.warning("[MAIN] Warnings: " + str(_we))
-
-            # v12.9 FIX: _error_count reset moved AFTER successful scan
-            # (was here at top = circuit breaker never fired)
-
-            with _state_lock:
-                _pnl_snapshot = state.get("daily_pnl", 0)
-            if check_profit_lock(state, _pnl_snapshot):
-                _save_state()
 
             # v13.8 Change 3: Straddle decay aggressive mode
             _strad_open = getattr(D, "_straddle_open", 0)
@@ -2741,38 +2710,8 @@ def _strategy_loop(kite):
             if now.second % 10 < 2:
                 _update_dashboard_ltp()
 
-            # v12.9: Reset error count only after a successful loop iteration
-            if state.get("_error_count", 0) > 0:
-                with _state_lock:
-                    state["_error_count"] = 0
-
         except Exception as e:
             logger.error("[MAIN] Loop error: " + str(e))
-            with _state_lock:
-                state["_error_count"] = state.get("_error_count", 0) + 1
-                _cb_threshold = 3 if not D.PAPER_MODE else 5
-                if state["_error_count"] >= _cb_threshold and not state.get("_circuit_breaker"):
-                    if state.get('in_trade'):
-                        try:
-                            cb_ltp = D.get_ltp(state.get('token', 0))
-                            if cb_ltp > 0:
-                                _execute_exit_v13(kite,
-                                                  {"lots": "ALL", "lot_id": "ALL",
-                                                   "reason": "CIRCUIT_BREAKER_EXIT",
-                                                   "price": cb_ltp})
-                                logger.warning('[MAIN] Circuit breaker: emergency exit executed')
-                            else:
-                                logger.critical('[MAIN] Circuit breaker: LTP=0, manual exit required')
-                        except Exception as cb_e:
-                            logger.critical('[MAIN] Circuit breaker exit failed: ' + str(cb_e))
-                    state["_circuit_breaker"] = True
-                    state["paused"]            = True
-                    logger.critical("[MAIN] ⚡ CIRCUIT BREAKER — "
-                                    + str(state["_error_count"]) + " errors")
-                    _tg_send("⚡ <b>CIRCUIT BREAKER</b>\n"
-                             + str(state["_error_count"]) + " consecutive errors.\n"
-                             + "Bot paused. /resume to restart.\n"
-                             + "Error: " + str(e)[:100])
             time.sleep(2)
 
         time.sleep(1)
@@ -3108,18 +3047,7 @@ def main():
             pnl    = sum(_get_pnl(t) for t in trades_today)
 
             with _state_lock:
-                state["daily_trades"]       = len(trades_today)
-                state["daily_losses"]       = len(losses)
                 state["daily_pnl"]          = round(pnl, 2)
-                # v12.7 fix: count streak from tail — not total losses
-                # e.g. W L L W → streak=0, not 2
-                streak = 0
-                for t in reversed(trades_today):
-                    if _get_pnl(t) < 0:
-                        streak += 1
-                    else:
-                        break
-                state["consecutive_losses"] = streak
 
             logger.info("[MAIN] Restored: " + str(len(trades_today))
                         + " trades | " + str(len(losses)) + " losses | pnl="

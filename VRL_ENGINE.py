@@ -41,10 +41,6 @@ def get_option_ema_spread(token: int, dte: int = 99) -> float:
 
 def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: dict,
                      session: str = "", direction: str = "") -> tuple:
-    if state.get("daily_trades", 0) >= D.MAX_DAILY_TRADES:
-        return False, "MAX_DAILY_TRADES reached"
-    if state.get("daily_losses", 0) >= D.MAX_DAILY_LOSSES:
-        return False, "MAX_DAILY_LOSSES reached"
     last_exit = state.get("last_exit_time")
     if last_exit:
         try:
@@ -199,14 +195,6 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
         sl = entry_price - 10
         tier = "INITIAL"
     return round(sl, 2), tier
-
-def check_profit_lock(state: dict, daily_pnl: float) -> bool:
-    if state.get("profit_locked"): return False
-    if daily_pnl >= D.PROFIT_LOCK_PTS:
-        state["profit_locked"] = True
-        logger.info("[ENGINE] Profit lock at " + str(round(daily_pnl,1)) + "pts")
-        return True
-    return False
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, market_open: bool) -> list:
     if not state.get("in_trade"): return []
