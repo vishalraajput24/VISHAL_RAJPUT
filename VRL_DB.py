@@ -169,7 +169,7 @@ def init_db():
             open REAL, high REAL, low REAL, close REAL, volume REAL,
             spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
             body_pct REAL, rsi REAL, ema9 REAL, ema9_gap REAL, adx REAL,
-            volume_ratio REAL, iv_pct REAL, delta REAL,
+            volume_ratio REAL,
             fwd_1c REAL, fwd_3c REAL, fwd_5c REAL, fwd_outcome TEXT)""")
 
         # ── OPTION 3-MIN ──
@@ -180,7 +180,6 @@ def init_db():
             iv_vs_open REAL,
             body_pct REAL, adx REAL, rsi REAL, ema9 REAL, ema21 REAL,
             ema_spread REAL, ema9_gap REAL, volume_ratio REAL,
-            iv_pct REAL, delta REAL, gamma REAL, theta REAL, vega REAL,
             fwd_3c REAL, fwd_6c REAL, fwd_9c REAL, fwd_outcome TEXT)""")
 
         # ── OPTION 5-MIN ──
@@ -189,7 +188,7 @@ def init_db():
             open REAL, high REAL, low REAL, close REAL, volume REAL,
             spot_ref REAL, dte INTEGER, session_block TEXT,
             body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
-            adx REAL, volume_ratio REAL, iv_pct REAL, delta REAL)""")
+            adx REAL, volume_ratio REAL)""")
 
         # ── OPTION 15-MIN ──
         c.execute("""CREATE TABLE IF NOT EXISTS option_15min (
@@ -198,7 +197,7 @@ def init_db():
             spot_ref REAL, dte INTEGER, session_block TEXT,
             body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
             macd_hist REAL, adx REAL,
-            volume_ratio REAL, iv_pct REAL, delta REAL)""")
+            volume_ratio REAL)""")
 
         # ── SIGNAL SCANS ──
         c.execute("""CREATE TABLE IF NOT EXISTS signal_scans (
@@ -207,7 +206,7 @@ def init_db():
             rsi_1m REAL, body_pct_1m REAL, vol_ratio_1m REAL, rsi_rising_1m TEXT, spread_1m REAL,
             rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL, conditions_3m TEXT, mode_3m TEXT,
             score REAL, fired TEXT, reject_reason TEXT,
-            iv_pct REAL, delta REAL, vix REAL,
+            vix REAL,
             spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT, spot_gap REAL,
             bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
             near_fib_level TEXT, fib_distance REAL,
@@ -220,7 +219,7 @@ def init_db():
             entry_price REAL, exit_price REAL, pnl_pts REAL, pnl_rs REAL,
             peak_pnl REAL, trough_pnl REAL,
             exit_reason TEXT, exit_phase INTEGER,
-            score REAL, iv_at_entry REAL, regime TEXT,
+            score REAL, regime TEXT,
             dte INTEGER, candles_held INTEGER,
             session TEXT, strike INTEGER, sl_pts REAL,
             spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
@@ -412,6 +411,14 @@ def init_db():
         else:
             logger.info("[DB] Schema v" + str(_schema_v)
                         + " — migration already done, skipped")
+
+        # v16.6: Greek columns removed from schemas. Drop them from
+        # pre-existing DBs (idempotent — ALTER fails silently if column
+        # is already gone or the table doesn't exist).
+        try:
+            migrate_drop_greeks()
+        except Exception as _me:
+            logger.warning("[DB] migrate_drop_greeks: " + str(_me))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -639,6 +646,31 @@ def migrate_schema_v16():
         logger.warning("[DB] v16 migration error: " + str(e))
 
 
+def migrate_drop_greeks():
+    """Idempotent migration to drop Greek columns from existing DBs.
+    Requires SQLite ≥ 3.35 for ALTER TABLE DROP COLUMN; on older versions
+    the ALTER fails silently and the stale columns stay (harmless — they
+    simply aren't written to or read from)."""
+    conn = get_conn()
+    c = conn.cursor()
+    migrations = [
+        ("option_3min",  ["iv_pct", "delta", "gamma", "theta", "vega"]),
+        ("option_1min",  ["iv_pct", "delta"]),
+        ("option_5min",  ["iv_pct", "delta"]),
+        ("option_15min", ["iv_pct", "delta"]),
+        ("signal_scans", ["iv_pct", "delta"]),
+        ("trades",       ["iv_at_entry"]),
+    ]
+    for table, cols in migrations:
+        for col in cols:
+            try:
+                c.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+                conn.commit()
+                logger.info(f"[DB] Migrated: dropped {table}.{col}")
+            except Exception:
+                pass  # column already removed or table doesn't exist
+
+
 def _insert(table, row, fields):
     """Generic insert. row is a dict, fields is ordered list of column names."""
     conn = get_conn()
@@ -704,7 +736,7 @@ _OPT_1M_FIELDS = [
     "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema9_gap", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
@@ -713,7 +745,6 @@ _OPT_3M_FIELDS = [
     "spot_ref", "atm_distance", "dte", "session_block", "iv_vs_open",
     "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap",
     "volume_ratio", "ema9_high", "ema9_low",   # v15.0 bands
-    "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
 ]
 
@@ -721,14 +752,14 @@ _OPT_5M_FIELDS = [
     "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
     "spot_ref", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema21", "ema_spread", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
 ]
 
 _OPT_15M_FIELDS = [
     "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
     "spot_ref", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema21", "ema_spread", "macd_hist", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
 ]
 
 def insert_option_1min(row):
@@ -760,8 +791,8 @@ def insert_option_15min_many(rows):
 
 # v15.2.5 BUG-N6: live columns only. Dead v13 fields (rsi_1m, body_pct_1m,
 # vol_ratio_1m, rsi_rising_1m, spread_1m, rsi_3m, conditions_3m, score,
-# iv_pct, delta, straddle_decay_pct, straddle_threshold, near_fib_level,
-# fib_distance) removed after schema migration in migrate_schema_v15().
+# straddle_decay_pct, straddle_threshold, near_fib_level, fib_distance,
+# and later the Greek columns) removed via schema migrations.
 _SCAN_FIELDS = [
     "timestamp", "session", "dte", "atm_strike", "spot",
     "direction", "entry_price",
@@ -786,10 +817,10 @@ def insert_scan_many(rows):
 # ── Trades ──
 
 # v15.2.5 BUG-N7: live columns only. Dead v13 fields (mode, score,
-# iv_at_entry, regime, spread_1m, spread_3m, delta_at_entry,
+# regime, spread_1m, spread_3m, delta_at_entry,
 # straddle_decay, signal_price, bonus_*, momentum_pts, rsi_rising,
 # spot_confirms, spot_move, spike_ratio, other_falling, other_move,
-# momentum_tf) removed after schema migration in migrate_schema_v15().
+# momentum_tf, entry IV) removed after schema migration in migrate_schema_v15().
 _TRADE_FIELDS = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
