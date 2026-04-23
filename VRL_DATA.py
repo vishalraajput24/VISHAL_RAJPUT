@@ -967,41 +967,6 @@ def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
 #  Returns None on missing data so the gate can reject explicitly.
 # ═══════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════
-#  BONUS INDICATORS — information only, never block trades
-# ═══════════════════════════════════════════════════════════════
-
-def calculate_option_vwap(token: int) -> dict:
-    """VWAP on option — today's intraday only."""
-    result = {"vwap": 0.0, "above_vwap": False, "distance": 0.0}
-    try:
-        from datetime import date as _d
-        df = get_historical_data(token, "minute", 200)
-        if df.empty or len(df) < 5:
-            return result
-        # Filter to TODAY only — today_only param unreliable
-        today_str = _d.today().strftime("%Y-%m-%d")
-        df = df.copy()
-        df["_date"] = df.index.map(
-            lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
-        df = df[df["_date"] == today_str]
-        if df.empty or len(df) < 3:
-            return result
-        typical_price = (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3
-        vol = df["volume"].astype(float)
-        cum_vol = vol.cumsum().replace(0, float("nan"))
-        cum_tp_vol = (typical_price * vol).cumsum()
-        vwap = cum_tp_vol / cum_vol
-        vwap_val = round(float(vwap.iloc[-1]), 2)
-        last_close = float(df["close"].iloc[-1])
-        result["vwap"] = vwap_val
-        result["above_vwap"] = last_close > vwap_val
-        result["distance"] = round(last_close - vwap_val, 2)
-    except Exception as e:
-        logger.debug("[VWAP] " + str(e))
-    return result
-
-
 def get_active_strike_step(dte: int = None) -> int:
     """v13.3: True ATM — 50-step for ALL DTE."""
     return 50
@@ -1309,28 +1274,6 @@ def get_hourly_rsi():
     return _hourly_rsi
 
 
-def check_vix_warning():
-    if not is_market_open():
-        return {"vix": 0, "warning": False, "level": "NORMAL", "msg": ""}
-    vix = get_vix()
-    result = {"vix": round(vix, 1), "warning": False, "level": "NORMAL", "msg": ""}
-    if vix >= VIX_DANGER_LEVEL:
-        result.update(warning=True, level="DANGER",
-                      msg="VIX " + str(round(vix, 1)) + " DANGER — SLs hit by noise")
-    elif vix >= VIX_WARN_LEVEL:
-        result.update(warning=True, level="ELEVATED",
-                      msg="VIX " + str(round(vix, 1)) + " ELEVATED — wider SLs needed")
-    return result
-
-
-def is_entry_fire_window(now=None):
-    if now is None:
-        now = datetime.now()
-    start = now.replace(hour=ENTRY_FIRE_HOUR, minute=ENTRY_FIRE_MIN, second=0)
-    end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0)
-    return start <= now <= end
-
-
 def run_warnings(kite, state, expiry, dte, spot_ltp, now):
     import time as _t
     msgs = []
@@ -1374,15 +1317,6 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
                 msgs.append("\u26a0\ufe0f <b>" + hr["msg"] + "</b>")
         except Exception as _e:
             logger.warning("[WARN] Hourly: " + str(_e))
-    # 5. VIX (once)
-    if not state.get("_vix_warned"):
-        try:
-            vw = check_vix_warning()
-            if vw.get("warning"):
-                upd["_vix_warned"] = True
-                msgs.append("\u26a0\ufe0f <b>" + vw["msg"] + "</b>")
-        except Exception:
-            pass
     return msgs, upd
 
 

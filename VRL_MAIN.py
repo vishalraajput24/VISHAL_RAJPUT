@@ -1154,11 +1154,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     if _savail and _sinfo and _sinfo != "NA" and _sd is not None:
         _ctx_lines.append("Straddle  \u0394" + "{:+.1f}".format(float(_sd)) + "  " + _sinfo)
 
-    _vwap_bonus = entry_result.get("vwap_bonus", "") or ""
-    _spot_diff  = entry_result.get("spot_vs_vwap", 0) or 0
-    if _vwap_bonus:
-        _ctx_lines.append("VWAP      spot " + "{:+.0f}".format(float(_spot_diff)) + "  " + _vwap_bonus)
-
     _ctag = entry_result.get("context_tag", "NORMAL")
     if _ctag == "TRIPLE_CONFLUENCE":
         _ctx_header = "<b>CONTEXT  \u2713 TRIPLE CONFLUENCE</b>\n"
@@ -1528,19 +1523,6 @@ def _is_new_1min_candle(now: datetime) -> bool:
     return False
 
 
-def _compute_bonus(token: int) -> dict:
-    """Compute all bonus indicators for a token. Info only — never blocks trades."""
-    bonus = {}
-    try:
-        vwap = D.calculate_option_vwap(token)
-        bonus["vwap"] = vwap.get("vwap", 0)
-        bonus["above_vwap"] = vwap.get("above_vwap", False)
-        bonus["vwap_dist"] = vwap.get("distance", 0)
-    except Exception:
-        bonus["vwap"] = 0; bonus["above_vwap"] = False; bonus["vwap_dist"] = 0
-    return bonus
-
-
 # ═══════════════════════════════════════════════════════════════
 #  STRATEGY LOOP
 # ═══════════════════════════════════════════════════════════════
@@ -1665,7 +1647,6 @@ def _warmup_signal(opt_type, strike, progress, needed, eta):
         "breakout_confirmed": False, "spot_slope": 0,
         "rsi_cap_active": 0, "spot_aligned": False,
         "entry_mode": "",
-        "vwap": 0, "above_vwap": False, "vwap_dist": 0,
     }
 
 
@@ -1761,10 +1742,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "straddle_threshold": result.get("straddle_threshold", 0),
                 "straddle_period":    result.get("straddle_period", ""),
                 "atm_strike_used":    result.get("atm_strike_used", 0),
-                # v15.2 VWAP bonus (display only)
-                "spot_vwap":     round(float(result.get("spot_vwap", 0) or 0), 2),
-                "spot_vs_vwap":  round(float(result.get("spot_vs_vwap", 0) or 0), 2),
-                "vwap_bonus":    result.get("vwap_bonus", ""),
                 # Legacy compat
                 "rsi": 0, "ema9": round(_eh, 2), "ema21": 0,
             }
@@ -1777,13 +1754,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         else:
             ce_signal = _build_signal("CE", all_results.get("CE"))
             pe_signal = _build_signal("PE", all_results.get("PE"))
-
-        # Flatten bonus dict into signal for dashboard consumption
-        for _sig in (ce_signal, pe_signal):
-            _b = _sig.pop("bonus", {})
-            _sig["vwap"] = _b.get("vwap", 0)
-            _sig["above_vwap"] = _b.get("above_vwap", False)
-            _sig["vwap_dist"] = _b.get("vwap_dist", 0)
 
         # ── Fix LTP=0 when gate blocks early ──
         try:
@@ -1865,9 +1835,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "entry_straddle_threshold": st.get("entry_straddle_threshold", 0),
                 "entry_straddle_period":    st.get("entry_straddle_period", ""),
                 "entry_band_width":         st.get("entry_band_width", 0),
-                "entry_spot_vwap":          st.get("entry_spot_vwap", 0),
-                "entry_spot_vs_vwap":       st.get("entry_spot_vs_vwap", 0),
-                "entry_vwap_bonus":         st.get("entry_vwap_bonus", ""),
                 # v15.2.5 velocity stall telemetry (sparkline + number)
                 "peak_history":             (st.get("peak_history") or [])[-4:],
                 "current_velocity":         round(float(st.get("current_velocity", 0) or 0), 2),
