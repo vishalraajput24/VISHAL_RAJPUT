@@ -1,9 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.5
-#  Vishal Close Trail: exit on candle close, 85% trail for peaks ≥25
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.5 FINAL
+#  Vishal Close Trail: 60% → 85% → 80% → VISHAL_LOCK (+40)
+#  Exit on candle close, bulletproof margin check
 # ═══════════════════════════════════════════════════════════════
 
 import logging
+import time
 from datetime import datetime
 import pandas as pd
 import VRL_DATA as D
@@ -44,6 +46,14 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
     if not D.is_tick_live(D.NIFTY_SPOT_TOKEN): return False, "Spot tick stale"
     if option_ltp <= 0:                      return False, "Option LTP zero"
     if state.get("paused"):                  return False, "Bot paused"
+    if not D.PAPER_MODE and kite is not None:
+        try:
+            from VRL_TRADE import get_margin_available
+            avail = get_margin_available(kite)
+            if avail < option_ltp * D.get_lot_size() * 1.2:
+                return False, "Insufficient margin"
+        except Exception:
+            return False, "Margin check failed"
     return True, ""
 
 def loss_streak_gate(state: dict) -> bool:
@@ -172,8 +182,11 @@ def is_setup_building(token: int, direction: str) -> bool:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """Vishal Close Trail: 60% → 85% → 80%, exit on candle close."""
-    if peak_pnl >= 40:
+    """Vishal Close Trail: 60% → 85% → 80% → VISHAL_LOCK (+40)."""
+    if peak_pnl >= 45:
+        sl = entry_price + 40  # Hard lock, minimal giveback
+        tier = "VISHAL_LOCK"
+    elif peak_pnl >= 40:
         sl = entry_price + peak_pnl * 0.80
         tier = "TRAIL_80"
     elif peak_pnl >= 25:
@@ -211,17 +224,16 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        last_close = option_ltp  # fallback default
-    if opt_3m_full is not None and len(opt_3m_full) >= 2:
-        last_close = opt_3m_full.iloc[-2]["close"]
-    else:
-        import time
-        for _ in range(7):
-            time.sleep(5)
-            opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
-            if opt_3m_full is not None and len(opt_3m_full) >= 2:
-                last_close = opt_3m_full.iloc[-2]["close"]
-                break
+        last_close = option_ltp
+        if opt_3m_full is not None and len(opt_3m_full) >= 2:
+            last_close = opt_3m_full.iloc[-2]["close"]
+        else:
+            for _ in range(7):
+                time.sleep(5)
+                opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
+                if opt_3m_full is not None and len(opt_3m_full) >= 2:
+                    last_close = opt_3m_full.iloc[-2]["close"]
+                    break
         if last_close <= trail_sl:
             return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
     return []
