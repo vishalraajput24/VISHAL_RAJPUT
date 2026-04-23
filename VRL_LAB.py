@@ -43,10 +43,7 @@ FIELDNAMES_1M = [
 ]
 
 # Signal scan log — BUG-N6 v15.2.5: live columns only.
-# Dead v13 fields (rsi_1m, body_pct_1m, vol_ratio_1m, rsi_rising_1m,
-# spread_1m, rsi_3m, conditions_3m, score, iv_pct, delta,
-# straddle_decay_pct, straddle_threshold, near_fib_level, fib_distance)
-# removed in the schema migration. CSV matches the DB schema.
+# Dead v13 fields removed in the schema migration. CSV matches the DB schema.
 FIELDNAMES_SCAN = [
     "timestamp", "session", "dte", "atm_strike", "spot",
     "direction", "entry_price",
@@ -59,7 +56,7 @@ FIELDNAMES_SCAN = [
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
     # Market context
     "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
-    "spot_gap", "bias", "hourly_rsi",
+    "bias", "hourly_rsi",
     # Result
     "fired", "trade_taken", "reject_reason",
     # Forward fill (populated EOD)
@@ -305,7 +302,6 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
     rows    = []
 
     spot_3m   = D.get_spot_indicators("3minute")
-    spot_gap  = D.get_spot_gap()
 
     for opt_type, info in _current_atm_tokens.items():
         token = info["token"]
@@ -359,7 +355,6 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "spot_rsi_3m"        : spot_3m.get("rsi", 0),
                 "spot_ema_spread_3m" : spot_3m.get("spread", 0),
                 "spot_regime"        : spot_3m.get("regime", ""),
-                "spot_gap"           : round(spot_gap, 1),
                 "bias"               : D.get_daily_bias() if hasattr(D, "get_daily_bias") else "",
                 "hourly_rsi"         : D.get_hourly_rsi() if hasattr(D, "get_hourly_rsi") else 0,
                 "fired"              : int(result.get("fired", False)),
@@ -369,13 +364,6 @@ def _log_signal_scan(kite, spot_ltp: float, now: datetime):
                 "reject_reason"      : reject,
                 "fwd_3c": "", "fwd_5c": "", "fwd_10c": "", "fwd_outcome": "",
             })
-
-            try:
-                fib = D.get_nearest_fib_level(spot_ltp)
-                rows[-1]["near_fib_level"] = fib.get("level", "")
-                rows[-1]["fib_distance"] = fib.get("distance", 0)
-            except Exception:
-                pass
 
         except Exception as e:
             logger.warning("[LAB] scan log error " + opt_type + ": " + str(e))
@@ -1179,7 +1167,6 @@ FIELDNAMES_DAILY = [
     # Market context
     "bias", "vix_open", "vix_close", "vix_high",
     "spot_open", "spot_close", "spot_high", "spot_low", "spot_range",
-    "gap_pts",
     "dte",
     # Warning data
     "straddle_open", "straddle_close", "straddle_decay_pct",
@@ -1303,11 +1290,6 @@ def generate_daily_summary(target_date: date = None):
                     row["spot_range"] = round(max(highs) - min(lows), 1)
         except Exception:
             pass
-
-    try:
-        row["gap_pts"] = round(D.get_spot_gap(), 1) if hasattr(D, "get_spot_gap") else 0
-    except Exception:
-        row["gap_pts"] = 0
 
     try:
         exp = D.get_nearest_expiry()

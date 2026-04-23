@@ -207,9 +207,8 @@ def init_db():
             rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL, conditions_3m TEXT, mode_3m TEXT,
             score REAL, fired TEXT, reject_reason TEXT,
             vix REAL,
-            spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT, spot_gap REAL,
+            spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT,
             bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
-            near_fib_level TEXT, fib_distance REAL,
             fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT)""")
 
         # ── TRADES ──
@@ -420,6 +419,14 @@ def init_db():
         except Exception as _me:
             logger.warning("[DB] migrate_drop_greeks: " + str(_me))
 
+        # v16.6: dead indicators (Fib pivots, vol spike, PDH/PDL, spot gap)
+        # removed from signal_scans. Drop any leftover columns from
+        # pre-existing DBs.
+        try:
+            migrate_drop_dead_indicators()
+        except Exception as _me:
+            logger.warning("[DB] migrate_drop_dead_indicators: " + str(_me))
+
 
 # ═══════════════════════════════════════════════════════════════
 #  v15.2.5 BUG-N6/N7 — SCHEMA MIGRATION: drop dead v13 columns
@@ -451,7 +458,7 @@ _SCAN_LIVE_COLS = [
     # Market context
     "vix REAL DEFAULT 0", "spot_rsi_3m REAL DEFAULT 0",
     "spot_ema_spread_3m REAL DEFAULT 0", "spot_regime TEXT DEFAULT ''",
-    "spot_gap REAL DEFAULT 0", "bias TEXT DEFAULT ''",
+    "bias TEXT DEFAULT ''",
     "hourly_rsi REAL DEFAULT 0",
     # Result
     "fired TEXT DEFAULT '0'", "trade_taken INTEGER DEFAULT 0",
@@ -671,6 +678,33 @@ def migrate_drop_greeks():
                 pass  # column already removed or table doesn't exist
 
 
+def migrate_drop_dead_indicators():
+    """v16.6: idempotent migration to drop dead indicator columns
+    (Fib pivots, volume spike, PDH/PDL, spot gap) from signal_scans.
+    Same idempotency guarantees as migrate_drop_greeks."""
+    conn = get_conn()
+    c = conn.cursor()
+    migrations = [
+        ("signal_scans", [
+            "spot_gap",
+            "fib_pivot", "fib_R1", "fib_R2", "fib_R3",
+            "fib_S1", "fib_S2", "fib_S3",
+            "near_fib_level", "fib_distance",
+            "vol_spike", "vol_ratio",
+            "pdh_break", "pdl_break",
+            "prev_high", "prev_low",
+        ]),
+    ]
+    for table, cols in migrations:
+        for col in cols:
+            try:
+                c.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+                conn.commit()
+                logger.info(f"[DB] Migrated: dropped {table}.{col}")
+            except Exception:
+                pass
+
+
 def _insert(table, row, fields):
     """Generic insert. row is a dict, fields is ordered list of column names."""
     conn = get_conn()
@@ -802,7 +836,7 @@ _SCAN_FIELDS = [
     "atm_strike_used", "band_width",
     "spot_vwap", "spot_vs_vwap", "vwap_bonus",
     "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
-    "spot_gap", "bias", "hourly_rsi",
+    "bias", "hourly_rsi",
     "fired", "trade_taken", "reject_reason",
     "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]

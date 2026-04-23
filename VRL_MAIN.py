@@ -1538,35 +1538,6 @@ def _compute_bonus(token: int) -> dict:
         bonus["vwap_dist"] = vwap.get("distance", 0)
     except Exception:
         bonus["vwap"] = 0; bonus["above_vwap"] = False; bonus["vwap_dist"] = 0
-    try:
-        fib = D.calculate_option_fib_pivots(token)
-        bonus["fib_nearest"] = fib.get("nearest_level", "")
-        bonus["fib_distance"] = fib.get("nearest_distance", 0)
-        bonus["fib_pivot"] = fib.get("pivot", 0)
-        bonus["fib_R1"] = fib.get("R1", 0)
-        bonus["fib_R2"] = fib.get("R2", 0)
-        bonus["fib_R3"] = fib.get("R3", 0)
-        bonus["fib_S1"] = fib.get("S1", 0)
-        bonus["fib_S2"] = fib.get("S2", 0)
-        bonus["fib_S3"] = fib.get("S3", 0)
-    except Exception:
-        bonus["fib_nearest"] = ""; bonus["fib_distance"] = 0
-        bonus["fib_pivot"] = 0
-    try:
-        vol = D.detect_volume_spike(token)
-        bonus["vol_spike"] = vol.get("spike", False)
-        bonus["vol_ratio"] = vol.get("ratio", 0)
-    except Exception:
-        bonus["vol_spike"] = False; bonus["vol_ratio"] = 0
-    try:
-        pdh = D.get_option_prev_day_hl(token)
-        bonus["pdh_break"] = pdh.get("above_prev_high", False)
-        bonus["pdl_break"] = pdh.get("below_prev_low", False)
-        bonus["prev_high"] = pdh.get("prev_high", 0)
-        bonus["prev_low"] = pdh.get("prev_low", 0)
-    except Exception:
-        bonus["pdh_break"] = False; bonus["pdl_break"] = False
-        bonus["prev_high"] = 0; bonus["prev_low"] = 0
     return bonus
 
 
@@ -1695,12 +1666,6 @@ def _warmup_signal(opt_type, strike, progress, needed, eta):
         "rsi_cap_active": 0, "spot_aligned": False,
         "entry_mode": "",
         "vwap": 0, "above_vwap": False, "vwap_dist": 0,
-        "fib_nearest": "", "fib_distance": 0, "fib_pivot": 0,
-        "fib_R1": 0, "fib_R2": 0, "fib_R3": 0,
-        "fib_S1": 0, "fib_S2": 0, "fib_S3": 0,
-        "vol_spike": False, "vol_ratio": 0,
-        "pdh_break": False, "pdl_break": False,
-        "prev_high": 0, "prev_low": 0,
     }
 
 
@@ -1716,8 +1681,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
         # ── Market context ──
         spot_3m = D.get_spot_indicators("3minute")
-        spot_gap = D.get_spot_gap()
-        fib_info = D.get_nearest_fib_level(spot_ltp) if spot_ltp > 0 else {}
 
         hourly_rsi = 0
         try:
@@ -1821,21 +1784,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _sig["vwap"] = _b.get("vwap", 0)
             _sig["above_vwap"] = _b.get("above_vwap", False)
             _sig["vwap_dist"] = _b.get("vwap_dist", 0)
-            _sig["fib_nearest"] = _b.get("fib_nearest", "")
-            _sig["fib_distance"] = _b.get("fib_distance", 0)
-            _sig["fib_pivot"] = _b.get("fib_pivot", 0)
-            _sig["fib_R1"] = _b.get("fib_R1", 0)
-            _sig["fib_R2"] = _b.get("fib_R2", 0)
-            _sig["fib_R3"] = _b.get("fib_R3", 0)
-            _sig["fib_S1"] = _b.get("fib_S1", 0)
-            _sig["fib_S2"] = _b.get("fib_S2", 0)
-            _sig["fib_S3"] = _b.get("fib_S3", 0)
-            _sig["vol_spike"] = _b.get("vol_spike", False)
-            _sig["vol_ratio"] = _b.get("vol_ratio", 0)
-            _sig["pdh_break"] = _b.get("pdh_break", False)
-            _sig["pdl_break"] = _b.get("pdl_break", False)
-            _sig["prev_high"] = _b.get("prev_high", 0)
-            _sig["prev_low"] = _b.get("prev_low", 0)
 
         # ── Fix LTP=0 when gate blocks early ──
         try:
@@ -2037,17 +1985,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "regime": spot_3m.get("regime", ""),
                 "context_tag": state.get("entry_context_tag", "") if state.get("in_trade") else "",
                 "bias": bias,
-                "gap": round(spot_gap, 1),
                 "spot_ema9": spot_3m.get("ema9", 0),
                 "spot_ema21": spot_3m.get("ema21", 0),
                 "spot_spread": spot_3m.get("spread", 0),
                 "spot_rsi": spot_3m.get("rsi", 0),
                 "spot_adx_3m": spot_3m.get("adx", 0),
                 "hourly_rsi": round(hourly_rsi, 1),
-                "fib_nearest": fib_info.get("level", ""),
-                "fib_price": fib_info.get("price", 0),
-                "fib_distance": round(fib_info.get("distance", 0), 1),
-                "fib_pivots": D.get_fib_pivots() if hasattr(D, "get_fib_pivots") else {},
                 "expiry": expiry.isoformat() if expiry else "",
                 "market_open": D.is_market_open(),
                 "indicators_warm": _is_warm,
@@ -2636,34 +2579,11 @@ def _strategy_loop(kite):
 
             # ── NO RE‑ENTRY WATCHING — removed ──────────────────
 
-            # v12.15: Feed spot buffer for consolidation detection
-            if spot_ltp > 0:
-                D.update_spot_buffer({
-                    "timestamp": now.isoformat(),
-                    "open": spot_ltp, "high": spot_ltp,
-                    "low": spot_ltp, "close": spot_ltp,
-                })
-
             if (not state.get("paused")
                     and D.is_trading_window(now)
                     and _is_new_1min_candle(now)
                     and spot_ltp > 0
                     and expiry is not None):
-
-                # v12.15: Feed proper 1-min candle to spot buffer
-                try:
-                    _spot_df = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 5)
-                    if not _spot_df.empty and len(_spot_df) >= 2:
-                        _last_spot = _spot_df.iloc[-2]
-                        D.update_spot_buffer({
-                            "timestamp": str(_spot_df.index[-2]),
-                            "open": float(_last_spot["open"]),
-                            "high": float(_last_spot["high"]),
-                            "low": float(_last_spot["low"]),
-                            "close": float(_last_spot["close"]),
-                        })
-                except Exception:
-                    pass
 
                 step       = D.get_active_strike_step(dte)
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
@@ -3339,25 +3259,6 @@ def main():
             logger.warning("[MAIN] Pre-warm: no historical 3-min data returned")
     except Exception as _pwe:
         logger.warning("[MAIN] Pre-warm failed: " + str(_pwe))
-
-    # v12.11: Calculate spot gap on startup
-    try:
-        gap_info = D.calculate_spot_gap()
-        if gap_info["gap_pts"] != 0:
-            logger.info("[MAIN] Spot gap: " + str(gap_info["gap_pts"]) + "pts"
-                        + " (" + str(gap_info["gap_pct"]) + "%)")
-    except Exception as e:
-        logger.warning("[MAIN] Gap calculation failed: " + str(e))
-
-    # v12.15: Calculate fib pivot points
-    try:
-        pivots = D.calculate_fib_pivots()
-        if pivots:
-            logger.info("[MAIN] Fib pivots loaded: P=" + str(pivots.get("pivot", 0))
-                        + " R1=" + str(pivots.get("R1", 0))
-                        + " S1=" + str(pivots.get("S1", 0)))
-    except Exception as e:
-        logger.warning("[MAIN] Fib pivot calc failed: " + str(e))
 
     start_lab(kite)
     _start_telegram_listener()

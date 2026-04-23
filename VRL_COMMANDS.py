@@ -303,8 +303,6 @@ def _cmd_help(args):
         "/account   — balance + margin info\n"
         "/slippage  — fill quality stats\n"
         "/streak    — rolling win rate + streak\n"
-        "/spot      — Spot trend + gap\n"
-        "/pivot     — Fib pivot levels\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DATA</b>\n"
         "/files     — browse folders\n"
@@ -864,50 +862,10 @@ def _cmd_source(args):
 #  NEW v12.11 COMMANDS
 # ═══════════════════════════════════════════════════════════════
 
-def _cmd_spot(args):
-    """Spot trend + gap + regime — always reliable from candle 1."""
-    try:
-        spot_3m = D.get_spot_indicators("3minute")
-        spot_1m = D.get_spot_indicators("minute")
-        gap     = D.get_spot_gap()
-        vix     = D.get_vix()
-        spot_ltp= D.get_ltp(D.NIFTY_SPOT_TOKEN)
-
-        gap_str = ""
-        if abs(gap) > 0:
-            direction = "UP" if gap > 0 else "DOWN"
-            gap_str = (
-                "Gap    : " + ("+" if gap >= 0 else "") + str(round(gap, 1)) + "pts " + direction + "\n"
-            )
-
-        _tg_send(
-            "📈 <b>SPOT INTELLIGENCE</b>  " + _now_str() + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Spot   : " + str(round(spot_ltp, 1)) + "  VIX: " + str(round(vix, 1)) + "\n"
-            + gap_str
-            + "Regime : " + spot_3m.get("regime", "—") + " (" + str(spot_3m.get("candles", 0)) + " candles)\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "3-MIN\n"
-            "EMA9   : " + str(spot_3m["ema9"]) + "\n"
-            "EMA21  : " + str(spot_3m["ema21"]) + "\n"
-            "Spread : " + ("+" if spot_3m["spread"] >= 0 else "") + str(spot_3m["spread"]) + "pts\n"
-            "RSI    : " + str(spot_3m["rsi"]) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "1-MIN\n"
-            "EMA9   : " + str(spot_1m["ema9"]) + "\n"
-            "EMA21  : " + str(spot_1m["ema21"]) + "\n"
-            "Spread : " + ("+" if spot_1m["spread"] >= 0 else "") + str(spot_1m["spread"]) + "pts\n"
-            "RSI    : " + str(spot_1m["rsi"])
-        )
-    except Exception as e:
-        _tg_send("Spot error: " + str(e))
-
-
 def _cmd_regime(args):
     """Current regime + detection mode."""
     try:
         spot_3m = D.get_spot_indicators("3minute")
-        gap     = D.get_spot_gap()
         now     = datetime.now()
         expiry  = D.get_nearest_expiry()
         dte     = D.calculate_dte(expiry) if expiry else 0
@@ -927,7 +885,6 @@ def _cmd_regime(args):
             "Detection    : " + mode + "\n"
             "DTE          : " + str(dte) + "\n"
             "Session      : " + session + "\n"
-            "Gap          : " + ("+" if gap >= 0 else "") + str(round(gap, 1)) + "pts\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + ("💡 Spot is backup — option data thin (DTE≤1)" if dte <= 1 else "📊 Normal mode — option EMA has full history")
         )
@@ -1062,67 +1019,6 @@ def _cmd_validate(args):
     except Exception as e:
         _tg_send("Validate error: " + str(e))
 
-
-def _cmd_pivot(args):
-    """Show fib pivot levels + nearest level to current spot.
-    Self-heals: on empty cache, tries to compute fresh pivots from the
-    historical-data endpoint (works even at night) before giving up.
-    No more misleading 'Run /restart' hint."""
-    try:
-        pivots = D.get_fib_pivots()
-        if not pivots:
-            # Try a live compute — works any time Kite historical_data does,
-            # i.e. also at night (prev close is always yesterday's session).
-            try:
-                fresh = (D.calculate_fib_pivots()
-                         if hasattr(D, "calculate_fib_pivots") else None)
-                if fresh:
-                    pivots = fresh
-            except Exception as _e:
-                logger.debug("[PIVOT] recompute err: " + str(_e))
-        if not pivots:
-            _tg_send(
-                "\U0001F4D0 <b>PIVOT DATA UNAVAILABLE</b>\n"
-                "Previous session's H/L/C not cached and the live compute\n"
-                "didn't return data. This is normal if Kite's historical_data\n"
-                "is rate-limited right now. Will self-heal on the next\n"
-                "daily rollover at 9:15 IST.")
-            return
-        spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        nearest = D.get_nearest_fib_level(spot)
-        consol = D.detect_spot_consolidation()
-
-        _tg_send(
-            "📐 <b>FIB PIVOTS</b>  " + _now_str() + "\n"
-            "Prev: " + pivots.get("prev_date","") + " H=" + str(pivots.get("prev_high",0))
-            + " L=" + str(pivots.get("prev_low",0)) + " C=" + str(pivots.get("prev_close",0)) + "\n"
-            "Range: " + str(pivots.get("range",0)) + "pts\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "R3  : " + str(pivots.get("R3",0)) + "\n"
-            "R2  : " + str(pivots.get("R2",0)) + "\n"
-            "R1  : " + str(pivots.get("R1",0)) + "\n"
-            "<b>P   : " + str(pivots.get("pivot",0)) + "</b>\n"
-            "S1  : " + str(pivots.get("S1",0)) + "\n"
-            "S2  : " + str(pivots.get("S2",0)) + "\n"
-            "S3  : " + str(pivots.get("S3",0)) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Spot : " + str(round(spot,1)) + "\n"
-            "Near : " + nearest.get("level","—") + " (" + str(nearest.get("price",0))
-            + ")  " + ("+" if nearest.get("distance",0)>=0 else "") + str(nearest.get("distance",0)) + "pts\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Consolidation: " + ("YES (" + str(consol["range"]) + "pts range)" if consol["consolidating"] else "No")
-        )
-    except Exception as e:
-        _tg_send("Pivot error: " + str(e))
-
-
-# ═══════════════════════════════════════════════════════════════
-#  TELEGRAM LISTENER
-# ═══════════════════════════════════════════════════════════════
-
-_tg_offset         = 0
-_tg_running        = False
-_tg_last_update_id = -1
 
 def _cmd_token(args):
     """Manage subscriber access tokens."""
@@ -1323,10 +1219,8 @@ _DISPATCH = {
     "/alerts_on"   : _cmd_alerts_on,
     "/alerts_off"  : _cmd_alerts_off,
     "/status"      : _cmd_status,
-    "/spot"        : _cmd_spot,
     "/regime"      : _cmd_regime,
     "/align"       : _cmd_align,
-    "/pivot"       : _cmd_pivot,
     "/pnl"         : _cmd_pnl,
     "/account"     : _cmd_account,
     "/trades"      : _cmd_trades,
