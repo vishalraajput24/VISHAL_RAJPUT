@@ -728,7 +728,7 @@ def check_and_reconnect():
     except Exception:
         pass
     try:
-        from VRL_AUTH import get_kite
+        from VRL_CONFIG import get_kite
         new_kite = get_kite()
         if not new_kite:
             logger.error("[DATA] Re-auth returned None")
