@@ -171,17 +171,10 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
     market_open = D.is_market_open()
     now = datetime.now()
     atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
-    straddle_delta = None
-    if CFG.straddle_filter("enabled", True) and atm_strike:
-        try:
-            straddle_delta = D.get_straddle_delta(atm_strike, lookback_minutes=int(CFG.straddle_filter("lookback_minutes", 15)))
-        except: pass
-    spot_vwap = D.get_spot_vwap() if CFG.vwap_bonus("enabled", True) else None
-    spot_for_vwap = D.get_spot_ltp() or spot_ltp
     return _evaluate_entry_gates_pure(
         opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp, now=now,
-        market_open=market_open, state=state, straddle_delta=straddle_delta,
-        spot_vwap=spot_vwap, spot_for_vwap=spot_for_vwap, atm_strike=atm_strike,
+        market_open=market_open, state=state, straddle_delta=None,
+        spot_vwap=None, spot_for_vwap=spot_ltp, atm_strike=atm_strike,
         silent=silent, other_opt_3m=None)
 
 def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:

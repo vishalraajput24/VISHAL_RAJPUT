@@ -25,10 +25,6 @@ BOT_NAME = "VISHAL RAJPUT TRADE"
 # ── Timezone ──
 IST = ZoneInfo("Asia/Kolkata")
 
-def now_ist() -> datetime:
-    """Return current time in IST, timezone-aware."""
-    return datetime.now(IST)
-
 def _load_env_file(path: str):
     if not os.path.isfile(path):
         return
@@ -214,30 +210,6 @@ def setup_logger(name: str, log_file: str, level=logging.DEBUG) -> logging.Logge
     lg.setLevel(level)
     fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s",
                             datefmt="%Y-%m-%d %H:%M:%S")
-    fh = TimedRotatingFileHandler(log_file, when="midnight", backupCount=30)
-    fh.suffix = "%Y-%m-%d"
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(fmt)
-    lg.addHandler(fh)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(fmt)
-    lg.addHandler(ch)
-    # Mirror errors to central error log
-    lg.addHandler(_ErrorMirrorHandler())
-    return lg
-
-
-def setup_dated_logger(name: str, log_dir: str, level=logging.DEBUG) -> logging.Logger:
-    """Create a logger that writes to ~/logs/<category>/YYYY-MM-DD.log"""
-    os.makedirs(log_dir, exist_ok=True)
-    lg = logging.getLogger(name)
-    if lg.handlers:
-        return lg
-    lg.setLevel(level)
-    fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s",
-                            datefmt="%Y-%m-%d %H:%M:%S")
-    log_file = _dated_log_path(log_dir)
     fh = TimedRotatingFileHandler(log_file, when="midnight", backupCount=30)
     fh.suffix = "%Y-%m-%d"
     fh.setLevel(logging.DEBUG)
@@ -805,14 +777,14 @@ TRADING_HOLIDAYS = {
 def is_trading_day(now: datetime = None) -> bool:
     """True only on weekdays that are NOT NSE holidays."""
     if now is None:
-        now = now_ist()
+        now = datetime.now()
     if now.weekday() >= 5:
         return False
     return now.strftime("%Y-%m-%d") not in TRADING_HOLIDAYS
 
 
 def is_market_open() -> bool:
-    now = now_ist()
+    now = datetime.now()
     if not is_trading_day(now):
         return False
     start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
@@ -821,7 +793,7 @@ def is_market_open() -> bool:
 
 def is_trading_window(now: datetime = None) -> bool:
     if now is None:
-        now = now_ist()
+        now = datetime.now()
     if not is_market_open():
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
@@ -995,159 +967,6 @@ def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
 #  Returns None on missing data so the gate can reject explicitly.
 # ═══════════════════════════════════════════════════════════════
 
-def get_atm_straddle(timestamp=None, atm_strike: int = 0) -> float:
-    """Return ATM_CE_close + ATM_PE_close at (or just before) `timestamp`.
-    timestamp=None → live (use the most recent CLOSED 3-min candle of each leg).
-    Returns None if either leg's data is missing."""
-    if not atm_strike:
-        return None
-    expiry = None
-    try:
-        expiry = get_nearest_expiry(_kite)
-    except Exception:
-        expiry = None
-    if expiry is None or _kite is None:
-        return None
-    tokens = get_option_tokens(_kite, atm_strike, expiry) or {}
-    ce_tok = (tokens.get("CE") or {}).get("token")
-    pe_tok = (tokens.get("PE") or {}).get("token")
-    if not ce_tok or not pe_tok:
-        return None
-    try:
-        ce_df = get_historical_data(int(ce_tok), "3minute", 30)
-        pe_df = get_historical_data(int(pe_tok), "3minute", 30)
-        if ce_df is None or pe_df is None or ce_df.empty or pe_df.empty:
-            return None
-
-        def _closest(df, ts):
-            """Pick the last close at-or-before ts. v15.2.3: tz-safe.
-            Kite returns a tz-AWARE (IST) DatetimeIndex; callers pass a
-            tz-NAIVE wall-clock datetime. Normalize both sides to naive
-            so pandas doesn't raise TypeError on the comparison."""
-            if ts is None:
-                idx = -2 if len(df) >= 2 else -1
-                return float(df.iloc[idx]["close"])
-            try:
-                df_idx = df.index
-                # Strip tz from the DataFrame index if present
-                if getattr(df_idx, "tz", None) is not None:
-                    df_idx = df_idx.tz_localize(None)
-                # Strip tz from ts if present
-                if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
-                    ts = ts.replace(tzinfo=None)
-                mask_pos = [i for i, t in enumerate(df_idx) if t <= ts]
-                if not mask_pos:
-                    return None
-                return float(df.iloc[mask_pos[-1]]["close"])
-            except Exception as _e:
-                logger.debug("[STRADDLE] _closest err: " + str(_e))
-                return None
-
-        ce_close = _closest(ce_df, timestamp)
-        pe_close = _closest(pe_df, timestamp)
-        if ce_close is None or pe_close is None:
-            return None
-        return round(ce_close + pe_close, 2)
-    except Exception as e:
-        logger.debug("[STRADDLE] get_atm_straddle err: " + str(e))
-        return None
-
-
-def get_straddle_delta(atm_strike: int, lookback_minutes: int = 15) -> float:
-    """Straddle expansion = straddle(now) - straddle(now - lookback_minutes).
-
-    v15.2.3 changes:
-    - Timezone-safe lookup (see `_closest` in get_atm_straddle).
-    - Graceful fallback: if the strict lookback is unavailable (data gap,
-      ATM just shifted, weekend boundary), try progressively shorter
-      lookbacks [15, 12, 9, 6] before giving up.
-    - INFO-level diagnostic log so 100%-NA failures are visible without
-      redeploy (the old code returned None with no trace).
-    """
-    if not atm_strike:
-        return None
-    now_dt = now_ist().replace(tzinfo=None)
-    current = get_atm_straddle(None, atm_strike)
-    if current is None:
-        logger.info("[STRADDLE] atm=" + str(atm_strike)
-                    + " current=NA → delta=None")
-        return None
-
-    tried = []
-    for lb in (int(lookback_minutes), 12, 9, 6):
-        if lb <= 0 or lb in tried:
-            continue
-        tried.append(lb)
-        prior_dt = now_dt - timedelta(minutes=lb)
-        # Snap back to the 3-min boundary that line up with option_3min rows.
-        prior_dt = prior_dt.replace(
-            minute=(prior_dt.minute // 3) * 3, second=0, microsecond=0)
-        prior = get_atm_straddle(prior_dt, atm_strike)
-        if prior is not None:
-            delta = round(current - prior, 2)
-            logger.info("[STRADDLE] atm=" + str(atm_strike)
-                        + " now=" + str(round(current, 1))
-                        + " @-" + str(lb) + "min=" + str(round(prior, 1))
-                        + " Δ=" + "{:+.1f}".format(delta)
-                        + " prior_ts=" + prior_dt.strftime("%H:%M"))
-            return delta
-
-    logger.info("[STRADDLE] atm=" + str(atm_strike)
-                + " current=" + str(round(current, 1))
-                + " prior NA for lookbacks=" + str(tried) + " → delta=None")
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════
-#  v15.2 SPOT VWAP — display-only confluence indicator
-#  Cumulative session VWAP from 5-min spot candles, market open → now.
-# ═══════════════════════════════════════════════════════════════
-
-def get_spot_5min(today: bool = True, end=None) -> list:
-    """Return today's spot 5-min candles up to `end` (or now). List of dicts."""
-    try:
-        df = get_historical_data(NIFTY_SPOT_TOKEN, "5minute", 80)
-    except Exception:
-        return []
-    if df is None or df.empty:
-        return []
-    df = df.copy()
-    today_str = date.today().strftime("%Y-%m-%d")
-    df["_date"] = df.index.map(
-        lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
-    if today:
-        df = df[df["_date"] == today_str]
-    if end is not None:
-        try:
-            df = df[df.index <= end]
-        except Exception:
-            pass
-    if df.empty:
-        return []
-    return [
-        {"high":  float(r["high"]),
-         "low":   float(r["low"]),
-         "close": float(r["close"]),
-         "volume": float(r["volume"]) if r["volume"] else 0.0}
-        for _, r in df.iterrows()
-    ]
-
-
-def get_spot_vwap(end=None) -> float:
-    """Cumulative session VWAP from 5-min spot candles. Returns None if no data."""
-    rows = get_spot_5min(today=True, end=end)
-    if not rows:
-        return None
-    cum_pv = 0.0
-    cum_v  = 0.0
-    for r in rows:
-        typical = (r["high"] + r["low"] + r["close"]) / 3.0
-        v = r["volume"] if r["volume"] > 0 else 1.0
-        cum_pv += typical * v
-        cum_v  += v
-    return round(cum_pv / cum_v, 2) if cum_v > 0 else None
-
-
 # ═══════════════════════════════════════════════════════════════
 #  BONUS INDICATORS — information only, never block trades
 # ═══════════════════════════════════════════════════════════════
@@ -1182,59 +1001,6 @@ def calculate_option_vwap(token: int) -> dict:
         logger.debug("[VWAP] " + str(e))
     return result
 
-
-def calculate_atr(token: int, interval: str = "minute",
-                  n_candles: int = None) -> float:
-    """v12.12: Calculate ATR (Average True Range) for SL sizing."""
-    if n_candles is None:
-        n_candles = ATR_SL_CANDLES
-    try:
-        df = get_historical_data(token, interval, n_candles + 10)
-        if df.empty or len(df) < n_candles + 1:
-            return 0.0
-        # True Range = max(high-low, |high-prev_close|, |low-prev_close|)
-        prev_close = df["close"].shift(1)
-        df["TR"] = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs()
-        ], axis=1).max(axis=1)
-        # ATR = average of last N candles' true range
-        atr = float(df["TR"].iloc[-n_candles - 1:-1].mean())
-        return round(atr, 2)
-    except Exception as e:
-        logger.warning("[DATA] ATR calc error: " + str(e))
-        return 0.0
-
-
-def calculate_atr_sl(token: int, profile: dict,
-                     entry_price: float = 0.0) -> float:
-    """
-    v12.12: ATR-based SL with floor and hard cap.
-    Returns SL in points.
-    """
-    atr = calculate_atr(token, "minute", ATR_SL_CANDLES)
-    if atr <= 0:
-        # Fallback to DTE-based fixed SL
-        return float(profile.get("conv_sl_pts", 15))
-
-    raw_sl = round(ATR_SL_MULTIPLIER * atr, 1)
-
-    # Floor based on premium level
-    if entry_price >= 300:   floor_sl = 15
-    elif entry_price >= 200: floor_sl = 12
-    elif entry_price >= 100: floor_sl = 10
-    elif entry_price >= 50:  floor_sl = 8
-    else:                    floor_sl = 6
-
-    sl = max(raw_sl, floor_sl)
-    sl = min(sl, ATR_SL_MAX)  # Hard cap 25pts
-
-    logger.info("[DATA] ATR SL: atr=" + str(atr)
-                + " raw=" + str(round(ATR_SL_MULTIPLIER * atr, 1))
-                + " floor=" + str(floor_sl)
-                + " final=" + str(sl))
-    return sl
 
 def get_active_strike_step(dte: int = None) -> int:
     """v13.3: True ATM — 50-step for ALL DTE."""
@@ -1330,7 +1096,7 @@ def clear_token_cache():
 #  Used for: gap detection, regime backup, direction, alignment
 # ═══════════════════════════════════════════════════════════════
 
-_prev_spot_spread_3m = None   # for spread_prev in compute_spot_regime
+_prev_spot_spread_3m = None   # cached by get_spot_indicators for spread_prev
 
 def get_spot_indicators(interval: str = "3minute") -> dict:
     """
@@ -1392,76 +1158,6 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
     return result
 
 
-def compute_spot_regime() -> str:
-    """
-    Price action regime — instant, zero lag. No ADX dependency.
-    Uses higher highs/lower lows, range, breakout, momentum.
-    """
-    try:
-        df = get_historical_data(NIFTY_SPOT_TOKEN, "3minute", 15)
-        if df.empty or len(df) < 7:
-            return "UNKNOWN"
-
-        candles = []
-        for i in range(-min(10, len(df)), 0):
-            row = df.iloc[i]
-            candles.append({
-                "open": float(row["open"]), "high": float(row["high"]),
-                "low": float(row["low"]), "close": float(row["close"]),
-            })
-
-        if len(candles) < 5:
-            return "UNKNOWN"
-
-        last5 = candles[-5:]
-        last3 = candles[-3:]
-
-        # 1. HIGHER HIGHS / LOWER LOWS — directional move
-        hh = all(last3[i]["high"] > last3[i-1]["high"] for i in range(1, len(last3)))
-        ll = all(last3[i]["low"] < last3[i-1]["low"] for i in range(1, len(last3)))
-        trending = hh or ll
-
-        # 2. RANGE — last 5 candles total range
-        range_high = max(c["high"] for c in last5)
-        range_low = min(c["low"] for c in last5)
-        total_range = range_high - range_low
-
-        # 3. BREAKOUT — current candle body vs average
-        bodies = [abs(c["close"] - c["open"]) for c in candles]
-        avg_body = sum(bodies) / len(bodies) if bodies else 1
-        curr_body = abs(candles[-1]["close"] - candles[-1]["open"])
-        breakout = curr_body > avg_body * 2
-
-        # 4. MOMENTUM — are candles getting bigger?
-        recent_bodies = [abs(c["close"] - c["open"]) for c in last3]
-        accelerating = recent_bodies[-1] > recent_bodies[0]
-
-        # REGIME DECISION — pure price action
-        if breakout and trending:
-            return "TRENDING_STRONG"
-        elif trending or (breakout and total_range > 30):
-            return "TRENDING"
-        elif total_range < 30:
-            return "NEUTRAL"
-        else:
-            return "CHOPPY"
-
-    except Exception:
-        return "UNKNOWN"
-
-
-def get_spot_regime(interval: str = "3minute") -> str:
-    """Quick regime from spot."""
-    return get_spot_indicators(interval).get("regime", "UNKNOWN")
-
-
-def is_expiry_window(now: datetime = None) -> bool:
-    """Check if current time is within expiry trading window."""
-    if now is None:
-        now = datetime.now()
-    start = now.replace(hour=EXPIRY_START_HOUR, minute=EXPIRY_START_MIN, second=0)
-    end   = now.replace(hour=EXPIRY_CUTOFF_HOUR, minute=EXPIRY_CUTOFF_MIN, second=0)
-    return start <= now <= end
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1517,44 +1213,6 @@ def capture_straddle(kite, strike, expiry):
                         + " Sum=" + str(_straddle_open))
     except Exception as e:
         logger.warning("[STRADDLE] Capture: " + str(e))
-
-
-def get_straddle_decay(kite, strike, expiry):
-    global _straddle_check_ts
-    import time as _t
-    result = {"decay_pct": 0.0, "current": 0.0, "open": _straddle_open,
-              "warning": False, "msg": ""}
-    if not _straddle_captured or _straddle_open <= 0:
-        return result
-    if _t.time() - _straddle_check_ts < 300:
-        return result
-    _straddle_check_ts = _t.time()
-    try:
-        tokens = get_option_tokens(kite, strike, expiry)
-        if not tokens:
-            return result
-        ce_ltp = pe_ltp = 0.0
-        for side in ("CE", "PE"):
-            info = tokens.get(side)
-            if info:
-                ltp = get_ltp(info["token"])
-                if side == "CE":
-                    ce_ltp = ltp
-                else:
-                    pe_ltp = ltp
-        if ce_ltp > 0 and pe_ltp > 0:
-            current = ce_ltp + pe_ltp
-            decay = round((current - _straddle_open) / _straddle_open * 100, 1)
-            result["current"] = round(current, 2)
-            result["decay_pct"] = decay
-            if decay <= -STRADDLE_WARN_PCT:
-                result["warning"] = True
-                result["msg"] = ("SELLERS DAY straddle " + str(decay)
-                                 + "% (open " + str(int(_straddle_open))
-                                 + " now " + str(int(current)) + ")")
-    except Exception as e:
-        logger.warning("[STRADDLE] Decay: " + str(e))
-    return result
 
 
 def compute_daily_bias(kite):
@@ -1706,18 +1364,6 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
                     msgs.append("\U0001f4ca <b>STRADDLE CAPTURED</b>\nATM CE+PE: \u20b9" + str(int(_straddle_open)))
         except Exception as _e:
             logger.warning("[WARN] Straddle: " + str(_e))
-    # 3. Straddle decay (every 5min)
-    if (_straddle_captured and not state.get("_straddle_alerted")
-            and spot_ltp > 0 and expiry is not None):
-        try:
-            _ss2 = get_active_strike_step(dte)
-            _sa2 = resolve_atm_strike(spot_ltp, _ss2)
-            sd = get_straddle_decay(kite, _sa2, expiry)
-            if sd.get("warning"):
-                upd["_straddle_alerted"] = True
-                msgs.append("\U0001f534 <b>" + sd["msg"] + "</b>")
-        except Exception:
-            pass
     # 4. Hourly RSI (every hour — only during market hours)
     if (is_market_open() and now.minute == 0 and now.second < 35
             and (_t.time() - state.get("_hourly_rsi_ts", 0)) > 3000):
