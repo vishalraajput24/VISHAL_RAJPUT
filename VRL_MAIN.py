@@ -1180,10 +1180,23 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 pass
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
-                "direction": "", "entry_price": 0.0, "entry_time": "",
+                "direction": "", "strike": 0,
+                "entry_price": 0.0, "entry_time": "",
                 "_static_floor_sl": 0.0, "current_floor": 0.0,
                 "peak_pnl": 0.0,
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
+                # Trail state — clear so next trade starts at INITIAL
+                "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
+                "_last_milestone": 0,
+                # Entry context (v15.0 band + body)
+                "entry_mode": "",
+                "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
+                "entry_band_position": "", "entry_body_pct": 0.0,
+                "current_ema9_high": 0.0, "current_ema9_low": 0.0,
+                "last_band_check_ts": "",
+                "other_token": 0,
+                # Exchange SL-M tracking (live mode)
+                "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
                 "lot1_exit_reason": "", "lot1_exit_time": "",
@@ -2297,8 +2310,26 @@ def _strategy_loop(kite):
                     _otm_key = opt_type + "_OTM"
                     _atm_info = dir_tokens.get(opt_type)
                     _otm_info = _locked_tokens.get(_otm_key)
-                    for _label, _oi in [("ATM", _atm_info), ("OTM", _otm_info)]:
-                        if not _oi:
+                    # get_option_tokens() returns {token, symbol} only — no
+                    # strike key — so we track the real strike per label
+                    # here. Before this fix, both ATM and OTM candidates
+                    # ended up tagged with the ATM strike, making the log
+                    # and state["strike"] disagree with the traded symbol.
+                    _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
+                    _otm_strike_v = (_atm_strike_v + 50) if opt_type == "CE" else (_atm_strike_v - 50)
+                    _iter = [("ATM", _atm_info, _atm_strike_v),
+                             ("OTM", _otm_info, _otm_strike_v)]
+                    for _label, _oi, _strike_val in _iter:
+                        if not _oi or not _strike_val:
+                            continue
+                        # Sanity: if the resolved symbol doesn't contain the
+                        # expected strike, skip — prevents a stale token
+                        # cache from crossing strikes.
+                        _sym_chk = str(_oi.get("symbol", ""))
+                        if _sym_chk and str(_strike_val) not in _sym_chk:
+                            logger.warning("[MAIN] Strike/symbol mismatch skipped: "
+                                           + _label + " " + opt_type + " strike="
+                                           + str(_strike_val) + " sym=" + _sym_chk)
                             continue
                         result = check_entry(
                             token=_oi["token"],
@@ -2310,11 +2341,9 @@ def _strategy_loop(kite):
                             other_token=_other_tok,
                             state=state,
                         )
-                        _strike_val = _oi.get("strike", dir_strikes.get(opt_type, atm_strike))
-                        if not _strike_val:
-                            _strike_val = dir_strikes.get(opt_type, atm_strike)
                         result["_strike"] = _strike_val
                         result["_strike_label"] = _label
+                        result["_symbol"] = _oi.get("symbol", "")
                         all_results[opt_type + "_" + _label] = result
                         if not result["fired"]:
                             continue
