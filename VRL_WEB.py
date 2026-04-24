@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE War Room v13.9
+VRL_WEB.py — VISHAL RAJPUT TRADE v16.6
 Dashboard server with admin login + subscriber token access.
 """
-import csv, json, os, hashlib, secrets, time, threading
+import csv, json, os, hashlib, secrets, time, threading, logging
 from datetime import date, datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from http.cookies import SimpleCookie
 
-PORT = 8080
 BASE = os.path.expanduser("~")
-# State files live inside the repo so AUTH/MAIN/WEB all agree. BUG-016.
+# State files live inside the repo so AUTH/MAIN/WEB all agree.
 import VRL_DATA as _D
+import VRL_CONFIG as _CFG
+# v16.6: read port from config.yaml (websocket section) with 8080 default.
+PORT = _CFG.web_port() or 8080
 STATE_DIR = _D.STATE_DIR
 DASH_FILE = os.path.join(STATE_DIR, "vrl_dashboard.json")
 TRADE_LOG = os.path.join(BASE, "lab_data", "vrl_trade_log.csv")
+# Wire into VRL_DATA's dated-rotating logger so WEB logs land under
+# ~/logs/web/YYYY-MM-DD.log alongside main/lab instead of disappearing.
+_WEB_LOG_FILE = os.path.join(_D.WEB_LOG_DIR, "vrl_web.log")
+try:
+    logger = _D.setup_logger("vrl_web", _WEB_LOG_FILE)
+except Exception:
+    # Fallback if VRL_DATA logging isn't ready yet
+    logger = logging.getLogger("vrl_web")
 
 # ── AUTH CONFIG ──
 ADMIN_USER = "vishal"
@@ -169,7 +179,7 @@ def _read_dash():
         except (json.JSONDecodeError, OSError) as e:
             try:
                 import logging
-                logging.getLogger("vrl_web").debug("[WEB] _read_dash error: " + str(e))
+                logger.debug("[WEB] _read_dash error: " + str(e))
             except Exception:
                 pass
             data = {}
@@ -258,20 +268,30 @@ def _read_multitf():
         try: return round(float(r.get(k, d)), 3)
         except (TypeError, ValueError): return d
     spot = []
-    for label, prefix in [("1m","nifty_spot_1min"),("3m","nifty_spot_3min_"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("D","nifty_spot_daily")]:
+    # v16.6: spot 3m is computed in-memory via get_spot_indicators and written
+    # to the dashboard JSON, not a CSV. Read from dash for 3m; other TFs use
+    # the LAB-collected CSVs.
+    for label, prefix in [("1m","nifty_spot_1min"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("60m","nifty_spot_60min_"),("D","nifty_spot_daily")]:
         r = _last(_latest(spot_dir, prefix))
-        if not r and label == "3m":
-            # 3m spot comes from get_spot_indicators, not CSV — use dashboard JSON
-            try:
-                d = _read_dash()
-                mk = d.get("market", {})
-                r = {"adx": mk.get("spot_adx_3m", 0), "rsi": mk.get("spot_rsi", 0), "ema_spread": mk.get("spot_spread", 0), "regime": mk.get("regime", "")}
-            except Exception:
-                r = None
         if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread")),"regime":r.get("regime","")})
         else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0,"regime":""})
+    # Append 3m row from dashboard JSON (not CSV)
+    try:
+        _d = _read_dash()
+        _mk = _d.get("market", {})
+        spot.insert(1, {
+            "tf": "3m",
+            "adx": round(float(_mk.get("spot_adx_3m", 0)), 1),
+            "rsi": round(float(_mk.get("spot_rsi", 0)), 1),
+            "spread": round(float(_mk.get("spot_spread", 0)), 1),
+            "regime": _mk.get("regime", ""),
+        })
+    except Exception:
+        spot.insert(1, {"tf": "3m", "adx": 0, "rsi": 0, "spread": 0, "regime": ""})
     ce = []; pe = []; ce_strike = 0; pe_strike = 0
-    for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_"),("5m",opt1_dir,"nifty_option_5min_"),("15m",opt1_dir,"nifty_option_15min_")]:
+    # v16.6 dropped option_5min / option_15min tables and CSVs entirely.
+    # Only 1m and 3m option timeframes survive.
+    for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_")]:
         p = _latest(d, prefix)
         for side, arr in [("CE",ce),("PE",pe)]:
             r = _lasttype(p, side)
@@ -1168,7 +1188,7 @@ def _bind_host():
     print("[VRL_WEB] " + msg, file=_sys.stderr, flush=True)
     try:
         import logging as _logging
-        _logging.getLogger("vrl_web").critical(msg)
+        logger.critical(msg)
     except Exception:
         pass
     # Best-effort Telegram — needs token + chat from env. Never raise.
