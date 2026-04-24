@@ -1179,16 +1179,8 @@ def validate_entry(state, entry_result, kite=None):
     if float(state.get("entry_price", 0) or 0) <= 0:
         failures.append("STATE: entry_price=0 after entry")
 
-    # CHECK 3: SL is set correctly (entry - hard_sl)
-    try:
-        hard_sl     = CFG.get().get("exit", {}).get("hard_sl", 12)
-        expected_sl = round(float(state.get("entry_price", 0) or 0) - hard_sl, 2)
-        actual_sl   = round(float(state.get("phase1_sl", 0) or 0), 2)
-        if abs(expected_sl - actual_sl) > 0.5:
-            failures.append("SL_MISMATCH: expected=" + str(expected_sl)
-                            + " actual=" + str(actual_sl))
-    except Exception as e:
-        failures.append("CHECK3_ERR: " + str(e))
+    # CHECK 3: (v16.6) legacy SL-state validation removed — the
+    # strict 3-rule exit chain has no persistent SL field in state.
 
     # CHECK 4: Qty is correct (lots × lot_size)
     try:
