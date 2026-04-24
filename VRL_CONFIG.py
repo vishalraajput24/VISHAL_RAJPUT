@@ -96,6 +96,17 @@ def _validate(cfg: dict):
     if not isinstance(_esp, (int, float)) or _esp >= 0:
         raise ConfigError("exit.ema9_band.emergency_sl_pts must be a "
                           "negative number, got: " + str(_esp))
+    # eod_exit_time must be HH:MM with valid hour/minute — a typo would
+    # crash the exit chain parser at runtime.
+    _eod = str(xb["eod_exit_time"])
+    try:
+        _eh, _em = _eod.split(":")
+        _eh_i, _em_i = int(_eh), int(_em)
+        if not (0 <= _eh_i < 24 and 0 <= _em_i < 60):
+            raise ValueError("out of range")
+    except Exception as _e:
+        raise ConfigError("exit.ema9_band.eod_exit_time must be HH:MM "
+                          "(24h), got: " + _eod + " (" + str(_e) + ")")
 
 
 # ── Accessors ────────────────────────────────────────────────

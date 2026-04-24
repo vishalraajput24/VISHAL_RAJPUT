@@ -220,29 +220,37 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -10):
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:
-        eod_mins = int(CFG.exit_ema9_band("eod_exit_time", "15:20").replace(":", "")) // 100 * 60 + int(CFG.exit_ema9_band("eod_exit_time", "15:20")[-2:])
+        # Robust HH:MM parse — tolerates single-digit hours or minutes.
+        _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20")
+        try:
+            _eh, _em = _eod_str.split(":")
+            eod_mins = int(_eh) * 60 + int(_em)
+        except Exception:
+            eod_mins = 15 * 60 + 20  # safe default
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
     trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        # Fetch data if not provided, with a short wait-loop for freshly
-        # opened trades where the 3-min history hasn't arrived yet.
+        # Fetch data if not provided, capped at 10s total wait so the
+        # strategy loop doesn't stall out of emergency-SL monitoring.
+        # On miss we return [] — the next manage_exit call retries.
         if opt_3m_full is None or len(opt_3m_full) < 2:
-            for _ in range(7):
+            for _ in range(2):
                 time.sleep(5)
                 opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
                 if opt_3m_full is not None and len(opt_3m_full) >= 2:
                     break
             else:
-                return []  # no data — hold the trade
+                return []  # no data — hold the trade, retry next tick
         # CRITICAL: use the last closed 3-min candle only if its close
-        # time is at or after entry_time. Otherwise iloc[-2] points at a
-        # pre-entry candle (the live 15:03-15:06 bar is still forming at
-        # iloc[-1], so iloc[-2] is the 15:00-15:03 bar — pre-entry data).
-        # Using that stale close fired the trail the moment SL rose above
-        # it, costing the trade 50+ pts on fast entries.
+        # time is strictly AFTER entry_time. Otherwise iloc[-2] points
+        # at a pre-entry candle (the live 15:03-15:06 bar is still
+        # forming at iloc[-1], so iloc[-2] is the 15:00-15:03 bar —
+        # pre-entry data). Using that stale close fired the trail the
+        # moment SL rose above it, costing the trade 50+ pts on fast
+        # entries. `<=` rejects the exact-boundary entry (<1% case).
         _candle = opt_3m_full.iloc[-2]
         _et_str = state.get("entry_time") or ""
         _use = True
@@ -251,7 +259,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 _h, _m, _s = (int(p) for p in _et_str.split(":"))
                 _et_t = _dtime(_h, _m, _s)
                 _candle_close_t = (_candle.name + timedelta(minutes=3)).time()
-                if _candle_close_t < _et_t:
+                if _candle_close_t <= _et_t:
                     _use = False   # whole candle was pre-entry — hold
             except Exception:
                 pass  # fail open — use candle as before
