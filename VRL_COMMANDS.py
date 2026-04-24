@@ -377,7 +377,6 @@ def _cmd_status(args):
     entry   = st.get("entry_price", 0)
     pnl     = round(ltp - entry, 1) if ltp > 0 else 0
     peak    = st.get("peak_pnl", 0)
-    phase   = st.get("exit_phase", 1)
 
     # v16.2: trail tier = active stop, else initial -10
     _tier = st.get("active_ratchet_tier", "None")
@@ -386,24 +385,11 @@ def _cmd_status(args):
         _stop_line = "Trail  : " + _tier + " @ Rs" + str(round(_rsl, 1))
         _stop_dist = round(ltp - _rsl, 1) if ltp > 0 else "—"
     else:
-        _init_sl   = round(entry - 10, 1)    # v16.2: was -12
+        _init_sl   = round(entry - 10, 1)
         _stop_line = "Trail  : INITIAL @ Rs" + str(_init_sl)
         _stop_dist = round(ltp - _init_sl, 1) if ltp > 0 else "—"
 
-    # v15.2.5: velocity + peak_history for /status
-    _vel = round(float(st.get("current_velocity", 0) or 0), 2)
-    _ph  = (st.get("peak_history") or [])[-4:]
-    _vel_sign = "+" if _vel >= 0 else ""
-    if _vel > 1:
-        _vel_tag = "GROWING"
-    elif _vel > 0:
-        _vel_tag = "SLOWING"
-    elif _vel == 0:
-        _vel_tag = "FLAT ⚠️"
-    else:
-        _vel_tag = "DYING ⚠️"
-    _vel_line = ("Vel    : " + _vel_sign + str(_vel) + " pts/candle (" + _vel_tag + ")\n"
-                 + "Peaks  : " + str(_ph) + "\n")
+    _vel_line = ""
 
     _tg_send(
         "📊 <b>STATUS — IN TRADE</b>\n"
@@ -780,19 +766,10 @@ def _cmd_reset_exit(args):
             state["direction"] = ""
             state["entry_price"] = 0.0
             state["entry_time"] = ""
-            state["exit_phase"] = 1
-            state["phase1_sl"] = 0.0
-            state["phase2_sl"] = 0.0
             state["qty"] = D.get_lot_size()
-            state["trail_tightened"] = False
             state["peak_pnl"] = 0.0
             state["mode"] = ""
-            state["iv_at_entry"] = 0.0
-            state["score_at_entry"] = 0
-            state["regime_at_entry"] = ""
             state["candles_held"] = 0
-            state["_rsi_was_overbought"] = False
-            state["_last_trail_candle"] = ""
             state["force_exit"] = False
             state["_exit_failed"] = False
             _tg_send("⚠️ Trade state cleared – verify position in broker manually.")

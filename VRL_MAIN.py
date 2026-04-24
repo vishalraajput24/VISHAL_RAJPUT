@@ -64,9 +64,8 @@ DEFAULT_STATE = {
     "entry_time"         : "",
     "qty"                : D.get_lot_size(),
     "lot_count"          : 2,
-    # ── Exit state (v15.0: band-based trailing, no fixed floors) ──
+    # ── Exit state ────────────────────────────────────────
     "peak_pnl"           : 0.0,
-    "trough_pnl"         : 0.0,
     "candles_held"       : 0,
     "force_exit"         : False,
     "_exit_failed"       : False,
@@ -79,44 +78,13 @@ DEFAULT_STATE = {
     "current_ema9_high"  : 0.0,
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
-    # ── v15.2 entry context (straddle + VWAP) ──
-    "entry_straddle_delta"     : 0.0,
-    "entry_straddle_threshold" : 0.0,
-    "entry_straddle_period"    : "",
-    "entry_atm_strike"         : 0,
-    "entry_band_width"         : 0.0,
-    "entry_spot_vwap"          : 0.0,
-    "entry_spot_vs_vwap"       : 0.0,
-    "entry_vwap_bonus"         : "",
-    "entry_straddle_info"      : "",
-    # v16.0 Batch 7 context (bands slope + confluence tag)
-    "entry_bands_state"        : "",
-    "entry_context_tag"        : "",
-    "ema9_high_slope_5c"       : 0.0,
-    "ema9_low_slope_5c"        : 0.0,
-    "current_bands_state"      : "",
-    "current_ema9_high_slope"  : 0.0,
-    "current_ema9_low_slope"   : 0.0,
-    "_last_context_ts"         : "",
-    # v15.2.5 velocity stall tracking (per 3-min candle)
-    "peak_history"       : [],
-    "last_peak_candle_ts": "",
-    "current_velocity"   : 0.0,
-    # BUG-J: one-shot flag so backfill runs only once per trade
-    "_peak_history_backfilled": False,
     # BUG-V: date sentinel for "run lab cleanup once per trading day"
     "_last_cleanup_date" : "",
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
-    "alert_history"      : {},   # key -> ISO timestamp
     # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
-    "_ratchet_alert_tier": "None",
-    # v15.1 BE+2 lock (legacy, kept for state compat)
-    "be2_active"         : False,
-    "be2_level"          : 0.0,
-    "score_at_entry"     : 0,
     "other_token"        : 0,
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
@@ -133,7 +101,6 @@ DEFAULT_STATE = {
     "_bias_done"         : False,
     "_straddle_done"     : False,
     "_hourly_rsi_ts"     : 0,
-    "_vix_warned"        : False,
     "_straddle_alerted"  : False,
     # ── Loop bookkeeping ───────────────────────────────────
     "_last_1min_candle"  : "",
@@ -144,13 +111,10 @@ DEFAULT_STATE = {
     # ── Exchange order tracking (live mode — legacy compat) ──
     "_sl_order_id"       : "",
     "_sl_trigger_at_exchange": 0,
-    "phase1_sl"          : 0.0,   # legacy: VRL_TRADE may still use for SL-M
-    "exit_phase"         : 1,     # legacy
     "lot1_active"        : True,  # legacy (always True in v15.0)
     "lot2_active"        : True,  # legacy (always True in v15.0)
     "lots_split"         : False, # legacy (always False in v15.0)
     "current_floor"      : 0.0,   # legacy (used for dashboard trail display)
-    "current_rsi"        : 0.0,   # legacy
     "_candle_low"        : 0.0,   # legacy
     "_last_milestone"    : 0,     # legacy
     "_static_floor_sl"   : 0.0,   # legacy
@@ -261,7 +225,6 @@ def _load_state():
             _tg_send(
                 "🔄 <b>Bot restarted mid-trade</b>\n"
                 "Symbol : " + str(state.get("symbol")) + "\n"
-                "Phase  : " + str(state.get("exit_phase")) + "\n"
                 "Resuming exit monitoring."
             )
     except Exception as e:
@@ -345,15 +308,11 @@ def _reset_daily(today_str: str):
         state["_bias_done"]            = False
         state["_straddle_done"]        = False
         state["_hourly_rsi_ts"]        = 0
-        state["_vix_warned"]           = False
         state["_straddle_alerted"]     = False
     D.clear_token_cache()
     D.reset_daily_warnings()
     _reset_strike_lock()
     logger.info("[MAIN] _eod_exited reset for new day")
-    # v15.2.5: clear pre-entry alert rate-limit history at daily rollover
-    with _state_lock:
-        state["alert_history"] = {}
     # DB maintenance
     try:
         import VRL_DB as _DB
@@ -420,28 +379,21 @@ def _remove_pid():
 # ═══════════════════════════════════════════════════════════════
 
 # v15.2.5 BUG-N7: live columns only (matches _TRADE_FIELDS in VRL_DB.py).
-# Dead v13 fields (mode, score, iv_at_entry, regime, spread_1m, spread_3m,
-# delta_at_entry, straddle_decay, signal_price, bonus_*, momentum_pts,
-# rsi_rising, spot_confirms, spot_move) removed.
+# Dead v13 fields previously tracked here — removed via schema migrations.
 TRADE_FIELDNAMES = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
     "gross_pnl_rs", "net_pnl_rs",
-    "peak_pnl", "trough_pnl", "exit_reason", "exit_phase",
+    "peak_pnl", "exit_reason",
     "dte", "candles_held", "session", "sl_pts",
-    "bias", "vix_at_entry", "hourly_rsi", "entry_mode",
+    "vix_at_entry", "entry_mode",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "num_exit_orders", "qty_exited",
     "entry_slippage", "exit_slippage", "lot_id",
-    # v15.2 entry/exit context
     "entry_ema9_high", "entry_ema9_low",
     "exit_ema9_high", "exit_ema9_low",
     "entry_band_position", "exit_band_position",
     "entry_body_pct",
-    "entry_straddle_delta", "entry_straddle_threshold",
-    "entry_straddle_period", "entry_straddle_info",
-    "entry_atm_strike", "entry_band_width",
-    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
 ]
 
 def _cleanup_trade_log():
@@ -507,9 +459,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "pnl_pts"       : pnl_pts,
         "pnl_rs"        : pnl_rs,
         "peak_pnl"      : round(st.get("peak_pnl", 0), 2),
-        "trough_pnl"    : round(st.get("trough_pnl", 0), 2),
         "exit_reason"   : exit_reason,
-        "exit_phase"    : st.get("exit_phase", 1),
         "dte"           : st.get("dte_at_entry", 0),
         "candles_held"  : candles_held,
         "session"       : st.get("session_at_entry", ""),
@@ -536,16 +486,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
                                     st.get("current_ema9_high", 0),
                                     st.get("current_ema9_low", 0)),
         "entry_body_pct":      round(float(st.get("entry_body_pct", 0) or 0), 1),
-        "entry_straddle_delta":     round(float(st.get("entry_straddle_delta", 0) or 0), 2),
-        "entry_straddle_threshold": round(float(st.get("entry_straddle_threshold", 0) or 0), 2),
-        "entry_straddle_period":    st.get("entry_straddle_period", "") or "",
-        "entry_atm_strike":    int(st.get("entry_atm_strike", 0) or 0),
-        "entry_band_width":    round(float(st.get("entry_band_width", 0) or 0), 2),
-        "entry_spot_vwap":     round(float(st.get("entry_spot_vwap", 0) or 0), 2),
-        "entry_spot_vs_vwap":  round(float(st.get("entry_spot_vs_vwap", 0) or 0), 2),
-        "entry_vwap_bonus":    st.get("entry_vwap_bonus", "") or "",
         # v15.2.5 Fix 5: straddle classification captured at entry
-        "entry_straddle_info": st.get("entry_straddle_info", "") or "",
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -994,24 +935,16 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         except Exception as _ate:
             logger.debug("[MAIN] set_active_trade: " + str(_ate))
         # Exit state
-        state["exit_phase"]         = 1
-        state["phase1_sl"]          = phase1_sl
         state["_static_floor_sl"]   = 0
         state["current_floor"]      = phase1_sl
         state["peak_pnl"]           = 0.0
-        state["trough_pnl"]         = 0.0
         state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
-        # v15.2.5 BUG-J: fresh trade starts with an empty peak_history so
+        # Fresh trade starts without
         # the normal per-candle append path populates it cleanly. Reset
         # the one-shot backfill sentinel so the NEXT restart-with-trade
         # (if this position is still open) gets its own seed.
-        state["peak_history"]        = []
-        state["last_peak_candle_ts"] = ""
-        state["current_velocity"]    = 0.0
-        state["_peak_history_backfilled"] = False
         state["_last_milestone"]    = 0
-        state["current_rsi"]        = 0
         # v15.0 entry context — band values at entry
         state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
         # v16.4: Stage 2 confirmation tracking
@@ -1027,26 +960,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["other_token"]        = _other_token_entry
         # v15.2: capture straddle + VWAP context for exit alert + dashboard
         _sd_at_entry = entry_result.get("straddle_delta")
-        state["entry_straddle_delta"]     = float(_sd_at_entry) if _sd_at_entry is not None else 0.0
-        state["entry_straddle_threshold"] = float(entry_result.get("straddle_threshold", 0) or 0)
-        state["entry_straddle_period"]    = entry_result.get("straddle_period", "")
-        state["entry_atm_strike"]         = int(entry_result.get("atm_strike_used", 0) or 0)
-        state["entry_band_width"]         = float(entry_result.get("band_width", 0) or 0)
-        state["entry_spot_vwap"]          = float(entry_result.get("spot_vwap", 0) or 0)
-        state["entry_spot_vs_vwap"]       = float(entry_result.get("spot_vs_vwap", 0) or 0)
-        state["entry_vwap_bonus"]         = entry_result.get("vwap_bonus", "")
         # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA straddle classification
-        state["entry_straddle_info"]      = entry_result.get("straddle_info", "")
         # v16.0 Batch 7: band slope + context tag (display only)
-        state["entry_bands_state"]        = entry_result.get("bands_state", "")
-        state["entry_context_tag"]        = entry_result.get("context_tag", "")
         state["backbone_status"]          = entry_result.get("backbone_status", "N/A")
-        state["ema9_high_slope_5c"]       = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
-        state["ema9_low_slope_5c"]        = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
-        state["current_bands_state"]      = entry_result.get("bands_state", "")
-        state["current_ema9_high_slope"]  = float(entry_result.get("ema9_high_slope_5c", 0) or 0)
-        state["current_ema9_low_slope"]   = float(entry_result.get("ema9_low_slope_5c", 0) or 0)
-        state["_last_context_ts"]         = ""
 
     _save_state()
 
@@ -1120,8 +1036,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         pass
 
     _ctx_lines = []
-    _ehs = entry_result.get("ema9_high_slope_5c", 0)
-    _els = entry_result.get("ema9_low_slope_5c", 0)
     _bstate = entry_result.get("bands_state", "")
     if _bstate == "RISING":
         _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  RISING OK")
@@ -1317,9 +1231,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
                 "direction": "", "entry_price": 0.0, "entry_time": "",
-                "exit_phase": 1, "phase1_sl": 0.0, "phase2_sl": 0.0,
                 "_static_floor_sl": 0.0, "current_floor": 0.0,
-                "peak_pnl": 0.0, "trough_pnl": 0.0,
+                "peak_pnl": 0.0,
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
@@ -1356,7 +1269,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _reason_line = ""
         _tier = state.get("active_ratchet_tier", "") or "INITIAL"
         if reason == "VELOCITY_STALL":
-            _ph = state.get("peak_history") or []
             _reason_line = "Last peaks: " + str(_ph[-4:]) + "\n"
         elif reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
@@ -1735,7 +1647,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
                 "pnl": running,
                 "peak": round(st.get("peak_pnl", 0), 1),
-                "trough": round(st.get("trough_pnl", 0), 1),
                 "candles": st.get("candles_held", 0),
                 "strike": st.get("strike", 0),
                 "entry_mode": st.get("entry_mode", ""),
@@ -1752,25 +1663,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
                 "backbone_status":     st.get("backbone_status", "CONFIRMED"),
                 # v16.0 Batch 7 context display (bands + straddle + VWAP)
-                "entry_bands_state":        st.get("entry_bands_state", ""),
-                "entry_context_tag":        st.get("entry_context_tag", ""),
-                "ema9_high_slope_5c":       round(float(st.get("ema9_high_slope_5c", 0) or 0), 1),
-                "ema9_low_slope_5c":        round(float(st.get("ema9_low_slope_5c", 0) or 0), 1),
-                "current_bands_state":      st.get("current_bands_state", ""),
-                "current_ema9_high_slope":  round(float(st.get("current_ema9_high_slope", 0) or 0), 1),
-                "current_ema9_low_slope":   round(float(st.get("current_ema9_low_slope", 0) or 0), 1),
-                "entry_straddle_info":      st.get("entry_straddle_info", ""),
                 # v15.2 entry context (replayed at exit on dashboard)
-                "entry_straddle_delta":     st.get("entry_straddle_delta", 0),
-                "entry_straddle_threshold": st.get("entry_straddle_threshold", 0),
-                "entry_straddle_period":    st.get("entry_straddle_period", ""),
-                "entry_band_width":         st.get("entry_band_width", 0),
                 # v15.2.5 velocity stall telemetry (sparkline + number)
-                "peak_history":             (st.get("peak_history") or [])[-4:],
-                "current_velocity":         round(float(st.get("current_velocity", 0) or 0), 2),
                 # Legacy compat
                 "lots_split": False,
-                "current_rsi": round(st.get("current_rsi", 0), 1),
                 "current_floor": round(st.get("current_ema9_low", 0), 2),
                 "lot1": lot1,
                 "lot2": lot2,
@@ -1878,7 +1774,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "vix": round(vix_ltp, 1),
                 "session": session,
                 "regime": spot_3m.get("regime", ""),
-                "context_tag": state.get("entry_context_tag", "") if state.get("in_trade") else "",
                 "bias": bias,
                 "spot_ema9": spot_3m.get("ema9", 0),
                 "spot_ema21": spot_3m.get("ema21", 0),
@@ -2172,7 +2067,7 @@ def _strategy_loop(kite):
             if _force and _in_trade:
                 option_ltp = D.get_ltp(_token)
                 # BUG-027: use floor SL as minimum if LTP is stale/zero
-                _floor_sl = state.get("_static_floor_sl", state.get("phase1_sl", 0))
+                _floor_sl = state.get("_static_floor_sl", 0)
                 _exit_px = option_ltp if option_ltp > 0 else max(_entry_px, _floor_sl)
                 # BUG-D fix: thread the pre-captured entry through so PNL is
                 # computed against the REAL entry — not a race-stale state read.
@@ -2205,17 +2100,6 @@ def _strategy_loop(kite):
                     except Exception as e:
                         logger.warning("[MAIN] REST option LTP failed: " + str(e))
                 if option_ltp > 0:
-                    # Update RSI for dashboard display (independent of manage_exit)
-                    try:
-                        _dash_df = D.get_historical_data(_token, "minute", 5)
-                        _dash_df = D.add_indicators(_dash_df)
-                        if not _dash_df.empty and len(_dash_df) >= 2:
-                            _dash_rsi = round(float(_dash_df.iloc[-2].get("RSI", 0)), 1)
-                            with _state_lock:
-                                state["current_rsi"] = _dash_rsi
-                    except Exception:
-                        pass
-
                     with _state_lock:
                         cur_1m = now.strftime("%H:%M")
                         if cur_1m != state.get("_last_candle_held_min", ""):
@@ -2279,7 +2163,6 @@ def _strategy_loop(kite):
 
                     # v16.2: trail tier upgrade alert (was v16.0 ratchet)
                     try:
-                        _prev_tier = state.get("_ratchet_alert_tier", "None")
                         _new_tier  = state.get("active_ratchet_tier", "None")
                         # Alert only on transitions to an ARMED tier (skip INITIAL).
                         _armed = _new_tier not in ("None", "", "INITIAL")
@@ -2312,11 +2195,6 @@ def _strategy_loop(kite):
                                 + "   (+" + "{:.1f}".format(_r_lock) + " pts lock, "
                                 + "{:.1f}".format(_r_room) + " pts room)"
                             )
-                            with _state_lock:
-                                state["_ratchet_alert_tier"] = _new_tier
-                        if not state.get("in_trade"):
-                            with _state_lock:
-                                state["_ratchet_alert_tier"] = "None"
                     except Exception as _re:
                         logger.debug("[MAIN] trail tier alert error: " + str(_re))
 
@@ -2325,25 +2203,6 @@ def _strategy_loop(kite):
                         _ctx_tok = state.get("token")
                         if _ctx_tok:
                             _df_ctx = D.get_option_3min(_ctx_tok, lookback=10)
-                            if _df_ctx is not None and len(_df_ctx) >= 6:
-                                _c_closed = _df_ctx.iloc[:-1]
-                                _c_ts = str(_c_closed.index[-1]) if len(_c_closed) else ""
-                                if _c_ts and state.get("_last_context_ts") != _c_ts:
-                                    _c_tail = _c_closed.tail(6)
-                                    _ehs = round(float(_c_tail.iloc[-1].get("ema9_high", 0))
-                                                 - float(_c_tail.iloc[0].get("ema9_high", 0)), 1)
-                                    _els = round(float(_c_tail.iloc[-1].get("ema9_low", 0))
-                                                 - float(_c_tail.iloc[0].get("ema9_low", 0)), 1)
-                                    with _state_lock:
-                                        state["current_ema9_high_slope"] = _ehs
-                                        state["current_ema9_low_slope"]  = _els
-                                        if _ehs >= 20 and _els >= 20:
-                                            state["current_bands_state"] = "RISING"
-                                        elif _ehs <= 3 and _els <= 3:
-                                            state["current_bands_state"] = "FLAT"
-                                        else:
-                                            state["current_bands_state"] = "WEAK"
-                                        state["_last_context_ts"] = _c_ts
                     except Exception:
                         pass
 
@@ -2663,16 +2522,10 @@ def _strategy_loop(kite):
                         _alert_state = {
                             "pre_entry_alerts_enabled":
                                 state.get("pre_entry_alerts_enabled", True),
-                            "alert_history":
-                                dict(state.get("alert_history") or {}),
                         }
                     _signals = VRL_ALERTS.detect_pre_entry_signals(
                         all_results, _alert_state, dfs=None)
-                    # Persist updated history + send
                     if _signals:
-                        with _state_lock:
-                            state["alert_history"] = _alert_state.get(
-                                "alert_history", {})
                         for _sig in _signals:
                             _tg_send(_sig["msg"])
                 except Exception as _ae:
@@ -2968,8 +2821,6 @@ def main():
             state["direction"] = ""
             state["entry_price"] = 0.0
             state["entry_time"] = ""
-            state["exit_phase"] = 1
-            state["phase1_sl"] = 0.0
             state["peak_pnl"] = 0.0
             state["candles_held"] = 0
             state["lot1_active"] = True

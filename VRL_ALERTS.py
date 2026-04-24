@@ -113,7 +113,6 @@ def _record(state: dict, key: str):
                     fresh[k] = ts
             except Exception:
                 pass
-        state["alert_history"] = fresh
 
 
 def _key(strike: int, side: str, signal_type: str) -> str:

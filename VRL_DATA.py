@@ -114,35 +114,19 @@ STATE_PERSIST_FIELDS = [
     # Position
     "in_trade", "symbol", "token", "direction", "strike", "expiry",
     "entry_price", "entry_time", "qty", "lot_count",
-    # Exit state (v15.0: band-based)
-    "peak_pnl", "trough_pnl", "candles_held",
+    # Exit state
+    "peak_pnl", "candles_held",
     # v15.0 entry context + band trail
     "entry_mode", "entry_ema9_high", "entry_ema9_low",
     "entry_band_position", "entry_body_pct",
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
-    "score_at_entry", "other_token",
-    # v15.2 entry context (straddle + VWAP)
-    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
-    "entry_atm_strike", "entry_band_width",
-    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
-    "entry_straddle_info",
-    # v16.0 Batch 7 band slope + context tag
-    "entry_bands_state", "entry_context_tag",
-    "ema9_high_slope_5c", "ema9_low_slope_5c",
-    "current_bands_state", "current_ema9_high_slope", "current_ema9_low_slope",
-    "_last_context_ts",
-    # v15.2.5 velocity stall tracking
-    "peak_history", "last_peak_candle_ts", "current_velocity",
-    # v15.2.5 BUG-J sentinel: one-shot peak_history backfill on startup
-    "_peak_history_backfilled",
-    # v15.2.5 BUG-V sentinel: daily lab cleanup date guard
+    "other_token",
+    # BUG-V sentinel: daily lab cleanup date guard
     "_last_cleanup_date",
-    # v15.2.5 pre-entry alert toggle + rate-limit history
-    "pre_entry_alerts_enabled", "alert_history",
+    # Pre-entry alert toggle
+    "pre_entry_alerts_enabled",
     # v16.0 ratchet state
     "active_ratchet_tier", "active_ratchet_sl",
-    # v15.1 BE+2 lock (legacy)
-    "be2_active", "be2_level",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",
@@ -150,11 +134,11 @@ STATE_PERSIST_FIELDS = [
     "daily_pnl",
     # Bot control
     "paused", "prev_close",
-    # v15.2.5 BUG-A: persist _exit_failed so a crash mid-manual-resolution
+    # BUG-A: persist _exit_failed so a crash mid-manual-resolution
     # doesn't silently clear the block on restart
     "_exit_failed",
     # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
-    "phase1_sl", "exit_phase", "lot1_active", "lot2_active", "lots_split",
+    "lot1_active", "lot2_active", "lots_split",
 ]
 
 def get_session_block(hour: int, minute: int) -> str:
