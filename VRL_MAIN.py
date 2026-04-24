@@ -88,6 +88,7 @@ DEFAULT_STATE = {
     "_last_cleanup_date" : "",
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
+    "alert_history"      : {},   # key "PE_23950_C" -> ISO ts (rate-limit store)
     # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
@@ -2398,9 +2399,17 @@ def _strategy_loop(kite):
                         _alert_state = {
                             "pre_entry_alerts_enabled":
                                 state.get("pre_entry_alerts_enabled", True),
+                            "alert_history":
+                                dict(state.get("alert_history") or {}),
                         }
                     _signals = VRL_ALERTS.detect_pre_entry_signals(
                         all_results, _alert_state, dfs=None)
+                    # Persist rate-limit history back to state so the
+                    # per-key cooldown + global hourly cap actually hold
+                    # across ticks and restarts.
+                    with _state_lock:
+                        state["alert_history"] = _alert_state.get(
+                            "alert_history", {})
                     if _signals:
                         for _sig in _signals:
                             _tg_send(_sig["msg"])

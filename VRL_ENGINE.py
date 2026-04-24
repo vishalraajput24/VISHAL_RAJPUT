@@ -524,14 +524,15 @@ def _detect_ready_to_fire(side: str, strike: int, result: dict,
     body  = float(result.get("body_pct", 0) or 0)
     sd    = result.get("straddle_delta")
     green = bool(result.get("candle_green", False))
+    body_min = int(CFG.entry_ema9_band("body_pct_min", 40))
 
     # Only fire C when the "setup outline" is healthy:
-    # price is above the band AND candle is green AND straddle data OK.
+    # price is above the band AND candle is green.
     if not (close > ema9h and green):
         return None
     blocker = None
     if reason.startswith("weak_body"):
-        blocker = "body " + str(int(body)) + "% < 30"
+        blocker = "body " + str(int(body)) + "% < " + str(body_min)
     elif reason.startswith("cooldown"):
         blocker = "cooldown active (" + reason + ")"
     elif reason.startswith("narrow_band"):
@@ -545,7 +546,7 @@ def _detect_ready_to_fire(side: str, strike: int, result: dict,
            "Close ₹" + str(round(close, 1))
            + " > EMA9-high ₹" + str(round(ema9h, 1)) + " ✓\n"
            "Green ✓ | Body " + str(int(body)) + "% "
-           + ("✓" if body >= 30 else "✗") + "\n"
+           + ("✓" if body >= body_min else "✗") + "\n"
            "Straddle Δ" + (str(sd) if sd is not None else "n/a")
            + (" ✓" if sd is not None else "") + "\n"
            "MISSING: " + str(blocker))
@@ -554,7 +555,7 @@ def _detect_ready_to_fire(side: str, strike: int, result: dict,
 
 def _detect_blocked_setup(side: str, strike: int, result: dict,
                            df) -> dict:
-    """D — Fresh breakout + green + body≥30 but a HARD gate
+    """D — Fresh breakout + green + body ≥ body_min but a HARD gate
     (straddle tier, cooldown, time window) blocked. The educational
     part: show WHICH filter did the blocking."""
     if result.get("fired"):
@@ -566,7 +567,8 @@ def _detect_blocked_setup(side: str, strike: int, result: dict,
     ema9h = float(result.get("ema9_high", 0) or 0)
     body  = float(result.get("body_pct", 0) or 0)
     green = bool(result.get("candle_green", False))
-    if not (close > ema9h and green and body >= 30):
+    body_min = int(CFG.entry_ema9_band("body_pct_min", 40))
+    if not (close > ema9h and green and body >= body_min):
         return None
     # Only alert when the HARD gate was the blocker. already_above_band
     # and below_band are breakout-quality fails, not filter blocks.
