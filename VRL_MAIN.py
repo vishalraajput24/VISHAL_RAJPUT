@@ -875,13 +875,18 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
-    # v14.0: extract the OTHER side token for manage_exit divergence check
+    # Extract the OTHER side token for manage_exit divergence check.
+    # _locked_tokens is the module-global populated by _lock_strikes();
+    # the previous _ce_info_v15/_pe_info_v15 names were locals of the
+    # strategy loop and never reachable from this callee.
     _other_token_entry = 0
     try:
-        if option_type == "CE" and _pe_info_v15:
-            _other_token_entry = _pe_info_v15.get("token", 0)
-        elif option_type == "PE" and _ce_info_v15:
-            _other_token_entry = _ce_info_v15.get("token", 0)
+        _ce_locked = (_locked_tokens or {}).get("CE") or {}
+        _pe_locked = (_locked_tokens or {}).get("PE") or {}
+        if option_type == "CE" and _pe_locked:
+            _other_token_entry = int(_pe_locked.get("token", 0) or 0)
+        elif option_type == "PE" and _ce_locked:
+            _other_token_entry = int(_ce_locked.get("token", 0) or 0)
     except Exception:
         pass
 
@@ -905,10 +910,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         try:
             _trade_strike = state["strike"]
             _trade_dir    = option_type
-            _tce = int(_ce_info_v15.get("token", 0)) if _ce_info_v15 else 0
-            _tpe = int(_pe_info_v15.get("token", 0)) if _pe_info_v15 else 0
-            # If we only have the traded side, fill the other from the
-            # same token-resolution batch at this strike.
+            _tce = int((_ce_locked or {}).get("token", 0) or 0)
+            _tpe = int((_pe_locked or {}).get("token", 0) or 0)
+            # If the locked ATM tokens don't match the traded strike
+            # (OTM candidate won), resolve fresh tokens for the exact
+            # traded strike so hedge research has both legs of the
+            # actual position.
             if not _tce or not _tpe:
                 _both = D.get_option_tokens(kite, int(_trade_strike), expiry) or {}
                 if not _tce:
@@ -2065,9 +2072,13 @@ def _strategy_loop(kite):
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
                     _mex_other_tok = state.get("other_token", 0)
+                    # Snapshot the previous tier BEFORE manage_exit mutates
+                    # state so the upgrade-alert block below can detect
+                    # transitions (INITIAL → TRAIL_60 → VISHAL_MAX → …).
+                    _prev_tier = state.get("active_ratchet_tier", "None") or "None"
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # v16.2: trail tier upgrade alert (was v16.0 ratchet)
+                    # v16.2: trail tier upgrade alert
                     try:
                         _new_tier  = state.get("active_ratchet_tier", "None")
                         # Alert only on transitions to an ARMED tier (skip INITIAL).
