@@ -759,11 +759,13 @@ def _alert_bot_started():
         "2. EOD 15:20\n"
         "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>VISHAL TRAIL</b>  (patient)\n"
-        "peak <15   SL = entry-10          (INITIAL)\n"
-        "peak 15-30 SL = entry+peak*0.70   (TRAIL_70)\n"
-        "peak 30-50 SL = entry+peak*0.85   (VISHAL_MAX)\n"
-        "peak 50+   SL = entry+peak*0.90   (TRAIL_90)\n"
+        "<b>SMART TRAIL v2+</b>\n"
+        "peak <5    SL = entry-10          (INITIAL)\n"
+        "peak 5-8   SL = entry             (BREAKEVEN)\n"
+        "peak 8-15  SL = entry+peak*0.60   (TRAIL_60)\n"
+        "peak 15-30 SL = entry+peak*0.75   (TRAIL_75)\n"
+        "peak 30-45 SL = entry+peak*0.85   (VISHAL_MAX)\n"
+        "peak 45+   SL = entry+peak*0.90   (TRAIL_90)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1010,7 +1012,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +15 (TRAIL_70, 70% capture)\n"
+        "Breakeven at +5, trail arms at +8 (Smart v2+)\n"
     )
 
     # Backbone display removed — check_entry() never passes other-side
@@ -1128,7 +1130,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
         # Snapshot the active trail tier BEFORE state.update() wipes it below,
-        # so the exit alert reports the real tier (TRAIL_70/VISHAL_MAX/TRAIL_90)
+        # so the exit alert reports the real tier (BREAKEVEN/TRAIL_60/TRAIL_75/VISHAL_MAX/TRAIL_90)
         # instead of always falling back to INITIAL.
         _tier_snapshot = state.get("active_ratchet_tier", "") or "INITIAL"
         # v15.0: entry confirmation = band position at entry
@@ -2094,7 +2096,7 @@ def _strategy_loop(kite):
                     _mex_other_tok = state.get("other_token", 0)
                     # Snapshot the previous tier BEFORE manage_exit mutates
                     # state so the upgrade-alert block below can detect
-                    # transitions (INITIAL → TRAIL_70 → VISHAL_MAX → TRAIL_90).
+                    # transitions (INITIAL → BREAKEVEN → TRAIL_60 → TRAIL_75 → VISHAL_MAX → TRAIL_90).
                     _prev_tier = state.get("active_ratchet_tier", "None") or "None"
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
@@ -2122,8 +2124,12 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier == "TRAIL_70":
+                            if _new_tier == "BREAKEVEN":
+                                _icon = "🛡️"
+                            elif _new_tier == "TRAIL_60":
                                 _icon = "🔒"
+                            elif _new_tier == "TRAIL_75":
+                                _icon = "🔒🔒"
                             elif _new_tier == "VISHAL_MAX":
                                 _icon = "🔒🔒"
                             elif _new_tier == "TRAIL_90":
