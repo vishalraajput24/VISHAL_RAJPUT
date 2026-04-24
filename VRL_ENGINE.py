@@ -101,6 +101,18 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         ema9_low_slope = round(ema9_low - _ema9_low_past, 2)
         band_width = round(ema9_high - ema9_low, 2)
 
+        # Always compute band_position + body_pct up-front so the
+        # dashboard has values even when an early gate rejects.
+        if close > ema9_high:
+            _band_pos = "ABOVE"
+        elif close < ema9_low:
+            _band_pos = "BELOW"
+        else:
+            _band_pos = "IN"
+        _candle_range = high - low
+        _body_pct = round((abs(close - open_) / _candle_range * 100)
+                          if _candle_range > 0 else 0, 1)
+
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
             "ema9_low": round(ema9_low, 2), "close": round(close, 2), "open": round(open_, 2),
@@ -108,6 +120,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             "band_width": band_width,
             "ema9_low_slope": ema9_low_slope,
             "candle_green": (close > open_),
+            "band_position": _band_pos,
+            "body_pct": _body_pct,
         })
 
         # ── GATE 1: Time window (09:35-15:10) ──
@@ -136,12 +150,9 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             return result
 
         # ── GATE 4: Body ≥ body_pct_min ──
-        candle_range = high - low
-        body = abs(close - open_)
-        body_pct = round((body / candle_range * 100) if candle_range > 0 else 0, 1)
-        result["body_pct"] = body_pct
-        if body_pct < body_min:
-            result["reject_reason"] = f"weak_body_{int(body_pct)}pct"
+        # body_pct already computed up-front in result.update() above.
+        if _body_pct < body_min:
+            result["reject_reason"] = f"weak_body_{int(_body_pct)}pct"
             return result
 
         # ── All 4 gates passed ──

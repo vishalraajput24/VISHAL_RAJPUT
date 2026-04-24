@@ -386,11 +386,15 @@ sh+='<div class="sg">';
   sh+='<div class="mr"><span class="ml e" style="color:var(--bl)">EMA9-low</span><span class="mv mono" style="margin-left:auto">\u20B9'+_el.toFixed(1)+'</span></div>';
   sh+='</div>';
 
-  sh+='<div class="sr"><span class="sk">Body</span><span class="sv '+(_bodyok?'ok':'fl')+' mono">'+_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (&lt;40%)')+'</span></div>';
+    var _bodyShow = (_body>0)?(_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (<40)')):('\u2014 not computed');
+  var _bodyClr = (_body>0)?(_bodyok?'var(--gn2)':'var(--rd)'):'var(--tx3)';
+  sh+='<div class="sr"><span class="sk">Body</span><span class="sv mono" style="color:'+_bodyClr+';font-weight:800">'+_bodyShow+'</span></div>';
   sh+='<div class="sr"><span class="sk">Band width</span><span class="sv mono" style="color:'+(_widthok?'var(--gn2)':'var(--yl)')+';font-weight:800">'+_width.toFixed(1)+'pts '+(_widthok?'\u2713':'\u26A0 (<7)')+'</span></div>';
   var _slope=parseFloat(s.ema9_low_slope||0); var _slopeok=(_slope>=0);
-  sh+='<div class="sr"><span class="sk">EMA9 slope</span><span class="sv mono" style="color:'+(_slopeok?'var(--gn2)':'var(--rd)')+';font-weight:800">'+(_slope>=0?'+':'')+_slope.toFixed(1)+' '+(_slopeok?'\u2713 rising':'\u2717 falling')+'</span></div>';
-  sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
+  var _slopeLbl=(_slope>0.05?'\u2713 rising':_slope<-0.05?'\u2717 falling':'\u2192 flat');
+  var _slopeClr=(_slope>0.05?'var(--gn2)':_slope<-0.05?'var(--rd)':'var(--yl)');
+  sh+='<div class="sr"><span class="sk">EMA9 slope</span><span class="sv mono" style="color:'+_slopeClr+';font-weight:800">'+(_slope>=0?'+':'')+_slope.toFixed(1)+' '+_slopeLbl+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Candle</span><span class="sv mono" style="color:'+(_green?'var(--gn2)':'var(--tx3)')+'">'+(_green?'GREEN':'RED')+' (info)</span></div>';
   sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
   // v15.2.5 Fix 5 — Straddle is display only (never blocks). Classification
@@ -434,7 +438,24 @@ sh+='<div class="sg">';
   var vc='vw',vt='WAIT';
   if(fi){vc='vf';vt='READY TO FIRE \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
-  else if(s.reject_reason){vt=esc(s.reject_reason);}
+  else if(s.reject_reason){
+  var _r=String(s.reject_reason||'');
+  var _rmap={
+    'close_below_ema9_low':'Close below EMA9-low',
+    'red_candle':'(stale) Red candle \u2014 bot needs restart',
+    'not_fresh_breakout':'(stale) Not fresh breakout',
+    'insufficient_3m_data':'Warming up\u2026 waiting for candles'
+  };
+  if(_rmap[_r])vt=_rmap[_r];
+  else if(_r.indexOf('tight_band_')===0)vt='Band too narrow ('+_r.split('_').pop()+'pts < 7)';
+  else if(_r.indexOf('ema9_low_falling_')===0)vt='EMA9 falling ('+_r.split('_').pop()+')';
+  else if(_r.indexOf('weak_body_')===0)vt='Body '+_r.replace('weak_body_','').replace('pct','')+'% < 40%';
+  else if(_r.indexOf('before_')===0)vt='Pre-warmup (before '+_r.replace('before_','')+')';
+  else if(_r.indexOf('after_')===0)vt='Past entry cutoff ('+_r.replace('after_','')+')';
+  else if(_r.indexOf('no_floor_test_gap_')===0)vt='(stale) Floor test gap';
+  else if(_r.indexOf('weak_breakout_gap_')===0)vt='(stale) Weak gap';
+  else vt=esc(_r);
+}
   else if(_pos==='ABOVE'&&_bodyok&&_widthok&&_slopeok){vc='vr';vt='READY';}
   sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
 });
@@ -508,6 +529,7 @@ if(trades&&trades.length){
     th+='<div class="tre">'+esc(t.exit_reason||'')+'</div></div>';
   });
 }
+if(!(trades&&trades.length)){th+='<div style="text-align:center;color:var(--tx3);padding:30px 12px;font-size:12px">\u270b No trades today yet \u2014 watching for entry signals</div>';}
 document.getElementById('p-trd').innerHTML=th;
 document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN');
 }
