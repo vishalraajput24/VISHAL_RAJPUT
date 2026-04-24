@@ -7,7 +7,7 @@
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, time as _dtime
 import pandas as pd
 import VRL_DATA as D
 import VRL_CONFIG as CFG
@@ -209,21 +209,35 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        # Always use the last closed 3‑min candle close. No LTP fallback.
-        if opt_3m_full is not None and len(opt_3m_full) >= 2:
-            last_close = opt_3m_full.iloc[-2]["close"]
-        else:
-            # Wait up to 35 seconds for the candle to appear
+        # Fetch data if not provided, with a short wait-loop for freshly
+        # opened trades where the 3-min history hasn't arrived yet.
+        if opt_3m_full is None or len(opt_3m_full) < 2:
             for _ in range(7):
                 time.sleep(5)
                 opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
                 if opt_3m_full is not None and len(opt_3m_full) >= 2:
-                    last_close = opt_3m_full.iloc[-2]["close"]
                     break
             else:
-                # No data after waiting – hold the trade (do NOT exit)
-                last_close = float('inf')
-        if last_close <= trail_sl:
+                return []  # no data — hold the trade
+        # CRITICAL: use the last closed 3-min candle only if its close
+        # time is at or after entry_time. Otherwise iloc[-2] points at a
+        # pre-entry candle (the live 15:03-15:06 bar is still forming at
+        # iloc[-1], so iloc[-2] is the 15:00-15:03 bar — pre-entry data).
+        # Using that stale close fired the trail the moment SL rose above
+        # it, costing the trade 50+ pts on fast entries.
+        _candle = opt_3m_full.iloc[-2]
+        _et_str = state.get("entry_time") or ""
+        _use = True
+        if _et_str:
+            try:
+                _h, _m, _s = (int(p) for p in _et_str.split(":"))
+                _et_t = _dtime(_h, _m, _s)
+                _candle_close_t = (_candle.name + timedelta(minutes=3)).time()
+                if _candle_close_t < _et_t:
+                    _use = False   # whole candle was pre-entry — hold
+            except Exception:
+                pass  # fail open — use candle as before
+        if _use and _candle["close"] <= trail_sl:
             return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
     return []
 
