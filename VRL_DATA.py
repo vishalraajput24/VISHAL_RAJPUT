@@ -591,15 +591,25 @@ def start_websocket():
     _ticker.connect(threaded=True, disable_ssl_verification=False)
     logger.info("[WS] Ticker started")
 
-def subscribe_tokens(tokens: list):
+def subscribe_tokens(tokens: list) -> set:
+    """Subscribe to WS feed for the given tokens. Returns the set of
+    tokens actually accepted (empty set on failure). Callers that need
+    to track what actually got subscribed should use the return value
+    rather than the input list — prior code assumed all inputs made
+    it through, leaking tokens on partial failure."""
     global _subscribed
     with _subscribed_lock:
         new = set(int(t) for t in tokens if t)
-        _subscribed.update(new)
         if _ticker and _ws_connected:
-            _ticker.subscribe(list(new))
-            _ticker.set_mode(_ticker.MODE_FULL, list(new))
+            try:
+                _ticker.subscribe(list(new))
+                _ticker.set_mode(_ticker.MODE_FULL, list(new))
+            except Exception as _e:
+                logger.warning("[WS] Subscribe failed: " + str(_e))
+                return set()
+        _subscribed.update(new)
     logger.info("[WS] Subscribed: " + str(new))
+    return new
 
 def unsubscribe_tokens(tokens: list):
     global _subscribed
@@ -804,28 +814,29 @@ def get_lot_size(kite=None) -> int:
     if k is None:
         return LOT_SIZE_BASE
     today_iso = date.today().isoformat()
+    # Hold the lock across the entire miss→fetch→write flow so two
+    # threads that both miss the cache don't both end up parsing the
+    # 2000-row instrument dump.
     with _lot_size_cache_lock:
         if today_iso in _lot_size_cache:
             return _lot_size_cache[today_iso]
-    # Cache miss — fetch from broker (first call of the day).
-    try:
-        instruments = _get_nfo_instruments(k)
-        for inst in instruments:
-            if (inst.get("name") == "NIFTY"
-                    and inst.get("instrument_type") == "CE"
-                    and inst.get("lot_size", 0) > 0):
-                lot = int(inst["lot_size"])
-                logger.info("[DATA] Lot size from broker: " + str(lot)
-                            + " (cached for " + today_iso + ")")
-                with _lot_size_cache_lock:
+        try:
+            instruments = _get_nfo_instruments(k)
+            for inst in instruments:
+                if (inst.get("name") == "NIFTY"
+                        and inst.get("instrument_type") == "CE"
+                        and inst.get("lot_size", 0) > 0):
+                    lot = int(inst["lot_size"])
+                    logger.info("[DATA] Lot size from broker: " + str(lot)
+                                + " (cached for " + today_iso + ")")
                     _lot_size_cache[today_iso] = lot
                     # Evict stale dates (keep only today).
                     for k_date in list(_lot_size_cache.keys()):
                         if k_date != today_iso:
                             del _lot_size_cache[k_date]
-                return lot
-    except Exception as e:
-        logger.warning("[DATA] Lot size fetch failed: " + str(e))
+                    return lot
+        except Exception as e:
+            logger.warning("[DATA] Lot size fetch failed: " + str(e))
     return LOT_SIZE_BASE
 
 # ── Historical data cache — keyed by candle bucket so it self-invalidates
@@ -962,6 +973,14 @@ def get_active_strike_step(dte: int = None) -> int:
     return 50
 
 def resolve_atm_strike(spot_ltp: float, step: int = None) -> int:
+    # Guard against spot_ltp <= 0 (WS tick glitch, pre-open read before
+    # first tick lands). Returning 0 cascaded into strike-0 lookups that
+    # silently produced empty token dicts; return 0 but log a warning so
+    # the caller has a clear breadcrumb.
+    if not spot_ltp or spot_ltp <= 0:
+        logger.warning("[DATA] resolve_atm_strike called with spot_ltp="
+                       + str(spot_ltp) + " — returning 0")
+        return 0
     if step is None:
         step = STRIKE_STEP
     return int(round(spot_ltp / step) * step)
@@ -1031,8 +1050,14 @@ def get_option_tokens(kite, strike: int, expiry_date) -> dict:
             if len(result) == 2:
                 break
         if len(result) < 2:
+            # Do NOT cache incomplete results — if only CE was found
+            # (e.g., pre-listing on gap-open), a cached {"CE": ...} would
+            # keep returning the incomplete dict, causing the next trade
+            # to manage the missing side with token=None.
             logger.warning("[DATA] Token resolve incomplete: strike=" + str(strike)
-                           + " found=" + str(list(result.keys())))
+                           + " found=" + str(list(result.keys()))
+                           + " — skipping cache, will retry")
+            return dict(result)
         with _token_cache_lock:
             _token_cache[key] = result
         return dict(result)

@@ -433,8 +433,9 @@ def collect_option_3min(kite, spot_ltp: float):
         n = _append_rows(_csv_path_3m(today), FIELDNAMES_3M, all_rows)
         try:
             DB.insert_option_3min_many(all_rows)
-        except Exception:
-            pass
+        except Exception as _dbe:
+            logger.warning("[LAB] 3m DB insert failed (CSV still wrote): "
+                           + str(_dbe))
         logger.debug("[LAB] 3m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
     try:
         _at_n = _collect_active_trade_candles(
@@ -639,8 +640,9 @@ def collect_option_1min(kite, spot_ltp: float):
         n = _append_rows(_csv_path_1m(today), FIELDNAMES_1M, all_rows)
         try:
             DB.insert_option_1min_many(all_rows)
-        except Exception:
-            pass
+        except Exception as _dbe:
+            logger.warning("[LAB] 1m DB insert failed (CSV still wrote): "
+                           + str(_dbe))
         logger.debug("[LAB] 1m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
     try:
         _at_n = _collect_active_trade_candles(kite, "minute", today, now)
@@ -780,8 +782,9 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
                     update_fn(ts, ot, row.get("fwd_1c"), row.get("fwd_3c"), row.get("fwd_5c"), row.get("fwd_outcome"))
                 else:
                     update_fn(ts, ot, row.get("fwd_3c"), row.get("fwd_6c"), row.get("fwd_9c"), row.get("fwd_outcome"))
-    except Exception:
-        pass
+    except Exception as _fwde:
+        logger.warning("[LAB] fwd-fill DB update failed (" + timeframe
+                       + ", CSV still correct): " + str(_fwde))
 
 
 def _startup_backfill(kite):

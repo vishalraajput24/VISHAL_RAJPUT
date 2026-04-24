@@ -80,11 +80,26 @@ def _validate(cfg: dict):
             raise ConfigError("lots." + k + " is required")
         if not isinstance(lots[k], int) or lots[k] <= 0:
             raise ConfigError("lots." + k + " must be a positive integer")
-    # v16.3 validation: only the keys the engine actually reads.
+    # v16.6 validation: Golden 4 entry keys required so tuning
+    # changes land instead of silently falling back to defaults.
     eb = (cfg.get("entry") or {}).get("ema9_band") or {}
-    for k in ("body_pct_min", "warmup_until", "cutoff_after"):
+    for k in ("body_pct_min", "warmup_until", "cutoff_after",
+              "band_width_min", "ema9_slope_lookback"):
         if k not in eb:
             raise ConfigError("entry.ema9_band." + k + " is required")
+    # warmup_until / cutoff_after must be HH:MM. A typo like "9:35"
+    # would slip past the engine's split-based parser in silent
+    # reject-reason mode; catch it at config load.
+    for _tk in ("warmup_until", "cutoff_after"):
+        _ts = str(eb[_tk])
+        try:
+            _th, _tm = _ts.split(":")
+            _th_i, _tm_i = int(_th), int(_tm)
+            if not (0 <= _th_i < 24 and 0 <= _tm_i < 60):
+                raise ValueError("out of range")
+        except Exception as _te:
+            raise ConfigError("entry.ema9_band." + _tk + " must be HH:MM "
+                              "(24h), got: " + _ts + " (" + str(_te) + ")")
     xb = (cfg.get("exit") or {}).get("ema9_band") or {}
     for k in ("emergency_sl_pts", "eod_exit_time"):
         if k not in xb:
@@ -248,8 +263,14 @@ def _read_token() -> dict:
         if os.path.isfile(D.TOKEN_FILE_PATH):
             with open(D.TOKEN_FILE_PATH) as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except json.JSONDecodeError as _je:
+        # Corrupt token file (truncated mid-write, disk full, etc.) —
+        # log explicitly so restart-loop rate-limit risks are visible
+        # instead of silently triggering a fresh login every startup.
+        logger.warning("[AUTH] Token file corrupted (" + str(_je)
+                       + ") — triggering fresh login")
+    except Exception as _re:
+        logger.warning("[AUTH] Token read error: " + str(_re))
     return {}
 
 
@@ -268,6 +289,17 @@ def _auto_login(kite) -> str:
     password    = os.getenv("ZERODHA_PASSWORD", "")
     totp_secret = os.getenv("TOTP_SECRET", "")
     api_secret  = D.KITE_API_SECRET
+    # Fail fast with a named error if any credential is missing, instead
+    # of letting the POST at line 274 send empty strings and Zerodha
+    # reject with a generic "Invalid credentials" response.
+    _missing = [n for n, v in (
+        ("ZERODHA_USER_ID", user_id),
+        ("ZERODHA_PASSWORD", password),
+        ("TOTP_SECRET", totp_secret),
+        ("KITE_API_SECRET", api_secret),
+    ) if not v]
+    if _missing:
+        raise RuntimeError("[AUTH] Missing env vars: " + ", ".join(_missing))
     session     = requests.Session()
 
     logger.info("[AUTH] Step 1: Password login")

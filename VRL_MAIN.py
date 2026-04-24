@@ -340,6 +340,11 @@ def _reset_daily(today_str: str):
         state["_straddle_done"]        = False
         state["_hourly_rsi_ts"]        = 0
         state["_straddle_alerted"]     = False
+        # Clear persisted scan dedup key so a crash-restart landing at
+        # 09:30:45 (after the loop already scanned 09:30) doesn't treat
+        # the current minute as already-scanned and silently skip the
+        # first entry of the session.
+        state["_last_scan_key"]        = ""
     D.clear_token_cache()
     D.reset_daily_warnings()
     _reset_strike_lock()
