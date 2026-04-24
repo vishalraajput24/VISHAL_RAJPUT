@@ -29,24 +29,25 @@ lots:
   count: 2
   size: 65
 
-# ── v16.6 Entry configuration ──────────────────────────────────
-# 7 hard gates: time window, close>ema9_low, gap>=3, green, body>=40%,
-# floor test (low within 3pts of ema9_low), fresh breakout.
+# ── v16.6 Entry configuration (Golden 4 rules) ─────────────────
+# 4 hard gates: time window, close>ema9_low + band width, ema9_low slope
+# flat/rising, body >= 40%. Removed gap>=3, floor test, fresh breakout,
+# green-candle check — replaced by band_width_min + slope gate.
 entry:
   ema9_band:
     body_pct_min: 40
-    warmup_until: "09:30"
+    warmup_until: "09:35"
     cutoff_after: "15:10"
     cooldown_minutes: 5
-    # Fresh-breakout lookback window (3-min candles). Fires entry if ANY
-    # of the last N bars had close <= its ema9_low. N=3 recovers from
-    # a restart that lands mid-move; N=1 is the strict immediate cross.
-    fresh_breakout_lookback: 3
-    # v15.2.5: multi-candidate strike scanning (ATM-50/ATM/ATM+50).
-    # When enabled, every scan cycle evaluates all 6 CE/PE candidates
-    # and picks the best fired one by (straddle_delta, body_pct, -|Δstrike|).
-    # Disabled by default — enable after confirming the 6-token subscription
-    # load is acceptable on the production Kite quota.
+    # Minimum EMA9 band width (ema9_high - ema9_low) in points. Protects
+    # against dead-zone entries during tight consolidation ranges.
+    band_width_min: 7
+    # Candle lookback for EMA9_low slope check. Entry rejects when
+    # ema9_low(now) - ema9_low(N candles ago) < 0 (falling band).
+    ema9_slope_lookback: 3
+    # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
+    # evaluates all 6 CE/PE candidates per scan and picks the best by
+    # (body × gap). Disabled by default to keep WS token count low.
     multi_candidate_enabled: false
     multi_candidate_strike_range: 50
   filters:

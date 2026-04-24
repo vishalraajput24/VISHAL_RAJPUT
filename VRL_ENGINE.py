@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.6
-#  Entry: 7 gates. Exit: strict 3 rules (Emergency / EOD / Vishal Trail).
+#  Entry: Golden 4 rules. Exit: strict 3 rules (Emergency / EOD / Vishal Trail).
 #  Smart Trail v2+: INITIAL → BREAKEVEN → TRAIL_60 → TRAIL_75 → VISHAL_MAX → TRAIL_90
 #  Exit on candle close, bulletproof margin check.
 # ═══════════════════════════════════════════════════════════════
@@ -68,37 +68,49 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, market_open: bool,
                                state: dict, straddle_delta, spot_vwap, spot_for_vwap: float,
                                atm_strike: int, silent: bool = False, other_opt_3m=None) -> dict:
+    # ── Golden 4 entry rules (Vishal V16.6 final) ──
+    #   1. Time window 09:35 ≤ now ≤ 15:10
+    #   2. Close > EMA9_low AND (ema9_high - ema9_low) > band_width_min
+    #   3. EMA9_low slope flat or rising (last - N candles ago ≥ 0)
+    #   4. Body ≥ body_pct_min (default 40%) of candle range
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
-        "backbone_status": "N/A",
+        "backbone_status": "N/A", "ema9_low_slope": 0.0,
     }
     try:
         body_min = CFG.entry_ema9_band("body_pct_min", 40)
-        warmup_until = CFG.entry_ema9_band("warmup_until", "09:30")
+        warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:10")
+        band_width_min = CFG.entry_ema9_band("band_width_min", 7)
+        slope_lookback = int(CFG.entry_ema9_band("ema9_slope_lookback", 3))
 
-        if opt_3m is None or opt_3m.empty or len(opt_3m) < 4:
+        need_rows = max(4, slope_lookback + 2)
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < need_rows:
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
         last = opt_3m.iloc[-2]
-        prev = opt_3m.iloc[-3]
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
-        prev_close = float(prev["close"])
-        prev_ema9_high = float(prev.get("ema9_high", 0))
+        # Slope: current ema9_low minus ema9_low N candles ago (points over N bars).
+        _ema9_low_past = float(opt_3m.iloc[-2 - slope_lookback].get("ema9_low", 0))
+        ema9_low_slope = round(ema9_low - _ema9_low_past, 2)
+        band_width = round(ema9_high - ema9_low, 2)
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
             "ema9_low": round(ema9_low, 2), "close": round(close, 2), "open": round(open_, 2),
             "high": round(high, 2), "low": round(low, 2),
-            "band_width": round(ema9_high - ema9_low, 2),
+            "band_width": band_width,
+            "ema9_low_slope": ema9_low_slope,
+            "candle_green": (close > open_),
         })
 
+        # ── GATE 1: Time window (09:35-15:10) ──
         if market_open:
             mins = now.hour * 60 + now.minute
             warmup_mins = int(warmup_until.split(":")[0])*60 + int(warmup_until.split(":")[1])
@@ -110,23 +122,20 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE: Close > EMA9-low ──
+        # ── GATE 2: Close > EMA9_low AND band_width > threshold ──
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
             return result
-
-        # ── GATE: Minimum gap of 3 pts above EMA9-low ──
-        if close - ema9_low < 3:
-            result["reject_reason"] = "weak_breakout_gap_lt_3"
+        if band_width <= band_width_min:
+            result["reject_reason"] = f"tight_band_{band_width}"
             return result
 
-        # ── GATE: Green candle ──
-        if close <= open_:
-            result["reject_reason"] = "red_candle"
+        # ── GATE 3: EMA9_low slope flat or rising ──
+        if ema9_low_slope < 0:
+            result["reject_reason"] = f"ema9_low_falling_{ema9_low_slope}"
             return result
-        result["candle_green"] = True
 
-        # ── GATE: Body ≥ 30% ──
+        # ── GATE 4: Body ≥ body_pct_min ──
         candle_range = high - low
         body = abs(close - open_)
         body_pct = round((body / candle_range * 100) if candle_range > 0 else 0, 1)
@@ -135,23 +144,14 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             result["reject_reason"] = f"weak_body_{int(body_pct)}pct"
             return result
 
-        # ── GATE: Floor test (low within 3 pts of ema9_low) ──
-        floor_gap = low - ema9_low
-        if floor_gap > 3:
-            result["reject_reason"] = f"no_floor_test_gap_{round(floor_gap,1)}"
-            return result
-
-        # ── GATE: Fresh breakout (previous close ≤ previous ema9_high) ──
-        if prev_close > prev_ema9_high:
-            result["reject_reason"] = "not_fresh_breakout"
-            return result
-
-        # ── All gates passed ──
+        # ── All 4 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         result["ema9h_confirmed"] = (close > ema9_high)
         if not silent:
-            logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} > ema9l={round(ema9_low,1)} gap={round(close-ema9_low,1)} body={int(body_pct)}%")
+            logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
+                        f"ema9l={round(ema9_low,1)} band={band_width} "
+                        f"slope={ema9_low_slope} body={int(body_pct)}%")
         return result
 
     except Exception as e:

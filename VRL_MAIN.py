@@ -748,10 +748,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6\n"
-        "Entry   : 09:30 - 15:10 IST  |  5-min same-direction cooldown\n"
-        "Gates   : 7 — time window, close>ema9_low, gap>=3, green,\n"
-        "          body>=40%, floor test (low within 3pts), fresh breakout\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6 (Vishal Golden 4)\n"
+        "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
+        "Gates   : 4 — time window, close>ema9_low + band>7,\n"
+        "          ema9_low slope flat/rising, body>=40%\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -996,11 +996,14 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _sym = _short_sym(symbol, option_type, entry_result.get("_strike", state.get("strike", 0)))
     _tm = datetime.now().strftime("%H:%M:%S")
 
+    _slope = float(entry_result.get("ema9_low_slope", 0) or 0)
+    _slope_tag = "+" if _slope >= 0 else ""
     _core = (
         "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
-        "Body    " + str(_body) + "% green\n"
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
+        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts (3 bars)\n"
+        "Body    " + str(_body) + "%\n"
     )
 
     # Read the emergency SL from the same config key the engine uses
