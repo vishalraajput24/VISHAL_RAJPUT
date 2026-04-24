@@ -158,7 +158,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 <body>
 <div class="container">
 <div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.3</span></div><div class="ldot"></div></div>
+<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.6</span></div><div class="ldot"></div></div>
 <div class="tags" id="tags"></div>
 </div>
 <div class="stats" id="stats-area">
@@ -238,7 +238,7 @@ if(pos.in_trade){
   // v16.0 Batch 7: both lots always exit together at the same SL, color-coded by direction
   var prs=Math.round(pnl*65*2),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
   var sl=parseFloat(pos.stop||0);
-  if(sl<=0)sl=Math.round((entry-12)*100)/100;
+  if(sl<=0)sl=Math.round((entry-10)*100)/100;
   var _dirTint=pos.direction==='CE'?'rgba(34,197,94,0.04)':'rgba(239,68,68,0.04)';
   var _emoji=pos.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
   pa+='<div class="pos '+pc+'" style="background:'+_dirTint+'">';
@@ -264,17 +264,18 @@ if(pos.in_trade){
   var _band_range=Math.max(1,_cur_eh-_cur_el);
   var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
   pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
-  // Trail badge (v16.2) — color scales with tier
-  var _trail_color={'INITIAL':'var(--tx3)','LOCK_2':'var(--yl2)','LOCK_5':'var(--or2)','LOCK_10':'var(--gn2)','TRAIL_70':'var(--gn)'}[_trail_tier]||'var(--tx3)';
-  var _trail_bg={'INITIAL':'var(--bg2)','LOCK_2':'var(--yl-bg)','LOCK_5':'var(--or-bg)','LOCK_10':'var(--gn-bg)','TRAIL_70':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
+  // Smart Trail v2+ tier badge — color + icon scale with tier strength
+  var _trail_color={'INITIAL':'var(--tx3)','BREAKEVEN':'var(--bl)','TRAIL_60':'var(--or2)','TRAIL_75':'var(--gn2)','VISHAL_MAX':'var(--gn)','TRAIL_90':'var(--gn)'}[_trail_tier]||'var(--tx3)';
+  var _trail_bg={'INITIAL':'var(--bg2)','BREAKEVEN':'var(--bl-bg)','TRAIL_60':'var(--or-bg)','TRAIL_75':'var(--gn-bg)','VISHAL_MAX':'var(--gn-bg)','TRAIL_90':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
+  var _trail_icon={'BREAKEVEN':'🛡️','TRAIL_60':'🔒','TRAIL_75':'🔒🔒','VISHAL_MAX':'🔒🔒','TRAIL_90':'🔒🔒🔒'}[_trail_tier]||'🔒';
   if(_trail_tier && _trail_tier!=='INITIAL' && _trail_tier!=='None'){
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:'+_trail_bg+';border:1px solid var(--bd);color:'+_trail_color+';font-size:10px;font-weight:800;text-align:center">\uD83D\uDD12 TRAIL '+esc(_trail_tier)+' @ \u20B9'+_trail_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:'+_trail_bg+';border:1px solid var(--bd);color:'+_trail_color+';font-size:10px;font-weight:800;text-align:center">'+_trail_icon+' '+esc(_trail_tier)+' @ \u20B9'+_trail_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
   }else{
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">TRAIL INITIAL (peak '+fmt(pk)+', arms at +10)</div>';
+    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">INITIAL \u00B7 peak '+fmt(pk)+' \u00B7 BE at +5 \u00B7 trail arms at +8</div>';
   }
   // Backbone indicator (v16.2)
   var _backbone=pos.backbone_status||'';
-  if(_backbone){
+  if(false && _backbone){  // hidden: always N/A in Golden 4
     var _bb_color=_backbone==='CONFIRMED'?'var(--gn2)':(_backbone==='MISMATCH'?'var(--rd)':'var(--tx3)');
     var _bb_icon=_backbone==='CONFIRMED'?'\u2705':(_backbone==='MISMATCH'?'\u274C':'\u26AA');
     pa+='<div style="margin-top:6px;padding:4px 10px;border-radius:6px;background:var(--bg2);color:'+_bb_color+';font-size:9px;text-align:center;font-weight:700">'+_bb_icon+' BACKBONE '+_backbone+'</div>';
@@ -366,9 +367,9 @@ sh+='<div class="sg">';
   var _body=parseFloat(s.body_pct||0);
   var _green=s.candle_green;
   var _pos=s.band_position||'';
-  var _bodyok=(_body>=30);
+  var _bodyok=(_body>=40);
   var _width=parseFloat(s.band_width||(_eh-_el));
-  var _widthok=(_width>=8);
+  var _widthok=(_width>=7);
 
   // Band position visual
   var _posColor='var(--tx3)',_posLabel='—',_posBg='var(--bg2)';
@@ -385,8 +386,10 @@ sh+='<div class="sg">';
   sh+='<div class="mr"><span class="ml e" style="color:var(--bl)">EMA9-low</span><span class="mv mono" style="margin-left:auto">\u20B9'+_el.toFixed(1)+'</span></div>';
   sh+='</div>';
 
-  sh+='<div class="sr"><span class="sk">Body</span><span class="sv '+(_bodyok?'ok':'fl')+' mono">'+_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (&lt;30%)')+'</span></div>';
-  sh+='<div class="sr"><span class="sk">Band width</span><span class="sv mono" style="color:'+(_widthok?'var(--gn2)':'var(--yl)')+';font-weight:800">'+_width.toFixed(1)+'pts '+(_widthok?'\u2713':'\u26A0')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Body</span><span class="sv '+(_bodyok?'ok':'fl')+' mono">'+_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (&lt;40%)')+'</span></div>';
+  sh+='<div class="sr"><span class="sk">Band width</span><span class="sv mono" style="color:'+(_widthok?'var(--gn2)':'var(--yl)')+';font-weight:800">'+_width.toFixed(1)+'pts '+(_widthok?'\u2713':'\u26A0 (<7)')+'</span></div>';
+  var _slope=parseFloat(s.ema9_low_slope||0); var _slopeok=(_slope>=0);
+  sh+='<div class="sr"><span class="sk">EMA9 slope</span><span class="sv mono" style="color:'+(_slopeok?'var(--gn2)':'var(--rd)')+';font-weight:800">'+(_slope>=0?'+':'')+_slope.toFixed(1)+' '+(_slopeok?'\u2713 rising':'\u2717 falling')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Candle</span><span class="sv '+(_green?'ok':'fl')+'">'+(_green?'GREEN \u2713':'RED \u2717')+'</span></div>';
   sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
 
@@ -432,7 +435,7 @@ sh+='<div class="sg">';
   if(fi){vc='vf';vt='READY TO FIRE \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
   else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
   else if(s.reject_reason){vt=esc(s.reject_reason);}
-  else if(_pos==='ABOVE'&&_green&&_bodyok&&_widthok){vc='vr';vt='READY';}
+  else if(_pos==='ABOVE'&&_bodyok&&_widthok&&_slopeok){vc='vr';vt='READY';}
   sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
 });
 sh+='</div>';

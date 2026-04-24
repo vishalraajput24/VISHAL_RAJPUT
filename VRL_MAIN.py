@@ -1568,6 +1568,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
+                # v16.6 Golden 4 — slope of EMA9_low over last N candles
+                "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
                 # v15.2 straddle filter context
                 "straddle_delta":     result.get("straddle_delta"),
                 "straddle_threshold": result.get("straddle_threshold", 0),
