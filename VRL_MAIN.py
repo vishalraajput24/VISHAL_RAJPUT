@@ -868,7 +868,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     actual_price = fill["fill_price"]
     actual_qty   = fill["fill_qty"]
     _entry_slippage = fill.get("slippage", 0)
-    hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
+    # Read the same config key that the engine's emergency-SL check uses
+    # (exit.ema9_band.emergency_sl_pts = -10) so the log line and the real
+    # trigger stay in sync. Previously this fell back to a stale default of
+    # 12, printing "SL=entry-12" while the engine exited at entry-10.
+    hard_sl = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
     # Extract the OTHER side token for manage_exit divergence check.
