@@ -212,16 +212,20 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        last_close = option_ltp
+        # Always use the last closed 3‑min candle close. No LTP fallback.
         if opt_3m_full is not None and len(opt_3m_full) >= 2:
             last_close = opt_3m_full.iloc[-2]["close"]
         else:
+            # Wait up to 35 seconds for the candle to appear
             for _ in range(7):
                 time.sleep(5)
                 opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
                 if opt_3m_full is not None and len(opt_3m_full) >= 2:
                     last_close = opt_3m_full.iloc[-2]["close"]
                     break
+            else:
+                # No data after waiting – hold the trade (do NOT exit)
+                last_close = float('inf')
         if last_close <= trail_sl:
             return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
     return []
