@@ -86,9 +86,6 @@ DEFAULT_STATE = {
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
     "_last_cleanup_date" : "",
-    # v15.2.5 pre-entry alerts (learning mode)
-    "pre_entry_alerts_enabled": True,
-    "alert_history"      : {},   # key "PE_23950_C" -> ISO ts (rate-limit store)
     # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
@@ -2431,32 +2428,6 @@ def _strategy_loop(kite):
                         "pe": pe_res,
                     }
 
-                # ── v15.2.5: pre-entry awareness alerts (learning mode) ──
-                # Non-blocking. Only runs during the trading window (outer
-                # if-gate guarantees that). Rate-limited inside VRL_ENGINE.
-                try:
-                    import VRL_ENGINE as VRL_ALERTS
-                    with _state_lock:
-                        _alert_state = {
-                            "pre_entry_alerts_enabled":
-                                state.get("pre_entry_alerts_enabled", True),
-                            "alert_history":
-                                dict(state.get("alert_history") or {}),
-                        }
-                    _signals = VRL_ALERTS.detect_pre_entry_signals(
-                        all_results, _alert_state, dfs=None)
-                    # Persist rate-limit history back to state so the
-                    # per-key cooldown + global hourly cap actually hold
-                    # across ticks and restarts.
-                    with _state_lock:
-                        state["alert_history"] = _alert_state.get(
-                            "alert_history", {})
-                    if _signals:
-                        for _sig in _signals:
-                            _tg_send(_sig["msg"])
-                except Exception as _ae:
-                    logger.debug("[ALERTS] dispatch error: " + str(_ae))
-
                 # ── v15.2 Part 4: silent 1-min shadow strategy ────────
                 # Runs after live scan on every 1-min boundary. Independent
                 # state, independent cooldown, never touches live state,
@@ -2610,8 +2581,6 @@ def _cmd_help(args):
         "/pause      — block new entries\n"
         "/resume     — re-enable entries\n"
         "/forceexit  — emergency exit all lots\n"
-        "/alerts_on  — pre-entry learning alerts ON\n"
-        "/alerts_off — pre-entry learning alerts OFF\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v16.6 — EMA9 Band Breakout, "
@@ -2828,23 +2797,6 @@ def _cmd_trades(args):
     )
 
 
-def _cmd_alerts_on(args):
-    with _state_lock:
-        state["pre_entry_alerts_enabled"] = True
-    _tg_send("🔔 <b>Pre-entry alerts ON</b>\n"
-             "REVERSAL 🔔 / APPROACHING ⏰ / READY ⚡ / BLOCKED ⚠️ "
-             "events will send during the trading window.\n"
-             "Use /alerts_off to silence.")
-
-
-def _cmd_alerts_off(args):
-    with _state_lock:
-        state["pre_entry_alerts_enabled"] = False
-    _tg_send("🔕 <b>Pre-entry alerts OFF</b>\n"
-             "Learning-mode alerts silenced. Trade alerts + EOD still fire.\n"
-             "Use /alerts_on to re-enable.")
-
-
 _DISPATCH = {
     "/help"      : _cmd_help,
     "/status"    : _cmd_status,
@@ -2854,8 +2806,6 @@ _DISPATCH = {
     "/resume"    : _cmd_resume,
     "/forceexit" : _cmd_forceexit,
     "/restart"   : _cmd_restart,
-    "/alerts_on" : _cmd_alerts_on,
-    "/alerts_off": _cmd_alerts_off,
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
 }

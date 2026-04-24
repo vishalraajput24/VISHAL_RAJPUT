@@ -122,8 +122,6 @@ STATE_PERSIST_FIELDS = [
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
     "other_token",
     "_last_cleanup_date",
-    # Pre-entry alert toggle + rate-limit history
-    "pre_entry_alerts_enabled", "alert_history",
     # v16.0 ratchet state
     "active_ratchet_tier", "active_ratchet_sl",
     # Last exit memory
