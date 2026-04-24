@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.0 — Central Configuration
-#  EMA9 Band Breakout + Velocity Stall + Straddle Display + VWAP
+#  VISHAL RAJPUT TRADE v16.6 — Central Configuration
+#  EMA9 Band Breakout (7 gates) + strict 3-rule exit chain
 # ═══════════════════════════════════════════════════════════════
 
-version: "v16.4"
+version: "v16.6"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
@@ -29,9 +29,9 @@ lots:
   count: 2
   size: 65
 
-# ── v16.3 Entry configuration ──────────────────────────────────
-# 3 hard gates: time window, fresh EMA9_LOW break, green + body >= 30%.
-# Backbone + straddle + VWAP are DISPLAY ONLY (never block entries).
+# ── v16.6 Entry configuration ──────────────────────────────────
+# 7 hard gates: time window, close>ema9_low, gap>=3, green, body>=40%,
+# floor test (low within 3pts of ema9_low), fresh breakout.
 entry:
   ema9_band:
     body_pct_min: 40
@@ -62,9 +62,9 @@ entry:
       enabled: true
       mode: display_only
 
-# ── v16.3 Exit configuration ──────────────────────────────────
+# ── v16.6 Exit configuration ──────────────────────────────────
 # 3 rules: EMERGENCY_SL, EOD, VISHAL_TRAIL. Trail logic is in
-# VRL_ENGINE.compute_trail_sl (INITIAL/BREAKEVEN/LOCK_5/LOCK_10/TRAIL_70).
+# VRL_ENGINE.compute_trail_sl (patient: INITIAL/TRAIL_70/VISHAL_MAX/TRAIL_90).
 exit:
   ema9_band:
     emergency_sl_pts: -10

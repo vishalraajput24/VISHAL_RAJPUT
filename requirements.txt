@@ -1,5 +1,7 @@
-streamlit
-breeze-connect
+kiteconnect
+pyotp
+PyYAML
 pandas
+numpy
 requests
 pytz

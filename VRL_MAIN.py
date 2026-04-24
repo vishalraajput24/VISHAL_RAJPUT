@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.3
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.6
 #  Master orchestration. EMA9 Band Breakout strategy.
-#  Entry: close > EMA9-low (fresh) + green + body ≥ 30%
-#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (70% capture).
+#  Entry: close > EMA9-low (fresh) + green + body ≥ 40%
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (60/85/80/LOCK+40 tiers).
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -86,8 +86,6 @@ DEFAULT_STATE = {
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
     "_last_cleanup_date" : "",
-    # v15.2.5 pre-entry alerts (learning mode)
-    "pre_entry_alerts_enabled": True,
     # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
@@ -721,10 +719,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.4\n"
-        "Entry   : 09:30 - 15:10 IST\n"
-        "Gates   : EMA9L bounce + floor test + near high\n"
-        "Confirm : EMA9H break within 3 candles (or cut)\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6\n"
+        "Entry   : 09:30 - 15:10 IST  |  5-min same-direction cooldown\n"
+        "Gates   : 7 — time window, close>ema9_low, gap>=3, green,\n"
+        "          body>=40%, floor test (low within 3pts), fresh breakout\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -732,11 +730,11 @@ def _alert_bot_started():
         "2. EOD 15:20\n"
         "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>VISHAL TRAIL</b>\n"
-        "peak 10   SL = entry+2  (LOCK_2)\n"
-        "peak 12   SL = entry+5  (LOCK_5)\n"
-        "peak 18   SL = entry+10 (LOCK_10)\n"
-        "peak 25+  SL = 70% of peak (TRAIL_70)\n"
+        "<b>VISHAL TRAIL</b>  (patient)\n"
+        "peak <15   SL = entry-10          (INITIAL)\n"
+        "peak 15-30 SL = entry+peak*0.70   (TRAIL_70)\n"
+        "peak 30-50 SL = entry+peak*0.85   (VISHAL_MAX)\n"
+        "peak 50+   SL = entry+peak*0.90   (TRAIL_90)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -873,13 +871,18 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     hard_sl = CFG.get().get("exit", {}).get("hard_sl", 12)
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
-    # v14.0: extract the OTHER side token for manage_exit divergence check
+    # Extract the OTHER side token for manage_exit divergence check.
+    # _locked_tokens is the module-global populated by _lock_strikes();
+    # the previous _ce_info_v15/_pe_info_v15 names were locals of the
+    # strategy loop and never reachable from this callee.
     _other_token_entry = 0
     try:
-        if option_type == "CE" and _pe_info_v15:
-            _other_token_entry = _pe_info_v15.get("token", 0)
-        elif option_type == "PE" and _ce_info_v15:
-            _other_token_entry = _ce_info_v15.get("token", 0)
+        _ce_locked = (_locked_tokens or {}).get("CE") or {}
+        _pe_locked = (_locked_tokens or {}).get("PE") or {}
+        if option_type == "CE" and _pe_locked:
+            _other_token_entry = int(_pe_locked.get("token", 0) or 0)
+        elif option_type == "PE" and _ce_locked:
+            _other_token_entry = int(_ce_locked.get("token", 0) or 0)
     except Exception:
         pass
 
@@ -903,10 +906,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         try:
             _trade_strike = state["strike"]
             _trade_dir    = option_type
-            _tce = int(_ce_info_v15.get("token", 0)) if _ce_info_v15 else 0
-            _tpe = int(_pe_info_v15.get("token", 0)) if _pe_info_v15 else 0
-            # If we only have the traded side, fill the other from the
-            # same token-resolution batch at this strike.
+            _tce = int((_ce_locked or {}).get("token", 0) or 0)
+            _tpe = int((_pe_locked or {}).get("token", 0) or 0)
+            # If the locked ATM tokens don't match the traded strike
+            # (OTM candidate won), resolve fresh tokens for the exact
+            # traded strike so hedge research has both legs of the
+            # actual position.
             if not _tce or not _tpe:
                 _both = D.get_option_tokens(kite, int(_trade_strike), expiry) or {}
                 if not _tce:
@@ -963,13 +968,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
     )
 
-    _initial_sl = round(actual_price - 10, 1)       # v16.2: -10 (was -12)
+    _initial_sl = round(actual_price - 10, 1)
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +10 (LOCK_2)\n"
-        + ("✅ EMA9H CONFIRMED — trail active\n" if entry_result.get("ema9h_confirmed")
-           else "⏳ Watching 3 candles for EMA9H confirm\n")
+        "Trail arms at peak +15 (TRAIL_70, 70% capture)\n"
     )
 
     # v16.2 backbone block — DISPLAY ONLY, never blocks entry
@@ -997,13 +1000,15 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         pass
 
     _ctx_lines = []
+    _ehs = int(float(entry_result.get("ema9_high_slope_5c", 0) or 0))
+    _els = int(float(entry_result.get("ema9_low_slope_5c", 0) or 0))
     _bstate = entry_result.get("bands_state", "")
     if _bstate == "RISING":
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  RISING OK")
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  RISING OK")
     elif _bstate == "FLAT":
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  FLAT WARN")
-    else:
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  OK")
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  FLAT WARN")
+    elif _bstate:
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  " + _bstate)
 
     _sinfo = entry_result.get("straddle_info", "") or ""
     _sd    = entry_result.get("straddle_delta")
@@ -1102,6 +1107,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
+        # Snapshot the active trail tier BEFORE state.update() wipes it below,
+        # so the exit alert reports the real tier (TRAIL_70/VISHAL_MAX/TRAIL_90)
+        # instead of always falling back to INITIAL.
+        _tier_snapshot = state.get("active_ratchet_tier", "") or "INITIAL"
         # v15.0: entry confirmation = band position at entry
         _entry_eh = round(float(state.get("entry_ema9_high", 0)), 1)
         _entry_el = round(float(state.get("entry_ema9_low", 0)), 1)
@@ -1178,10 +1187,23 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 pass
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
-                "direction": "", "entry_price": 0.0, "entry_time": "",
+                "direction": "", "strike": 0,
+                "entry_price": 0.0, "entry_time": "",
                 "_static_floor_sl": 0.0, "current_floor": 0.0,
                 "peak_pnl": 0.0,
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
+                # Trail state — clear so next trade starts at INITIAL
+                "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
+                "_last_milestone": 0,
+                # Entry context (v15.0 band + body)
+                "entry_mode": "",
+                "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
+                "entry_band_position": "", "entry_body_pct": 0.0,
+                "current_ema9_high": 0.0, "current_ema9_low": 0.0,
+                "last_band_check_ts": "",
+                "other_token": 0,
+                # Exchange SL-M tracking (live mode)
+                "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
                 "lot1_exit_reason": "", "lot1_exit_time": "",
@@ -1215,7 +1237,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _net_sign  = "+" if _ch["net_pnl"] >= 0 else "-"
 
         _reason_line = ""
-        _tier = state.get("active_ratchet_tier", "") or "INITIAL"
+        _tier = _tier_snapshot
         if reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
         # capture percentage (v16.2 display)
@@ -1490,7 +1512,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = _reject
             elif _width > 0 and _width < 8:
                 verdict = "narrow_band " + str(round(_width, 1)) + "pts (chop)"
-            elif _pos == "ABOVE" and _green and _body >= 30:
+            elif _pos == "ABOVE" and _green and _body >= 40:
                 verdict = "READY"
             elif _pos == "ABOVE":
                 verdict = "above band, waiting body/green"
@@ -2050,9 +2072,13 @@ def _strategy_loop(kite):
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
                     _mex_other_tok = state.get("other_token", 0)
+                    # Snapshot the previous tier BEFORE manage_exit mutates
+                    # state so the upgrade-alert block below can detect
+                    # transitions (INITIAL → TRAIL_70 → VISHAL_MAX → TRAIL_90).
+                    _prev_tier = state.get("active_ratchet_tier", "None") or "None"
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # v16.2: trail tier upgrade alert (was v16.0 ratchet)
+                    # v16.2: trail tier upgrade alert
                     try:
                         _new_tier  = state.get("active_ratchet_tier", "None")
                         # Alert only on transitions to an ARMED tier (skip INITIAL).
@@ -2071,13 +2097,11 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier in ("LOCK_2",):
+                            if _new_tier == "TRAIL_70":
                                 _icon = "🔒"
-                            elif _new_tier in ("LOCK_5",):
-                                _icon = "🔒"
-                            elif _new_tier in ("LOCK_10",):
+                            elif _new_tier == "VISHAL_MAX":
                                 _icon = "🔒🔒"
-                            elif _new_tier in ("TRAIL_70",):
+                            elif _new_tier == "TRAIL_90":
                                 _icon = "🔒🔒🔒"
                             _tg_send(
                                 _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"
@@ -2117,7 +2141,7 @@ def _strategy_loop(kite):
                                              + str(round(_r_sl, 1))
                                              + " (" + str(_dist_r) + "pts away)")
                                 else:
-                                    _init_sl = round(_entry_px - 12, 1)
+                                    _init_sl = round(_entry_px - 10, 1)
                                     _tg_send("📈 <b>+" + str(_m) + "pts</b>"
                                              + " | Initial SL Rs" + str(_init_sl))
                                 break
@@ -2129,7 +2153,7 @@ def _strategy_loop(kite):
                             logger.warning("[MAIN] 15:25 SAFETY — forcing exit before broker square-off")
                             _tg_send("⚠️ <b>15:25 SAFETY EXIT</b>\nClosing before broker auto square-off")
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
-                                      "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
+                                      "reason": "EOD_EXIT" if not D.PAPER_MODE else "MARKET_CLOSE",
                                       "price": option_ltp}]
                     if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
                         if not state.get("_eod_exited"):
@@ -2295,8 +2319,26 @@ def _strategy_loop(kite):
                     _otm_key = opt_type + "_OTM"
                     _atm_info = dir_tokens.get(opt_type)
                     _otm_info = _locked_tokens.get(_otm_key)
-                    for _label, _oi in [("ATM", _atm_info), ("OTM", _otm_info)]:
-                        if not _oi:
+                    # get_option_tokens() returns {token, symbol} only — no
+                    # strike key — so we track the real strike per label
+                    # here. Before this fix, both ATM and OTM candidates
+                    # ended up tagged with the ATM strike, making the log
+                    # and state["strike"] disagree with the traded symbol.
+                    _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
+                    _otm_strike_v = (_atm_strike_v + 50) if opt_type == "CE" else (_atm_strike_v - 50)
+                    _iter = [("ATM", _atm_info, _atm_strike_v),
+                             ("OTM", _otm_info, _otm_strike_v)]
+                    for _label, _oi, _strike_val in _iter:
+                        if not _oi or not _strike_val:
+                            continue
+                        # Sanity: if the resolved symbol doesn't contain the
+                        # expected strike, skip — prevents a stale token
+                        # cache from crossing strikes.
+                        _sym_chk = str(_oi.get("symbol", ""))
+                        if _sym_chk and str(_strike_val) not in _sym_chk:
+                            logger.warning("[MAIN] Strike/symbol mismatch skipped: "
+                                           + _label + " " + opt_type + " strike="
+                                           + str(_strike_val) + " sym=" + _sym_chk)
                             continue
                         result = check_entry(
                             token=_oi["token"],
@@ -2308,11 +2350,9 @@ def _strategy_loop(kite):
                             other_token=_other_tok,
                             state=state,
                         )
-                        _strike_val = _oi.get("strike", dir_strikes.get(opt_type, atm_strike))
-                        if not _strike_val:
-                            _strike_val = dir_strikes.get(opt_type, atm_strike)
                         result["_strike"] = _strike_val
                         result["_strike_label"] = _label
+                        result["_symbol"] = _oi.get("symbol", "")
                         all_results[opt_type + "_" + _label] = result
                         if not result["fired"]:
                             continue
@@ -2388,24 +2428,6 @@ def _strategy_loop(kite):
                         "ce": ce_res,
                         "pe": pe_res,
                     }
-
-                # ── v15.2.5: pre-entry awareness alerts (learning mode) ──
-                # Non-blocking. Only runs during the trading window (outer
-                # if-gate guarantees that). Rate-limited inside VRL_ENGINE.
-                try:
-                    import VRL_ENGINE as VRL_ALERTS
-                    with _state_lock:
-                        _alert_state = {
-                            "pre_entry_alerts_enabled":
-                                state.get("pre_entry_alerts_enabled", True),
-                        }
-                    _signals = VRL_ALERTS.detect_pre_entry_signals(
-                        all_results, _alert_state, dfs=None)
-                    if _signals:
-                        for _sig in _signals:
-                            _tg_send(_sig["msg"])
-                except Exception as _ae:
-                    logger.debug("[ALERTS] dispatch error: " + str(_ae))
 
                 # ── v15.2 Part 4: silent 1-min shadow strategy ────────
                 # Runs after live scan on every 1-min boundary. Independent
@@ -2560,8 +2582,6 @@ def _cmd_help(args):
         "/pause      — block new entries\n"
         "/resume     — re-enable entries\n"
         "/forceexit  — emergency exit all lots\n"
-        "/alerts_on  — pre-entry learning alerts ON\n"
-        "/alerts_off — pre-entry learning alerts OFF\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v16.6 — EMA9 Band Breakout, "
@@ -2778,23 +2798,6 @@ def _cmd_trades(args):
     )
 
 
-def _cmd_alerts_on(args):
-    with _state_lock:
-        state["pre_entry_alerts_enabled"] = True
-    _tg_send("🔔 <b>Pre-entry alerts ON</b>\n"
-             "REVERSAL 🔔 / APPROACHING ⏰ / READY ⚡ / BLOCKED ⚠️ "
-             "events will send during the trading window.\n"
-             "Use /alerts_off to silence.")
-
-
-def _cmd_alerts_off(args):
-    with _state_lock:
-        state["pre_entry_alerts_enabled"] = False
-    _tg_send("🔕 <b>Pre-entry alerts OFF</b>\n"
-             "Learning-mode alerts silenced. Trade alerts + EOD still fire.\n"
-             "Use /alerts_on to re-enable.")
-
-
 _DISPATCH = {
     "/help"      : _cmd_help,
     "/status"    : _cmd_status,
@@ -2804,8 +2807,6 @@ _DISPATCH = {
     "/resume"    : _cmd_resume,
     "/forceexit" : _cmd_forceexit,
     "/restart"   : _cmd_restart,
-    "/alerts_on" : _cmd_alerts_on,
-    "/alerts_off": _cmd_alerts_off,
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
 }

@@ -122,10 +122,11 @@ STATE_PERSIST_FIELDS = [
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
     "other_token",
     "_last_cleanup_date",
-    # Pre-entry alert toggle
-    "pre_entry_alerts_enabled",
     # v16.0 ratchet state
     "active_ratchet_tier", "active_ratchet_sl",
+    # Milestone + scan throttling — restored so restarts mid-trade don't
+    # lose dedup state and re-fire milestone alerts / scan the same bar twice.
+    "_last_milestone", "_last_candle_held_min", "_last_scan_key",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",
@@ -288,8 +289,6 @@ def collect_logs_for_date(target_date: str = None) -> list:
     data_patterns = [
         (OPTIONS_3MIN_DIR, "nifty_option_3min_" + date_compact + ".csv", "data/options_3min/"),
         (OPTIONS_1MIN_DIR, "nifty_option_1min_" + date_compact + ".csv", "data/options_1min/"),
-        (OPTIONS_1MIN_DIR, "nifty_option_5min_" + date_compact + ".csv", "data/options_1min/"),
-        (OPTIONS_1MIN_DIR, "nifty_option_15min_" + date_compact + ".csv", "data/options_1min/"),
         (OPTIONS_1MIN_DIR, "nifty_signal_scan_" + date_compact + ".csv", "data/scans/"),
         (SPOT_DIR, "nifty_spot_1min_" + date_compact + ".csv", "data/spot/"),
         (SPOT_DIR, "nifty_spot_5min_" + date_compact + ".csv", "data/spot/"),
@@ -1359,8 +1358,7 @@ def ensure_option_history(kite_inst, strike: int, expiry,
 
     db_path = os.path.expanduser("~/lab_data/vrl_data.db")
     cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    table_map = {"minute": "option_1min", "3minute": "option_3min",
-                 "5minute": "option_5min", "15minute": "option_15min"}
+    table_map = {"minute": "option_1min", "3minute": "option_3min"}
     tokens = get_option_tokens(k, strike, expiry)
     if not tokens:
         result["error"] = "no tokens for strike " + str(strike)
