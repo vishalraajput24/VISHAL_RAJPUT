@@ -101,7 +101,6 @@ FIELDNAMES_SPOT = ["timestamp", "open", "high", "low", "close", "volume", "ema9"
 def collect_spot_1min(kite):
     """
     Append last closed 1-min SPOT candle to rolling spot CSV.
-    Required by backfill — _read_spot_open() depends on this file.
     Call every minute at HH:MM:30.
     """
     if not D.is_market_open():
@@ -654,26 +653,6 @@ def collect_option_1min(kite, spot_ltp: float):
 # ─── BACKFILL — 3-MIN ─────────────────────────────────────────
 
 
-def _read_spot_open(target_date: date):
-    paths = [
-        os.path.join(D.SPOT_DIR, "nifty_spot_1min.csv"),
-        os.path.expanduser("~/nifty_spot_1min.csv"),
-    ]
-    target_str = target_date.strftime("%Y-%m-%d")
-    for path in paths:
-        if not os.path.isfile(path):
-            continue
-        try:
-            with open(path) as f:
-                for row in csv.DictReader(f):
-                    ts = row.get("timestamp", row.get("date", ""))
-                    if ts.startswith(target_str + " 09:15"):
-                        return float(row.get("close", row.get("Close", 0)))
-        except Exception as e:
-            logger.warning("[LAB] Spot open read error: " + str(e))
-    return None
-
-
 def _read_spot_1min_map(target_date: date) -> dict:
     result     = {}
     paths      = [
@@ -1056,7 +1035,7 @@ def _lab_loop():
                         collect_option_1min(_kite_ref, spot_ltp)
                     except Exception as e:
                         logger.error("[LAB] 1m error: " + str(e))
-                    # Spot 1-min — required for backfill _read_spot_open()
+                    # Spot 1-min rolling CSV (still consumed by reports tooling)
                     try:
                         collect_spot_1min(_kite_ref)
                     except Exception as e:

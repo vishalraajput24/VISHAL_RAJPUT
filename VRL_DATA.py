@@ -370,7 +370,11 @@ _subscribed_lock  = threading.Lock()
 _ws_connected     = False
 _ws_reconnect_attempts = 0
 _ws_reconnect_delay = 1
-_ws_max_delay = 60
+# Cap on the exponential-backoff reconnect delay. Configurable via
+# websocket.max_reconnect_delay so extended Kite outages don't hammer
+# the server every 60s. Defaults to 300s (5 min) — comfortable for
+# Kite's rate limits while still recovering quickly.
+_ws_max_delay = CFG.ws_max_reconnect_delay()
 
 # ── auth-rejection backoff ───────────────────
 # When Kite's nightly 03:30 session invalidation kills the token,
@@ -824,31 +828,46 @@ def get_lot_size(kite=None) -> int:
         logger.warning("[DATA] Lot size fetch failed: " + str(e))
     return LOT_SIZE_BASE
 
-# ── Historical data cache — avoids duplicate API calls within same minute ──
+# ── Historical data cache — keyed by candle bucket so it self-invalidates
+# when a new candle closes. A 30s fixed TTL used to cause two separate API
+# hits per 3-min bucket; now we only refetch when the bucket flips.
 _hist_cache = {}
 _hist_cache_lock = threading.Lock()
-_HIST_CACHE_TTL = 30   # seconds
 _HIST_CACHE_MAX = 256  # hard cap on entries — prevents unbounded growth
 
+_INTERVAL_SECS = {
+    "minute":    60,
+    "3minute":   180,
+    "5minute":   300,
+    "15minute":  900,
+    "30minute":  1800,
+    "60minute":  3600,
+    "hour":      3600,
+    "day":       86400,
+}
+
+def _candle_bucket(interval: str) -> int:
+    """Current epoch floor-divided by the candle width. Bumps on each
+    candle close, so callers naturally miss the cache when a new bar
+    is available and hit otherwise."""
+    secs = _INTERVAL_SECS.get(interval, 60)
+    return int(time.time()) // secs
+
 def _hist_cache_key(token: int, interval: str, lookback: int) -> str:
-    return str(token) + "|" + interval + "|" + str(lookback)
+    return (str(token) + "|" + interval + "|" + str(lookback)
+            + "|" + str(_candle_bucket(interval)))
 
 def _hist_cache_get(key: str):
     with _hist_cache_lock:
         entry = _hist_cache.get(key)
-        if entry and (time.time() - entry["ts"]) < _HIST_CACHE_TTL:
+        if entry:
             return entry["df"].copy()
     return None
 
 def _hist_cache_put(key: str, df):
     with _hist_cache_lock:
         _hist_cache[key] = {"df": df.copy(), "ts": time.time()}
-        # Evict by age first
-        now = time.time()
-        stale = [k for k, v in _hist_cache.items() if now - v["ts"] > _HIST_CACHE_TTL * 2]
-        for k in stale:
-            del _hist_cache[k]
-        # Hard cap: drop oldest entries if still over max
+        # Hard cap: drop oldest entries if over max
         if len(_hist_cache) > _HIST_CACHE_MAX:
             ordered = sorted(_hist_cache.items(), key=lambda kv: kv[1]["ts"])
             for k, _v in ordered[:len(_hist_cache) - _HIST_CACHE_MAX]:
@@ -858,7 +877,8 @@ def get_historical_data(token: int, interval: str, lookback: int,
                         today_only: bool = False) -> pd.DataFrame:
     if _kite is None:
         return pd.DataFrame()
-    # Check cache first — avoids duplicate API calls within same 30s window
+    # Check cache first — key includes the current candle bucket, so a
+    # fresh fetch is triggered exactly once per candle close.
     cache_key = _hist_cache_key(token, interval, lookback)
     cached = _hist_cache_get(cache_key)
     if cached is not None:

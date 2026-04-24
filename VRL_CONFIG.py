@@ -89,6 +89,13 @@ def _validate(cfg: dict):
     for k in ("emergency_sl_pts", "eod_exit_time"):
         if k not in xb:
             raise ConfigError("exit.ema9_band." + k + " is required")
+    # emergency_sl_pts must be a negative number — the engine's exit check
+    # is `if pnl <= emergency_sl_pts`, so a non-negative value would fire
+    # immediately on entry and blow up every trade.
+    _esp = xb["emergency_sl_pts"]
+    if not isinstance(_esp, (int, float)) or _esp >= 0:
+        raise ConfigError("exit.ema9_band.emergency_sl_pts must be a "
+                          "negative number, got: " + str(_esp))
 
 
 # ── Accessors ────────────────────────────────────────────────
@@ -189,6 +196,10 @@ def ws_reconnect_delay() -> int:
 
 def ws_tick_stale_secs() -> int:
     return _deep_get(get(), "websocket", "tick_stale_secs", default=8)
+
+
+def ws_max_reconnect_delay() -> int:
+    return _deep_get(get(), "websocket", "max_reconnect_delay", default=300)
 
 
 # ── Web ──

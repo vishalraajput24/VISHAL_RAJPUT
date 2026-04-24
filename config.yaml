@@ -137,3 +137,6 @@ web:
 websocket:
   reconnect_delay: 5
   tick_stale_secs: 8
+  # Cap on the exponential-backoff reconnect delay (seconds). During a
+  # prolonged Kite outage, reconnect attempts stop doubling past this.
+  max_reconnect_delay: 300
