@@ -2102,10 +2102,11 @@ def _strategy_loop(kite):
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
                     _mex_other_tok = state.get("other_token", 0)
-                    # Snapshot the previous tier BEFORE manage_exit mutates
-                    # state so the upgrade-alert block below can detect
-                    # transitions (INITIAL → BREAKEVEN → TRAIL_60 → TRAIL_75 → VISHAL_MAX → TRAIL_90).
+                    # Snapshot the previous tier AND SL BEFORE manage_exit
+                    # mutates state so the upgrade-alert below can show
+                    # both "old tier → new tier" and "old SL → new SL".
                     _prev_tier = state.get("active_ratchet_tier", "None") or "None"
+                    _prev_sl   = float(state.get("active_ratchet_sl", 0) or 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
                     # v16.2: trail tier upgrade alert
@@ -2142,12 +2143,21 @@ def _strategy_loop(kite):
                                 _icon = "🔒🔒"
                             elif _new_tier == "TRAIL_90":
                                 _icon = "🔒🔒🔒"
+                            # Old→New SL line — shows the ratchet jump
+                            # clearly so the operator can see "SL moved
+                            # from Rs X (tier A) up to Rs Y (tier B)".
+                            _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
+                                           if _prev_sl > 0 else "entry-10")
                             _tg_send(
-                                _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"
-                                + _r_emoji + " " + _r_sym + "   Peak +" + "{:.1f}".format(_r_peak) + "\n"
-                                "SL Rs" + "{:.1f}".format(_r_sl)
-                                + "   (+" + "{:.1f}".format(_r_lock) + " pts lock, "
-                                + "{:.1f}".format(_r_room) + " pts room)"
+                                _icon + " <b>SL UPGRADED → " + _new_tier + "</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                + _r_emoji + " " + _r_sym + "   Peak +"
+                                + "{:.1f}".format(_r_peak) + "\n"
+                                "Prev  " + _prev_tier + "   " + _sl_old_str + "\n"
+                                "New   " + _new_tier + "   Rs"
+                                + "{:.1f}".format(_r_sl) + "   ⬆️\n"
+                                "Lock  +" + "{:.1f}".format(_r_lock) + " pts\n"
+                                "Room  " + "{:.1f}".format(_r_room) + " pts"
                             )
                     except Exception as _re:
                         logger.debug("[MAIN] trail tier alert error: " + str(_re))
@@ -2166,23 +2176,42 @@ def _strategy_loop(kite):
                         _last_ms = state.get("_last_milestone", 0)
                         _cur_el = round(float(state.get("current_ema9_low", 0)), 1)
                         _entry_px = state.get("entry_price", 0)
-                        # Fire milestone alert once per threshold crossed
-                        for _m in [5, 10, 15, 20, 30, 40, 50]:
+                        # Fire milestone alert once per threshold crossed.
+                        # Thresholds now align with Smart Trail v2+ tier
+                        # boundaries (5/8/15/30/45) plus a few mid steps
+                        # so the operator sees peak progress + SL status
+                        # at every major point.
+                        for _m in [5, 8, 10, 15, 20, 25, 30, 40, 50]:
                             if _peak >= _m and _last_ms < _m:
                                 with _state_lock:
                                     state["_last_milestone"] = _m
-                                _r_tier = state.get("active_ratchet_tier", "")
+                                _r_tier = state.get("active_ratchet_tier", "") or "INITIAL"
                                 _r_sl   = float(state.get("active_ratchet_sl", 0) or 0)
-                                if _r_tier and _r_tier not in ("", "None") and _r_sl > 0:
-                                    _dist_r = round(option_ltp - _r_sl, 1)
-                                    _tg_send("📈 <b>+" + str(_m) + "pts</b>"
-                                             + " | Ratchet " + _r_tier + " Rs"
-                                             + str(round(_r_sl, 1))
-                                             + " (" + str(_dist_r) + "pts away)")
-                                else:
-                                    _init_sl = round(_entry_px - 10, 1)
-                                    _tg_send("📈 <b>+" + str(_m) + "pts</b>"
-                                             + " | Initial SL Rs" + str(_init_sl))
+                                _cur_pnl = round(option_ltp - _entry_px, 1)
+                                if _r_sl <= 0:
+                                    _r_sl = round(_entry_px - 10, 1)
+                                _lock = round(_r_sl - _entry_px, 1)
+                                _room = round(option_ltp - _r_sl, 1)
+                                # Icon by tier strength
+                                _ms_icon = "📈"
+                                if _r_tier == "BREAKEVEN":
+                                    _ms_icon = "🛡️"
+                                elif _r_tier in ("TRAIL_60", "TRAIL_75"):
+                                    _ms_icon = "🔒"
+                                elif _r_tier in ("VISHAL_MAX", "TRAIL_90"):
+                                    _ms_icon = "🔒🔒"
+                                _lock_str = (("+" if _lock >= 0 else "")
+                                             + "{:.1f}".format(_lock))
+                                _tg_send(
+                                    _ms_icon + " <b>Peak +" + str(_m)
+                                    + " pts</b>   " + _r_tier + "\n"
+                                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                    "Peak  +" + "{:.1f}".format(_peak) + "\n"
+                                    "Now   +" + "{:.1f}".format(_cur_pnl) + "\n"
+                                    "SL    Rs" + "{:.1f}".format(_r_sl)
+                                    + "   (" + _lock_str + " locked)\n"
+                                    "Room  " + "{:.1f}".format(_room) + " pts"
+                                )
                                 break
                     # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
                     # Paper mode: exit at 15:28 as before
