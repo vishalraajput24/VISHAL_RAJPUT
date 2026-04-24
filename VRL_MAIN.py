@@ -31,7 +31,14 @@ from VRL_ENGINE import (
 )
 # VRL_TRADE handles both paper and live mode
 import VRL_CONFIG as CFG
-from VRL_TRADE import place_entry, place_exit
+try:
+    from kiteconnect.exceptions import (
+        TokenException, NetworkException, GeneralException,
+        OrderException, InputException,
+    )
+except ImportError:
+    TokenException = NetworkException = GeneralException = Exception
+    OrderException = InputException = Exception
 
 from VRL_LAB    import start_lab
 import VRL_ENGINE as CHARGES
@@ -938,24 +945,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
-    # v13.5: Place ONE exchange backup SL-M for full qty at entry - candle_close_sl
-    try:
-        from VRL_TRADE import place_sl_order
-        _cfg_lots    = CFG.get().get("lots", {})
-        _lot_size    = _cfg_lots.get("size", D.get_lot_size())
-        _lot_count   = _cfg_lots.get("count", 2)
-        _candle_sl   = CFG.get().get("exit", {}).get("candle_close_sl", 12)
-        _sl_price    = round(actual_price - _candle_sl, 2)
-        _full_qty    = _lot_size * _lot_count
-        _sl_oid = place_sl_order(kite, symbol, _full_qty, _sl_price)
-        with _state_lock:
-            state["_sl_order_id"] = _sl_oid
-            state["_sl_trigger_at_exchange"] = round(_sl_price, 1)
-            state["_sl_order_id_lot1"] = ""
-            state["_sl_order_id_lot2"] = ""
-    except Exception as _se:
-        logger.warning("[MAIN] SL-M place error: " + str(_se))
-
     # ── v16.3.2 Entry alert ──
     _close = round(float(entry_result.get("close", actual_price)), 1)
     _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
@@ -1126,15 +1115,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         exit_qty = state.get("qty", D.get_lot_size() * 2)
     else:
         exit_qty = D.get_lot_size()
-
-    # v13.5: Cancel the single exchange SL-M order
-    try:
-        from VRL_TRADE import cancel_sl_order
-        _sl_oid = state.get("_sl_order_id", "")
-        if _sl_oid:
-            cancel_sl_order(kite, _sl_oid)
-    except Exception:
-        pass
 
     fill = place_exit(kite, symbol, token, direction,
                       exit_qty, exit_price, reason)
@@ -2141,19 +2121,6 @@ def _strategy_loop(kite):
                                     _tg_send("📈 <b>+" + str(_m) + "pts</b>"
                                              + " | Initial SL Rs" + str(_init_sl))
                                 break
-                        # Update exchange SL-M trigger to current EMA9-low
-                        try:
-                            from VRL_TRADE import modify_sl_order
-                            _new_trigger = _cur_el
-                            _sid = state.get("_sl_order_id", "")
-                            _cur = state.get("_sl_trigger_at_exchange", 0)
-                            if _sid and _new_trigger > _cur:
-                                if modify_sl_order(kite, _sid, _new_trigger):
-                                    with _state_lock:
-                                        state["_sl_trigger_at_exchange"] = _new_trigger
-                        except Exception:
-                            pass
-
                     # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
                     # Paper mode: exit at 15:28 as before
                     _eod_cutoff = 25 if not D.PAPER_MODE else 28
@@ -2842,6 +2809,199 @@ _DISPATCH = {
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+# === TRADE EXECUTION (merged from VRL_TRADE) ===
+# ═══════════════════════════════════════════════════════════════
+
+def _verify_timeout(kind: str, default: int) -> int:
+    """Pull verify_order_fill timeouts from config.yaml
+    trade.verify_timeout_{entry,exit}. Fall back to the historical
+    hardcoded value if config lacks the key."""
+    try:
+        v = (CFG.get().get("trade") or {}).get("verify_timeout_" + kind)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    return default
+
+
+def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
+    """Poll order history until filled or timeout. Returns (fill_price, fill_qty)."""
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        try:
+            history = kite.order_history(order_id)
+            if not history:
+                time.sleep(0.5)
+                continue
+            last = history[-1]
+            status = last.get("status", "")
+            if status == "COMPLETE":
+                return float(last.get("average_price", 0)), int(last.get("filled_quantity", 0))
+            elif status in ("REJECTED", "CANCELLED"):
+                logger.error("[TRADE] Order " + order_id + " " + status
+                             + " msg=" + str(last.get("status_message", "")))
+                return 0.0, 0
+        except Exception as e:
+            logger.warning("[TRADE] verify_fill error: " + str(e))
+        time.sleep(0.5)
+    logger.error("[TRADE] Fill verification timeout: " + order_id)
+    return 0.0, 0
+
+
+def place_entry(kite, symbol: str, token: int,
+                option_type: str, qty: int,
+                entry_price_ref: float) -> dict:
+    """Paper mode: simulated fill. Live mode: LIMIT entry at LTP + buffer."""
+    if D.PAPER_MODE:
+        logger.info("[TRADE] PAPER ENTRY: " + symbol
+                    + " qty=" + str(qty)
+                    + " ref=" + str(round(entry_price_ref, 2)))
+        return {
+            "ok": True, "fill_price": round(entry_price_ref, 2),
+            "fill_qty": qty,
+            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
+            "error": "", "slippage": 0,
+        }
+
+    _first_live_flag = os.path.expanduser("~/state/.first_live_done")
+    if not os.path.isfile(_first_live_flag):
+        logger.info("[TRADE] 🚀 FIRST LIVE ORDER EVER")
+
+    buffer = max(2.0, round(entry_price_ref * 0.01, 1))
+    limit_price = round(entry_price_ref + buffer, 1)
+
+    logger.info("[TRADE] LIMIT ENTRY: ref=" + str(round(entry_price_ref, 2))
+                + " buffer=" + str(buffer) + " limit=" + str(limit_price))
+
+    try:
+        order_id = kite.place_order(
+            variety          = kite.VARIETY_REGULAR,
+            exchange         = D.EXCHANGE_NFO,
+            tradingsymbol    = symbol,
+            transaction_type = kite.TRANSACTION_TYPE_BUY,
+            quantity         = qty,
+            order_type       = kite.ORDER_TYPE_LIMIT,
+            price            = limit_price,
+            product          = kite.PRODUCT_MIS,
+        )
+        logger.info("[TRADE] LIMIT ENTRY placed: " + str(order_id)
+                    + " limit=" + str(limit_price))
+
+        fill_price, fill_qty = verify_order_fill(
+            kite, order_id, timeout_secs=_verify_timeout("entry", 8))
+
+        if fill_qty == 0:
+            try:
+                kite.cancel_order(kite.VARIETY_REGULAR, order_id)
+                logger.info("[TRADE] Entry cancelled — price moved away")
+            except Exception:
+                pass
+            return {
+                "ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": str(order_id),
+                "error": "LIMIT_NOT_FILLED", "slippage": 0,
+            }
+
+        slippage = round(fill_price - entry_price_ref, 2)
+        logger.info("[TRADE] ENTRY FILLED: price=" + str(fill_price)
+                    + " slippage=" + str(slippage) + "pts")
+
+        if not os.path.isfile(_first_live_flag):
+            try:
+                with open(_first_live_flag, "w") as _f:
+                    _f.write(datetime.now().isoformat())
+            except Exception:
+                pass
+
+        if fill_qty < qty:
+            logger.warning("[TRADE] Partial fill accepted: "
+                           + str(fill_qty) + "/" + str(qty))
+
+        return {
+            "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+            "order_id": str(order_id), "error": "", "slippage": slippage,
+        }
+
+    except TokenException as e:
+        logger.error("[TRADE] Entry auth error: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "AUTH_EXPIRED: " + str(e), "slippage": 0}
+    except OrderException as e:
+        logger.error("[TRADE] Entry order rejected: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "ORDER_REJECTED: " + str(e), "slippage": 0}
+    except NetworkException as e:
+        logger.error("[TRADE] Entry network error: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "NETWORK: " + str(e), "slippage": 0}
+    except Exception as e:
+        logger.error("[TRADE] Entry unexpected: " + type(e).__name__ + " " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": str(e), "slippage": 0}
+
+
+def place_exit(kite, symbol: str, token: int,
+               option_type: str, qty: int,
+               exit_price_ref: float, reason: str) -> dict:
+    """Paper mode: simulated fill. Live mode: MARKET exit with retry."""
+    if D.PAPER_MODE:
+        logger.info("[TRADE] PAPER EXIT: " + symbol
+                    + " qty=" + str(qty)
+                    + " ref=" + str(round(exit_price_ref, 2))
+                    + " reason=" + reason)
+        return {
+            "ok": True, "fill_price": round(exit_price_ref, 2),
+            "fill_qty": qty,
+            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
+            "error": "", "slippage": 0,
+        }
+
+    for attempt in range(2):
+        try:
+            order_id = kite.place_order(
+                variety          = kite.VARIETY_REGULAR,
+                exchange         = D.EXCHANGE_NFO,
+                tradingsymbol    = symbol,
+                transaction_type = kite.TRANSACTION_TYPE_SELL,
+                quantity         = qty,
+                order_type       = kite.ORDER_TYPE_MARKET,
+                product          = kite.PRODUCT_MIS,
+                market_protection = -1,
+            )
+            logger.info("[TRADE] MARKET EXIT placed attempt=" + str(attempt + 1)
+                        + " order=" + str(order_id))
+
+            fill_price, fill_qty = verify_order_fill(kite, order_id)
+
+            if fill_qty > 0:
+                slippage = round(exit_price_ref - fill_price, 2)
+                return {
+                    "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+                    "order_id": str(order_id), "error": "", "slippage": slippage,
+                }
+
+            logger.warning("[TRADE] Exit attempt " + str(attempt + 1) + " not filled")
+            time.sleep(1)
+
+        except TokenException as e:
+            logger.error("[TRADE] Exit auth error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
+        except (OrderException, NetworkException) as e:
+            logger.error("[TRADE] Exit order/network error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
+        except Exception as e:
+            logger.error("[TRADE] Exit unexpected error attempt=" + str(attempt + 1)
+                         + ": " + type(e).__name__ + " " + str(e))
+            time.sleep(1)
+
+    logger.critical("CRITICAL: Exit failed for " + symbol
+                    + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
+    return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+            "order_id": "", "error": "EXIT_FAILED_MANUAL_REQUIRED", "slippage": 0}
 
 
 # ── Telegram listener state ───────────────────────────────────
