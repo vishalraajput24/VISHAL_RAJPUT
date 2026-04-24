@@ -730,12 +730,11 @@ def _alert_bot_started():
         "2. EOD 15:20\n"
         "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>VISHAL TRAIL</b>\n"
-        "peak <10   SL = entry-10          (INITIAL)\n"
-        "peak 10-25 SL = entry+peak*0.60   (TRAIL_60)\n"
-        "peak 25-40 SL = entry+peak*0.85   (VISHAL_MAX)\n"
-        "peak 40-45 SL = entry+peak*0.80   (TRAIL_80)\n"
-        "peak 45+   SL = entry+40          (VISHAL_LOCK)\n"
+        "<b>VISHAL TRAIL</b>  (patient)\n"
+        "peak <15   SL = entry-10          (INITIAL)\n"
+        "peak 15-30 SL = entry+peak*0.70   (TRAIL_70)\n"
+        "peak 30-50 SL = entry+peak*0.85   (VISHAL_MAX)\n"
+        "peak 50+   SL = entry+peak*0.90   (TRAIL_90)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -973,7 +972,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +10 (TRAIL_60, 60% capture)\n"
+        "Trail arms at peak +15 (TRAIL_70, 70% capture)\n"
     )
 
     # v16.2 backbone block — DISPLAY ONLY, never blocks entry
@@ -1108,6 +1107,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
+        # Snapshot the active trail tier BEFORE state.update() wipes it below,
+        # so the exit alert reports the real tier (TRAIL_70/VISHAL_MAX/TRAIL_90)
+        # instead of always falling back to INITIAL.
+        _tier_snapshot = state.get("active_ratchet_tier", "") or "INITIAL"
         # v15.0: entry confirmation = band position at entry
         _entry_eh = round(float(state.get("entry_ema9_high", 0)), 1)
         _entry_el = round(float(state.get("entry_ema9_low", 0)), 1)
@@ -1234,7 +1237,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _net_sign  = "+" if _ch["net_pnl"] >= 0 else "-"
 
         _reason_line = ""
-        _tier = state.get("active_ratchet_tier", "") or "INITIAL"
+        _tier = _tier_snapshot
         if reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
         # capture percentage (v16.2 display)
@@ -2071,7 +2074,7 @@ def _strategy_loop(kite):
                     _mex_other_tok = state.get("other_token", 0)
                     # Snapshot the previous tier BEFORE manage_exit mutates
                     # state so the upgrade-alert block below can detect
-                    # transitions (INITIAL → TRAIL_60 → VISHAL_MAX → …).
+                    # transitions (INITIAL → TRAIL_70 → VISHAL_MAX → TRAIL_90).
                     _prev_tier = state.get("active_ratchet_tier", "None") or "None"
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
@@ -2094,13 +2097,11 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier == "TRAIL_60":
+                            if _new_tier == "TRAIL_70":
                                 _icon = "🔒"
                             elif _new_tier == "VISHAL_MAX":
                                 _icon = "🔒🔒"
-                            elif _new_tier == "TRAIL_80":
-                                _icon = "🔒🔒"
-                            elif _new_tier == "VISHAL_LOCK":
+                            elif _new_tier == "TRAIL_90":
                                 _icon = "🔒🔒🔒"
                             _tg_send(
                                 _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"

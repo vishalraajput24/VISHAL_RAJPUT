@@ -626,8 +626,6 @@ def migrate_drop_greeks():
     migrations = [
         ("option_3min",  ["iv_pct", "delta", "gamma", "theta", "vega"]),
         ("option_1min",  ["iv_pct", "delta"]),
-        ("option_5min",  ["iv_pct", "delta"]),
-        ("option_15min", ["iv_pct", "delta"]),
         ("signal_scans", ["iv_pct", "delta"]),
         ("trades",       ["iv_at_entry"]),
     ]

@@ -64,7 +64,7 @@ entry:
 
 # ── v16.6 Exit configuration ──────────────────────────────────
 # 3 rules: EMERGENCY_SL, EOD, VISHAL_TRAIL. Trail logic is in
-# VRL_ENGINE.compute_trail_sl (INITIAL/TRAIL_60/VISHAL_MAX/TRAIL_80/VISHAL_LOCK).
+# VRL_ENGINE.compute_trail_sl (patient: INITIAL/TRAIL_70/VISHAL_MAX/TRAIL_90).
 exit:
   ema9_band:
     emergency_sl_pts: -10

@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.6
 #  Entry: 7 gates. Exit: strict 3 rules (Emergency / EOD / Vishal Trail).
-#  Vishal Trail: INITIAL → TRAIL_60 → VISHAL_MAX → TRAIL_80 → VISHAL_LOCK+40
+#  Vishal Trail (patient): INITIAL → TRAIL_70 → VISHAL_MAX → TRAIL_90
 #  Exit on candle close, bulletproof margin check.
 # ═══════════════════════════════════════════════════════════════
 
