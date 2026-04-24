@@ -375,29 +375,30 @@ def init_db():
             logger.info("[DB] Schema v" + str(_schema_v)
                         + " — migration already done, skipped")
 
-        # v16.6: Greek columns removed from schemas. Drop them from
-        # pre-existing DBs (idempotent — ALTER fails silently if column
-        # is already gone or the table doesn't exist).
-        try:
-            migrate_drop_greeks()
-        except Exception as _me:
-            logger.warning("[DB] migrate_drop_greeks: " + str(_me))
+        # v16.6: one-shot drops for Greek / dead-indicator / dead-trade
+        # columns. Each is idempotent, but stamp schema_meta after success
+        # so subsequent boots skip the ALTER TABLE transactions entirely.
+        def _gated_drop(meta_key: str, fn, label: str):
+            row = c.execute(
+                "SELECT value FROM schema_meta WHERE key=?", (meta_key,)
+            ).fetchone()
+            if row and row[0] == "done":
+                return
+            try:
+                fn()
+                c.execute(
+                    "INSERT OR REPLACE INTO schema_meta VALUES (?, 'done')",
+                    (meta_key,),
+                )
+                conn.commit()
+            except Exception as _me:
+                logger.warning("[DB] " + label + ": " + str(_me))
 
-        # v16.6: dead indicators (Fib pivots, vol spike, PDH/PDL, spot gap)
-        # removed from signal_scans. Drop any leftover columns from
-        # pre-existing DBs.
-        try:
-            migrate_drop_dead_indicators()
-        except Exception as _me:
-            logger.warning("[DB] migrate_drop_dead_indicators: " + str(_me))
-
-        # v16.6: dead trade columns (bias, hourly_rsi, exit_phase,
-        # score_at_entry, trough_pnl, entry_vwap_bonus) removed from
-        # the trades table. Idempotent drop on pre-existing DBs.
-        try:
-            migrate_drop_dead_trade_cols()
-        except Exception as _me:
-            logger.warning("[DB] migrate_drop_dead_trade_cols: " + str(_me))
+        _gated_drop("drop_greeks_v1", migrate_drop_greeks, "migrate_drop_greeks")
+        _gated_drop("drop_dead_indicators_v1", migrate_drop_dead_indicators,
+                    "migrate_drop_dead_indicators")
+        _gated_drop("drop_dead_trade_cols_v1", migrate_drop_dead_trade_cols,
+                    "migrate_drop_dead_trade_cols")
 
 
 # ═══════════════════════════════════════════════════════════════

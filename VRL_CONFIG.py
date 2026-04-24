@@ -74,6 +74,12 @@ def _validate(cfg: dict):
             raise ConfigError("instrument." + k + " is required")
     if not isinstance(inst["lot_size"], int) or inst["lot_size"] <= 0:
         raise ConfigError("instrument.lot_size must be a positive integer")
+    lots = cfg["lots"]
+    for k in ("count", "size"):
+        if k not in lots:
+            raise ConfigError("lots." + k + " is required")
+        if not isinstance(lots[k], int) or lots[k] <= 0:
+            raise ConfigError("lots." + k + " must be a positive integer")
     # v16.3 validation: only the keys the engine actually reads.
     eb = (cfg.get("entry") or {}).get("ema9_band") or {}
     for k in ("body_pct_min", "warmup_until", "cutoff_after"):

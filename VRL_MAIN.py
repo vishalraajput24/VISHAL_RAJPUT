@@ -188,8 +188,19 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
             logger.debug("[PRELOAD] strike lock error: " + str(_r11e))
 
 def _reset_strike_lock():
-    """Reset lock after trade exit or session start."""
+    """Reset lock after trade exit or session start.
+    Unsubscribes every currently-locked token first so the WebSocket
+    doesn't leak stale CE/PE/OTM subscriptions across relocks. Without
+    this, a full trading day of ~20 relocks leaves 60+ dead tokens
+    pinned against the Kite quota."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
+    try:
+        _old = [v.get("token") for v in (_locked_tokens or {}).values()
+                if isinstance(v, dict) and v.get("token")]
+        if _old:
+            D.unsubscribe_tokens(_old)
+    except Exception as _ue:
+        logger.debug("[MAIN] reset_strike_lock unsubscribe: " + str(_ue))
     _locked_ce_strike = None
     _locked_pe_strike = None
     _locked_at_spot = None
@@ -229,6 +240,24 @@ def _load_state():
                 "Symbol : " + str(state.get("symbol")) + "\n"
                 "Resuming exit monitoring."
             )
+            # Refresh band context immediately so the dashboard doesn't
+            # show zeroed current_ema9_high/low until the next manage_exit
+            # tick. Best-effort — if the fetch fails we keep the persisted
+            # values and the next 3-min candle will overwrite them.
+            try:
+                _rt_tok = state.get("token")
+                if _rt_tok:
+                    _rt_df = D.get_option_3min(_rt_tok, lookback=10)
+                    if _rt_df is not None and len(_rt_df) >= 2:
+                        _rt_last = _rt_df.iloc[-2]
+                        with _state_lock:
+                            state["current_ema9_high"] = round(
+                                float(_rt_last.get("ema9_high", 0)), 2)
+                            state["current_ema9_low"] = round(
+                                float(_rt_last.get("ema9_low", 0)), 2)
+                            state["last_band_check_ts"] = datetime.now().isoformat()
+            except Exception as _rte:
+                logger.debug("[MAIN] restart band refresh: " + str(_rte))
     except Exception as e:
         logger.error("[MAIN] State load error: " + str(e))
 
@@ -972,36 +1001,23 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
     )
 
-    _initial_sl = round(actual_price - 10, 1)
+    # Read the emergency SL from the same config key the engine uses
+    # (exit.ema9_band.emergency_sl_pts = -10) so the alert and the actual
+    # trigger stay in sync if the operator changes the config.
+    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
+    _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
-        "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
+        "Hard SL   -" + str(_sl_pts) + " pts (Rs"
+        + "{:.1f}".format(_initial_sl) + ")\n"
         "Trail arms at peak +15 (TRAIL_70, 70% capture)\n"
     )
 
-    # v16.2 backbone block — DISPLAY ONLY, never blocks entry
+    # Backbone display removed — check_entry() never passes other-side
+    # candle data to the engine, so backbone_status was permanently "N/A"
+    # and the entry alert carried a dead line. State key is still written
+    # above for back-compat with the dashboard field.
     _backbone_block = ""
-    try:
-        _bb_status = entry_result.get("backbone_status", "N/A")
-        _other_side = "PE" if option_type == "CE" else "CE"
-        if _bb_status == "CONFIRMED":
-            _backbone_block = (
-                "<b>BACKBONE</b> \u2705 CONFIRMED\n"
-                + _other_side + " closed RED &amp; below EMA9H\n"
-            )
-        elif _bb_status == "MISMATCH":
-            _bb_red = entry_result.get("backbone_other_red", False)
-            _backbone_block = (
-                "<b>BACKBONE</b> \u26A0 MISMATCH (info only)\n"
-                + _other_side + " not confirming — "
-                + ("not RED" if not _bb_red else "above EMA9H") + "\n"
-            )
-        else:
-            _backbone_block = (
-                "<b>BACKBONE</b> \u26AA N/A (no data)\n"
-            )
-    except Exception:
-        pass
 
     _ctx_lines = []
     _ehs = int(float(entry_result.get("ema9_high_slope_5c", 0) or 0))
@@ -2087,8 +2103,13 @@ def _strategy_loop(kite):
                         _new_tier  = state.get("active_ratchet_tier", "None")
                         # Alert only on transitions to an ARMED tier (skip INITIAL).
                         _armed = _new_tier not in ("None", "", "INITIAL")
+                        # Suppress the upgrade alert if an exit is firing on
+                        # the same tick — the exit alert already carries the
+                        # real tier via _tier_snapshot, so sending both is
+                        # redundant and confusing.
+                        _exit_imminent = bool(exit_list)
                         if (state.get("in_trade") and _new_tier != _prev_tier
-                                and _new_tier and _armed):
+                                and _new_tier and _armed and not _exit_imminent):
                             _r_sl   = float(state.get("active_ratchet_sl", 0) or 0)
                             _r_ent  = float(state.get("entry_price", 0) or 0)
                             _r_lock = round(_r_sl - _r_ent, 1)
