@@ -19,7 +19,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v16.4"
+VERSION  = "v16.6"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
