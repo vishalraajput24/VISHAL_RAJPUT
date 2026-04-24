@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.5 FINAL
-#  Vishal Close Trail: 60% → 85% → 80% → VISHAL_LOCK (+40)
-#  Exit on candle close, bulletproof margin check
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.6
+#  Entry: 7 gates. Exit: strict 3 rules (Emergency / EOD / Vishal Trail).
+#  Vishal Trail: INITIAL → TRAIL_60 → VISHAL_MAX → TRAIL_80 → VISHAL_LOCK+40
+#  Exit on candle close, bulletproof margin check.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -173,7 +174,7 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
         spot_vwap=None, spot_for_vwap=spot_ltp, atm_strike=atm_strike,
         silent=silent, other_opt_3m=None)
 
-def compute_entry_sl(entry_price: float, hard_sl: int = 12) -> float:
+def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,

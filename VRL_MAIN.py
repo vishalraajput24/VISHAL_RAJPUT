@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.3
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.6
 #  Master orchestration. EMA9 Band Breakout strategy.
-#  Entry: close > EMA9-low (fresh) + green + body ≥ 30%
-#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (70% capture).
+#  Entry: close > EMA9-low (fresh) + green + body ≥ 40%
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (60/85/80/LOCK+40 tiers).
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -722,10 +722,10 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.4\n"
-        "Entry   : 09:30 - 15:10 IST\n"
-        "Gates   : EMA9L bounce + floor test + near high\n"
-        "Confirm : EMA9H break within 3 candles (or cut)\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6\n"
+        "Entry   : 09:30 - 15:10 IST  |  5-min same-direction cooldown\n"
+        "Gates   : 7 — time window, close>ema9_low, gap>=3, green,\n"
+        "          body>=40%, floor test (low within 3pts), fresh breakout\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -734,10 +734,11 @@ def _alert_bot_started():
         "3. Vishal Trail (see tiers)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>VISHAL TRAIL</b>\n"
-        "peak 10   SL = entry+2  (LOCK_2)\n"
-        "peak 12   SL = entry+5  (LOCK_5)\n"
-        "peak 18   SL = entry+10 (LOCK_10)\n"
-        "peak 25+  SL = 70% of peak (TRAIL_70)\n"
+        "peak <10   SL = entry-10          (INITIAL)\n"
+        "peak 10-25 SL = entry+peak*0.60   (TRAIL_60)\n"
+        "peak 25-40 SL = entry+peak*0.85   (VISHAL_MAX)\n"
+        "peak 40-45 SL = entry+peak*0.80   (TRAIL_80)\n"
+        "peak 45+   SL = entry+40          (VISHAL_LOCK)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -964,13 +965,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
     )
 
-    _initial_sl = round(actual_price - 10, 1)       # v16.2: -10 (was -12)
+    _initial_sl = round(actual_price - 10, 1)
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -10 pts (Rs" + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +10 (LOCK_2)\n"
-        + ("✅ EMA9H CONFIRMED — trail active\n" if entry_result.get("ema9h_confirmed")
-           else "⏳ Watching 3 candles for EMA9H confirm\n")
+        "Trail arms at peak +10 (TRAIL_60, 60% capture)\n"
     )
 
     # v16.2 backbone block — DISPLAY ONLY, never blocks entry
@@ -1491,7 +1490,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = _reject
             elif _width > 0 and _width < 8:
                 verdict = "narrow_band " + str(round(_width, 1)) + "pts (chop)"
-            elif _pos == "ABOVE" and _green and _body >= 30:
+            elif _pos == "ABOVE" and _green and _body >= 40:
                 verdict = "READY"
             elif _pos == "ABOVE":
                 verdict = "above band, waiting body/green"
@@ -2072,13 +2071,13 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier in ("LOCK_2",):
+                            if _new_tier == "TRAIL_60":
                                 _icon = "🔒"
-                            elif _new_tier in ("LOCK_5",):
-                                _icon = "🔒"
-                            elif _new_tier in ("LOCK_10",):
+                            elif _new_tier == "VISHAL_MAX":
                                 _icon = "🔒🔒"
-                            elif _new_tier in ("TRAIL_70",):
+                            elif _new_tier == "TRAIL_80":
+                                _icon = "🔒🔒"
+                            elif _new_tier == "VISHAL_LOCK":
                                 _icon = "🔒🔒🔒"
                             _tg_send(
                                 _icon + " <b>TRAIL UPGRADE → " + _new_tier + "</b>\n"
