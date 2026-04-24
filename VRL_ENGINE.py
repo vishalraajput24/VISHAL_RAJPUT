@@ -178,19 +178,16 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """Vishal Close Trail: 60% → 85% → 80% → VISHAL_LOCK (+40)."""
-    if peak_pnl >= 45:
-        sl = entry_price + 40  # Hard lock, minimal giveback
-        tier = "VISHAL_LOCK"
-    elif peak_pnl >= 40:
-        sl = entry_price + peak_pnl * 0.80
-        tier = "TRAIL_80"
-    elif peak_pnl >= 25:
+    """Vishal Close Trail – patient version. First lock‑in at +15 pts."""
+    if peak_pnl >= 50:
+        sl = entry_price + peak_pnl * 0.90
+        tier = "TRAIL_90"
+    elif peak_pnl >= 30:
         sl = entry_price + peak_pnl * 0.85
         tier = "VISHAL_MAX"
-    elif peak_pnl >= 10:
-        sl = entry_price + peak_pnl * 0.60
-        tier = "TRAIL_60"
+    elif peak_pnl >= 15:
+        sl = entry_price + peak_pnl * 0.70
+        tier = "TRAIL_70"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
