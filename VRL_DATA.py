@@ -4,7 +4,6 @@
 # ═══════════════════════════════════════════════════════════════
 
 import os
-import math
 import time
 import logging
 import threading
@@ -20,15 +19,11 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v16.4"
+VERSION  = "v16.6"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 # ── Timezone ──
 IST = ZoneInfo("Asia/Kolkata")
-
-def now_ist() -> datetime:
-    """Return current time in IST, timezone-aware."""
-    return datetime.now(IST)
 
 def _load_env_file(path: str):
     if not os.path.isfile(path):
@@ -63,7 +58,7 @@ ZONES_LOG_DIR    = os.path.join(LOGS_DIR, "zones")
 ML_LOG_DIR       = os.path.join(LOGS_DIR, "ml")
 ERROR_LOG_DIR    = os.path.join(LOGS_DIR, "errors")
 # STATE_DIR lives next to the code (inside the repo) so AUTH and MAIN
-# always agree on the token location. BUG-015.
+# always agree on the token location..
 STATE_DIR        = os.path.join(REPO_DIR, "state")
 LAB_DIR          = os.path.join(BASE_DIR, "lab_data")
 BACKUP_DIR       = os.path.join(BASE_DIR, "backups")
@@ -90,11 +85,7 @@ STRIKE_STEP         = CFG.strike_cfg("step", 100)
 STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
-RISK_FREE_RATE   = CFG.risk("risk_free_rate", 0.065)
 
-MAX_DAILY_TRADES        = CFG.risk("max_daily_trades", 999)
-MAX_DAILY_LOSSES        = CFG.risk("max_daily_losses", 999)
-PROFIT_LOCK_PTS         = CFG.risk("profit_lock_pts", 150)
 PROFIT_LOCK_TRAIL_TF    = "3minute"
 
 # v16: RSI constants kept for shadow analysis
@@ -123,48 +114,28 @@ STATE_PERSIST_FIELDS = [
     # Position
     "in_trade", "symbol", "token", "direction", "strike", "expiry",
     "entry_price", "entry_time", "qty", "lot_count",
-    # Exit state (v15.0: band-based)
-    "peak_pnl", "trough_pnl", "candles_held",
+    # Exit state
+    "peak_pnl", "candles_held",
     # v15.0 entry context + band trail
     "entry_mode", "entry_ema9_high", "entry_ema9_low",
     "entry_band_position", "entry_body_pct",
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
-    "score_at_entry", "other_token",
-    # v15.2 entry context (straddle + VWAP)
-    "entry_straddle_delta", "entry_straddle_threshold", "entry_straddle_period",
-    "entry_atm_strike", "entry_band_width",
-    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
-    "entry_straddle_info",
-    # v16.0 Batch 7 band slope + context tag
-    "entry_bands_state", "entry_context_tag",
-    "ema9_high_slope_5c", "ema9_low_slope_5c",
-    "current_bands_state", "current_ema9_high_slope", "current_ema9_low_slope",
-    "_last_context_ts",
-    # v15.2.5 velocity stall tracking
-    "peak_history", "last_peak_candle_ts", "current_velocity",
-    # v15.2.5 BUG-J sentinel: one-shot peak_history backfill on startup
-    "_peak_history_backfilled",
-    # v15.2.5 BUG-V sentinel: daily lab cleanup date guard
+    "other_token",
     "_last_cleanup_date",
-    # v15.2.5 pre-entry alert toggle + rate-limit history
-    "pre_entry_alerts_enabled", "alert_history",
+    # Pre-entry alert toggle
+    "pre_entry_alerts_enabled",
     # v16.0 ratchet state
     "active_ratchet_tier", "active_ratchet_sl",
-    # v15.1 BE+2 lock (legacy)
-    "be2_active", "be2_level",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",
     # Daily
-    "daily_trades", "daily_losses", "daily_pnl",
-    "consecutive_losses", "profit_locked",
+    "daily_pnl",
     # Bot control
     "paused", "prev_close",
-    # v15.2.5 BUG-A: persist _exit_failed so a crash mid-manual-resolution
-    # doesn't silently clear the block on restart
     "_exit_failed",
     # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
-    "phase1_sl", "exit_phase", "lot1_active", "lot2_active", "lots_split",
+    "lot1_active", "lot2_active", "lots_split",
 ]
 
 def get_session_block(hour: int, minute: int) -> str:
@@ -230,32 +201,8 @@ def setup_logger(name: str, log_file: str, level=logging.DEBUG) -> logging.Logge
     return lg
 
 
-def setup_dated_logger(name: str, log_dir: str, level=logging.DEBUG) -> logging.Logger:
-    """Create a logger that writes to ~/logs/<category>/YYYY-MM-DD.log"""
-    os.makedirs(log_dir, exist_ok=True)
-    lg = logging.getLogger(name)
-    if lg.handlers:
-        return lg
-    lg.setLevel(level)
-    fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s",
-                            datefmt="%Y-%m-%d %H:%M:%S")
-    log_file = _dated_log_path(log_dir)
-    fh = TimedRotatingFileHandler(log_file, when="midnight", backupCount=30)
-    fh.suffix = "%Y-%m-%d"
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(fmt)
-    lg.addHandler(fh)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(fmt)
-    lg.addHandler(ch)
-    # Mirror errors to central error log
-    lg.addHandler(_ErrorMirrorHandler())
-    return lg
-
-
 def audit_log_paths() -> dict:
-    """v15.2.5 BUG-DL3: one-shot report of which log directories exist.
+    """v15.2.5 one-shot report of which log directories exist.
 
     Called once from VRL_MAIN startup. Does NOT create anything —
     just inspects disk state so the operator can see at a glance
@@ -426,12 +373,12 @@ _ws_reconnect_attempts = 0
 _ws_reconnect_delay = 1
 _ws_max_delay = 60
 
-# ── BUG-N1 v15.2.5: auth-rejection backoff ───────────────────
+# ── auth-rejection backoff ───────────────────
 # When Kite's nightly 03:30 session invalidation kills the token,
 # every historical_data / quote / LTP call raises "Incorrect
 # api_key or access_token". Without a guard, the bot retries
 # every 1-2 seconds for hours, flooding the log with 13K+ warnings.
-# This flag stops all retries until VRL_AUTH refreshes the token
+# This flag stops all retries until VRL_CONFIG refreshes the token
 # and calls notify_auth_refreshed().
 _auth_rejected = False
 _auth_rejected_lock = threading.Lock()
@@ -447,11 +394,11 @@ def _set_auth_rejected():
     with _auth_rejected_lock:
         if not _auth_rejected:
             logger.warning("[DATA] Auth token rejected — pausing retries "
-                           "until re-auth via VRL_AUTH.")
+                           "until re-auth via VRL_CONFIG.")
         _auth_rejected = True
 
 
-# ── BUG-N3 v15.2.5: cross-module "trade was taken" signal ────
+# ── cross-module "trade was taken" signal ────
 # VRL_MAIN sets this after a successful entry; VRL_LAB reads it
 # when building the next signal_scans row and writes trade_taken=1.
 _trade_taken_lock = threading.Lock()
@@ -479,7 +426,7 @@ def consume_trade_taken(direction: str) -> bool:
     return False
 
 
-# ── BUG-N12 v15.2.5: active trade token for LAB persistence ──
+# ── active trade token for LAB persistence ──
 # VRL_MAIN sets this on entry; VRL_LAB reads it to ensure the
 # traded strike's candles are always written regardless of ATM drift.
 _active_trade_lock = threading.Lock()
@@ -514,7 +461,7 @@ def get_active_trade() -> dict:
 
 
 def notify_auth_refreshed():
-    """Called by VRL_AUTH on successful login / token refresh.
+    """Called by VRL_CONFIG on successful login / token refresh.
     Resets the auth-rejection flag so historical_data and WS
     resume normal operation."""
     global _auth_rejected
@@ -701,15 +648,13 @@ def set_autoheal_callback(fn):
 
 def check_and_reconnect():
     """
-    v13.10 (BUG-029): Auto-heal stale WebSocket. If spot tick is 3+ min stale during
+    v13.10 (Auto-heal stale WebSocket. If spot tick is 3+ min stale during
     market hours, re-authenticate Kite and restart WebSocket. Rate limited to 1 per 10min.
     Called from strategy loop every cycle.
     """
     global _last_reconnect_attempt, _kite, _ticker
     if not is_market_open():
         return
-    # BUG-N2: if auth is known-rejected, auto-heal can't help — VRL_AUTH
-    # must refresh the token first. Skip to avoid pointless reconnect.
     if _is_auth_rejected():
         return
     # Check if spot tick is stale (v13.10: tightened from 5min to 3min)
@@ -728,7 +673,7 @@ def check_and_reconnect():
     except Exception:
         pass
     try:
-        from VRL_AUTH import get_kite
+        from VRL_CONFIG import get_kite
         new_kite = get_kite()
         if not new_kite:
             logger.error("[DATA] Re-auth returned None")
@@ -766,7 +711,6 @@ def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
         return ltp
-    # BUG-N1: skip REST fallback if auth is rejected
     if _is_auth_rejected():
         return 0.0
     if _kite is not None:
@@ -807,14 +751,14 @@ TRADING_HOLIDAYS = {
 def is_trading_day(now: datetime = None) -> bool:
     """True only on weekdays that are NOT NSE holidays."""
     if now is None:
-        now = now_ist()
+        now = datetime.now()
     if now.weekday() >= 5:
         return False
     return now.strftime("%Y-%m-%d") not in TRADING_HOLIDAYS
 
 
 def is_market_open() -> bool:
-    now = now_ist()
+    now = datetime.now()
     if not is_trading_day(now):
         return False
     start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
@@ -823,7 +767,7 @@ def is_market_open() -> bool:
 
 def is_trading_window(now: datetime = None) -> bool:
     if now is None:
-        now = now_ist()
+        now = datetime.now()
     if not is_market_open():
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
@@ -846,8 +790,6 @@ def _get_nfo_instruments(kite=None):
         _nfo_instruments = instruments
         _nfo_instruments_date = today
     return instruments
-
-# BUG-N8 v15.2.5: per-date cache for lot_size.
 # get_lot_size() called 28× per day via D.get_lot_size() — each call
 # invokes _get_nfo_instruments(kite) which returns thousands of rows.
 # Cache the result per date so only the FIRST call per day hits Kite.
@@ -932,7 +874,6 @@ def get_historical_data(token: int, interval: str, lookback: int,
     from_dt = min(candidate_from, min_from)
     to_dt   = datetime.now()
     raw   = None
-    # BUG-N1: skip entirely if auth is known-rejected (03:30 session kill).
     if _is_auth_rejected():
         return pd.DataFrame()
     for attempt in range(2):
@@ -996,345 +937,6 @@ def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
 #  Read live ATM CE+PE 3-min closes and compare current vs N min ago.
 #  Returns None on missing data so the gate can reject explicitly.
 # ═══════════════════════════════════════════════════════════════
-
-def get_atm_straddle(timestamp=None, atm_strike: int = 0) -> float:
-    """Return ATM_CE_close + ATM_PE_close at (or just before) `timestamp`.
-    timestamp=None → live (use the most recent CLOSED 3-min candle of each leg).
-    Returns None if either leg's data is missing."""
-    if not atm_strike:
-        return None
-    expiry = None
-    try:
-        expiry = get_nearest_expiry(_kite)
-    except Exception:
-        expiry = None
-    if expiry is None or _kite is None:
-        return None
-    tokens = get_option_tokens(_kite, atm_strike, expiry) or {}
-    ce_tok = (tokens.get("CE") or {}).get("token")
-    pe_tok = (tokens.get("PE") or {}).get("token")
-    if not ce_tok or not pe_tok:
-        return None
-    try:
-        ce_df = get_historical_data(int(ce_tok), "3minute", 30)
-        pe_df = get_historical_data(int(pe_tok), "3minute", 30)
-        if ce_df is None or pe_df is None or ce_df.empty or pe_df.empty:
-            return None
-
-        def _closest(df, ts):
-            """Pick the last close at-or-before ts. v15.2.3: tz-safe.
-            Kite returns a tz-AWARE (IST) DatetimeIndex; callers pass a
-            tz-NAIVE wall-clock datetime. Normalize both sides to naive
-            so pandas doesn't raise TypeError on the comparison."""
-            if ts is None:
-                idx = -2 if len(df) >= 2 else -1
-                return float(df.iloc[idx]["close"])
-            try:
-                df_idx = df.index
-                # Strip tz from the DataFrame index if present
-                if getattr(df_idx, "tz", None) is not None:
-                    df_idx = df_idx.tz_localize(None)
-                # Strip tz from ts if present
-                if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
-                    ts = ts.replace(tzinfo=None)
-                mask_pos = [i for i, t in enumerate(df_idx) if t <= ts]
-                if not mask_pos:
-                    return None
-                return float(df.iloc[mask_pos[-1]]["close"])
-            except Exception as _e:
-                logger.debug("[STRADDLE] _closest err: " + str(_e))
-                return None
-
-        ce_close = _closest(ce_df, timestamp)
-        pe_close = _closest(pe_df, timestamp)
-        if ce_close is None or pe_close is None:
-            return None
-        return round(ce_close + pe_close, 2)
-    except Exception as e:
-        logger.debug("[STRADDLE] get_atm_straddle err: " + str(e))
-        return None
-
-
-def get_straddle_delta(atm_strike: int, lookback_minutes: int = 15) -> float:
-    """Straddle expansion = straddle(now) - straddle(now - lookback_minutes).
-
-    v15.2.3 changes:
-    - Timezone-safe lookup (see `_closest` in get_atm_straddle).
-    - Graceful fallback: if the strict lookback is unavailable (data gap,
-      ATM just shifted, weekend boundary), try progressively shorter
-      lookbacks [15, 12, 9, 6] before giving up.
-    - INFO-level diagnostic log so 100%-NA failures are visible without
-      redeploy (the old code returned None with no trace).
-    """
-    if not atm_strike:
-        return None
-    now_dt = now_ist().replace(tzinfo=None)
-    current = get_atm_straddle(None, atm_strike)
-    if current is None:
-        logger.info("[STRADDLE] atm=" + str(atm_strike)
-                    + " current=NA → delta=None")
-        return None
-
-    tried = []
-    for lb in (int(lookback_minutes), 12, 9, 6):
-        if lb <= 0 or lb in tried:
-            continue
-        tried.append(lb)
-        prior_dt = now_dt - timedelta(minutes=lb)
-        # Snap back to the 3-min boundary that line up with option_3min rows.
-        prior_dt = prior_dt.replace(
-            minute=(prior_dt.minute // 3) * 3, second=0, microsecond=0)
-        prior = get_atm_straddle(prior_dt, atm_strike)
-        if prior is not None:
-            delta = round(current - prior, 2)
-            logger.info("[STRADDLE] atm=" + str(atm_strike)
-                        + " now=" + str(round(current, 1))
-                        + " @-" + str(lb) + "min=" + str(round(prior, 1))
-                        + " Δ=" + "{:+.1f}".format(delta)
-                        + " prior_ts=" + prior_dt.strftime("%H:%M"))
-            return delta
-
-    logger.info("[STRADDLE] atm=" + str(atm_strike)
-                + " current=" + str(round(current, 1))
-                + " prior NA for lookbacks=" + str(tried) + " → delta=None")
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════
-#  v15.2 SPOT VWAP — display-only confluence indicator
-#  Cumulative session VWAP from 5-min spot candles, market open → now.
-# ═══════════════════════════════════════════════════════════════
-
-def get_spot_5min(today: bool = True, end=None) -> list:
-    """Return today's spot 5-min candles up to `end` (or now). List of dicts."""
-    try:
-        df = get_historical_data(NIFTY_SPOT_TOKEN, "5minute", 80)
-    except Exception:
-        return []
-    if df is None or df.empty:
-        return []
-    df = df.copy()
-    today_str = date.today().strftime("%Y-%m-%d")
-    df["_date"] = df.index.map(
-        lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
-    if today:
-        df = df[df["_date"] == today_str]
-    if end is not None:
-        try:
-            df = df[df.index <= end]
-        except Exception:
-            pass
-    if df.empty:
-        return []
-    return [
-        {"high":  float(r["high"]),
-         "low":   float(r["low"]),
-         "close": float(r["close"]),
-         "volume": float(r["volume"]) if r["volume"] else 0.0}
-        for _, r in df.iterrows()
-    ]
-
-
-def get_spot_vwap(end=None) -> float:
-    """Cumulative session VWAP from 5-min spot candles. Returns None if no data."""
-    rows = get_spot_5min(today=True, end=end)
-    if not rows:
-        return None
-    cum_pv = 0.0
-    cum_v  = 0.0
-    for r in rows:
-        typical = (r["high"] + r["low"] + r["close"]) / 3.0
-        v = r["volume"] if r["volume"] > 0 else 1.0
-        cum_pv += typical * v
-        cum_v  += v
-    return round(cum_pv / cum_v, 2) if cum_v > 0 else None
-
-
-# ═══════════════════════════════════════════════════════════════
-#  BONUS INDICATORS — information only, never block trades
-# ═══════════════════════════════════════════════════════════════
-
-def calculate_option_vwap(token: int) -> dict:
-    """VWAP on option — today's intraday only."""
-    result = {"vwap": 0.0, "above_vwap": False, "distance": 0.0}
-    try:
-        from datetime import date as _d
-        df = get_historical_data(token, "minute", 200)
-        if df.empty or len(df) < 5:
-            return result
-        # Filter to TODAY only — today_only param unreliable
-        today_str = _d.today().strftime("%Y-%m-%d")
-        df = df.copy()
-        df["_date"] = df.index.map(
-            lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10])
-        df = df[df["_date"] == today_str]
-        if df.empty or len(df) < 3:
-            return result
-        typical_price = (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3
-        vol = df["volume"].astype(float)
-        cum_vol = vol.cumsum().replace(0, float("nan"))
-        cum_tp_vol = (typical_price * vol).cumsum()
-        vwap = cum_tp_vol / cum_vol
-        vwap_val = round(float(vwap.iloc[-1]), 2)
-        last_close = float(df["close"].iloc[-1])
-        result["vwap"] = vwap_val
-        result["above_vwap"] = last_close > vwap_val
-        result["distance"] = round(last_close - vwap_val, 2)
-    except Exception as e:
-        logger.debug("[VWAP] " + str(e))
-    return result
-
-
-def calculate_option_fib_pivots(token: int) -> dict:
-    """Fib pivot points from previous day's option H/L/C."""
-    result = {"pivot": 0, "R1": 0, "R2": 0, "R3": 0,
-              "S1": 0, "S2": 0, "S3": 0,
-              "nearest_level": "", "nearest_distance": 0, "ok": False}
-    try:
-        from datetime import date as _date
-        df = get_historical_data(token, "minute", 500)
-        if df.empty or len(df) < 50:
-            return result
-        df = df.copy()
-        df["_date"] = df.index.map(lambda x: str(x)[:10])
-        today_str = _date.today().strftime("%Y-%m-%d")
-        dates = sorted(df["_date"].unique())
-        if today_str not in dates or dates.index(today_str) == 0:
-            return result
-        prev_date = dates[dates.index(today_str) - 1]
-        prev = df[df["_date"] == prev_date]
-        if prev.empty:
-            return result
-        H = float(prev["high"].max())
-        L = float(prev["low"].min())
-        C = float(prev["close"].iloc[-1])
-        R = H - L
-        pivot = round((H + L + C) / 3, 2)
-        result.update({
-            "pivot": pivot,
-            "R1": round(pivot + 0.382 * R, 2), "R2": round(pivot + 0.618 * R, 2),
-            "R3": round(pivot + 1.000 * R, 2),
-            "S1": round(pivot - 0.382 * R, 2), "S2": round(pivot - 0.618 * R, 2),
-            "S3": round(pivot - 1.000 * R, 2),
-            "ok": True,
-        })
-        last_price = float(df["close"].iloc[-1])
-        levels = [(k, v) for k, v in result.items()
-                  if k in ("pivot", "R1", "R2", "R3", "S1", "S2", "S3")]
-        if levels:
-            nearest = min(levels, key=lambda x: abs(last_price - x[1]))
-            result["nearest_level"] = nearest[0]
-            result["nearest_distance"] = round(last_price - nearest[1], 2)
-    except Exception as e:
-        logger.debug("[OPT_FIB] " + str(e))
-    return result
-
-
-def detect_volume_spike(token: int, threshold: float = 3.0) -> dict:
-    """Check if current candle volume is Nx average."""
-    result = {"spike": False, "ratio": 0.0, "current_vol": 0, "avg_vol": 0}
-    try:
-        df = get_historical_data(token, "minute", 25)
-        if df.empty or len(df) < 10:
-            return result
-        last = df.iloc[-2]
-        avg_window = df.iloc[-22:-2]
-        avg_vol = float(avg_window["volume"].mean()) if len(avg_window) > 0 else 1
-        curr_vol = float(last["volume"])
-        ratio = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 0
-        result["current_vol"] = int(curr_vol)
-        result["avg_vol"] = int(avg_vol)
-        result["ratio"] = ratio
-        result["spike"] = ratio >= threshold
-    except Exception as e:
-        logger.debug("[VOLSPIKE] " + str(e))
-    return result
-
-
-def get_option_prev_day_hl(token: int) -> dict:
-    """Get previous day high/low for option."""
-    result = {"prev_high": 0, "prev_low": 0,
-              "above_prev_high": False, "below_prev_low": False, "ok": False}
-    try:
-        from datetime import date as _date
-        df = get_historical_data(token, "minute", 500)
-        if df.empty or len(df) < 50:
-            return result
-        df = df.copy()
-        df["_date"] = df.index.map(lambda x: str(x)[:10])
-        today_str = _date.today().strftime("%Y-%m-%d")
-        dates = sorted(df["_date"].unique())
-        if today_str not in dates or dates.index(today_str) == 0:
-            return result
-        prev_date = dates[dates.index(today_str) - 1]
-        prev = df[df["_date"] == prev_date]
-        if prev.empty:
-            return result
-        ph = float(prev["high"].max())
-        pl = float(prev["low"].min())
-        last_price = float(df["close"].iloc[-1])
-        result.update({
-            "prev_high": round(ph, 2), "prev_low": round(pl, 2),
-            "above_prev_high": last_price > ph,
-            "below_prev_low": last_price < pl, "ok": True,
-        })
-    except Exception as e:
-        logger.debug("[PDH] " + str(e))
-    return result
-
-
-def calculate_atr(token: int, interval: str = "minute",
-                  n_candles: int = None) -> float:
-    """v12.12: Calculate ATR (Average True Range) for SL sizing."""
-    if n_candles is None:
-        n_candles = ATR_SL_CANDLES
-    try:
-        df = get_historical_data(token, interval, n_candles + 10)
-        if df.empty or len(df) < n_candles + 1:
-            return 0.0
-        # True Range = max(high-low, |high-prev_close|, |low-prev_close|)
-        prev_close = df["close"].shift(1)
-        df["TR"] = pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs()
-        ], axis=1).max(axis=1)
-        # ATR = average of last N candles' true range
-        atr = float(df["TR"].iloc[-n_candles - 1:-1].mean())
-        return round(atr, 2)
-    except Exception as e:
-        logger.warning("[DATA] ATR calc error: " + str(e))
-        return 0.0
-
-
-def calculate_atr_sl(token: int, profile: dict,
-                     entry_price: float = 0.0) -> float:
-    """
-    v12.12: ATR-based SL with floor and hard cap.
-    Returns SL in points.
-    """
-    atr = calculate_atr(token, "minute", ATR_SL_CANDLES)
-    if atr <= 0:
-        # Fallback to DTE-based fixed SL
-        return float(profile.get("conv_sl_pts", 15))
-
-    raw_sl = round(ATR_SL_MULTIPLIER * atr, 1)
-
-    # Floor based on premium level
-    if entry_price >= 300:   floor_sl = 15
-    elif entry_price >= 200: floor_sl = 12
-    elif entry_price >= 100: floor_sl = 10
-    elif entry_price >= 50:  floor_sl = 8
-    else:                    floor_sl = 6
-
-    sl = max(raw_sl, floor_sl)
-    sl = min(sl, ATR_SL_MAX)  # Hard cap 25pts
-
-    logger.info("[DATA] ATR SL: atr=" + str(atr)
-                + " raw=" + str(round(ATR_SL_MULTIPLIER * atr, 1))
-                + " floor=" + str(floor_sl)
-                + " final=" + str(sl))
-    return sl
 
 def get_active_strike_step(dte: int = None) -> int:
     """v13.3: True ATM — 50-step for ALL DTE."""
@@ -1424,121 +1026,13 @@ def clear_token_cache():
         _token_cache.clear()
     logger.info("[DATA] Token cache cleared")
 
-def _norm_cdf(x: float) -> float:
-    if x < -8.0: return 0.0
-    if x > 8.0:  return 1.0
-    a1,a2,a3,a4,a5,p = 0.319381530,-0.356563782,1.781477937,-1.821255978,1.330274429,0.2316419
-    k    = 1.0 / (1.0 + p * abs(x))
-    poly = k * (a1 + k * (a2 + k * (a3 + k * (a4 + k * a5))))
-    cdf  = 1.0 - _norm_pdf(x) * poly
-    return cdf if x >= 0 else 1.0 - cdf
-
-def _norm_pdf(x: float) -> float:
-    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
-
-def _bs_price(S, K, T, r, sigma, option_type: str) -> float:
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return 0.0
-    try:
-        sqrt_T = math.sqrt(T)
-        d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        d2 = d1 - sigma*sqrt_T
-        if option_type == "CE":
-            return S*_norm_cdf(d1) - K*math.exp(-r*T)*_norm_cdf(d2)
-        else:
-            return K*math.exp(-r*T)*_norm_cdf(-d2) - S*_norm_cdf(-d1)
-    except Exception:
-        return 0.0
-
-def _bs_vega(S, K, T, r, sigma) -> float:
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return 0.0
-    try:
-        sqrt_T = math.sqrt(T)
-        d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        return S * _norm_pdf(d1) * sqrt_T
-    except Exception:
-        return 0.0
-
-def calculate_iv(market_price, S, K, T, r, option_type, max_iter=100, tol=0.01):
-    if not market_price or market_price <= 0 or T <= 0 or S <= 0 or K <= 0:
-        return 0.0
-    sigma = 0.20
-    for _ in range(max_iter):
-        price = _bs_price(S, K, T, r, sigma, option_type)
-        vega  = _bs_vega(S, K, T, r, sigma)
-        diff  = price - market_price
-        if abs(diff) < tol:
-            return round(sigma, 6)
-        if abs(vega) < 1e-10:
-            break
-        sigma -= diff / vega
-        sigma = max(0.001, min(sigma, 10.0))
-    lo, hi = 0.001, 5.0
-    for _ in range(100):
-        mid   = (lo + hi) / 2.0
-        price = _bs_price(S, K, T, r, mid, option_type)
-        if abs(price - market_price) < 0.01:
-            return round(mid, 6)
-        if price < market_price:
-            lo = mid
-        else:
-            hi = mid
-    return 0.0
-
-def calculate_greeks(S, K, T, r, sigma, option_type):
-    empty = {"delta":0.0,"gamma":0.0,"theta":0.0,"vega":0.0,"iv_pct":0.0,"price":0.0}
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return empty
-    try:
-        sqrt_T = math.sqrt(T)
-        d1     = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*sqrt_T)
-        d2     = d1 - sigma*sqrt_T
-        pdf_d1 = _norm_pdf(d1)
-        exp_rT = math.exp(-r*T)
-        delta  = _norm_cdf(d1) if option_type == "CE" else _norm_cdf(d1) - 1.0
-        gamma  = pdf_d1 / (S * sigma * sqrt_T)
-        if option_type == "CE":
-            theta = ((-S*pdf_d1*sigma/(2*sqrt_T)) - r*K*exp_rT*_norm_cdf(d2)) / 365.0
-        else:
-            theta = ((-S*pdf_d1*sigma/(2*sqrt_T)) + r*K*exp_rT*_norm_cdf(-d2)) / 365.0
-        vega  = S * pdf_d1 * sqrt_T / 100.0
-        price = _bs_price(S, K, T, r, sigma, option_type)
-        return {"delta":round(delta,4),"gamma":round(gamma,6),"theta":round(theta,4),
-                "vega":round(vega,4),"iv_pct":round(sigma*100,2),"price":round(price,2)}
-    except Exception as e:
-        logger.error("[GREEKS] Calculation error: " + str(e))
-        return empty
-
-def get_full_greeks(market_price, spot_ltp, strike, expiry_date, option_type, r=None):
-    if r is None:
-        r = RISK_FREE_RATE
-    empty = {"delta":0.0,"gamma":0.0,"theta":0.0,"vega":0.0,"iv_pct":0.0,"dte":0,"ok":False}
-    try:
-        dte   = max((expiry_date - date.today()).days, 0)
-        T     = dte / 365.0 if dte > 0 else 0.5 / 365.0
-        P     = float(market_price) if market_price else 0.0
-        iv    = calculate_iv(P, float(spot_ltp), float(strike), T, r, option_type) if P > 0 else 0.0
-        if iv <= 0:
-            return {**empty, "dte": dte}
-        greeks        = calculate_greeks(float(spot_ltp), float(strike), T, r, iv, option_type)
-        greeks["dte"] = dte
-        greeks["ok"]  = True
-        return greeks
-    except Exception as e:
-        logger.error("[GREEKS] get_full_greeks error: " + str(e))
-        return empty
-
-
 # ═══════════════════════════════════════════════════════════════
 #  SPOT INTELLIGENCE LAYER (v12.11)
 #  Always reliable — spot has full multi-day history from Kite
 #  Used for: gap detection, regime backup, direction, alignment
 # ═══════════════════════════════════════════════════════════════
 
-_spot_gap      = 0.0
-_spot_prev_close = 0.0
-_prev_spot_spread_3m = None   # for spread_prev in compute_spot_regime
+_prev_spot_spread_3m = None   # cached by get_spot_indicators for spread_prev
 
 def get_spot_indicators(interval: str = "3minute") -> dict:
     """
@@ -1600,369 +1094,6 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
     return result
 
 
-def compute_spot_regime() -> str:
-    """
-    Price action regime — instant, zero lag. No ADX dependency.
-    Uses higher highs/lower lows, range, breakout, momentum.
-    """
-    try:
-        df = get_historical_data(NIFTY_SPOT_TOKEN, "3minute", 15)
-        if df.empty or len(df) < 7:
-            return "UNKNOWN"
-
-        candles = []
-        for i in range(-min(10, len(df)), 0):
-            row = df.iloc[i]
-            candles.append({
-                "open": float(row["open"]), "high": float(row["high"]),
-                "low": float(row["low"]), "close": float(row["close"]),
-            })
-
-        if len(candles) < 5:
-            return "UNKNOWN"
-
-        last5 = candles[-5:]
-        last3 = candles[-3:]
-
-        # 1. HIGHER HIGHS / LOWER LOWS — directional move
-        hh = all(last3[i]["high"] > last3[i-1]["high"] for i in range(1, len(last3)))
-        ll = all(last3[i]["low"] < last3[i-1]["low"] for i in range(1, len(last3)))
-        trending = hh or ll
-
-        # 2. RANGE — last 5 candles total range
-        range_high = max(c["high"] for c in last5)
-        range_low = min(c["low"] for c in last5)
-        total_range = range_high - range_low
-
-        # 3. BREAKOUT — current candle body vs average
-        bodies = [abs(c["close"] - c["open"]) for c in candles]
-        avg_body = sum(bodies) / len(bodies) if bodies else 1
-        curr_body = abs(candles[-1]["close"] - candles[-1]["open"])
-        breakout = curr_body > avg_body * 2
-
-        # 4. MOMENTUM — are candles getting bigger?
-        recent_bodies = [abs(c["close"] - c["open"]) for c in last3]
-        accelerating = recent_bodies[-1] > recent_bodies[0]
-
-        # REGIME DECISION — pure price action
-        if breakout and trending:
-            return "TRENDING_STRONG"
-        elif trending or (breakout and total_range > 30):
-            return "TRENDING"
-        elif total_range < 30:
-            return "NEUTRAL"
-        else:
-            return "CHOPPY"
-
-    except Exception:
-        return "UNKNOWN"
-
-
-def calculate_spot_gap() -> dict:
-    """
-    Calculate gap: today's open vs previous trading session's close.
-
-    BUG-G v15.2.5 Batch 4: lookback extended from 7 → 14 days so that
-    long weekends + back-to-back holidays (e.g. Diwali + weekend combo)
-    don't strand us with no previous session in the window. Also
-    falls back to the DAILY candle endpoint when the 1-min fetch
-    returns no prior-day data — daily candles survive any gap.
-
-    Kite's 1-min historical_data returns only market-hours candles,
-    so the last candle before today in the fetched window is always
-    the previous session's close regardless of non-trading days — as
-    long as the window actually reaches one.
-    """
-    global _spot_gap, _spot_prev_close
-    result = {"gap_pts": 0.0, "gap_pct": 0.0, "prev_close": 0.0, "today_open": 0.0}
-    try:
-        if _kite is None:
-            return result
-        now     = datetime.now()
-        # BUG-G: widened from 7 → 14 days to survive long weekends +
-        # paired holidays. Extra data is cheap and skipped in the loop below.
-        from_dt = now - timedelta(days=14)
-        raw = _kite.historical_data(
-            instrument_token=NIFTY_SPOT_TOKEN,
-            from_date=from_dt, to_date=now,
-            interval="minute", continuous=False, oi=False)
-
-        today_str = date.today().strftime("%Y-%m-%d")
-        prev_close = None
-        prev_date  = None
-        today_open = None
-
-        # Primary path: 1-min grouped by date.
-        if raw and len(raw) >= 50:
-            dates_seen = {}
-            for c in raw:
-                d = str(c["date"])[:10]
-                if d not in dates_seen:
-                    dates_seen[d] = {"first_open": c["open"], "last_close": c["close"]}
-                dates_seen[d]["last_close"] = c["close"]
-
-            sorted_dates = sorted(dates_seen.keys())
-            if today_str in sorted_dates:
-                today_idx = sorted_dates.index(today_str)
-                today_open = float(dates_seen[today_str]["first_open"])
-                if today_idx > 0:
-                    prev_date  = sorted_dates[today_idx - 1]
-                    prev_close = float(dates_seen[prev_date]["last_close"])
-
-        # BUG-G fallback: if 1-min path couldn't find a previous session,
-        # ask the daily-candle endpoint directly. Daily candles survive
-        # any combo of weekends + holidays because Kite stores one per
-        # actual trading day, with the session's final close baked in.
-        if prev_close is None:
-            try:
-                daily = _kite.historical_data(
-                    instrument_token=NIFTY_SPOT_TOKEN,
-                    from_date=(now - timedelta(days=30)),
-                    to_date=now,
-                    interval="day", continuous=False, oi=False)
-            except Exception as _e:
-                daily = None
-            if daily:
-                dsorted = sorted(daily, key=lambda r: str(r.get("date", "")))
-                # Walk backwards past any same-day candle and pick the
-                # first one strictly before today.
-                for r in reversed(dsorted):
-                    d = str(r.get("date", ""))[:10]
-                    if d < today_str:
-                        prev_close = float(r["close"])
-                        prev_date  = d
-                        if today_open is None:
-                            today_open = float(r["close"])  # degrades to 0 gap, honest default
-                        logger.info("[SPOT] Gap prev_close via DAILY fallback: "
-                                    + str(prev_close) + " (" + prev_date + ")")
-                        break
-
-        if prev_close is None or today_open is None:
-            logger.warning("[SPOT] Gap calc: no prev session found in 14d 1-min "
-                           "OR 30d daily — returning zero-gap result")
-            return result
-
-        gap_pts = round(today_open - prev_close, 2)
-        gap_pct = round(gap_pts / prev_close * 100, 2) if prev_close > 0 else 0.0
-        _spot_gap        = gap_pts
-        _spot_prev_close = prev_close
-        result = {
-            "gap_pts": gap_pts, "gap_pct": gap_pct,
-            "prev_close": prev_close, "today_open": today_open,
-        }
-        logger.info("[SPOT] Gap: " + str(gap_pts) + "pts ("
-                    + str(gap_pct) + "%) prev=" + str(prev_close)
-                    + " (" + str(prev_date) + ") open=" + str(today_open))
-    except Exception as e:
-        logger.warning("[SPOT] Gap calculation error: " + str(e))
-    return result
-
-
-def get_spot_gap() -> float:
-    return _spot_gap
-
-
-def get_spot_regime(interval: str = "3minute") -> str:
-    """Quick regime from spot."""
-    return get_spot_indicators(interval).get("regime", "UNKNOWN")
-
-
-# ═══════════════════════════════════════════════════════════════
-#  FIB PIVOT POINTS (v12.15)
-#  Calculated once at startup from previous session's H/L/C
-#  Fibonacci ratios: 0.382, 0.618, 1.000
-# ═══════════════════════════════════════════════════════════════
-
-_fib_pivots = {}
-
-def calculate_fib_pivots() -> dict:
-    """
-    Calculate Fibonacci pivot points from previous trading session.
-    Uses 7-day spot fetch — works across weekends and holidays.
-    Returns dict with Pivot, R1-R3, S1-S3.
-    """
-    global _fib_pivots
-    result = {}
-    try:
-        if _kite is None:
-            return result
-        now     = datetime.now()
-        from_dt = now - timedelta(days=7)
-        raw = _kite.historical_data(
-            instrument_token=NIFTY_SPOT_TOKEN,
-            from_date=from_dt, to_date=now,
-            interval="minute", continuous=False, oi=False)
-        if not raw or len(raw) < 50:
-            return result
-
-        today_str = date.today().strftime("%Y-%m-%d")
-        # Group by date
-        by_date = {}
-        for c in raw:
-            d = str(c["date"])[:10]
-            if d not in by_date:
-                by_date[d] = {"high": 0, "low": 999999, "close": 0}
-            by_date[d]["high"]  = max(by_date[d]["high"], float(c["high"]))
-            by_date[d]["low"]   = min(by_date[d]["low"],  float(c["low"]))
-            by_date[d]["close"] = float(c["close"])
-
-        sorted_dates = sorted(by_date.keys())
-        if today_str not in sorted_dates:
-            return result
-        idx = sorted_dates.index(today_str)
-        if idx == 0:
-            return result
-
-        prev_date = sorted_dates[idx - 1]
-        prev = by_date[prev_date]
-        H = prev["high"]
-        L = prev["low"]
-        C = prev["close"]
-        R = H - L
-
-        pivot = round((H + L + C) / 3, 2)
-        result = {
-            "pivot":     pivot,
-            "R1":        round(pivot + 0.382 * R, 2),
-            "R2":        round(pivot + 0.618 * R, 2),
-            "R3":        round(pivot + 1.000 * R, 2),
-            "S1":        round(pivot - 0.382 * R, 2),
-            "S2":        round(pivot - 0.618 * R, 2),
-            "S3":        round(pivot - 1.000 * R, 2),
-            "prev_high": H,
-            "prev_low":  L,
-            "prev_close":C,
-            "prev_date": prev_date,
-            "range":     round(R, 2),
-        }
-        _fib_pivots = result
-
-        # Also compute today's developing pivots
-        if today_str in by_date:
-            td = by_date[today_str]
-            result["today_high"] = td["high"]
-            result["today_low"]  = td["low"]
-
-        logger.info("[PIVOT] Fib pivots: P=" + str(pivot)
-                    + " R1=" + str(result["R1"]) + " R2=" + str(result["R2"])
-                    + " R3=" + str(result["R3"])
-                    + " S1=" + str(result["S1"]) + " S2=" + str(result["S2"])
-                    + " S3=" + str(result["S3"])
-                    + " (" + prev_date + " H=" + str(H) + " L=" + str(L)
-                    + " C=" + str(C) + ")")
-    except Exception as e:
-        logger.warning("[PIVOT] Fib calc error: " + str(e))
-    return result
-
-
-def get_fib_pivots() -> dict:
-    return _fib_pivots
-
-
-def get_nearest_fib_level(spot_price: float) -> dict:
-    """Find nearest fib level to current spot. Returns {level_name, price, distance}."""
-    if not _fib_pivots:
-        return {"level": "—", "price": 0, "distance": 999}
-    levels = [(k, v) for k, v in _fib_pivots.items()
-              if k in ("pivot", "R1", "R2", "R3", "S1", "S2", "S3")]
-    if not levels:
-        return {"level": "—", "price": 0, "distance": 999}
-    nearest = min(levels, key=lambda x: abs(spot_price - x[1]))
-    return {
-        "level": nearest[0],
-        "price": nearest[1],
-        "distance": round(spot_price - nearest[1], 2),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════
-#  SPOT CONSOLIDATION DETECTOR (v12.15)
-#  Tracks last N 1-min candles for tight-range detection
-#  Used by expiry breakout mode
-# ═══════════════════════════════════════════════════════════════
-
-_spot_1m_buffer = []   # List of (timestamp, open, high, low, close)
-_spot_buffer_lock = threading.Lock()
-_SPOT_BUFFER_MAX = 20  # Keep last 20 candles
-
-def update_spot_buffer(candle: dict):
-    """Called by strategy loop or lab to feed 1-min spot candles."""
-    global _spot_1m_buffer
-    with _spot_buffer_lock:
-        _spot_1m_buffer.append(candle)
-        if len(_spot_1m_buffer) > _SPOT_BUFFER_MAX:
-            _spot_1m_buffer = _spot_1m_buffer[-_SPOT_BUFFER_MAX:]
-
-
-def detect_spot_consolidation() -> dict:
-    """
-    Check if last N candles form a consolidation (range < threshold).
-    Returns {consolidating, range, high, low, candles, near_fib}.
-    """
-    n = EXPIRY_CONSOL_CANDLES
-    result = {
-        "consolidating": False, "range": 0, "high": 0, "low": 0,
-        "candles": 0, "near_fib": {}, "mid": 0,
-    }
-    with _spot_buffer_lock:
-        if len(_spot_1m_buffer) < n:
-            return result
-        recent = list(_spot_1m_buffer[-n:])
-    highs = [float(c.get("high", c.get("close", 0))) for c in recent]
-    lows  = [float(c.get("low",  c.get("close", 0))) for c in recent]
-    h = max(highs)
-    l = min(lows)
-    rng = round(h - l, 2)
-
-    result["range"]   = rng
-    result["high"]    = round(h, 2)
-    result["low"]     = round(l, 2)
-    result["candles"] = n
-    result["mid"]     = round((h + l) / 2, 2)
-
-    if rng <= EXPIRY_CONSOL_RANGE:
-        result["consolidating"] = True
-        result["near_fib"] = get_nearest_fib_level(result["mid"])
-
-    return result
-
-
-def detect_spot_breakout(current_spot: float) -> dict:
-    """
-    Check if current spot price has broken out of consolidation.
-    Returns {breakout, direction, magnitude, consolidation}.
-    """
-    result = {
-        "breakout": False, "direction": "", "magnitude": 0,
-        "consolidation": {}, "near_fib": {},
-    }
-    consol = detect_spot_consolidation()
-    if not consol["consolidating"]:
-        return result
-
-    result["consolidation"] = consol
-
-    if current_spot > consol["high"] + EXPIRY_BREAKOUT_MIN:
-        result["breakout"]  = True
-        result["direction"] = "CE"
-        result["magnitude"] = round(current_spot - consol["high"], 2)
-        result["near_fib"]  = get_nearest_fib_level(current_spot)
-    elif current_spot < consol["low"] - EXPIRY_BREAKOUT_MIN:
-        result["breakout"]  = True
-        result["direction"] = "PE"
-        result["magnitude"] = round(consol["low"] - current_spot, 2)
-        result["near_fib"]  = get_nearest_fib_level(current_spot)
-
-    return result
-
-
-def is_expiry_window(now: datetime = None) -> bool:
-    """Check if current time is within expiry trading window."""
-    if now is None:
-        now = datetime.now()
-    start = now.replace(hour=EXPIRY_START_HOUR, minute=EXPIRY_START_MIN, second=0)
-    end   = now.replace(hour=EXPIRY_CUTOFF_HOUR, minute=EXPIRY_CUTOFF_MIN, second=0)
-    return start <= now <= end
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2018,44 +1149,6 @@ def capture_straddle(kite, strike, expiry):
                         + " Sum=" + str(_straddle_open))
     except Exception as e:
         logger.warning("[STRADDLE] Capture: " + str(e))
-
-
-def get_straddle_decay(kite, strike, expiry):
-    global _straddle_check_ts
-    import time as _t
-    result = {"decay_pct": 0.0, "current": 0.0, "open": _straddle_open,
-              "warning": False, "msg": ""}
-    if not _straddle_captured or _straddle_open <= 0:
-        return result
-    if _t.time() - _straddle_check_ts < 300:
-        return result
-    _straddle_check_ts = _t.time()
-    try:
-        tokens = get_option_tokens(kite, strike, expiry)
-        if not tokens:
-            return result
-        ce_ltp = pe_ltp = 0.0
-        for side in ("CE", "PE"):
-            info = tokens.get(side)
-            if info:
-                ltp = get_ltp(info["token"])
-                if side == "CE":
-                    ce_ltp = ltp
-                else:
-                    pe_ltp = ltp
-        if ce_ltp > 0 and pe_ltp > 0:
-            current = ce_ltp + pe_ltp
-            decay = round((current - _straddle_open) / _straddle_open * 100, 1)
-            result["current"] = round(current, 2)
-            result["decay_pct"] = decay
-            if decay <= -STRADDLE_WARN_PCT:
-                result["warning"] = True
-                result["msg"] = ("SELLERS DAY straddle " + str(decay)
-                                 + "% (open " + str(int(_straddle_open))
-                                 + " now " + str(int(current)) + ")")
-    except Exception as e:
-        logger.warning("[STRADDLE] Decay: " + str(e))
-    return result
 
 
 def compute_daily_bias(kite):
@@ -2152,28 +1245,6 @@ def get_hourly_rsi():
     return _hourly_rsi
 
 
-def check_vix_warning():
-    if not is_market_open():
-        return {"vix": 0, "warning": False, "level": "NORMAL", "msg": ""}
-    vix = get_vix()
-    result = {"vix": round(vix, 1), "warning": False, "level": "NORMAL", "msg": ""}
-    if vix >= VIX_DANGER_LEVEL:
-        result.update(warning=True, level="DANGER",
-                      msg="VIX " + str(round(vix, 1)) + " DANGER — SLs hit by noise")
-    elif vix >= VIX_WARN_LEVEL:
-        result.update(warning=True, level="ELEVATED",
-                      msg="VIX " + str(round(vix, 1)) + " ELEVATED — wider SLs needed")
-    return result
-
-
-def is_entry_fire_window(now=None):
-    if now is None:
-        now = datetime.now()
-    start = now.replace(hour=ENTRY_FIRE_HOUR, minute=ENTRY_FIRE_MIN, second=0)
-    end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0)
-    return start <= now <= end
-
-
 def run_warnings(kite, state, expiry, dte, spot_ltp, now):
     import time as _t
     msgs = []
@@ -2207,18 +1278,6 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
                     msgs.append("\U0001f4ca <b>STRADDLE CAPTURED</b>\nATM CE+PE: \u20b9" + str(int(_straddle_open)))
         except Exception as _e:
             logger.warning("[WARN] Straddle: " + str(_e))
-    # 3. Straddle decay (every 5min)
-    if (_straddle_captured and not state.get("_straddle_alerted")
-            and spot_ltp > 0 and expiry is not None):
-        try:
-            _ss2 = get_active_strike_step(dte)
-            _sa2 = resolve_atm_strike(spot_ltp, _ss2)
-            sd = get_straddle_decay(kite, _sa2, expiry)
-            if sd.get("warning"):
-                upd["_straddle_alerted"] = True
-                msgs.append("\U0001f534 <b>" + sd["msg"] + "</b>")
-        except Exception:
-            pass
     # 4. Hourly RSI (every hour — only during market hours)
     if (is_market_open() and now.minute == 0 and now.second < 35
             and (_t.time() - state.get("_hourly_rsi_ts", 0)) > 3000):
@@ -2229,15 +1288,6 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
                 msgs.append("\u26a0\ufe0f <b>" + hr["msg"] + "</b>")
         except Exception as _e:
             logger.warning("[WARN] Hourly: " + str(_e))
-    # 5. VIX (once)
-    if not state.get("_vix_warned"):
-        try:
-            vw = check_vix_warning()
-            if vw.get("warning"):
-                upd["_vix_warned"] = True
-                msgs.append("\u26a0\ufe0f <b>" + vw["msg"] + "</b>")
-        except Exception:
-            pass
     return msgs, upd
 
 
@@ -2284,7 +1334,7 @@ def cleanup_old_lab_data(retention_days: int = None):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  BUG-R13: ensure_option_history() — single entry point for any
+#  ensure_option_history() — single entry point for any
 #  module that needs option candle history. Checks DB first, fetches
 #  from Kite API if insufficient. Never raises on network errors.
 # ═══════════════════════════════════════════════════════════════
@@ -2377,10 +1427,6 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                         DB.insert_option_3min_many(rows)
                     elif tf == "minute":
                         DB.insert_option_1min_many(rows)
-                    elif tf == "5minute":
-                        DB.insert_option_5min_many(rows)
-                    elif tf == "15minute":
-                        DB.insert_option_15min_many(rows)
                     fetched_any = True
                     new_cnt = cnt + len(rows)
                     if side == "CE":

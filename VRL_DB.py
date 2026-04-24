@@ -5,10 +5,16 @@
 #  All lab data + trades in ~/lab_data/vrl_data.db
 # ═══════════════════════════════════════════════════════════════
 
-import sqlite3
-import os
+import csv
+import json
 import logging
+import os
+import sqlite3
 import threading
+from datetime import date, datetime
+
+import VRL_CONFIG as CFG
+import VRL_DATA as D
 
 logger = logging.getLogger("vrl_live")
 
@@ -18,10 +24,9 @@ _init_lock = threading.Lock()
 _initialized = False
 
 # ── Error visibility ─────────────────────────────────────────
-# BUG-017: DB errors used to log at DEBUG level and vanish silently.
-# Now the first occurrence of each distinct error surfaces at WARNING,
-# repeats are throttled to DEBUG, and malformed/corrupt errors trigger
-# a one-shot Telegram alert so a broken DB can't hide for a full session.
+# First sighting of each distinct error surfaces at WARNING, repeats
+# are throttled to DEBUG. Malformed/corrupt DB errors also trigger a
+# one-shot Telegram alert per session.
 _db_seen_errors = set()
 _db_corruption_alerted = False
 _db_alert_lock = threading.Lock()
@@ -92,13 +97,9 @@ def _startup_integrity_check(conn):
     """Run PRAGMA quick_check once at startup. If the DB is corrupt,
     _report_db_error triggers the Telegram alert before the bot even
     starts scanning. Non-fatal: we let init_db continue so trading
-    (which doesn't need the DB) still works.
-
-    BUG-T v15.2.5 Batch 6: on a successful check we also clear
-    _db_corruption_alerted so that IF the DB gets corrupted again
-    later and then manually repaired, a FRESH corruption event will
-    re-alert. Without this reset, one corruption alert per session
-    was the cap — future events silent."""
+    (which doesn't need the DB) still works. On a clean check we
+    reset _db_corruption_alerted so a later corruption event can
+    re-alert after manual repair."""
     global _db_corruption_alerted
     try:
         row = conn.execute("PRAGMA quick_check").fetchone()
@@ -110,7 +111,6 @@ def _startup_integrity_check(conn):
             )
         else:
             logger.info("[DB] Startup integrity check: ok")
-            # BUG-T: reset the one-shot alert flag on a clean check.
             with _db_alert_lock:
                 if _db_corruption_alerted:
                     logger.info("[DB] Corruption alert flag cleared — "
@@ -131,7 +131,7 @@ def init_db():
         _startup_integrity_check(conn)
         c = conn.cursor()
 
-        # ── Schema version tracking (BUG-F1) ──
+        # ── Schema version tracking ──
         c.execute("CREATE TABLE IF NOT EXISTS schema_meta "
                   "(key TEXT PRIMARY KEY, value TEXT)")
         _schema_v = 0
@@ -143,19 +143,12 @@ def init_db():
         except Exception:
             pass
 
-        # ── SPOT TABLES ──
-        for table in ("spot_1min", "spot_5min", "spot_15min", "spot_60min"):
-            c.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
-                timestamp TEXT NOT NULL,
-                open REAL, high REAL, low REAL, close REAL, volume REAL,
-                ema9 REAL, ema21 REAL, ema_spread REAL, rsi REAL, adx REAL,
-                UNIQUE(timestamp))""")
-
-        c.execute("""CREATE TABLE IF NOT EXISTS spot_daily (
-            date TEXT NOT NULL,
+        # ── SPOT 1-MIN ──
+        c.execute("""CREATE TABLE IF NOT EXISTS spot_1min (
+            timestamp TEXT NOT NULL,
             open REAL, high REAL, low REAL, close REAL, volume REAL,
-            ema21 REAL, rsi REAL, adx REAL,
-            UNIQUE(date))""")
+            ema9 REAL, ema21 REAL, ema_spread REAL, rsi REAL, adx REAL,
+            UNIQUE(timestamp))""")
 
         # ── OPTION 1-MIN ──
         c.execute("""CREATE TABLE IF NOT EXISTS option_1min (
@@ -163,7 +156,7 @@ def init_db():
             open REAL, high REAL, low REAL, close REAL, volume REAL,
             spot_ref REAL, atm_distance REAL, dte INTEGER, session_block TEXT,
             body_pct REAL, rsi REAL, ema9 REAL, ema9_gap REAL, adx REAL,
-            volume_ratio REAL, iv_pct REAL, delta REAL,
+            volume_ratio REAL,
             fwd_1c REAL, fwd_3c REAL, fwd_5c REAL, fwd_outcome TEXT)""")
 
         # ── OPTION 3-MIN ──
@@ -174,25 +167,7 @@ def init_db():
             iv_vs_open REAL,
             body_pct REAL, adx REAL, rsi REAL, ema9 REAL, ema21 REAL,
             ema_spread REAL, ema9_gap REAL, volume_ratio REAL,
-            iv_pct REAL, delta REAL, gamma REAL, theta REAL, vega REAL,
             fwd_3c REAL, fwd_6c REAL, fwd_9c REAL, fwd_outcome TEXT)""")
-
-        # ── OPTION 5-MIN ──
-        c.execute("""CREATE TABLE IF NOT EXISTS option_5min (
-            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
-            open REAL, high REAL, low REAL, close REAL, volume REAL,
-            spot_ref REAL, dte INTEGER, session_block TEXT,
-            body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
-            adx REAL, volume_ratio REAL, iv_pct REAL, delta REAL)""")
-
-        # ── OPTION 15-MIN ──
-        c.execute("""CREATE TABLE IF NOT EXISTS option_15min (
-            timestamp TEXT NOT NULL, strike INTEGER, type TEXT,
-            open REAL, high REAL, low REAL, close REAL, volume REAL,
-            spot_ref REAL, dte INTEGER, session_block TEXT,
-            body_pct REAL, rsi REAL, ema9 REAL, ema21 REAL, ema_spread REAL,
-            macd_hist REAL, adx REAL,
-            volume_ratio REAL, iv_pct REAL, delta REAL)""")
 
         # ── SIGNAL SCANS ──
         c.execute("""CREATE TABLE IF NOT EXISTS signal_scans (
@@ -201,10 +176,9 @@ def init_db():
             rsi_1m REAL, body_pct_1m REAL, vol_ratio_1m REAL, rsi_rising_1m TEXT, spread_1m REAL,
             rsi_3m REAL, body_pct_3m REAL, ema_spread_3m REAL, conditions_3m TEXT, mode_3m TEXT,
             score REAL, fired TEXT, reject_reason TEXT,
-            iv_pct REAL, delta REAL, vix REAL,
-            spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT, spot_gap REAL,
-            bias TEXT, hourly_rsi REAL, straddle_decay_pct REAL,
-            near_fib_level TEXT, fib_distance REAL,
+            vix REAL,
+            spot_rsi_3m REAL, spot_ema_spread_3m REAL, spot_regime TEXT,
+            straddle_decay_pct REAL,
             fwd_3c REAL, fwd_5c REAL, fwd_10c REAL, fwd_outcome TEXT)""")
 
         # ── TRADES ──
@@ -212,16 +186,16 @@ def init_db():
             date TEXT NOT NULL, entry_time TEXT, exit_time TEXT,
             symbol TEXT, direction TEXT, mode TEXT,
             entry_price REAL, exit_price REAL, pnl_pts REAL, pnl_rs REAL,
-            peak_pnl REAL, trough_pnl REAL,
-            exit_reason TEXT, exit_phase INTEGER,
-            score REAL, iv_at_entry REAL, regime TEXT,
+            peak_pnl REAL,
+            exit_reason TEXT,
+            score REAL, regime TEXT,
             dte INTEGER, candles_held INTEGER,
             session TEXT, strike INTEGER, sl_pts REAL,
             spread_1m REAL, spread_3m REAL, delta_at_entry REAL,
-            bias TEXT, vix_at_entry REAL, hourly_rsi REAL, straddle_decay REAL)""")
+            vix_at_entry REAL, straddle_decay REAL)""")
 
-        # v13.3: migrate trades table — add columns that may not exist yet
-        # BUG-F1: skip if schema v15+ (migration already dropped these)
+        # Legacy trades-table column adds — skipped on schema v15+ where
+        # migrate_schema_v15 already normalised the schema.
         if _schema_v >= 15:
             logger.info("[DB] Schema v" + str(_schema_v) + " — legacy "
                         "ALTER TABLE blocks skipped")
@@ -268,14 +242,8 @@ def init_db():
         # ── INDEXES ──
         _indexes = [
             ("idx_spot1m_ts", "spot_1min", "timestamp"),
-            ("idx_spot5m_ts", "spot_5min", "timestamp"),
-            ("idx_spot15m_ts", "spot_15min", "timestamp"),
-            ("idx_spot60m_ts", "spot_60min", "timestamp"),
-            ("idx_spotd_date", "spot_daily", "date"),
             ("idx_opt1m_ts", "option_1min", "timestamp, type"),
             ("idx_opt3m_ts", "option_3min", "timestamp, type"),
-            ("idx_opt5m_ts", "option_5min", "timestamp, type"),
-            ("idx_opt15m_ts", "option_15min", "timestamp, type"),
             ("idx_scans_ts", "signal_scans", "timestamp"),
             ("idx_scans_dir", "signal_scans", "direction, fired"),
             ("idx_trades_date", "trades", "date"),
@@ -352,8 +320,8 @@ def init_db():
                 ("signal_scans", "spot_vwap",     "REAL DEFAULT 0"),
                 ("signal_scans", "spot_vs_vwap",  "REAL DEFAULT 0"),
                 ("signal_scans", "vwap_bonus",    "TEXT DEFAULT ''"),
-                # BUG-N3 v15.2.5: distinguishes "signal passed all gates"
-                # (fired=1) from "trade was actually opened" (trade_taken=1).
+                # trade_taken=1 means the signal not only fired but was
+                # actually opened (vs fired=1 which just means gates passed).
                 ("signal_scans", "trade_taken",   "INTEGER DEFAULT 0"),
                 ("trades",       "entry_ema9_high", "REAL DEFAULT 0"),
                 ("trades",       "entry_ema9_low",  "REAL DEFAULT 0"),
@@ -384,8 +352,8 @@ def init_db():
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
 
-        # BUG-N6 + N7: one-shot migration to drop dead v13 columns.
-        # BUG-F1: gated by schema version so it doesn't re-run.
+        # One-shot migration to drop dead v13 columns. Gated by
+        # schema_meta.version so it doesn't re-run after success.
         if _schema_v < 15:
             try:
                 migrate_schema_v15()
@@ -407,9 +375,33 @@ def init_db():
             logger.info("[DB] Schema v" + str(_schema_v)
                         + " — migration already done, skipped")
 
+        # v16.6: Greek columns removed from schemas. Drop them from
+        # pre-existing DBs (idempotent — ALTER fails silently if column
+        # is already gone or the table doesn't exist).
+        try:
+            migrate_drop_greeks()
+        except Exception as _me:
+            logger.warning("[DB] migrate_drop_greeks: " + str(_me))
+
+        # v16.6: dead indicators (Fib pivots, vol spike, PDH/PDL, spot gap)
+        # removed from signal_scans. Drop any leftover columns from
+        # pre-existing DBs.
+        try:
+            migrate_drop_dead_indicators()
+        except Exception as _me:
+            logger.warning("[DB] migrate_drop_dead_indicators: " + str(_me))
+
+        # v16.6: dead trade columns (bias, hourly_rsi, exit_phase,
+        # score_at_entry, trough_pnl, entry_vwap_bonus) removed from
+        # the trades table. Idempotent drop on pre-existing DBs.
+        try:
+            migrate_drop_dead_trade_cols()
+        except Exception as _me:
+            logger.warning("[DB] migrate_drop_dead_trade_cols: " + str(_me))
+
 
 # ═══════════════════════════════════════════════════════════════
-#  v15.2.5 BUG-N6/N7 — SCHEMA MIGRATION: drop dead v13 columns
+#  SCHEMA MIGRATION — drop dead v13 columns from signal_scans + trades
 #  SQLite < 3.35 has no ALTER TABLE DROP COLUMN. Strategy:
 #    1. Backup DB
 #    2. Rename table → _legacy
@@ -420,7 +412,7 @@ def init_db():
 #  table has the expected column count.
 # ═══════════════════════════════════════════════════════════════
 
-# Live columns for signal_scans (v15.2.5 — dead v13 fields removed)
+# Live columns for signal_scans
 _SCAN_LIVE_COLS = [
     "timestamp TEXT NOT NULL",
     "session TEXT", "dte INTEGER", "atm_strike INTEGER", "spot REAL",
@@ -430,16 +422,9 @@ _SCAN_LIVE_COLS = [
     "band_position TEXT DEFAULT ''", "body_pct REAL DEFAULT 0",
     "body_pct_3m REAL DEFAULT 0", "ema_spread_3m REAL DEFAULT 0",
     "mode_3m TEXT DEFAULT ''",
-    # v15.2 straddle + VWAP (display-only after Fix 5)
-    "straddle_delta REAL DEFAULT 0", "straddle_period TEXT DEFAULT ''",
-    "atm_strike_used INTEGER DEFAULT 0", "band_width REAL DEFAULT 0",
-    "spot_vwap REAL DEFAULT 0", "spot_vs_vwap REAL DEFAULT 0",
-    "vwap_bonus TEXT DEFAULT ''",
     # Market context
     "vix REAL DEFAULT 0", "spot_rsi_3m REAL DEFAULT 0",
     "spot_ema_spread_3m REAL DEFAULT 0", "spot_regime TEXT DEFAULT ''",
-    "spot_gap REAL DEFAULT 0", "bias TEXT DEFAULT ''",
-    "hourly_rsi REAL DEFAULT 0",
     # Result
     "fired TEXT DEFAULT '0'", "trade_taken INTEGER DEFAULT 0",
     "reject_reason TEXT DEFAULT ''",
@@ -448,18 +433,18 @@ _SCAN_LIVE_COLS = [
     "fwd_outcome TEXT DEFAULT ''",
 ]
 
-# Live columns for trades (v15.2.5 — dead v13 fields removed)
+# Live columns for trades
 _TRADES_LIVE_COLS = [
     "date TEXT NOT NULL", "entry_time TEXT", "exit_time TEXT",
     "symbol TEXT", "direction TEXT", "strike INTEGER",
     "entry_price REAL", "exit_price REAL",
     "pnl_pts REAL", "pnl_rs REAL", "gross_pnl_rs REAL DEFAULT 0",
     "net_pnl_rs REAL DEFAULT 0",
-    "peak_pnl REAL", "trough_pnl REAL",
-    "exit_reason TEXT", "exit_phase INTEGER DEFAULT 1",
+    "peak_pnl REAL",
+    "exit_reason TEXT",
     "dte INTEGER", "candles_held INTEGER", "session TEXT",
-    "sl_pts REAL DEFAULT 0", "bias TEXT DEFAULT ''",
-    "vix_at_entry REAL DEFAULT 0", "hourly_rsi REAL DEFAULT 0",
+    "sl_pts REAL DEFAULT 0",
+    "vix_at_entry REAL DEFAULT 0",
     "entry_mode TEXT DEFAULT ''",
     # Charges
     "brokerage REAL DEFAULT 0", "stt REAL DEFAULT 0",
@@ -482,7 +467,6 @@ _TRADES_LIVE_COLS = [
     "entry_band_width REAL DEFAULT 0",
     "entry_spot_vwap REAL DEFAULT 0",
     "entry_spot_vs_vwap REAL DEFAULT 0",
-    "entry_vwap_bonus TEXT DEFAULT ''",
 ]
 
 
@@ -572,10 +556,9 @@ def _migrate_table(conn, table, live_cols_defs):
 
 
 def migrate_schema_v15():
-    """BUG-N6 + BUG-N7: one-shot migration that drops dead v13 columns
-    from signal_scans and trades. Call from init_db() gated by a
-    version check. Idempotent — running twice is a no-op if the first
-    run completed."""
+    """One-shot migration that drops dead v13 columns from signal_scans
+    and trades. Called from init_db() gated by schema_meta.version.
+    Idempotent — running twice is a no-op if the first run completed."""
     if not os.path.isfile(DB_PATH):
         return
     try:
@@ -633,7 +616,84 @@ def migrate_schema_v16():
         logger.warning("[DB] v16 migration error: " + str(e))
 
 
-from datetime import date
+def migrate_drop_greeks():
+    """Idempotent migration to drop Greek columns from existing DBs.
+    Requires SQLite ≥ 3.35 for ALTER TABLE DROP COLUMN; on older versions
+    the ALTER fails silently and the stale columns stay (harmless — they
+    simply aren't written to or read from)."""
+    conn = get_conn()
+    c = conn.cursor()
+    migrations = [
+        ("option_3min",  ["iv_pct", "delta", "gamma", "theta", "vega"]),
+        ("option_1min",  ["iv_pct", "delta"]),
+        ("option_5min",  ["iv_pct", "delta"]),
+        ("option_15min", ["iv_pct", "delta"]),
+        ("signal_scans", ["iv_pct", "delta"]),
+        ("trades",       ["iv_at_entry"]),
+    ]
+    for table, cols in migrations:
+        for col in cols:
+            try:
+                c.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+                conn.commit()
+                logger.info(f"[DB] Migrated: dropped {table}.{col}")
+            except Exception:
+                pass  # column already removed or table doesn't exist
+
+
+def migrate_drop_dead_indicators():
+    """v16.6: idempotent migration to drop dead indicator columns
+    (Fib pivots, volume spike, PDH/PDL, spot gap, straddle/VWAP
+    display-only columns, bias, hourly_rsi) from signal_scans.
+    Same idempotency guarantees as migrate_drop_greeks."""
+    conn = get_conn()
+    c = conn.cursor()
+    migrations = [
+        ("signal_scans", [
+            "spot_gap",
+            "fib_pivot", "fib_R1", "fib_R2", "fib_R3",
+            "fib_S1", "fib_S2", "fib_S3",
+            "near_fib_level", "fib_distance",
+            "vol_spike", "vol_ratio",
+            "pdh_break", "pdl_break",
+            "prev_high", "prev_low",
+            # v16.6 Part 10: display-only columns retired with the
+            # signal scan log removal.
+            "bias", "hourly_rsi",
+            "straddle_delta", "straddle_period",
+            "atm_strike_used", "band_width",
+            "spot_vwap", "spot_vs_vwap", "vwap_bonus",
+        ]),
+    ]
+    for table, cols in migrations:
+        for col in cols:
+            try:
+                c.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+                conn.commit()
+                logger.info(f"[DB] Migrated: dropped {table}.{col}")
+            except Exception:
+                pass
+
+
+def migrate_drop_dead_trade_cols():
+    """v16.6: idempotent migration to drop dead trade columns
+    (bias, hourly_rsi, exit_phase, score_at_entry, trough_pnl,
+    entry_vwap_bonus) from the trades table. Same idempotency
+    guarantees as migrate_drop_greeks."""
+    conn = get_conn()
+    c = conn.cursor()
+    dead_cols = [
+        "bias", "hourly_rsi", "exit_phase",
+        "score_at_entry", "trough_pnl", "entry_vwap_bonus",
+    ]
+    for col in dead_cols:
+        try:
+            c.execute(f"ALTER TABLE trades DROP COLUMN {col}")
+            conn.commit()
+            logger.info(f"[DB] Migrated: dropped trades.{col}")
+        except Exception:
+            pass
+
 
 def _insert(table, row, fields):
     """Generic insert. row is a dict, fields is ordered list of column names."""
@@ -675,23 +735,8 @@ def _insert_many_fn(table, fields):
 _SPOT_FIELDS = ["timestamp", "open", "high", "low", "close", "volume",
                 "ema9", "ema21", "ema_spread", "rsi", "adx"]
 
-_SPOT_DAILY_FIELDS = ["date", "open", "high", "low", "close", "volume",
-                      "ema21", "rsi", "adx"]
-
 def insert_spot_1min(row):
     _insert("spot_1min", row, _SPOT_FIELDS)
-
-def insert_spot_5min(row):
-    _insert("spot_5min", row, _SPOT_FIELDS)
-
-def insert_spot_15min(row):
-    _insert("spot_15min", row, _SPOT_FIELDS)
-
-def insert_spot_60min(row):
-    _insert("spot_60min", row, _SPOT_FIELDS)
-
-def insert_spot_daily(row):
-    _insert("spot_daily", row, _SPOT_DAILY_FIELDS)
 
 
 # ── Options ──
@@ -700,7 +745,7 @@ _OPT_1M_FIELDS = [
     "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
     "spot_ref", "atm_distance", "dte", "session_block",
     "body_pct", "rsi", "ema9", "ema9_gap", "adx",
-    "volume_ratio", "iv_pct", "delta",
+    "volume_ratio",
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
@@ -709,22 +754,7 @@ _OPT_3M_FIELDS = [
     "spot_ref", "atm_distance", "dte", "session_block", "iv_vs_open",
     "body_pct", "adx", "rsi", "ema9", "ema21", "ema_spread", "ema9_gap",
     "volume_ratio", "ema9_high", "ema9_low",   # v15.0 bands
-    "iv_pct", "delta", "gamma", "theta", "vega",
     "fwd_3c", "fwd_6c", "fwd_9c", "fwd_outcome",
-]
-
-_OPT_5M_FIELDS = [
-    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
-    "spot_ref", "dte", "session_block",
-    "body_pct", "rsi", "ema9", "ema21", "ema_spread", "adx",
-    "volume_ratio", "iv_pct", "delta",
-]
-
-_OPT_15M_FIELDS = [
-    "timestamp", "strike", "type", "open", "high", "low", "close", "volume",
-    "spot_ref", "dte", "session_block",
-    "body_pct", "rsi", "ema9", "ema21", "ema_spread", "macd_hist", "adx",
-    "volume_ratio", "iv_pct", "delta",
 ]
 
 def insert_option_1min(row):
@@ -739,35 +769,17 @@ def insert_option_3min(row):
 def insert_option_3min_many(rows):
     _insert_many("option_3min", rows, _OPT_3M_FIELDS)
 
-def insert_option_5min(row):
-    _insert("option_5min", row, _OPT_5M_FIELDS)
-
-def insert_option_5min_many(rows):
-    _insert_many("option_5min", rows, _OPT_5M_FIELDS)
-
-def insert_option_15min(row):
-    _insert("option_15min", row, _OPT_15M_FIELDS)
-
-def insert_option_15min_many(rows):
-    _insert_many("option_15min", rows, _OPT_15M_FIELDS)
-
 
 # ── Scans ──
 
-# v15.2.5 BUG-N6: live columns only. Dead v13 fields (rsi_1m, body_pct_1m,
-# vol_ratio_1m, rsi_rising_1m, spread_1m, rsi_3m, conditions_3m, score,
-# iv_pct, delta, straddle_decay_pct, straddle_threshold, near_fib_level,
-# fib_distance) removed after schema migration in migrate_schema_v15().
+# Live scan columns only — dead v13 fields were removed via the
+# schema migration chain.
 _SCAN_FIELDS = [
     "timestamp", "session", "dte", "atm_strike", "spot",
     "direction", "entry_price",
     "ema9_high", "ema9_low", "band_position", "body_pct",
     "body_pct_3m", "ema_spread_3m", "mode_3m",
-    "straddle_delta", "straddle_period",
-    "atm_strike_used", "band_width",
-    "spot_vwap", "spot_vs_vwap", "vwap_bonus",
     "vix", "spot_rsi_3m", "spot_ema_spread_3m", "spot_regime",
-    "spot_gap", "bias", "hourly_rsi",
     "fired", "trade_taken", "reject_reason",
     "fwd_3c", "fwd_5c", "fwd_10c", "fwd_outcome",
 ]
@@ -781,18 +793,15 @@ def insert_scan_many(rows):
 
 # ── Trades ──
 
-# v15.2.5 BUG-N7: live columns only. Dead v13 fields (mode, score,
-# iv_at_entry, regime, spread_1m, spread_3m, delta_at_entry,
-# straddle_decay, signal_price, bonus_*, momentum_pts, rsi_rising,
-# spot_confirms, spot_move, spike_ratio, other_falling, other_move,
-# momentum_tf) removed after schema migration in migrate_schema_v15().
+# Live trades columns only — dead v13 fields were removed via the
+# schema migration chain.
 _TRADE_FIELDS = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
     "gross_pnl_rs", "net_pnl_rs",
-    "peak_pnl", "trough_pnl", "exit_reason", "exit_phase",
+    "peak_pnl", "exit_reason",
     "dte", "candles_held", "session", "sl_pts",
-    "bias", "vix_at_entry", "hourly_rsi", "entry_mode",
+    "vix_at_entry", "entry_mode",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "num_exit_orders", "qty_exited",
     "entry_slippage", "exit_slippage", "lot_id",
@@ -804,7 +813,7 @@ _TRADE_FIELDS = [
     "entry_straddle_delta", "entry_straddle_threshold",
     "entry_straddle_period", "entry_straddle_info",
     "entry_atm_strike", "entry_band_width",
-    "entry_spot_vwap", "entry_spot_vs_vwap", "entry_vwap_bonus",
+    "entry_spot_vwap", "entry_spot_vs_vwap",
 ]
 
 def insert_trade(row):
@@ -1023,12 +1032,12 @@ def extend_token(name: str, days: int) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 def cleanup_old_db_data(retention_days=30):
-    """Delete rows older than N days from candle/scan tables. Never touches trades or spot_daily."""
+    """Delete rows older than N days from candle/scan tables. Never touches trades."""
     from datetime import date, timedelta
     cutoff = (date.today() - timedelta(days=retention_days)).isoformat()
     conn = get_conn()
-    tables = ["spot_1min", "spot_5min", "spot_15min", "spot_60min",
-              "option_1min", "option_3min", "option_5min", "option_15min",
+    tables = ["spot_1min",
+              "option_1min", "option_3min",
               "signal_scans"]
     total = 0
     for t in tables:
@@ -1077,6 +1086,431 @@ def db_stats() -> dict:
     except Exception:
         pass
     return result
+
+
+# === VALIDATE (merged from VRL_VALIDATE) ===
+# 20 live market validation checks. Run on every entry + exit.
+# Silent on PASS, alerts + logs on FAIL.
+# Zero impact on trading speed (runs after orders, not in critical path).
+
+# v15.2 — single live entry mode
+VALID_ENTRY_MODES = ("EMA9_BREAKOUT",)
+
+# Old strings that may still appear in historical trades; do NOT raise
+# errors on them, but they're not allowed as fresh entries either.
+LEGACY_MODES = (
+    "FAST", "CONFIRMED", "MOMENTUM", "3MIN",
+    "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION",
+)
+
+# v16.6 — exit reasons accepted by validation
+VALID_EXIT_REASONS = (
+    # Strict 3-rule exit chain
+    "EMERGENCY_SL", "EOD_EXIT", "VISHAL_TRAIL",
+    # Safety / manual
+    "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
+    # Historical back-compat for old trade log rows
+    "TRAIL_FLOOR",
+    "HARD_SL", "PROFIT_FLOOR", "FLOOR_SL",
+    "RSI_BLOWOFF", "RSI_SPIKE", "ATR_TRAIL", "SCOUT_SL",
+    "CANDLE_SL", "DIVERGENCE_EXIT", "WEAK_SL",
+)
+
+# ── Validation logger ─────────────────────────────────────────
+_VAL_LOG_DIR  = os.path.expanduser("~/logs")
+_VAL_LOG_PATH = os.path.join(_VAL_LOG_DIR, "validation.log")
+os.makedirs(_VAL_LOG_DIR, exist_ok=True)
+
+val_logger = logging.getLogger("vrl_validation")
+if not val_logger.handlers:
+    val_logger.setLevel(logging.INFO)
+    _fh = logging.FileHandler(_VAL_LOG_PATH)
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+    val_logger.addHandler(_fh)
+    val_logger.propagate = False
+
+# ── Paths ─────────────────────────────────────────────────────
+# Token + state paths come from VRL_DATA so CONFIG/MAIN/validator all
+# agree on one location.
+_DB_PATH    = DB_PATH
+_CSV_PATH   = os.path.expanduser("~/lab_data/vrl_trade_log.csv")
+_DASH_PATH  = os.path.join(D.STATE_DIR, "vrl_dashboard.json")
+_TOKEN_PATH = D.TOKEN_FILE_PATH
+
+
+def _safe(fn, *a, **kw):
+    """Run a check that might fail. Returns (ok, error_msg). Never raises."""
+    try:
+        return True, fn(*a, **kw)
+    except Exception as e:
+        return False, str(e)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ENTRY VALIDATION — 10 checks, runs after every entry
+# ═══════════════════════════════════════════════════════════════
+
+def validate_entry(state, entry_result, kite=None):
+    """Run 10 checks after every entry. Returns list of failure strings."""
+    failures = []
+
+    # CHECK 1: Entry price matches signal price (slippage < 3pts)
+    try:
+        signal_price = float(entry_result.get("entry_price", 0) or 0)
+        fill_price   = float(state.get("entry_price", 0) or 0)
+        if signal_price > 0 and fill_price > 0:
+            diff = abs(signal_price - fill_price)
+            if diff > 3:
+                failures.append("ENTRY_SLIPPAGE: signal=" + str(signal_price)
+                                + " fill=" + str(fill_price)
+                                + " diff=" + str(round(diff, 2)))
+    except Exception as e:
+        failures.append("CHECK1_ERR: " + str(e))
+
+    # CHECK 2: State is consistent — in_trade, symbol, token, entry_price
+    if not state.get("in_trade"):
+        failures.append("STATE: in_trade=False after entry")
+    if not state.get("symbol"):
+        failures.append("STATE: symbol is empty after entry")
+    if not state.get("token"):
+        failures.append("STATE: token is None after entry")
+    if float(state.get("entry_price", 0) or 0) <= 0:
+        failures.append("STATE: entry_price=0 after entry")
+
+    # CHECK 3: (v16.6) legacy SL-state validation removed — the
+    # strict 3-rule exit chain has no persistent SL field in state.
+
+    # CHECK 4: Qty is correct (lots × lot_size)
+    try:
+        lot_count    = CFG.get().get("lots", {}).get("count", 2)
+        lot_size     = CFG.get().get("lots", {}).get("size", D.get_lot_size())
+        expected_qty = lot_count * lot_size
+        actual_qty   = int(state.get("qty", 0) or 0)
+        # Allow partial fills in live mode (smaller is OK, larger is not)
+        if actual_qty == 0:
+            failures.append("QTY: actual=0 (no fill)")
+        elif actual_qty > expected_qty:
+            failures.append("QTY: actual=" + str(actual_qty)
+                            + " > expected=" + str(expected_qty))
+    except Exception as e:
+        failures.append("CHECK4_ERR: " + str(e))
+
+    # CHECK 5: Exchange SL order placed (live mode only)
+    if not D.PAPER_MODE:
+        if not state.get("_sl_order_id"):
+            failures.append("EXCHANGE_SL: no SL order placed (live mode)")
+
+    # CHECK 6: Entry mode is valid (v15.2: EMA9_BREAKOUT is the only live mode)
+    mode = state.get("entry_mode", "") or state.get("mode", "")
+    if mode and mode not in VALID_ENTRY_MODES and mode not in LEGACY_MODES:
+        failures.append("ENTRY_MODE: invalid mode=" + str(mode))
+
+    # CHECK 7: Direction matches option type in symbol
+    direction = state.get("direction", "")
+    symbol    = state.get("symbol", "")
+    if direction == "CE" and symbol.endswith("PE"):
+        failures.append("DIRECTION: CE but symbol ends with PE: " + symbol)
+    if direction == "PE" and symbol.endswith("CE"):
+        failures.append("DIRECTION: PE but symbol ends with CE: " + symbol)
+
+    # CHECK 8: Strike is in symbol
+    try:
+        strike = int(state.get("strike", 0) or 0)
+        if strike and str(strike) not in symbol:
+            failures.append("STRIKE: " + str(strike) + " not in " + symbol)
+    except Exception as e:
+        failures.append("CHECK8_ERR: " + str(e))
+
+    # CHECK 9: WebSocket has live LTP for the token
+    try:
+        token  = state.get("token", 0)
+        ws_ltp = D.get_ltp(token) if token else 0
+        if ws_ltp <= 0:
+            failures.append("WEBSOCKET: no LTP for token=" + str(token))
+    except Exception as e:
+        failures.append("CHECK9_ERR: " + str(e))
+
+    # CHECK 10: Trade log file is writeable (entry persists on exit)
+    try:
+        log_dir = os.path.dirname(_CSV_PATH)
+        if not os.path.isdir(log_dir):
+            failures.append("TRADE_LOG: dir missing " + log_dir)
+        elif not os.access(log_dir, os.W_OK):
+            failures.append("TRADE_LOG: dir not writeable " + log_dir)
+    except Exception as e:
+        failures.append("CHECK10_ERR: " + str(e))
+
+    _log_result("ENTRY", 10, failures)
+    return failures
+
+
+# ═══════════════════════════════════════════════════════════════
+#  EXIT VALIDATION — 10 checks, runs after every exit
+# ═══════════════════════════════════════════════════════════════
+
+def validate_exit(state, exit_pnl, exit_price, exit_reason,
+                  entry_price, qty_exited, kite=None):
+    """Run 10 checks after every exit. Returns list of failure strings."""
+    failures = []
+    today    = date.today().isoformat()
+
+    # CHECK 11: PNL calculation matches (exit - entry)
+    try:
+        expected_pnl = round(float(exit_price) - float(entry_price), 2)
+        if abs(expected_pnl - float(exit_pnl)) > 0.5:
+            failures.append("PNL_CALC: expected=" + str(expected_pnl)
+                            + " actual=" + str(exit_pnl))
+    except Exception as e:
+        failures.append("CHECK11_ERR: " + str(e))
+
+    # CHECK 12: Exit reason is in the known set
+    if exit_reason not in VALID_EXIT_REASONS:
+        failures.append("EXIT_REASON: unknown=" + str(exit_reason))
+
+    # CHECK 13: Charges calculator returns sensible numbers (if module exists)
+    try:
+        import VRL_ENGINE as CH  # type: ignore
+        try:
+            charges = CH.calculate_charges(
+                float(entry_price), float(exit_price), int(qty_exited), 1)
+            if charges.get("total_charges", 0) <= 0:
+                failures.append("CHARGES: zero or negative")
+        except Exception as ce:
+            failures.append("CHARGES_ERR: " + str(ce))
+    except ImportError:
+        # Charges module not present in this build — skip silently
+        pass
+
+    # CHECK 14: DB trade row exists for today
+    try:
+        if os.path.isfile(_DB_PATH):
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            try:
+                cnt = conn.execute(
+                    "SELECT COUNT(*) FROM trades WHERE date=?", (today,)
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            if cnt < 1:
+                failures.append("DB: no trade row for today")
+    except Exception as e:
+        failures.append("CHECK14_ERR: " + str(e))
+
+    # CHECK 15: CSV trade row exists for today
+    csv_count = 0
+    try:
+        if os.path.isfile(_CSV_PATH):
+            with open(_CSV_PATH) as f:
+                csv_count = sum(1 for r in csv.DictReader(f)
+                                if r.get("date") == today)
+            if csv_count < 1:
+                failures.append("CSV: no trade row for today")
+    except Exception as e:
+        failures.append("CHECK15_ERR: " + str(e))
+
+    # CHECK 16: DB and CSV trade counts match
+    try:
+        if os.path.isfile(_DB_PATH) and os.path.isfile(_CSV_PATH):
+            conn2 = sqlite3.connect(_DB_PATH, timeout=5)
+            try:
+                db_count = conn2.execute(
+                    "SELECT COUNT(*) FROM trades WHERE date=?", (today,)
+                ).fetchone()[0]
+            finally:
+                conn2.close()
+            if db_count != csv_count:
+                failures.append("SYNC: DB=" + str(db_count)
+                                + " CSV=" + str(csv_count))
+    except Exception as e:
+        failures.append("CHECK16_ERR: " + str(e))
+
+    # CHECK 17: State reset after a fully-closed exit
+    if state.get("in_trade"):
+        failures.append("STATE: in_trade=True after exit")
+    if float(state.get("entry_price", 0) or 0) != 0:
+        failures.append("STATE: entry_price not reset")
+    if float(state.get("peak_pnl", 0) or 0) != 0:
+        failures.append("STATE: peak_pnl not reset")
+
+    # CHECK 18: Exchange SL cancelled (live mode only)
+    if not D.PAPER_MODE:
+        sl_id = state.get("_sl_order_id")
+        if sl_id and sl_id != "PAPER_SL":
+            failures.append("EXCHANGE_SL: SL order_id=" + str(sl_id)
+                            + " not cleared after exit")
+
+    # CHECK 19: Dashboard JSON reflects PNL
+    try:
+        if os.path.isfile(_DASH_PATH):
+            with open(_DASH_PATH) as f:
+                dash = json.load(f)
+            today_block = dash.get("today", {}) or {}
+            try:
+                tg_pnl   = round(float(state.get("daily_pnl", 0) or 0), 1)
+                dash_pnl = round(float(today_block.get("pnl", 0) or 0), 1)
+                if abs(tg_pnl - dash_pnl) > 1.0:
+                    failures.append("ALIGN_PNL: state=" + str(tg_pnl)
+                                    + " dashboard=" + str(dash_pnl))
+            except Exception:
+                pass
+    except Exception as e:
+        failures.append("CHECK19_ERR: " + str(e))
+
+    _log_result("EXIT ", 10, failures)
+    return failures
+
+
+# ═══════════════════════════════════════════════════════════════
+#  /validate COMMAND — manual on-demand system check
+# ═══════════════════════════════════════════════════════════════
+
+def manual_validate(state):
+    """
+    Run a fresh ad-hoc validation. Returns dict:
+        {"checks": [(name, ok, detail), ...], "passed": int, "total": int}
+    """
+    checks = []
+
+    # 1. DB exists and has trades table
+    try:
+        if os.path.isfile(_DB_PATH):
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            try:
+                cnt = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            finally:
+                conn.close()
+            size_mb = round(os.path.getsize(_DB_PATH) / (1024 * 1024), 1)
+            checks.append(("DB", True, str(cnt) + " trades, " + str(size_mb) + "MB"))
+        else:
+            checks.append(("DB", False, "missing " + _DB_PATH))
+    except Exception as e:
+        checks.append(("DB", False, str(e)))
+
+    # 2. CSV exists
+    try:
+        if os.path.isfile(_CSV_PATH):
+            with open(_CSV_PATH) as f:
+                csv_rows = sum(1 for _ in csv.DictReader(f))
+            checks.append(("CSV", True, str(csv_rows) + " rows"))
+        else:
+            checks.append(("CSV", False, "missing"))
+    except Exception as e:
+        checks.append(("CSV", False, str(e)))
+
+    # 3. DB == CSV (TODAY only — historical drift from pre-DB days is
+    #    not a bug we can fix retroactively).
+    try:
+        today_iso = date.today().isoformat()
+        db_today  = -1
+        csv_today = -1
+        if os.path.isfile(_DB_PATH):
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            try:
+                db_today = conn.execute(
+                    "SELECT COUNT(*) FROM trades WHERE date=?",
+                    (today_iso,)).fetchone()[0]
+            finally:
+                conn.close()
+        if os.path.isfile(_CSV_PATH):
+            with open(_CSV_PATH) as f:
+                csv_today = sum(1 for r in csv.DictReader(f)
+                                if r.get("date") == today_iso)
+        if db_today < 0 or csv_today < 0:
+            checks.append(("DB = CSV (today)", False,
+                           "db=" + str(db_today) + " csv=" + str(csv_today)))
+        else:
+            checks.append(("DB = CSV (today)", db_today == csv_today,
+                           "db=" + str(db_today) + " csv=" + str(csv_today)))
+    except Exception as e:
+        checks.append(("DB = CSV (today)", False, str(e)))
+
+    # 4. State sanity
+    try:
+        in_trade = bool(state.get("in_trade"))
+        checks.append(("State", True,
+                       "in_trade" if in_trade else "not in trade"))
+    except Exception as e:
+        checks.append(("State", False, str(e)))
+
+    # 5. WebSocket tick freshness — market-aware. A stale tick at
+    #    23:00 IST is normal, not a fault.
+    try:
+        ws_ok = D.is_tick_live(D.NIFTY_SPOT_TOKEN)
+        if not ws_ok and not D.is_market_open():
+            checks.append(("WebSocket", True, "idle (market closed)"))
+        else:
+            checks.append(("WebSocket", ws_ok,
+                           "connected" if ws_ok else "stale or closed"))
+    except Exception as e:
+        checks.append(("WebSocket", False, str(e)))
+
+    # 6. Kite auth — token file present and dated today
+    try:
+        if os.path.isfile(_TOKEN_PATH):
+            with open(_TOKEN_PATH) as f:
+                tok = json.load(f)
+            today_str = date.today().isoformat()
+            ok = tok.get("date") == today_str and bool(tok.get("access_token"))
+            checks.append(("Kite auth", ok,
+                           "valid" if ok else "stale (date=" + str(tok.get("date", "—")) + ")"))
+        else:
+            checks.append(("Kite auth", False, "no token file"))
+    except Exception as e:
+        checks.append(("Kite auth", False, str(e)))
+
+    # 7. Dashboard JSON freshness
+    try:
+        if os.path.isfile(_DASH_PATH):
+            age = int(datetime.now().timestamp() - os.path.getmtime(_DASH_PATH))
+            ok  = age < 300  # less than 5 minutes old
+            checks.append(("Dashboard", ok,
+                           "updated " + str(age) + "s ago"))
+        else:
+            checks.append(("Dashboard", False, "missing"))
+    except Exception as e:
+        checks.append(("Dashboard", False, str(e)))
+
+    # 8. Spot LTP available — market-aware. Zero LTP at 11pm is
+    #    expected (WebSocket idle); treat as PASS with "market closed".
+    try:
+        spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        if spot_ltp > 0:
+            checks.append(("Spot LTP", True, str(round(spot_ltp, 1))))
+        elif not D.is_market_open():
+            checks.append(("Spot LTP", True, "0 (market closed)"))
+        else:
+            checks.append(("Spot LTP", False, "0 — market open but no tick"))
+    except Exception as e:
+        checks.append(("Spot LTP", False, str(e)))
+
+    # 9. Config version stamp
+    try:
+        ver = CFG.get().get("version", "—")
+        checks.append(("Config", True, ver))
+    except Exception as e:
+        checks.append(("Config", False, str(e)))
+
+    passed = sum(1 for _n, ok, _d in checks if ok)
+    return {"checks": checks, "passed": passed, "total": len(checks)}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  INTERNAL — single-line summary log per validation run
+# ═══════════════════════════════════════════════════════════════
+
+def _log_result(phase: str, total: int, failures: list):
+    passed = total - len(failures)
+    if failures:
+        msg = ("| " + phase + " | " + str(passed) + "/" + str(total) + " PASS"
+               " | FAIL: " + "; ".join(failures))
+    else:
+        msg = "| " + phase + " | " + str(total) + "/" + str(total) + " PASS"
+    try:
+        val_logger.info(msg)
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════

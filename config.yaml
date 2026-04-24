@@ -37,6 +37,7 @@ entry:
     body_pct_min: 40
     warmup_until: "09:30"
     cutoff_after: "15:10"
+    cooldown_minutes: 5
     # Fresh-breakout lookback window (3-min candles). Fires entry if ANY
     # of the last N bars had close <= its ema9_low. N=3 recovers from
     # a restart that lands mid-move; N=1 is the strict immediate cross.
@@ -80,9 +81,6 @@ strike:
 
 # ── Risk ───────────────────────────────────────────────────────
 risk:
-  max_daily_trades: 999
-  max_daily_losses: 999
-  profit_lock_pts: 150
   reentry_cooldown_min: 5
   max_positions: 1
 
