@@ -3216,13 +3216,38 @@ def main():
             _health_lines.append("Spot: ❌ " + str(_he)[:60])
             _health_ok = False
         # 3. WebSocket (proves tick feed)
+        # Wait up to ~15s for the first tick before declaring no feed —
+        # the WS subscription lands before this check but the first tick
+        # can arrive 5-10s later. Outside market hours we don't expect
+        # ticks at all, so report that explicitly instead of warning.
         import time as _time_h
-        _time_h.sleep(3)
-        _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        if _ws_ltp > 0:
-            _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+        _ws_ltp = 0.0
+        _market_open_now = D.is_market_open()
+        if _market_open_now:
+            for _ in range(15):
+                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if _ws_ltp > 0:
+                    break
+                _time_h.sleep(1)
+            if _ws_ltp > 0:
+                _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+            else:
+                _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
+                _health_ok = False
         else:
-            _health_lines.append("WS: ⚠️ no tick yet (may need 30s to connect)")
+            # Market closed — WS won't push ticks. Surface the last-known
+            # tick age if we have one, otherwise say idle.
+            with D._tick_lock:
+                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+            if _entry:
+                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
+                _health_lines.append(
+                    "WS: 💤 market closed (last tick "
+                    + str(_age_min) + "m ago at "
+                    + str(round(_entry["ltp"], 1)) + ")"
+                )
+            else:
+                _health_lines.append("WS: 💤 market closed (no ticks yet)")
         _icon = "✅" if _health_ok else "⚠️"
         _tg_send(
             _icon + " <b>TOKEN HEALTH CHECK</b>\n"
