@@ -60,7 +60,7 @@ if not val_logger.handlers:
 
 # ── Paths ─────────────────────────────────────────────────────
 # Token + state paths come from VRL_DATA so AUTH/MAIN/VALIDATE all
-# agree on one location. BUG-015.
+# agree on one location..
 import VRL_DATA as _D
 _DB_PATH    = os.path.expanduser("~/lab_data/vrl_data.db")
 _CSV_PATH   = os.path.expanduser("~/lab_data/vrl_trade_log.csv")

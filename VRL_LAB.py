@@ -42,7 +42,7 @@ FIELDNAMES_1M = [
     "fwd_1c", "fwd_3c", "fwd_5c", "fwd_outcome",
 ]
 
-# Signal scan log — BUG-N6 v15.2.5: live columns only.
+# Signal scan log — live columns only.
 # Dead v13 fields removed in the schema migration. CSV matches the DB schema.
 FIELDNAMES_SCAN = [
     "timestamp", "session", "dte", "atm_strike", "spot",
@@ -437,8 +437,6 @@ def collect_option_3min(kite, spot_ltp: float):
         except Exception:
             pass
         logger.debug("[LAB] 3m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
-
-    # BUG-N12: also write the active trade's strike if it differs from ATM
     try:
         _at_n = _collect_active_trade_candles(
             kite, "3minute", today, now, today_ts)
@@ -448,7 +446,7 @@ def collect_option_3min(kite, spot_ltp: float):
         logger.debug("[LAB] 3m active-trade err: " + str(_ate))
 
 
-# ── BUG-N12: persist active-trade strike candles through ATM rotation ──
+# ── persist active-trade strike candles through ATM rotation ──
 
 def _collect_active_trade_candles(kite, interval: str, today, now,
                                   already_written_keys: set = None):
@@ -645,8 +643,6 @@ def collect_option_1min(kite, spot_ltp: float):
         except Exception:
             pass
         logger.debug("[LAB] 1m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
-
-    # BUG-N12: also write the active trade's strike if it differs from ATM
     try:
         _at_n = _collect_active_trade_candles(kite, "minute", today, now)
         if _at_n:
@@ -986,7 +982,7 @@ def start_lab(kite):
     except Exception as e:
         logger.warning("[LAB] SQLite init error: " + str(e))
 
-    # v15.2.5 BUG-I: mid-day restart backfill, gated on empty buffer
+    # v15.2.5 mid-day restart backfill, gated on empty buffer
     try:
         _startup_backfill(kite)
     except Exception as _be:
@@ -1082,7 +1078,7 @@ def _lab_loop():
                 elif spot_ltp <= 0 and D.is_market_open():
                     logger.debug("[LAB] 3m skip — spot LTP not available yet")
 
-            # ── EOD forward fill — BUG-N4: widened from exact 15:35:00-30
+            # ── EOD forward fill — widened from exact 15:35:00-30
             # to 15:35–15:50 window. The old 30-second slot was missed if
             # the loop was slow, restarting, or busy with the 3-min
             # collection tick. Still gated by _fwd_done so it runs AT MOST

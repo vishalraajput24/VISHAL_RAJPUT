@@ -102,7 +102,6 @@ def get_kite():
         try:
             kite.profile()
             logger.info("[AUTH] Token valid ✓")
-            # BUG-N1: reset the auth-rejection flag so DATA resumes retries.
             try:
                 import VRL_DATA as _D_auth
                 _D_auth.notify_auth_refreshed()
@@ -118,7 +117,6 @@ def get_kite():
             kite.set_access_token(token)
             _write_token({"date": today_str, "access_token": token})
             logger.info("[AUTH] Auto-login successful ✓")
-            # BUG-N1: reset the auth-rejection flag so DATA resumes retries.
             try:
                 import VRL_DATA as _D_auth
                 _D_auth.notify_auth_refreshed()

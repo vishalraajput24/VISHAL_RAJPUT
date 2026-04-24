@@ -4,7 +4,7 @@
 #  Brokerage & charges calculator. Pure math, no API calls.
 #  Zerodha F&O charges as of April 2026.
 #
-#  BUG-K (v15.2.5 Batch 5): lot_size is no longer a module-load
+#  lot_size is no longer a module-load
 #  constant. calculate_lot_charges()
 #  now look it up from VRL_DATA at CALL TIME when the caller
 #  doesn't pass an explicit value. This lets a mid-session lot-size
@@ -70,7 +70,7 @@ def calculate_charges(entry_price: float, exit_price: float,
 
 def calculate_lot_charges(entry_price: float, exit_price: float,
                           lot_size: int = None) -> dict:
-    """BUG-K: lot_size defaults to live VRL_DATA.LOT_SIZE when None,
+    """lot_size defaults to live VRL_DATA.LOT_SIZE when None,
     so the broker's current lot value flows through on every call
     instead of being frozen at module import."""
     if lot_size is None:

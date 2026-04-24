@@ -18,7 +18,7 @@ import VRL_CONFIG as CFG
 
 
 def _verify_timeout(kind: str, default: int) -> int:
-    """BUG-Q v15.2.5 Batch 6: pull verify_order_fill timeouts from
+    """pull verify_order_fill timeouts from
     config.yaml -> trade.verify_timeout_{entry,exit}. Falls back to
     the historical hardcoded value if config lacks the key."""
     try:

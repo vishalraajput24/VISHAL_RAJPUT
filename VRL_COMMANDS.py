@@ -211,8 +211,6 @@ def _send_today_download(target_date: str = None):
             cat = arcname.split("/")[0]
             categories[cat] = categories.get(cat, 0) + 1
         cat_summary = " | ".join(k + ":" + str(v) for k, v in sorted(categories.items()))
-
-        # BUG-DL4 v15.2.5: Telegram bot upload cap is 50MB. If the zip
         # exceeds the soft 45MB threshold (5MB headroom for multipart
         # overhead), don't attempt the send — put it behind the local
         # web server and reply with the URL. Preserves the zip on disk
@@ -261,7 +259,6 @@ def _send_today_download(target_date: str = None):
             except Exception:
                 pass
         else:
-            # BUG-DL4: keep zip on disk on failure + report local path.
             logger.warning("[DOWNLOAD] Telegram send failed — zip "
                            "preserved for SSH retrieval: " + zip_path)
             _tg_send(
@@ -329,7 +326,6 @@ def _cmd_status(args):
 
     if not st.get("in_trade"):
         last_scan = st.get("_last_scan", {})
-        # BUG-030: Read warmup state from dashboard JSON (written by VRL_MAIN)
         _warmup_line = ""
         try:
             import json as _j
@@ -568,14 +564,14 @@ def _cmd_download_strategy(args):
     """Smart download — 4 key files only (trade log + DB + config + state).
     Accessible via /download_strategy.
 
-    BUG-DL2 v15.2.5: replaced the four hardcoded paths with canonical
+    replaced the four hardcoded paths with canonical
     constants from VRL_DATA so the zip actually picks up the file the
     bot is really reading + writing. The old hardcoded
     ~/state/vrl_live_state.json pointed at a path that hasn't existed
-    since BUG-015; the real file is under D.STATE_FILE_PATH
+    since; the real file is under D.STATE_FILE_PATH
     (~/VISHAL_RAJPUT/state/vrl_live_state.json).
 
-    BUG-DL1 v15.2.5: renamed from _cmd_download. /download now delivers
+    renamed from _cmd_download. /download now delivers
     the full-day zip (previous /download_all behavior) — the semantics
     operators expected all along.
     """
@@ -619,7 +615,7 @@ def _cmd_download(args):
     /download             → today
     /download 2026-04-16  → specific day
 
-    BUG-DL1 v15.2.5: this replaces the old /download (now
+    this replaces the old /download (now
     /download_strategy) because operators uniformly treated this
     as "give me today's full data". The 4-file shortcut is still
     available via /download_strategy for the old muscle memory.
@@ -1174,7 +1170,7 @@ _DISPATCH = {
     "/files"       : _cmd_files,
     "/download"         : _cmd_download,
     "/download_strategy": _cmd_download_strategy,
-    "/download_all"     : _cmd_download_all,   # BUG-DL1: deprecated alias
+    "/download_all"     : _cmd_download_all,   # deprecated alias
     "/health"      : _cmd_health,
     "/pause"       : _cmd_pause,
     "/reset_exit"  : _cmd_reset_exit,

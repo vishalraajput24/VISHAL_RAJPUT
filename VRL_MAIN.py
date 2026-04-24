@@ -78,7 +78,6 @@ DEFAULT_STATE = {
     "current_ema9_high"  : 0.0,
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
-    # BUG-V: date sentinel for "run lab cleanup once per trading day"
     "_last_cleanup_date" : "",
     # v15.2.5 pre-entry alerts (learning mode)
     "pre_entry_alerts_enabled": True,
@@ -171,8 +170,6 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
                 + " PE=" + str(_locked_pe_strike)
                 + "+" + str(_locked_pe_strike - 50)
                 + " at spot=" + str(round(spot, 1)))
-
-    # BUG-R11: ensure history exists for locked strike before strategy runs.
     if kite and expiry and _locked_ce_strike:
         try:
             _r11 = D.ensure_option_history(
@@ -324,8 +321,6 @@ def _reset_daily(today_str: str):
         pass
     logger.info("[MAIN] Daily reset")
     _save_state()
-
-    # BUG-R10: pre-load 5-strike window at daily reset (before 09:15).
     # Fetch 5 days of 3-min + 1-min candles for ATM±100 so GARCH is warm.
     try:
         from datetime import date as _dr10
@@ -378,7 +373,7 @@ def _remove_pid():
 #  TRADE LOG
 # ═══════════════════════════════════════════════════════════════
 
-# v15.2.5 BUG-N7: live columns only (matches _TRADE_FIELDS in VRL_DB.py).
+# v15.2.5 live columns only (matches _TRADE_FIELDS in VRL_DB.py).
 # Dead v13 fields previously tracked here — removed via schema migrations.
 TRADE_FIELDNAMES = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
@@ -446,7 +441,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     _lot_qty = qty if qty > 0 else D.get_lot_size()
     pnl_rs  = round(pnl_pts * _lot_qty, 2)
 
-    # v15.2.5 BUG-N7: live columns only. Dead v13 fields purged.
+    # v15.2.5 live columns only. Dead v13 fields purged.
     row = {
         "date"          : date.today().isoformat(),
         "entry_time"    : st.get("entry_time", ""),
@@ -590,7 +585,7 @@ _TG_FLOOD_LIMIT = 5
 _TG_FLOOD_WINDOW = 10  # seconds
 
 def _tg_safe(s) -> str:
-    """BUG-031: Escape <, >, & in dynamic content for Telegram HTML mode.
+    """Escape <, >, & in dynamic content for Telegram HTML mode.
     Apply only to user/API-supplied strings, NOT to template literals."""
     if s is None:
         return ""
@@ -602,73 +597,55 @@ def _tg_safe(s) -> str:
         return ""
 
 
-def _tg_send_sync(text: str, parse_mode: str = "HTML", chat_id: str = None,
-                  priority: str = "normal") -> bool:
-    """Blocking send with flood control — max 5 msgs per 10s.
-
-    BUG-U v15.2.5 Batch 6: `priority="critical"` bypasses flood
-    control entirely. Use for CRITICAL alerts that MUST reach the
-    operator during a burst (exit failure, shutdown-with-open-trade,
-    DB corruption) even if the loop has already queued 5 messages
-    in the last 10 seconds. Critical sends still count toward the
-    sliding window so a second non-critical call right after won't
-    get an immediate free pass."""
-    if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
-        return False
-
-    is_critical = (str(priority).lower() == "critical")
-
-    # Flood control — prevent Telegram 429 rate limit.
-    # CRITICAL messages bypass the wait (BUG-U) but still append to
-    # the timestamp queue so bookkeeping stays accurate.
-    now_ts = time.time()
-    while _tg_timestamps and now_ts - _tg_timestamps[0] > _TG_FLOOD_WINDOW:
-        _tg_timestamps.popleft()
-    if not is_critical and len(_tg_timestamps) >= _TG_FLOOD_LIMIT:
-        wait = _TG_FLOOD_WINDOW - (now_ts - _tg_timestamps[0])
-        if wait > 0:
-            time.sleep(min(wait, _TG_FLOOD_WINDOW))
-    _tg_timestamps.append(time.time())
-
-    cid = chat_id or D.TELEGRAM_CHAT_ID
-    url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
-    # BUG-031: sanitize unknown HTML tags in HTML mode to prevent parse errors.
-    # Telegram allows <b>, <i>, <u>, <s>, <code>, <pre>, <a href>. Everything
-    # else (like stray <html> from an error trace) causes a 400.
-    _safe_text = text
-    if parse_mode == "HTML":
-        try:
-            import re as _re
-            _safe_text = _re.sub(
-                r"<(?!/?(b|i|u|s|code|pre|a)(\s|>|/))",
-                "&lt;", text)
-        except Exception:
-            _safe_text = text
-    try:
-        resp = requests.post(url, json={
-            "chat_id"              : cid,
-            "text"                 : _safe_text,
-            "parse_mode"           : parse_mode,
-            "disable_notification" : False,
-        }, timeout=10)
-        if not resp.ok:
-            logger.warning("[TG] Send failed: " + resp.text[:200])
-            return False
-        return True
-    except Exception as e:
-        logger.error("[TG] send error: " + type(e).__name__)
-        return False
-
 def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
              priority: str = "normal") -> bool:
-    """Non-blocking send — fires in background thread so strategy loop never waits.
-    BUG-U: `priority` passed through to _tg_send_sync for CRITICAL bypass."""
-    t = threading.Thread(
-        target=_tg_send_sync,
-        args=(text, parse_mode, chat_id, priority),
-        daemon=True
-    )
-    t.start()
+    """Non-blocking Telegram send with flood control.
+
+    Runs the POST in a daemon thread so the strategy loop never waits.
+    `priority="critical"` bypasses flood control so exit-failure / DB-
+    corruption / shutdown-with-open-trade alerts always deliver even
+    during a 5-in-10s burst. Critical sends still append to the
+    sliding window so bookkeeping stays accurate.
+    """
+    def _worker():
+        if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
+            return
+        is_critical = (str(priority).lower() == "critical")
+        now_ts = time.time()
+        while _tg_timestamps and now_ts - _tg_timestamps[0] > _TG_FLOOD_WINDOW:
+            _tg_timestamps.popleft()
+        if not is_critical and len(_tg_timestamps) >= _TG_FLOOD_LIMIT:
+            wait = _TG_FLOOD_WINDOW - (now_ts - _tg_timestamps[0])
+            if wait > 0:
+                time.sleep(min(wait, _TG_FLOOD_WINDOW))
+        _tg_timestamps.append(time.time())
+
+        cid = chat_id or D.TELEGRAM_CHAT_ID
+        url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
+        # Sanitize unknown HTML tags in HTML mode; Telegram only allows
+        # <b>, <i>, <u>, <s>, <code>, <pre>, <a href>.
+        _safe_text = text
+        if parse_mode == "HTML":
+            try:
+                import re as _re
+                _safe_text = _re.sub(
+                    r"<(?!/?(b|i|u|s|code|pre|a)(\s|>|/))",
+                    "&lt;", text)
+            except Exception:
+                _safe_text = text
+        try:
+            resp = requests.post(url, json={
+                "chat_id"              : cid,
+                "text"                 : _safe_text,
+                "parse_mode"           : parse_mode,
+                "disable_notification" : False,
+            }, timeout=10)
+            if not resp.ok:
+                logger.warning("[TG] Send failed: " + resp.text[:200])
+        except Exception as e:
+            logger.error("[TG] send error: " + type(e).__name__)
+
+    threading.Thread(target=_worker, daemon=True).start()
     return True
 
 def _tg_send_file(file_path: str, caption: str = "", chat_id: str = None) -> bool:
@@ -770,7 +747,7 @@ def _alert_bot_started():
         )
 
 def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
-    """v15.2.5 BUG-A: richer CRITICAL alert — names the blocked trade,
+    """v15.2.5 richer CRITICAL alert — names the blocked trade,
     tells the operator exactly which Telegram command clears the lock
     once Kite shows the position is flat. All further exit attempts
     are suppressed until /reset_exit is received."""
@@ -786,7 +763,7 @@ def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
         "   to re-enable automatic exits.\n"
         "Until then, all exit attempts are blocked to prevent duplicate\n"
         "orders or incorrect state.",
-        priority="critical",   # BUG-U: bypass flood control
+        priority="critical",   # bypass flood control
     )
 
 def _alert_error(message: str):
@@ -914,8 +891,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["lot1_active"]        = True
         state["lot2_active"]        = True
         state["lots_split"]         = False
-
-        # BUG-N12: tell VRL_LAB which strike to keep writing regardless
         # of ATM drift. Resolve both sides so the opposite-side candles
         # are also persisted for hedge research.
         try:
@@ -1167,7 +1142,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     if not fill["ok"] and fill.get("error") == "EXIT_FAILED_MANUAL_REQUIRED":
         with _state_lock:
             state["_exit_failed"] = True
-        _save_state()   # v15.2.5 BUG-A: persist the block across crashes
+        _save_state()   # v15.2.5 persist the block across crashes
         _alert_exit_critical(symbol, exit_qty, reason=reason)
         return
 
@@ -1200,8 +1175,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 
     # Check if trade is fully closed
     trade_done = not state.get("lot1_active") and not state.get("lot2_active")
-
-    # BUG-031: daily_pnl tracks POINTS per trade (matches dashboard/CSV).
     # Previous bug: used pnl * (qty/lot_size) which doubled the value for 2-lot exits.
     pnl_lots = pnl  # points per trade — one value per closed trade, matches trade log
 
@@ -1219,8 +1192,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_reason"] = reason
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
-            # BUG-N12: clear the LAB pinned strike so it returns to
-            # ATM-following mode.
             try:
                 D.clear_active_trade()
             except Exception:
@@ -1368,13 +1339,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 # ═══════════════════════════════════════════════════════════════
 
 def _is_new_1min_candle(now: datetime) -> bool:
-    # BUG-R v15.2.5 Batch 6: bumped from 30 → 35 seconds. Kite's
-    # historical_data endpoint occasionally reports the closed 1-min
-    # candle without the final trade(s) until ~32–34 seconds past the
-    # boundary, which caused rare stale-close reads. 35s gives a
-    # 5-second broker-side safety margin. Window still stays open for
-    # the remaining 24 seconds so a brief loop hiccup can't skip a
-    # minute.
     key = now.strftime("%Y%m%d%H%M")
     with _state_lock:
         if state.get("_last_1min_candle") != key and now.second >= 35:
@@ -1394,7 +1358,7 @@ def _is_new_1min_candle(now: datetime) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════
-#  Shadow CSV logger — REMOVED in v16.0 Batch 7 (BUG-Q9).
+#  Shadow CSV logger — REMOVED in v16.0 Batch 7.
 #  Historical shadow CSVs remain on disk in ~/lab_data/shadow_exits/.
 # ═══════════════════════════════════════════════════════════════
 
@@ -1892,8 +1856,6 @@ def _strategy_loop(kite):
 
             # v13.1: Auto-heal stale WebSocket (re-auth + reconnect)
             D.check_and_reconnect()
-
-            # BUG-030: Log warmup progress once per minute during warmup
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
                 if D.is_market_open() and not _wm_warm:
@@ -1944,9 +1906,6 @@ def _strategy_loop(kite):
                 _eod_done = state.get("_eod_reported")
             # v13.3: Save prev_close continuously from 15:25 onward — avoids
             # missing the 30-second EOD window if the loop is slow.
-            # BUG-H Batch 4: surface which source (WS vs REST) actually saved
-            # the value so operators can diagnose WebSocket stale-tick issues
-            # from the log without needing a broker replay.
             if now.hour == 15 and now.minute >= 25:
                 try:
                     _saved_via = ""
@@ -1993,11 +1952,6 @@ def _strategy_loop(kite):
                         state["prev_close"] = round(_eod_spot, 1)
                         logger.info("[MAIN] prev_close saved: " + str(state["prev_close"]))
                     else:
-                        # BUG-H Batch 4: Telegram on total EOD save failure.
-                        # Without prev_close, tomorrow's gap-relock guard
-                        # can't fire — operators need to know tonight so
-                        # they can manually set state.prev_close or force
-                        # a relock at the 9:15 open.
                         logger.warning("[MAIN] prev_close NOT saved — both WS and REST returned 0")
                         try:
                             _tg_send(
@@ -2006,7 +1960,7 @@ def _strategy_loop(kite):
                                 "Tomorrow's gap-relock guard will be disabled.\n"
                                 "Manual fix option: set state.prev_close via restart"
                                 " + /status, or force relock after 9:15 open.",
-                                priority="critical",   # BUG-U: bypass flood
+                                priority="critical",   # bypass flood
                             )
                         except Exception:
                             pass
@@ -2015,7 +1969,7 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
-            # ── BUG-V v15.2.5 Batch 6: daily lab cleanup at 15:45+ IST ──
+            # ── daily lab cleanup at 15:45+ IST ──
             # Previously cleanup ran only at bot startup. A process that
             # stays up for a week accumulates 7 days of option_3min /
             # signal_scans growth with no trim. Run once per trading day
@@ -2057,19 +2011,14 @@ def _strategy_loop(kite):
                 _entry_px = state.get("entry_price", 0)
             if _force and _in_trade:
                 option_ltp = D.get_ltp(_token)
-                # BUG-027: use floor SL as minimum if LTP is stale/zero
                 _floor_sl = state.get("_static_floor_sl", 0)
                 _exit_px = option_ltp if option_ltp > 0 else max(_entry_px, _floor_sl)
-                # BUG-D fix: thread the pre-captured entry through so PNL is
-                # computed against the REAL entry — not a race-stale state read.
                 _execute_exit_v13(kite,
                                   {"lots": "ALL", "lot_id": "ALL",
                                    "reason": "FORCE_EXIT", "price": _exit_px},
                                   saved_entry_price=_entry_px)
                 time.sleep(1)
                 continue
-
-            # BUG-N5 v15.2.5: unconditionally mark EOD at 15:30+ BEFORE
             # the in_trade block. Old code only set _eod_exited inside
             # the in_trade force-exit path, so days with no trade at
             # close left the flag at None / False in state.json.
@@ -2215,8 +2164,6 @@ def _strategy_loop(kite):
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
                                       "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
                                       "price": option_ltp}]
-
-                    # BUG-028: catch-all EOD exit at 15:30+ if cutoff above was missed
                     if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
                         if not state.get("_eod_exited"):
                             logger.warning("[MAIN] 15:30 catch-all — forcing exit on open trade")
@@ -2515,9 +2462,6 @@ def _strategy_loop(kite):
                 if best_result and best_opt_info:
                     _execute_entry(kite, best_opt_info, best_type,
                                    best_result, profile, expiry, dte, session)
-                    # BUG-N3: mark that this scan became a real trade.
-                    # VRL_LAB's next scan row will read the flag via
-                    # D.consume_trade_taken() and set trade_taken=1.
                     if state.get("in_trade"):
                         D.mark_trade_taken(best_type)
 
@@ -2639,11 +2583,7 @@ def _shutdown(signum, frame):
     logger.info("[MAIN] Shutdown signal received")
     _running = False
     _stop_telegram_listener()
-    # BUG-028: warn if shutting down with open trade
-    # fix(BUG-C-tail): also Telegram the operator. Uses _tg_send_sync
-    # (blocking) rather than _tg_send (async) so the message actually
-    # fires before sys.exit(0). BUG-U's CRITICAL flood-control bypass
-    # is not implemented yet; direct sync send is the specified fallback.
+    # Warn if shutting down with open trade
     if state.get("in_trade"):
         _sym   = state.get("symbol", "?")
         _entry = round(state.get("entry_price", 0), 2)
@@ -2653,12 +2593,14 @@ def _shutdown(signum, frame):
                        + " entry=" + str(_entry)
                        + " peak=" + str(_pk) + ")")
         try:
-            _tg_send_sync(
+            _tg_send(
                 "⚠️ VRL SHUTDOWN with open position: " + _sym
                 + " entry=" + str(_entry)
                 + " peak=" + str(_pk),
-                priority="critical",   # BUG-U: bypass flood on shutdown
+                priority="critical",
             )
+            # Give the daemon thread a moment to deliver before sys.exit
+            time.sleep(1.5)
         except Exception as _tge:
             # Shutdown path: network may already be down. Swallow —
             # the log line above is the fallback signal.
@@ -2681,8 +2623,6 @@ def main():
     _write_pid()
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
-
-    # BUG-029 Task 2: Explicit token freshness check on startup
     # get_kite() already auto-refreshes but we want loud logging + Telegram alert
     try:
         import json as _j
@@ -2768,8 +2708,6 @@ def main():
 
     _load_state()
     _reconcile_positions(kite)
-
-    # BUG-028: Clear phantom trade state if bot starts outside market hours
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
         _tg_send("⚠️ Phantom trade detected on startup — state cleared\n"
@@ -2798,8 +2736,6 @@ def main():
         D.cleanup_old_lab_data()
     except Exception as e:
         logger.warning("[MAIN] Lab cleanup failed: " + str(e))
-
-    # BUG-DL3 v15.2.5: log directory audit — one INFO line per category
     # present, one WARNING per missing dir. Helps the operator see at a
     # glance what `/download` will actually find on disk.
     try:
@@ -2869,8 +2805,6 @@ def main():
             logger.info("[MAIN] No trades found for today — starting fresh")
     except Exception as e:
         logger.warning("[MAIN] Trade log restore failed: " + str(e))
-
-    # BUG-020: Sync CSV trades into DB on startup (backfill after DB rebuild)
     try:
         import csv as _sync_csv
         import VRL_DB as _sync_db

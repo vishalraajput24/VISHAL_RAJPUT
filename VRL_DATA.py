@@ -58,7 +58,7 @@ ZONES_LOG_DIR    = os.path.join(LOGS_DIR, "zones")
 ML_LOG_DIR       = os.path.join(LOGS_DIR, "ml")
 ERROR_LOG_DIR    = os.path.join(LOGS_DIR, "errors")
 # STATE_DIR lives next to the code (inside the repo) so AUTH and MAIN
-# always agree on the token location. BUG-015.
+# always agree on the token location..
 STATE_DIR        = os.path.join(REPO_DIR, "state")
 LAB_DIR          = os.path.join(BASE_DIR, "lab_data")
 BACKUP_DIR       = os.path.join(BASE_DIR, "backups")
@@ -121,7 +121,6 @@ STATE_PERSIST_FIELDS = [
     "entry_band_position", "entry_body_pct",
     "current_ema9_high", "current_ema9_low", "last_band_check_ts",
     "other_token",
-    # BUG-V sentinel: daily lab cleanup date guard
     "_last_cleanup_date",
     # Pre-entry alert toggle
     "pre_entry_alerts_enabled",
@@ -134,8 +133,6 @@ STATE_PERSIST_FIELDS = [
     "daily_pnl",
     # Bot control
     "paused", "prev_close",
-    # BUG-A: persist _exit_failed so a crash mid-manual-resolution
-    # doesn't silently clear the block on restart
     "_exit_failed",
     # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
     "lot1_active", "lot2_active", "lots_split",
@@ -205,7 +202,7 @@ def setup_logger(name: str, log_file: str, level=logging.DEBUG) -> logging.Logge
 
 
 def audit_log_paths() -> dict:
-    """v15.2.5 BUG-DL3: one-shot report of which log directories exist.
+    """v15.2.5 one-shot report of which log directories exist.
 
     Called once from VRL_MAIN startup. Does NOT create anything —
     just inspects disk state so the operator can see at a glance
@@ -376,7 +373,7 @@ _ws_reconnect_attempts = 0
 _ws_reconnect_delay = 1
 _ws_max_delay = 60
 
-# ── BUG-N1 v15.2.5: auth-rejection backoff ───────────────────
+# ── auth-rejection backoff ───────────────────
 # When Kite's nightly 03:30 session invalidation kills the token,
 # every historical_data / quote / LTP call raises "Incorrect
 # api_key or access_token". Without a guard, the bot retries
@@ -401,7 +398,7 @@ def _set_auth_rejected():
         _auth_rejected = True
 
 
-# ── BUG-N3 v15.2.5: cross-module "trade was taken" signal ────
+# ── cross-module "trade was taken" signal ────
 # VRL_MAIN sets this after a successful entry; VRL_LAB reads it
 # when building the next signal_scans row and writes trade_taken=1.
 _trade_taken_lock = threading.Lock()
@@ -429,7 +426,7 @@ def consume_trade_taken(direction: str) -> bool:
     return False
 
 
-# ── BUG-N12 v15.2.5: active trade token for LAB persistence ──
+# ── active trade token for LAB persistence ──
 # VRL_MAIN sets this on entry; VRL_LAB reads it to ensure the
 # traded strike's candles are always written regardless of ATM drift.
 _active_trade_lock = threading.Lock()
@@ -651,15 +648,13 @@ def set_autoheal_callback(fn):
 
 def check_and_reconnect():
     """
-    v13.10 (BUG-029): Auto-heal stale WebSocket. If spot tick is 3+ min stale during
+    v13.10 (Auto-heal stale WebSocket. If spot tick is 3+ min stale during
     market hours, re-authenticate Kite and restart WebSocket. Rate limited to 1 per 10min.
     Called from strategy loop every cycle.
     """
     global _last_reconnect_attempt, _kite, _ticker
     if not is_market_open():
         return
-    # BUG-N2: if auth is known-rejected, auto-heal can't help — VRL_CONFIG
-    # must refresh the token first. Skip to avoid pointless reconnect.
     if _is_auth_rejected():
         return
     # Check if spot tick is stale (v13.10: tightened from 5min to 3min)
@@ -716,7 +711,6 @@ def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
         return ltp
-    # BUG-N1: skip REST fallback if auth is rejected
     if _is_auth_rejected():
         return 0.0
     if _kite is not None:
@@ -796,8 +790,6 @@ def _get_nfo_instruments(kite=None):
         _nfo_instruments = instruments
         _nfo_instruments_date = today
     return instruments
-
-# BUG-N8 v15.2.5: per-date cache for lot_size.
 # get_lot_size() called 28× per day via D.get_lot_size() — each call
 # invokes _get_nfo_instruments(kite) which returns thousands of rows.
 # Cache the result per date so only the FIRST call per day hits Kite.
@@ -882,7 +874,6 @@ def get_historical_data(token: int, interval: str, lookback: int,
     from_dt = min(candidate_from, min_from)
     to_dt   = datetime.now()
     raw   = None
-    # BUG-N1: skip entirely if auth is known-rejected (03:30 session kill).
     if _is_auth_rejected():
         return pd.DataFrame()
     for attempt in range(2):
@@ -1343,7 +1334,7 @@ def cleanup_old_lab_data(retention_days: int = None):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  BUG-R13: ensure_option_history() — single entry point for any
+#  ensure_option_history() — single entry point for any
 #  module that needs option candle history. Checks DB first, fetches
 #  from Kite API if insufficient. Never raises on network errors.
 # ═══════════════════════════════════════════════════════════════

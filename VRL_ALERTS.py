@@ -22,8 +22,6 @@ import VRL_DATA as D
 import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
-
-# BUG-L v15.2.5 Batch 5: dedicated lock for alert_history mutations.
 # Today VRL_MAIN already copies alert_history in/out under _state_lock,
 # so the state dict handed to detect_pre_entry_signals() is a private
 # snapshot. This lock makes the helpers safe ANYWAY — if a future
@@ -67,7 +65,7 @@ def _now_iso() -> str:
 def _rate_limited(state: dict, key: str, window_min: int) -> bool:
     """Returns True if the specific (strike, side, type) key fired within
     the last `window_min` minutes — caller should skip sending.
-    BUG-L: alert_history read protected by _alert_lock."""
+    alert_history read protected by _alert_lock."""
     with _alert_lock:
         hist = state.get("alert_history") or {}
         last = hist.get(key)
@@ -81,7 +79,7 @@ def _rate_limited(state: dict, key: str, window_min: int) -> bool:
 
 
 def _global_cap_exceeded(state: dict, cap_per_hour: int) -> bool:
-    """BUG-L: snapshot alert_history under _alert_lock before iterating
+    """snapshot alert_history under _alert_lock before iterating
     so we don't get RuntimeError: dictionary changed size during iteration
     if another thread is mutating it."""
     with _alert_lock:
@@ -98,7 +96,7 @@ def _global_cap_exceeded(state: dict, cap_per_hour: int) -> bool:
 
 
 def _record(state: dict, key: str):
-    """BUG-L: full read-modify-write of alert_history serialized under
+    """full read-modify-write of alert_history serialized under
     _alert_lock so two concurrent signals for different keys can't
     clobber each other's additions or each other's trim pass."""
     cutoff = datetime.now() - timedelta(hours=2)
@@ -317,12 +315,6 @@ def detect_pre_entry_signals(all_results: dict, state: dict,
         for code, cfg_key, fn in detectors:
             if not bool(types_on.get(cfg_key, True)):
                 continue
-            # BUG-P v15.2.5 Batch 6: isolate each detector. Individual
-            # detectors already have internal try/except but a future
-            # refactor might forget one, and an unhandled exception
-            # would abort the outer loop — killing every later detector
-            # for BOTH sides this tick. Wrap here too so the blast
-            # radius is exactly one (detector, side) pair.
             try:
                 sig = fn(side, strike, r, df)
             except Exception as _fe:
