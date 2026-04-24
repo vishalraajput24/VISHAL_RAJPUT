@@ -2522,13 +2522,7 @@ def _tg_handle_callback(callback: dict):
     if str(msg.get("chat", {}).get("id", "")) != str(D.TELEGRAM_CHAT_ID):
         return
     query_id = callback.get("id", "")
-    data     = callback.get("data", "")
-    if data.startswith("FB:"):
-        VRL_COMMANDS._handle_file_browser_callback(data, query_id)
-    elif data.startswith("DL:"):
-        VRL_COMMANDS._handle_download_callback(data, query_id)
-    else:
-        _tg_answer_callback(query_id, "Unknown action")
+    _tg_answer_callback(query_id, "Unknown action")
 
 def _tg_poll_loop():
     global _tg_offset, _tg_last_update_id
