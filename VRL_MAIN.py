@@ -997,13 +997,15 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         pass
 
     _ctx_lines = []
+    _ehs = int(float(entry_result.get("ema9_high_slope_5c", 0) or 0))
+    _els = int(float(entry_result.get("ema9_low_slope_5c", 0) or 0))
     _bstate = entry_result.get("bands_state", "")
     if _bstate == "RISING":
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  RISING OK")
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  RISING OK")
     elif _bstate == "FLAT":
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  FLAT WARN")
-    else:
-        _ctx_lines.append("Bands     +" + str(int(_ehs)) + " / +" + str(int(_els)) + "  OK")
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  FLAT WARN")
+    elif _bstate:
+        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  " + _bstate)
 
     _sinfo = entry_result.get("straddle_info", "") or ""
     _sd    = entry_result.get("straddle_delta")
@@ -2117,7 +2119,7 @@ def _strategy_loop(kite):
                                              + str(round(_r_sl, 1))
                                              + " (" + str(_dist_r) + "pts away)")
                                 else:
-                                    _init_sl = round(_entry_px - 12, 1)
+                                    _init_sl = round(_entry_px - 10, 1)
                                     _tg_send("📈 <b>+" + str(_m) + "pts</b>"
                                              + " | Initial SL Rs" + str(_init_sl))
                                 break
@@ -2129,7 +2131,7 @@ def _strategy_loop(kite):
                             logger.warning("[MAIN] 15:25 SAFETY — forcing exit before broker square-off")
                             _tg_send("⚠️ <b>15:25 SAFETY EXIT</b>\nClosing before broker auto square-off")
                         exit_list = [{"lots": "ALL", "lot_id": "ALL",
-                                      "reason": "EOD_SAFETY" if not D.PAPER_MODE else "MARKET_CLOSE",
+                                      "reason": "EOD_EXIT" if not D.PAPER_MODE else "MARKET_CLOSE",
                                       "price": option_ltp}]
                     if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
                         if not state.get("_eod_exited"):
