@@ -198,8 +198,8 @@ def place_exit(kite, symbol: str, token: int,
             "error": "", "slippage": 0,
         }
 
-    # STALE_ENTRY: try LIMIT first (not urgent), fallback to MARKET
-    use_limit_first = reason in ("STALE_ENTRY",)
+    # No current exit reasons use LIMIT-first; all exits are urgent MARKET.
+    use_limit_first = False
 
     for attempt in range(2):
         try:

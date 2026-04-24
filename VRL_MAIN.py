@@ -947,9 +947,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_last_milestone"]    = 0
         # v15.0 entry context — band values at entry
         state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
-        # v16.4: Stage 2 confirmation tracking
-        state["_ema9h_confirmed"]   = bool(entry_result.get("ema9h_confirmed", False))
-        state["_confirm_candles"]   = 0  # counts candles since entry for 3-candle window
         state["entry_ema9_high"]    = round(float(entry_result.get("ema9_high", 0)), 2)
         state["entry_ema9_low"]     = round(float(entry_result.get("ema9_low", 0)), 2)
         state["entry_band_position"] = entry_result.get("band_position", "ABOVE")
@@ -1268,14 +1265,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
 
         _reason_line = ""
         _tier = state.get("active_ratchet_tier", "") or "INITIAL"
-        if reason == "VELOCITY_STALL":
-            _reason_line = "Last peaks: " + str(_ph[-4:]) + "\n"
-        elif reason == "VISHAL_TRAIL":
+        if reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
-        elif reason == "PROFIT_RATCHET":       # historical / legacy
-            _reason_line = "Ratchet " + _tier + " triggered\n"
-        elif reason == "EMA1M_BREAK":           # historical (v16.2 removed)
-            _reason_line = "1-min EMA9 close break\n"
         # capture percentage (v16.2 display)
         _capture_line = ""
         try:
@@ -2129,37 +2120,8 @@ def _strategy_loop(kite):
                                 except Exception as _ue:
                                     logger.debug("[MAIN] 3m upgrade: " + str(_ue))
 
-                    exit_list = []
-
-                    # v16.4: Stage 2 confirmation monitor — if ema9h not confirmed
-                    # at entry, watch for 9 minutes (3 real 3-min candles).
-                    # If confirmed → trail runs. If 9 min pass → cut position.
-                    if state.get("in_trade") and not state.get("_ema9h_confirmed"):
-                        _cur_ema9h = float(state.get("current_ema9_high", 0) or 0)
-                        if option_ltp > _cur_ema9h and _cur_ema9h > 0:
-                            state["_ema9h_confirmed"] = True
-                            logger.info("[MAIN] Stage 2 CONFIRMED — close > ema9h "
-                                        + str(round(_cur_ema9h, 1)))
-                            _tg_send("✅ <b>STAGE 2 CONFIRMED</b>\n"
-                                     "Premium broke EMA9-HIGH — trail active")
-                        else:
-                            try:
-                                _ent_dt = datetime.fromisoformat(state.get("entry_time", ""))
-                                _elapsed = (datetime.now() - _ent_dt).total_seconds() / 60
-                            except Exception:
-                                _elapsed = 0
-                            if _elapsed >= 9:
-                                logger.info("[MAIN] Stage 2 FAILED — 9 min, no ema9h break. Exiting.")
-                                _tg_send("⚠️ <b>STAGE 2 FAILED</b>\n"
-                                         "9 min, no EMA9-HIGH break — cutting position")
-                                exit_list = [{"lot_id": "ALL",
-                                              "reason": "STAGE2_UNCONFIRMED",
-                                              "price": option_ltp}]
-
-                    # v13.0: manage_exit returns list of exit dicts
-                    if not exit_list:
-                        _mex_other_tok = state.get("other_token", 0)
-                        exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
+                    _mex_other_tok = state.get("other_token", 0)
+                    exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
                     # v16.2: trail tier upgrade alert (was v16.0 ratchet)
                     try:
