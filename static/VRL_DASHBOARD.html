@@ -141,8 +141,91 @@ body{
   vertical-align:middle;
 }
 
-.ref{text-align:center;padding:8px;font-size:9px;color:var(--tx3);font-weight:500}
-.rd2{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gn);margin-right:4px;animation:lp 2s infinite}
+/* ── POSITION CARD (Part 4) ────────────────── */
+.pos2{
+  margin:14px 12px;border-radius:22px;padding:18px 16px;
+  background:var(--card);color:var(--ctx);
+  border:1px solid rgba(255,255,255,0.55);
+  box-shadow:var(--sh-lg);
+  position:relative;overflow:hidden;
+  animation:slideup 0.4s ease;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+.pos2::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:5px;border-radius:22px 22px 0 0;
+}
+.pos2.up::before{background:linear-gradient(90deg,var(--gn2),var(--gn),var(--gn2))}
+.pos2.dn::before{background:linear-gradient(90deg,var(--rd2),var(--rd),var(--rd2))}
+.pos2.up{box-shadow:var(--sh-gn),var(--sh-lg)}
+.pos2.dn{box-shadow:var(--sh-rd),var(--sh-lg)}
+.pos2-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.pos2-sym{font-size:15px;font-weight:900;letter-spacing:0.3px;display:flex;align-items:center;gap:8px;color:var(--ctx)}
+.pos2-emj{font-size:18px;line-height:1}
+.pos2-bdg{
+  font-size:8.5px;font-weight:800;letter-spacing:0.7px;
+  padding:4px 10px;border-radius:12px;color:#fff;
+  background:linear-gradient(135deg,#fbbf24,#f59e0b);
+  box-shadow:0 3px 10px rgba(251,191,36,0.35);
+}
+.pos2-pnl{font-size:46px;font-weight:900;letter-spacing:-2px;line-height:1;font-feature-settings:"tnum"}
+.pos2-pnl.up{color:var(--gn2)}.pos2-pnl.dn{color:var(--rd)}
+.pos2-pnl small{font-size:18px;font-weight:800;margin-left:4px;letter-spacing:-0.5px}
+.pos2-rs{font-size:15px;color:var(--ctx2);font-weight:700;margin-top:2px}
+.pos2-meta{
+  margin-top:12px;padding:10px 12px;
+  background:rgba(15,23,42,0.04);border:1px solid var(--cbd);
+  border-radius:12px;font-size:11px;color:var(--ctx2);font-weight:600;
+  line-height:1.6;
+}
+.pos2-meta b{color:var(--ctx);font-weight:800;font-family:'JetBrains Mono',monospace}
+.pos2-meta .arr{color:var(--ctx3);margin:0 4px;font-weight:400}
+.pos2-meta .sub{display:block;margin-top:3px;color:var(--ctx3);font-size:10px;font-weight:600}
+
+/* Smart Trail v2+ Ladder */
+.trail-card{
+  margin-top:14px;border-radius:14px;overflow:hidden;
+  border:1px solid var(--cbd2);background:rgba(15,23,42,0.03);
+}
+.trail-hd{
+  padding:9px 14px;display:flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,rgba(15,23,42,0.06),rgba(15,23,42,0.02));
+  border-bottom:1px solid var(--cbd);
+  font-size:10px;font-weight:800;letter-spacing:0.6px;color:var(--ctx);
+}
+.trail-hd .ico{font-size:13px;line-height:1}
+.trail-tbl{display:grid;grid-template-columns:auto 1fr auto;font-size:10.5px}
+.trail-row{display:contents}
+.trail-row > div{
+  padding:7px 12px;border-bottom:1px solid rgba(15,23,42,0.05);
+  display:flex;align-items:center;color:var(--ctx2);
+}
+.trail-row:last-child > div{border-bottom:none}
+.trail-row .tn{font-weight:800;color:var(--ctx);gap:5px}
+.trail-row .tp{font-family:'JetBrains Mono',monospace;color:var(--ctx3);font-weight:700;justify-content:center}
+.trail-row .ts{font-family:'JetBrains Mono',monospace;color:var(--ctx2);font-weight:700;justify-content:flex-end}
+.trail-row.active > div{
+  background:linear-gradient(135deg,rgba(16,185,129,0.18),rgba(16,185,129,0.10));
+  color:var(--gn2);
+}
+.trail-row.active .tn{color:var(--gn2)}
+.trail-row.active .ts::after{content:' ◀';color:var(--gn2);font-weight:900;margin-left:6px}
+.trail-row.passed > div{opacity:0.50}
+
+.trail-sl{
+  margin-top:10px;padding:11px 14px;
+  background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.04));
+  border:1px solid rgba(16,185,129,0.30);border-radius:12px;
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:11px;color:var(--ctx);font-weight:700;
+  flex-wrap:wrap;gap:6px;
+}
+.trail-sl b{font-family:'JetBrains Mono',monospace;color:var(--gn2);font-weight:800}
+.trail-sl .sep{color:var(--ctx4);margin:0 2px}
+.trail-sl.dn{
+  background:linear-gradient(135deg,rgba(239,68,68,0.10),rgba(239,68,68,0.04));
+  border-color:rgba(239,68,68,0.30);
+}
+.trail-sl.dn b{color:var(--rd)}
 
 .sg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 12px}
 .sc{border-radius:18px;overflow:hidden;background:var(--white);border:1px solid var(--bd);box-shadow:var(--sh);transition:all 0.3s}
@@ -368,109 +451,87 @@ document.getElementById('st-status').innerHTML=
   '<span style="color:var(--ctx2);font-weight:800">'+_stText+'</span>'+
   (_stSub?'<br><span style="font-size:8.5px;color:var(--ctx3);font-weight:700">'+esc(_stSub)+'</span>':'');
 
-// Position card
+// Position card (Part 4) — Smart Trail v2+ tier ladder
 var pa='';
 if(pos.in_trade){
-  var sym=shortSym(pos.symbol,pos.direction,pos.strike);
-  var pnl=parseFloat(pos.pnl||0),pk=parseFloat(pos.peak||0);
-  var entry=parseFloat(pos.entry||0),ltp=parseFloat(pos.ltp||0);
+  var sym=(pos.direction||'')+' '+(pos.strike||'');
+  var pn=parseFloat(pos.pnl||0);
+  var pk=parseFloat(pos.peak||0);
+  var en=parseFloat(pos.entry||0);
+  var lt=parseFloat(pos.ltp||0);
   var cn=pos.candles||0;
-  // v16.0 Batch 7: both lots always exit together at the same SL, color-coded by direction
-  var prs=Math.round(pnl*65*2),pc=pnl>=0?'profit':'loss',nc=pnl>=0?'gn':'rd';
-  var sl=parseFloat(pos.stop||0);
-  if(sl<=0)sl=Math.round((entry-10)*100)/100;
-  var _dirTint=pos.direction==='CE'?'rgba(34,197,94,0.04)':'rgba(239,68,68,0.04)';
-  var _emoji=pos.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
-  pa+='<div class="pos '+pc+'" style="background:'+_dirTint+'">';
-  pa+='<div class="ph"><div class="ps">'+_emoji+' '+esc(sym)+' \u00B7 IN TRADE</div>';
-  pa+='</div>';
-  pa+='<div class="pp mono '+nc+'">'+fmt(pnl)+'<span style="font-size:16px;font-weight:700">pts</span></div>';
-  pa+='<div class="pr mono">\u20B9'+prs.toLocaleString('en-IN')+'</div>';
-  pa+='<div class="pe">Entry \u20B9'+entry+' \u2192 \u20B9'+ltp+' \u00B7 '+cn+' candles</div>';
-  // v16.0 Batch 7 BUG-Q15: single combined position row — ratchet is the active stop
-  pa+='<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;margin-top:12px">'
-    + '<div><div style="font-size:9px;color:var(--tx3)">POSITION</div>'
-    + '<div style="font-size:13px;font-weight:700">2 lots \u00B7 130 qty</div></div>'
-    + '<div style="text-align:right"><div style="font-size:9px;color:var(--tx3)">INITIAL SL</div>'
-    + '<div class="mono" style="font-size:13px;font-weight:700">\u20B9'+sl.toFixed(1)+'</div></div>'
-    + '</div>';
-  // v16.2: Vishal Trail tier display + EMA9 band context
-  var _cur_el=parseFloat(pos.current_ema9_low||0);
-  var _cur_eh=parseFloat(pos.current_ema9_high||0);
-  var _trail_tier=pos.active_ratchet_tier||pos.trail_tier||'';
-  var _trail_sl=parseFloat(pos.active_ratchet_sl||pos.trail_sl||0);
-  var _dist_rsl=_trail_sl>0?(ltp-_trail_sl):0;
-  pa+='<div class="rb"><div class="rl"><span>EMA9 band \u20B9'+_cur_el.toFixed(1)+' — \u20B9'+_cur_eh.toFixed(1)+'</span><span style="color:var(--rd)">\u20B9'+_cur_eh.toFixed(1)+'\u2191</span></div>';
-  var _band_range=Math.max(1,_cur_eh-_cur_el);
-  var _price_pct=_cur_el>0?Math.min(100,Math.max(0,((ltp-_cur_el)/_band_range)*100)):50;
-  pa+='<div class="rt" style="background:linear-gradient(90deg,var(--rd-bg),var(--gn-bg))"><div class="rf" style="width:'+_price_pct+'%;background:'+(ltp>_cur_eh?'var(--gn)':ltp<_cur_el?'var(--rd)':'var(--yl)')+'"></div></div></div>';
-  // Smart Trail v2+ tier badge — color + icon scale with tier strength
-  var _trail_color={'INITIAL':'var(--tx3)','BREAKEVEN':'var(--bl)','TRAIL_60':'var(--or2)','TRAIL_75':'var(--gn2)','VISHAL_MAX':'var(--gn)','TRAIL_90':'var(--gn)'}[_trail_tier]||'var(--tx3)';
-  var _trail_bg={'INITIAL':'var(--bg2)','BREAKEVEN':'var(--bl-bg)','TRAIL_60':'var(--or-bg)','TRAIL_75':'var(--gn-bg)','VISHAL_MAX':'var(--gn-bg)','TRAIL_90':'var(--gn-bg)'}[_trail_tier]||'var(--bg2)';
-  var _trail_icon={'BREAKEVEN':'🛡️','TRAIL_60':'🔒','TRAIL_75':'🔒🔒','VISHAL_MAX':'🔒🔒','TRAIL_90':'🔒🔒🔒'}[_trail_tier]||'🔒';
-  if(_trail_tier && _trail_tier!=='INITIAL' && _trail_tier!=='None'){
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:'+_trail_bg+';border:1px solid var(--bd);color:'+_trail_color+';font-size:10px;font-weight:800;text-align:center">'+_trail_icon+' '+esc(_trail_tier)+' @ \u20B9'+_trail_sl.toFixed(1)+' ('+(_dist_rsl>=0?'+':'')+_dist_rsl.toFixed(1)+'pts away)</div>';
-  }else{
-    pa+='<div style="margin-top:8px;padding:6px 12px;border-radius:8px;background:var(--bg2);color:var(--tx3);font-size:9px;text-align:center">INITIAL \u00B7 peak '+fmt(pk)+' \u00B7 BE at +5 \u00B7 trail arms at +8</div>';
+  var et=pos.entry_time||'';
+  var prs=Math.round(pn*65*2);
+  var emj=pos.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
+  var clsUp=pn>=0?'up':'dn';
+
+  pa+='<div class="pos2 '+clsUp+'">';
+  pa+='<div class="pos2-hd">'+
+        '<div class="pos2-sym"><span class="pos2-emj">'+emj+'</span>'+esc(sym)+'</div>'+
+        '<span class="pos2-bdg">IN TRADE</span>'+
+      '</div>';
+
+  pa+='<div class="pos2-pnl '+clsUp+' mono">'+(pn>=0?'+':'')+pn.toFixed(1)+'<small>pts</small></div>';
+  pa+='<div class="pos2-rs mono">'+(prs>=0?'\u20B9':'-\u20B9')+Math.abs(prs).toLocaleString('en-IN')+'</div>';
+
+  pa+='<div class="pos2-meta">'+
+        'Entry <b>\u20B9'+en.toFixed(2)+'</b><span class="arr">\u2192</span>'+
+        '<b>\u20B9'+lt.toFixed(2)+'</b><span class="arr">\u00B7</span>'+
+        'Peak <b>+'+pk.toFixed(1)+'</b>'+
+        '<span class="sub">Hold <b>'+cn+'</b> candles \u00B7 since '+esc(et)+'</span>'+
+      '</div>';
+
+  // Smart Trail v2+ tiers
+  var tiers=[
+    {k:'INITIAL',   icon:'',          range:'<5',    sl:'entry-10',  min:0,  max:5},
+    {k:'BREAKEVEN', icon:'\uD83D\uDEE1\uFE0F', range:'5-8',  sl:'entry',     min:5,  max:8},
+    {k:'TRAIL_60',  icon:'\uD83D\uDD12',     range:'8-15', sl:'+60% peak', min:8,  max:15},
+    {k:'TRAIL_75',  icon:'\uD83D\uDD12\uD83D\uDD12', range:'15-30',sl:'+75% peak', min:15, max:30},
+    {k:'VISHAL_MAX',icon:'\uD83D\uDD12\uD83D\uDD12', range:'30-45',sl:'+85% peak', min:30, max:45},
+    {k:'TRAIL_90',  icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'45+',  sl:'+90% peak', min:45, max:9999},
+  ];
+  var curTier=String(pos.active_ratchet_tier||pos.trail_tier||'').toUpperCase();
+  // Fallback: derive from peak if engine hasn't populated yet
+  if(!curTier||curTier==='NONE'){
+    for(var ti=tiers.length-1;ti>=0;ti--){if(pk>=tiers[ti].min){curTier=tiers[ti].k;break}}
+    if(!curTier)curTier='INITIAL';
   }
-  // Backbone indicator (v16.2)
-  var _backbone=pos.backbone_status||'';
-  if(false && _backbone){  // hidden: always N/A in Golden 4
-    var _bb_color=_backbone==='CONFIRMED'?'var(--gn2)':(_backbone==='MISMATCH'?'var(--rd)':'var(--tx3)');
-    var _bb_icon=_backbone==='CONFIRMED'?'\u2705':(_backbone==='MISMATCH'?'\u274C':'\u26AA');
-    pa+='<div style="margin-top:6px;padding:4px 10px;border-radius:6px;background:var(--bg2);color:'+_bb_color+';font-size:9px;text-align:center;font-weight:700">'+_bb_icon+' BACKBONE '+_backbone+'</div>';
+
+  var rows='';
+  var hitActive=false;
+  for(var ti=0;ti<tiers.length;ti++){
+    var T=tiers[ti];
+    var isActive=(T.k===curTier);
+    var isPassed=(!isActive&&!hitActive);
+    if(isActive)hitActive=true;
+    else if(hitActive)isPassed=false;
+    var cls=isActive?'active':(isPassed?'passed':'');
+    rows+='<div class="trail-row '+cls+'">'+
+            '<div class="tn">'+(T.icon?'<span>'+T.icon+'</span>':'')+T.k+'</div>'+
+            '<div class="tp">peak '+T.range+'</div>'+
+            '<div class="ts">'+T.sl+'</div>'+
+          '</div>';
   }
-  // v16.0 Batch 7 BUG-Q12: Context row (bands + straddle + VWAP display)
-  var _bs   = pos.current_bands_state || pos.entry_bands_state || '';
-  var _ehs  = parseFloat(pos.current_ema9_high_slope || pos.ema9_high_slope_5c || 0);
-  var _els  = parseFloat(pos.current_ema9_low_slope  || pos.ema9_low_slope_5c  || 0);
-  var _si   = pos.entry_straddle_info || '';
-  var _sd   = parseFloat(pos.entry_straddle_delta || 0);
-  var _vb   = pos.entry_vwap_bonus || '';
-  var _svv  = parseFloat(pos.entry_spot_vs_vwap || 0);
-  var _ctag = pos.entry_context_tag || '';
-  var _ctx_html = '<div style="margin-top:14px;padding:12px;border-radius:10px;background:var(--bg);border:1px solid var(--bd)">';
-  if(_ctag==='TRIPLE_CONFLUENCE'){_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--gn);margin-bottom:8px">\u2713 TRIPLE CONFLUENCE</div>';}
-  else if(_ctag==='MIXED_SIGNALS'){_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--am);margin-bottom:8px">\u26A0 MIXED SIGNALS</div>';}
-  else{_ctx_html+='<div style="font-size:10px;font-weight:800;color:var(--tx3);margin-bottom:8px">CONTEXT</div>';}
-  if(_bs){
-    var _bc=_bs==='RISING'?'var(--gn)':_bs==='FLAT'?'var(--rd)':'var(--am)';
-    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">Bands</span>'
-      +'<span style="color:var(--tx);font-weight:700">+'+_ehs.toFixed(0)+' / +'+_els.toFixed(0)+'</span>'
-      +'<span style="color:'+_bc+';font-weight:700;margin-left:8px">'+_bs+'</span></div>';
-  }
-  if(_si&&_si!=='NA'){
-    var _ic=_si==='STRONG'?'var(--gn)':_si==='WEAK'?'var(--rd)':'var(--am)';
-    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">Straddle</span>'
-      +'<span style="color:var(--tx);font-weight:700">\u0394'+(_sd>=0?'+':'')+_sd.toFixed(1)+'</span>'
-      +'<span style="color:'+_ic+';font-weight:700;margin-left:8px">'+_si+'</span></div>';
-  }
-  if(_vb){
-    var _vc=_vb.indexOf('CONFLUENCE')>=0?'var(--gn)':_vb.indexOf('DIVERGENCE')>=0?'var(--rd)':'var(--am)';
-    _ctx_html+='<div style="font-size:11px;margin:3px 0"><span style="color:var(--tx3);min-width:68px;display:inline-block">VWAP</span>'
-      +'<span style="color:var(--tx);font-weight:700">spot '+(_svv>=0?'+':'')+_svv.toFixed(0)+'</span>'
-      +'<span style="color:'+_vc+';font-weight:700;margin-left:8px">'+_vb+'</span></div>';
-  }
-  _ctx_html+='</div>';
-  pa+=_ctx_html;
-  // v15.2.5 velocity indicator — smoothed 3-candle growth rate + sparkline
-  var _vel=parseFloat(pos.current_velocity||0);
-  var _ph=(pos.peak_history||[]);
-  var _vel_clr=_vel>0?'var(--gn2)':(_vel<0?'var(--rd)':'var(--yl)');
-  var _vel_lbl=_vel>0?'\u2713':(_vel<0?'stalled':'0 (warning)');
-  var _spark='';
-  if(_ph.length){
-    var _min=Math.min.apply(null,_ph),_max=Math.max.apply(null,_ph),_rng=Math.max(1,_max-_min);
-    _ph.forEach(function(p){
-      var _h=Math.max(4,Math.round(((p-_min)/_rng)*20)+4);
-      _spark+='<span style="display:inline-block;width:8px;height:'+_h+'px;margin:0 1px;background:'+_vel_clr+';vertical-align:bottom;border-radius:1px"></span>';
-    });
-  }
-  pa+='<div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:var(--bg2);font-size:10px;display:flex;justify-content:space-between;align-items:center">'
-    + '<span>Velocity: <b style="color:'+_vel_clr+'">'+(_vel>=0?'+':'')+_vel.toFixed(2)+' pts/candle '+_vel_lbl+'</b></span>'
-    + '<span style="line-height:24px">'+_spark+'</span>'
-    + '</div>';
-  pa+='<div class="pm"><span>Peak: <b>'+fmt(pk)+'</b></span><span>Candles: <b>'+cn+'</b></span></div>';
+
+  pa+='<div class="trail-card">'+
+        '<div class="trail-hd"><span class="ico">\uD83D\uDD12</span>SMART TRAIL v2+</div>'+
+        '<div class="trail-tbl">'+rows+'</div>'+
+      '</div>';
+
+  // SL / Lock / Room line
+  var sl=parseFloat(pos.active_ratchet_sl||pos.trail_sl||pos.stop||0);
+  if(sl<=0)sl=Math.round((en-10)*100)/100;
+  var lock=Math.round((sl-en)*10)/10;
+  var room=lt>0?Math.round((lt-sl)*10)/10:0;
+  var slDn=lock<0;
+  pa+='<div class="trail-sl '+(slDn?'dn':'')+'">'+
+        '<span>SL <b>\u20B9'+sl.toFixed(2)+'</b></span>'+
+        '<span class="sep">\u00B7</span>'+
+        '<span>Lock <b>'+(lock>=0?'+':'')+lock.toFixed(1)+'</b></span>'+
+        '<span class="sep">\u00B7</span>'+
+        '<span>Room <b>'+(room>=0?'+':'')+room.toFixed(1)+'</b></span>'+
+      '</div>';
+
   pa+='</div>';
 }
 document.getElementById('pos-area').innerHTML=pa;
