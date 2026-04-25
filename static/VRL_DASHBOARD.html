@@ -299,6 +299,56 @@ body{
 .sig-vd.reject{color:var(--rd);background:var(--rd-bg)}
 .sig-vd.cool{color:var(--or2);background:var(--or-bg)}
 
+/* ── MARKET TAB (Part 6) ───────────────────── */
+.mkt-blk{
+  background:var(--card);color:var(--ctx);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:18px;margin:12px;overflow:hidden;
+  box-shadow:var(--sh);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  animation:slideup 0.5s ease;
+}
+.mkt-hd{
+  padding:10px 14px;display:flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,rgba(15,23,42,0.06),rgba(15,23,42,0.02));
+  border-bottom:1px solid var(--cbd);
+  font-size:10.5px;font-weight:800;letter-spacing:0.6px;color:var(--ctx);
+}
+.mkt-hd .ico{font-size:14px;line-height:1}
+.mkt-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 14px;font-size:11.5px;
+  border-bottom:1px solid rgba(15,23,42,0.04);
+}
+.mkt-row:last-child{border-bottom:none}
+.mkt-row .k{color:var(--ctx2);font-weight:600}
+.mkt-row .v{font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--ctx);display:flex;align-items:center;gap:8px}
+.mkt-row .v.up{color:var(--gn2)} .mkt-row .v.dn{color:var(--rd)} .mkt-row .v.warn{color:var(--yl2)}
+.mkt-tag{
+  font-size:9px;font-weight:700;letter-spacing:0.4px;
+  padding:2px 7px;border-radius:8px;
+  background:rgba(15,23,42,0.06);color:var(--ctx3);
+}
+.mkt-tag.up{background:var(--gn-bg);color:var(--gn2)}
+.mkt-tag.dn{background:var(--rd-bg);color:var(--rd)}
+.mkt-tag.warn{background:var(--yl-bg);color:var(--yl2)}
+.mkt-tbl{display:grid;font-size:11px;width:100%}
+.mkt-tbl.cols4{grid-template-columns:60px 1fr 1fr 1fr}
+.mkt-tbl.cols3{grid-template-columns:60px 1fr 1fr}
+.mkt-tbl > div{
+  padding:7px 12px;border-bottom:1px solid rgba(15,23,42,0.05);
+  display:flex;align-items:center;
+}
+.mkt-tbl > div.hdr{
+  font-size:9px;color:var(--ctx3);font-weight:800;
+  text-transform:uppercase;letter-spacing:0.6px;
+  background:rgba(15,23,42,0.04);
+  border-bottom:2px solid var(--cbd2);
+}
+.mkt-tbl .tf{font-weight:800;color:var(--ctx);font-family:'JetBrains Mono',monospace;font-size:11px}
+.mkt-tbl .num{font-family:'JetBrains Mono',monospace;font-weight:700;justify-content:flex-end}
+.mkt-tbl .num.up{color:var(--gn2)} .mkt-tbl .num.dn{color:var(--rd)} .mkt-tbl .num.muted{color:var(--ctx4);font-weight:600}
+
 .sg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 12px}
 .sc{border-radius:18px;overflow:hidden;background:var(--white);border:1px solid var(--bd);box-shadow:var(--sh);transition:all 0.3s}
 .sc.fired{border-color:var(--gn-bd);box-shadow:0 0 0 3px rgba(16,185,129,0.12),var(--sh-gn)}
@@ -709,39 +759,98 @@ sh+='<div class="sig-grid">';
 sh+='</div>';
 document.getElementById('p-sig').innerHTML=sh;
 
-// Market
+// Market (Part 6) — Spot block + Multi-TF + Options table
 var mh='';
-mh+='<div class="ms2"><div class="mh">\uD83D\uDCC8 Spot</div>';
-mh+='<div class="mw"><span class="mk2">Price</span><span class="mv2 mono">'+mk.spot+'</span></div>';
-var spc=parseFloat(mk.spot_ema9||0)>parseFloat(mk.spot_ema21||0)?'color:var(--gn)':'color:var(--rd)';
-mh+='<div class="mw"><span class="mk2">EMA9</span><span class="mv2 mono" style="'+spc+'">'+Number(mk.spot_ema9||0).toFixed(1)+'</span></div>';
-mh+='<div class="mw"><span class="mk2">EMA21</span><span class="mv2 mono">'+Number(mk.spot_ema21||0).toFixed(1)+'</span></div>';
-var sprc=parseFloat(mk.spot_spread||0)>0?'color:var(--gn)':'color:var(--rd)';
-mh+='<div class="mw"><span class="mk2">Spread</span><span class="mv2 mono" style="'+sprc+'">'+Number(mk.spot_spread||0).toFixed(1)+'</span></div>';
-mh+='<div class="mw"><span class="mk2">RSI 3m</span><span class="mv2 mono">'+Number(mk.spot_rsi||0).toFixed(1)+'</span></div>';
-mh+='<div class="mw"><span class="mk2">Hourly RSI</span><span class="mv2 mono">'+Number(mk.hourly_rsi||0).toFixed(1)+'</span></div>';
-var gc=parseFloat(mk.gap||0)>0?'color:var(--gn)':'color:var(--rd)';
-mh+='<div class="mw"><span class="mk2">Gap</span><span class="mv2 mono" style="'+gc+'">'+(parseFloat(mk.gap||0)>0?'+':'')+Number(mk.gap||0).toFixed(0)+'pts</span></div>';
-mh+='</div>';
 
-// Multi-TF
-if(mtf&&(mtf.spot&&mtf.spot.length||mtf.ce&&mtf.ce.length)){
-  mh+='<div class="ms2"><div class="mh">\uD83D\uDD0D Multi-TF</div>';
-  var tfs=mtf.spot||[];
-  tfs.forEach(function(r){
-    mh+='<div class="mw"><span class="mk2">'+esc(r.tf||'')+'</span><span class="mv2 mono" style="color:'+(parseFloat(r.spread||0)>0?'var(--gn)':'var(--rd)')+'">'+Number(r.spread||0).toFixed(1)+' | RSI '+Number(r.rsi||0).toFixed(0)+'</span></div>';
-  });
-  mh+='</div>';
+// Helper: RSI label
+function rsiLab(r){
+  r=parseFloat(r||0);
+  if(r>=70)return {cls:'dn',tag:'overbought'};
+  if(r<=30)return {cls:'up',tag:'oversold'};
+  return {cls:'',tag:''};
 }
 
-// v15.2 Part 4: silent 1-min shadow strategy — one-line A/B comparison
-var _sh=d.shadow||{};
-var _shn=parseInt(_sh.trades||0),_shw=parseInt(_sh.wins||0);
-var _shp=parseFloat(_sh.pnl||0);
-var _shc=_shp>=0?'var(--gn)':'var(--rd)';
-mh+='<div class="ms2"><div class="mh">\uD83C\uDF17 Shadow 1-min (silent A/B)</div>';
-mh+='<div class="mw"><span class="mk2">Today</span><span class="mv2 mono" style="color:'+_shc+'">'+_shn+' trades \u00B7 '+_shw+'W \u00B7 '+fmt(_shp)+'pts</span></div>';
+// SPOT block
+var sp=parseFloat(mk.spot||0);
+var ema9=parseFloat(mk.spot_ema9||0);
+var ema21=parseFloat(mk.spot_ema21||0);
+var spread=parseFloat(mk.spot_spread||0);
+var rsi3m=parseFloat(mk.spot_rsi||0);
+var rsiH=parseFloat(mk.hourly_rsi||0);
+var gap=parseFloat(mk.gap||0);
+var bias=String(mk.bias||'').toUpperCase();
+var ema9_diff=ema9-sp;
+
+mh+='<div class="mkt-blk">';
+mh+='<div class="mkt-hd"><span class="ico">\uD83D\uDCC8</span>SPOT NIFTY</div>';
+mh+='<div class="mkt-row"><span class="k">Price</span><span class="v">'+sp.toFixed(2)+'</span></div>';
+var ema9Cls=ema9>sp?'up':(ema9<sp?'dn':'');
+mh+='<div class="mkt-row"><span class="k">EMA9</span><span class="v '+ema9Cls+'">'+ema9.toFixed(1)+(Math.abs(ema9_diff)>=0.1?' <span class="mkt-tag '+ema9Cls+'">'+(ema9_diff>=0?'+':'')+ema9_diff.toFixed(1)+'</span>':'')+'</span></div>';
+mh+='<div class="mkt-row"><span class="k">EMA21</span><span class="v">'+ema21.toFixed(1)+'</span></div>';
+var sprCls=spread>0?'up':(spread<0?'dn':'');
+var sprTag=spread>0?'rising':(spread<0?'falling':'flat');
+mh+='<div class="mkt-row"><span class="k">EMA Spread</span><span class="v '+sprCls+'">'+(spread>=0?'+':'')+spread.toFixed(1)+' <span class="mkt-tag '+sprCls+'">'+sprTag+'</span></span></div>';
+var r3=rsiLab(rsi3m);
+mh+='<div class="mkt-row"><span class="k">RSI 3m</span><span class="v '+r3.cls+'">'+rsi3m.toFixed(1)+(r3.tag?' <span class="mkt-tag '+r3.cls+'">'+r3.tag+'</span>':'')+'</span></div>';
+var rH=rsiLab(rsiH);
+mh+='<div class="mkt-row"><span class="k">Hourly RSI</span><span class="v '+rH.cls+'">'+rsiH.toFixed(1)+(rH.tag?' <span class="mkt-tag '+rH.cls+'">'+rH.tag+'</span>':'')+'</span></div>';
+if(Math.abs(gap)>0.5){
+  var gCls=gap>0?'up':'dn';
+  mh+='<div class="mkt-row"><span class="k">Day Gap</span><span class="v '+gCls+'">'+(gap>0?'+':'')+gap.toFixed(0)+' pts</span></div>';
+}
+if(bias){
+  var bCls=bias==='BULL'?'up':(bias==='BEAR'?'dn':'');
+  mh+='<div class="mkt-row"><span class="k">Bias</span><span class="v '+bCls+'">'+bias+'</span></div>';
+}
 mh+='</div>';
+
+// SPOT MULTI-TF
+var tfs=(mtf&&mtf.spot)||[];
+if(tfs.length){
+  mh+='<div class="mkt-blk">';
+  mh+='<div class="mkt-hd"><span class="ico">\uD83D\uDD0D</span>SPOT MULTI-TIMEFRAME</div>';
+  var hasAdx=tfs.some(function(r){return parseFloat(r.adx||0)>0});
+  var cols=hasAdx?'cols4':'cols3';
+  mh+='<div class="mkt-tbl '+cols+'">';
+  mh+='<div class="hdr">TF</div><div class="hdr num">Spread</div><div class="hdr num">RSI</div>';
+  if(hasAdx)mh+='<div class="hdr num">ADX</div>';
+  tfs.forEach(function(r){
+    var sp2=parseFloat(r.spread||0);
+    var rs=parseFloat(r.rsi||0);
+    var ad=parseFloat(r.adx||0);
+    var spCls=sp2>0?'up':(sp2<0?'dn':'muted');
+    var rsCls=rs>=70?'dn':(rs<=30?'up':'');
+    mh+='<div class="tf">'+esc(r.tf||'')+'</div>';
+    mh+='<div class="num '+spCls+'">'+(sp2>=0?'+':'')+sp2.toFixed(1)+'</div>';
+    mh+='<div class="num '+rsCls+'">'+rs.toFixed(0)+'</div>';
+    if(hasAdx)mh+='<div class="num '+(ad>=20?'up':'muted')+'">'+(ad>0?ad.toFixed(0):'\u2014')+'</div>';
+  });
+  mh+='</div></div>';
+}
+
+// OPTION CE/PE TF table (1m + 3m only — v16.6 dropped 5m/15m)
+var ces=(mtf&&mtf.ce)||[];
+var pes=(mtf&&mtf.pe)||[];
+if(ces.length||pes.length){
+  var ce_strk=mk.locked_ce||mk.atm||'';
+  var pe_strk=mk.locked_pe||mk.atm||'';
+  mh+='<div class="mkt-blk">';
+  mh+='<div class="mkt-hd"><span class="ico">\uD83C\uDFAF</span>OPTIONS (CE '+esc(ce_strk)+' \u00B7 PE '+esc(pe_strk)+')</div>';
+  mh+='<div class="mkt-tbl cols3">';
+  mh+='<div class="hdr">TF</div><div class="hdr num">CE</div><div class="hdr num">PE</div>';
+  // Build TF map for cleaner row alignment
+  var tfMap={};
+  ces.forEach(function(r){tfMap[r.tf]=tfMap[r.tf]||{};tfMap[r.tf].ce=r});
+  pes.forEach(function(r){tfMap[r.tf]=tfMap[r.tf]||{};tfMap[r.tf].pe=r});
+  Object.keys(tfMap).forEach(function(tf){
+    var celtp=parseFloat((tfMap[tf].ce||{}).ltp||0);
+    var peltp=parseFloat((tfMap[tf].pe||{}).ltp||0);
+    mh+='<div class="tf">'+esc(tf)+'</div>';
+    mh+='<div class="num '+(celtp>0?'':'muted')+'">'+(celtp>0?'\u20B9'+celtp.toFixed(2):'\u2014')+'</div>';
+    mh+='<div class="num '+(peltp>0?'':'muted')+'">'+(peltp>0?'\u20B9'+peltp.toFixed(2):'\u2014')+'</div>';
+  });
+  mh+='</div></div>';
+}
 
 document.getElementById('p-mkt').innerHTML=mh;
 
