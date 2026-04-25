@@ -2766,7 +2766,7 @@ def _cmd_pulse(args):
                + "Last scan: " + str(_last_scan) + "\n"
                + "Bias: " + str(state.get("daily_bias", "?")) + "\n"
                if _market else "💤 awaiting market open\n")
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>CONFIG</b>\n"
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
             + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts\n"
