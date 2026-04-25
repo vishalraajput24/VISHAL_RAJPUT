@@ -204,18 +204,22 @@ def _read_dash():
 import glob as _glob
 
 _FOLDERS = {
-    "trade_log":    ("📒 Trade Log",              os.path.join(BASE, "lab_data")),
-    "spot":         ("📈 Spot (1m/5m/15m/D)",     os.path.join(BASE, "lab_data", "spot")),
-    "options_3min": ("📊 Options 3-Min CE+PE",    os.path.join(BASE, "lab_data", "options_3min")),
-    "options_1min": ("📊 Options 1m/5m/15m/Scan", os.path.join(BASE, "lab_data", "options_1min")),
-    "reports":      ("📑 Daily Summary",          os.path.join(BASE, "lab_data", "reports")),
-    "research":     ("🔭 Zones + Research",       os.path.join(BASE, "research")),
-    "state":        ("⚙️ State + Config",         STATE_DIR),
-    "logs_live":    ("📋 Live Logs",              os.path.join(BASE, "logs", "live")),
-    "logs_lab":     ("📋 Lab Logs",               os.path.join(BASE, "logs", "lab")),
-    "logs_auth":    ("📋 Auth Logs",              os.path.join(BASE, "logs", "auth")),
-    "logs_errors":  ("📋 Error Logs",             os.path.join(BASE, "logs", "errors")),
-    "logs_health":  ("📋 Health Logs",            os.path.join(BASE, "logs", "health")),
+    # Trading data — what you actually look at
+    "trade_log":    ("📒 Trade Log",            os.path.join(BASE, "lab_data")),
+    "reports":      ("📑 Daily Summary",        os.path.join(BASE, "lab_data", "reports")),
+    # Market data — for offline analysis
+    "spot":         ("📈 Spot Data",            os.path.join(BASE, "lab_data", "spot")),
+    "options_3min": ("📊 Options 3-Min CE+PE",  os.path.join(BASE, "lab_data", "options_3min")),
+    "options_1min": ("📊 Options 1-Min + Scan", os.path.join(BASE, "lab_data", "options_1min")),
+    # Diagnostics — when things break
+    "logs_live":    ("📋 Live Logs",            os.path.join(BASE, "logs", "live")),
+    "logs_errors":  ("⚠️ Error Logs",           os.path.join(BASE, "logs", "errors")),
+    # Removed in v16.6:
+    #   research      — module removed in refactor
+    #   state         — debug only, SSH access
+    #   logs_lab      — internal data collection noise
+    #   logs_auth     — only matters on login fail, SSH access
+    #   logs_health   — internal healthcheck noise
 }
 
 def _list_files(folder=""):
