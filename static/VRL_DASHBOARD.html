@@ -349,6 +349,129 @@ body{
 .mkt-tbl .num{font-family:'JetBrains Mono',monospace;font-weight:700;justify-content:flex-end}
 .mkt-tbl .num.up{color:var(--gn2)} .mkt-tbl .num.dn{color:var(--rd)} .mkt-tbl .num.muted{color:var(--ctx4);font-weight:600}
 
+/* ── TRADES TAB (Part 7) ───────────────────── */
+.tr-sum{
+  margin:14px 12px;padding:18px 16px;
+  background:var(--card);color:var(--ctx);
+  border-radius:18px;border:1px solid rgba(255,255,255,0.55);
+  box-shadow:var(--sh);text-align:center;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  animation:slideup 0.5s ease;position:relative;overflow:hidden;
+}
+.tr-sum::before{content:'';position:absolute;top:0;left:0;right:0;height:4px}
+.tr-sum.up::before{background:linear-gradient(90deg,var(--gn2),var(--gn),var(--gn2))}
+.tr-sum.dn::before{background:linear-gradient(90deg,var(--rd2),var(--rd),var(--rd2))}
+.tr-sum.up{box-shadow:var(--sh-gn)} .tr-sum.dn{box-shadow:var(--sh-rd)}
+.tr-sum-pnl{font-size:36px;font-weight:900;letter-spacing:-1.5px;line-height:1;font-family:'JetBrains Mono',monospace}
+.tr-sum-pnl.up{color:var(--gn2)} .tr-sum-pnl.dn{color:var(--rd)}
+.tr-sum-rs{font-size:14px;color:var(--ctx2);font-weight:700;margin-top:4px}
+.tr-sum-meta{
+  margin-top:12px;padding-top:12px;border-top:1px dashed var(--cbd);
+  display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;
+  font-size:10.5px;color:var(--ctx2);font-weight:700;
+}
+.tr-sum-meta .k{font-size:9px;color:var(--ctx3);font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px}
+.tr-sum-meta .v{font-size:13px;color:var(--ctx);font-weight:800;font-family:'JetBrains Mono',monospace}
+
+/* Trade list */
+.tr-list{margin:8px 12px}
+.tr-row{
+  display:grid;grid-template-columns:auto 1fr auto;gap:10px;
+  background:var(--card);color:var(--ctx);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:14px;padding:12px 14px;margin-top:8px;
+  box-shadow:var(--sh);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  align-items:center;
+  transition:transform 0.2s ease;
+}
+.tr-row:active{transform:scale(0.98)}
+.tr-pnl{
+  font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:900;
+  letter-spacing:-0.5px;min-width:60px;text-align:left;
+}
+.tr-pnl.up{color:var(--gn2)} .tr-pnl.dn{color:var(--rd)}
+.tr-info{min-width:0}
+.tr-sym{
+  font-size:12.5px;font-weight:800;color:var(--ctx);
+  display:flex;align-items:center;gap:6px;line-height:1.3;
+}
+.tr-sym .emj{font-size:13px;line-height:1}
+.tr-sym .mode{
+  font-size:8px;font-weight:800;letter-spacing:0.4px;
+  padding:2px 6px;border-radius:6px;
+  background:var(--bl-bg);color:var(--bl);border:1px solid var(--bl-bd);
+}
+.tr-meta{
+  font-size:10px;color:var(--ctx3);font-weight:600;margin-top:3px;
+  font-family:'JetBrains Mono',monospace;
+}
+.tr-reason{
+  font-size:9px;font-weight:800;letter-spacing:0.3px;
+  padding:4px 8px;border-radius:8px;text-align:center;white-space:nowrap;
+  background:rgba(15,23,42,0.06);color:var(--ctx2);
+}
+.tr-reason.trail{background:var(--gn-bg);color:var(--gn2);border:1px solid var(--gn-bd)}
+.tr-reason.eod{background:var(--bl-bg);color:var(--bl);border:1px solid var(--bl-bd)}
+.tr-reason.emerg{background:var(--rd-bg);color:var(--rd);border:1px solid var(--rd-bd)}
+
+.tr-empty{
+  margin:24px 12px;padding:32px 16px;
+  background:var(--card);border-radius:18px;text-align:center;
+  border:1px solid rgba(255,255,255,0.55);
+  color:var(--ctx2);box-shadow:var(--sh);
+  backdrop-filter:blur(12px);
+}
+.tr-empty .emj{font-size:40px;line-height:1;margin-bottom:10px}
+.tr-empty .ttl{font-size:13px;font-weight:800;color:var(--ctx);margin-bottom:4px}
+.tr-empty .sub{font-size:11px;color:var(--ctx3);font-weight:600}
+
+/* ── FILES TAB (Part 8) ────────────────────── */
+.fl-grid{margin:12px;display:grid;gap:8px}
+.fl-folder{
+  background:var(--card);color:var(--ctx);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:14px;padding:14px 16px;
+  display:flex;align-items:center;gap:12px;
+  box-shadow:var(--sh);cursor:pointer;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  transition:transform 0.2s ease, box-shadow 0.2s ease;
+}
+.fl-folder:hover{transform:translateY(-1px);box-shadow:var(--sh-lg)}
+.fl-folder:active{transform:scale(0.98)}
+.fl-folder .ico{font-size:22px;line-height:1}
+.fl-folder .name{font-size:13px;font-weight:700;color:var(--ctx);flex:1}
+.fl-folder .arr{font-size:14px;color:var(--ctx3);font-weight:700}
+
+.fl-back{
+  margin:12px;padding:10px 14px;
+  background:rgba(15,15,25,0.6);border:1px solid var(--bd);
+  border-radius:12px;color:var(--tx2);font-size:11px;font-weight:700;
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  backdrop-filter:blur(12px);
+}
+.fl-back:hover{background:rgba(15,15,25,0.8)}
+.fl-file{
+  display:flex;justify-content:space-between;align-items:center;
+  background:var(--card);border:1px solid rgba(255,255,255,0.55);
+  border-radius:10px;padding:10px 14px;margin:6px 12px;
+  text-decoration:none;color:var(--ctx);font-size:11.5px;
+  box-shadow:var(--sh);font-weight:600;
+  backdrop-filter:blur(10px);
+  transition:transform 0.15s ease;
+}
+.fl-file:active{transform:scale(0.98)}
+.fl-file .sz{
+  font-size:9.5px;color:var(--ctx3);font-weight:700;
+  font-family:'JetBrains Mono',monospace;
+}
+
+/* ── FOOTER ────────────────────────────────── */
+.ft{
+  text-align:center;padding:24px 12px 12px;
+  font-size:9px;color:var(--tx4);font-weight:600;letter-spacing:0.5px;
+}
+
 .sg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 12px}
 .sc{border-radius:18px;overflow:hidden;background:var(--white);border:1px solid var(--bd);box-shadow:var(--sh);transition:all 0.3s}
 .sc.fired{border-color:var(--gn-bd);box-shadow:0 0 0 3px rgba(16,185,129,0.12),var(--sh-gn)}
@@ -456,20 +579,22 @@ body{
 </div>
 <div class="tbar">
   <div class="tb on" data-t="sig" onclick="stab(0)"><span class="tb-ico">⚡</span>Signals</div>
-  <div class="tb" data-t="mkt" onclick="stab(1)"><span class="tb-ico">📊</span>Market</div>
-  <div class="tb" data-t="trd" onclick="stab(2)"><span class="tb-ico">📋</span>Trades</div>
-  <div class="tb" data-t="fil" onclick="stab(3)"><span class="tb-ico">📁</span>Files</div>
+  <div class="tb" data-t="trd" onclick="stab(1)"><span class="tb-ico">📋</span>Trades</div>
+  <div class="tb" data-t="fil" onclick="stab(2)"><span class="tb-ico">📁</span>Files</div>
 </div>
 <div class="ref"><span class="rd2"></span>Auto-refresh 10s · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
 <div id="pos-area"></div>
 <div class="tc show" id="p-sig"></div>
-<div class="tc" id="p-mkt"></div>
 <div class="tc" id="p-trd"></div>
 <div class="tc" id="p-fil"></div>
 <div class="ft">VISHAL RAJPUT TRADE · Powered by data, driven by discipline</div>
 </div>
 <script>
-function stab(n){document.querySelectorAll('.tb').forEach(function(t,i){t.classList.toggle('on',i===n)});document.querySelectorAll('.tc').forEach(function(t,i){t.classList.toggle('show',i===n)});if(n===3)loadFiles('')}
+function stab(n){
+  document.querySelectorAll('.tb').forEach(function(t,i){t.classList.toggle('on',i===n)});
+  document.querySelectorAll('.tc').forEach(function(t,i){t.classList.toggle('show',i===n)});
+  if(n===2)loadFiles(''); // Files is now tab index 2 (after dropping Market)
+}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function fmt(v){v=parseFloat(v||0);return(v>=0?'+':'')+v.toFixed(1)}
 function rs(p){var v=Math.round(parseFloat(p||0)*65*2);return '\u20B9'+(v>=0?'':'-')+Math.abs(v).toLocaleString('en-IN')}
@@ -495,6 +620,17 @@ function renderHeader(d){
   tg+='<span class="tag td">DTE '+dte+'</span>';
   tg+='<span class="tag tk">CE '+ce+' \u00B7 PE '+pe+' \uD83D\uDD12</span>';
   tg+='<span class="tag tv">VIX '+vix+'</span>';
+  // Spot price pill
+  if(mk.spot){
+    var _sp=Number(mk.spot).toFixed(0);
+    tg+='<span class="tag td">NIFTY '+_sp+'</span>';
+  }
+  // Hourly RSI pill (color by overbought/oversold zone)
+  if(mk.hourly_rsi!=null){
+    var _hr=Number(mk.hourly_rsi);
+    var _hrCls=_hr>=70?'tbear':(_hr<=30?'tbull':'td');
+    tg+='<span class="tag '+_hrCls+'">RSI(H) '+_hr.toFixed(0)+'</span>';
+  }
   if(bias==='BULL')tg+='<span class="tag tbull">'+bias+'</span>';
   if(bias==='BEAR')tg+='<span class="tag tbear">'+bias+'</span>';
   if(reg)         tg+='<span class="tag tl">'+reg+'</span>';
@@ -759,133 +895,74 @@ sh+='<div class="sig-grid">';
 sh+='</div>';
 document.getElementById('p-sig').innerHTML=sh;
 
-// Market (Part 6) — Spot block + Multi-TF + Options table
-var mh='';
+// Market tab removed (Part 6 rev) - spot + RSI now live in header pills
 
-// Helper: RSI label
-function rsiLab(r){
-  r=parseFloat(r||0);
-  if(r>=70)return {cls:'dn',tag:'overbought'};
-  if(r<=30)return {cls:'up',tag:'oversold'};
-  return {cls:'',tag:''};
-}
-
-// SPOT block
-var sp=parseFloat(mk.spot||0);
-var ema9=parseFloat(mk.spot_ema9||0);
-var ema21=parseFloat(mk.spot_ema21||0);
-var spread=parseFloat(mk.spot_spread||0);
-var rsi3m=parseFloat(mk.spot_rsi||0);
-var rsiH=parseFloat(mk.hourly_rsi||0);
-var gap=parseFloat(mk.gap||0);
-var bias=String(mk.bias||'').toUpperCase();
-var ema9_diff=ema9-sp;
-
-mh+='<div class="mkt-blk">';
-mh+='<div class="mkt-hd"><span class="ico">\uD83D\uDCC8</span>SPOT NIFTY</div>';
-mh+='<div class="mkt-row"><span class="k">Price</span><span class="v">'+sp.toFixed(2)+'</span></div>';
-var ema9Cls=ema9>sp?'up':(ema9<sp?'dn':'');
-mh+='<div class="mkt-row"><span class="k">EMA9</span><span class="v '+ema9Cls+'">'+ema9.toFixed(1)+(Math.abs(ema9_diff)>=0.1?' <span class="mkt-tag '+ema9Cls+'">'+(ema9_diff>=0?'+':'')+ema9_diff.toFixed(1)+'</span>':'')+'</span></div>';
-mh+='<div class="mkt-row"><span class="k">EMA21</span><span class="v">'+ema21.toFixed(1)+'</span></div>';
-var sprCls=spread>0?'up':(spread<0?'dn':'');
-var sprTag=spread>0?'rising':(spread<0?'falling':'flat');
-mh+='<div class="mkt-row"><span class="k">EMA Spread</span><span class="v '+sprCls+'">'+(spread>=0?'+':'')+spread.toFixed(1)+' <span class="mkt-tag '+sprCls+'">'+sprTag+'</span></span></div>';
-var r3=rsiLab(rsi3m);
-mh+='<div class="mkt-row"><span class="k">RSI 3m</span><span class="v '+r3.cls+'">'+rsi3m.toFixed(1)+(r3.tag?' <span class="mkt-tag '+r3.cls+'">'+r3.tag+'</span>':'')+'</span></div>';
-var rH=rsiLab(rsiH);
-mh+='<div class="mkt-row"><span class="k">Hourly RSI</span><span class="v '+rH.cls+'">'+rsiH.toFixed(1)+(rH.tag?' <span class="mkt-tag '+rH.cls+'">'+rH.tag+'</span>':'')+'</span></div>';
-if(Math.abs(gap)>0.5){
-  var gCls=gap>0?'up':'dn';
-  mh+='<div class="mkt-row"><span class="k">Day Gap</span><span class="v '+gCls+'">'+(gap>0?'+':'')+gap.toFixed(0)+' pts</span></div>';
-}
-if(bias){
-  var bCls=bias==='BULL'?'up':(bias==='BEAR'?'dn':'');
-  mh+='<div class="mkt-row"><span class="k">Bias</span><span class="v '+bCls+'">'+bias+'</span></div>';
-}
-mh+='</div>';
-
-// SPOT MULTI-TF
-var tfs=(mtf&&mtf.spot)||[];
-if(tfs.length){
-  mh+='<div class="mkt-blk">';
-  mh+='<div class="mkt-hd"><span class="ico">\uD83D\uDD0D</span>SPOT MULTI-TIMEFRAME</div>';
-  var hasAdx=tfs.some(function(r){return parseFloat(r.adx||0)>0});
-  var cols=hasAdx?'cols4':'cols3';
-  mh+='<div class="mkt-tbl '+cols+'">';
-  mh+='<div class="hdr">TF</div><div class="hdr num">Spread</div><div class="hdr num">RSI</div>';
-  if(hasAdx)mh+='<div class="hdr num">ADX</div>';
-  tfs.forEach(function(r){
-    var sp2=parseFloat(r.spread||0);
-    var rs=parseFloat(r.rsi||0);
-    var ad=parseFloat(r.adx||0);
-    var spCls=sp2>0?'up':(sp2<0?'dn':'muted');
-    var rsCls=rs>=70?'dn':(rs<=30?'up':'');
-    mh+='<div class="tf">'+esc(r.tf||'')+'</div>';
-    mh+='<div class="num '+spCls+'">'+(sp2>=0?'+':'')+sp2.toFixed(1)+'</div>';
-    mh+='<div class="num '+rsCls+'">'+rs.toFixed(0)+'</div>';
-    if(hasAdx)mh+='<div class="num '+(ad>=20?'up':'muted')+'">'+(ad>0?ad.toFixed(0):'\u2014')+'</div>';
-  });
-  mh+='</div></div>';
-}
-
-// OPTION CE/PE TF table (1m + 3m only — v16.6 dropped 5m/15m)
-var ces=(mtf&&mtf.ce)||[];
-var pes=(mtf&&mtf.pe)||[];
-if(ces.length||pes.length){
-  var ce_strk=mk.locked_ce||mk.atm||'';
-  var pe_strk=mk.locked_pe||mk.atm||'';
-  mh+='<div class="mkt-blk">';
-  mh+='<div class="mkt-hd"><span class="ico">\uD83C\uDFAF</span>OPTIONS (CE '+esc(ce_strk)+' \u00B7 PE '+esc(pe_strk)+')</div>';
-  mh+='<div class="mkt-tbl cols3">';
-  mh+='<div class="hdr">TF</div><div class="hdr num">CE</div><div class="hdr num">PE</div>';
-  // Build TF map for cleaner row alignment
-  var tfMap={};
-  ces.forEach(function(r){tfMap[r.tf]=tfMap[r.tf]||{};tfMap[r.tf].ce=r});
-  pes.forEach(function(r){tfMap[r.tf]=tfMap[r.tf]||{};tfMap[r.tf].pe=r});
-  Object.keys(tfMap).forEach(function(tf){
-    var celtp=parseFloat((tfMap[tf].ce||{}).ltp||0);
-    var peltp=parseFloat((tfMap[tf].pe||{}).ltp||0);
-    mh+='<div class="tf">'+esc(tf)+'</div>';
-    mh+='<div class="num '+(celtp>0?'':'muted')+'">'+(celtp>0?'\u20B9'+celtp.toFixed(2):'\u2014')+'</div>';
-    mh+='<div class="num '+(peltp>0?'':'muted')+'">'+(peltp>0?'\u20B9'+peltp.toFixed(2):'\u2014')+'</div>';
-  });
-  mh+='</div></div>';
-}
-
-document.getElementById('p-mkt').innerHTML=mh;
-
-// Trades
+// Trades (Part 7) - Today summary card + clean trade list
 var th='';
-var cum=parseFloat(td.pnl||0),tw2=td.wins||0,tl2=td.losses||0,tt2=td.trades||0;
+var dpts=parseFloat(td.pnl||0);
+var drs=parseFloat(td.pnl_rs||0);
+var nrs=parseFloat(td.net_pnl_rs||0);
+var chg=parseFloat(td.total_charges||0);
+var tt2=parseInt(td.trades||0);
+var tw2=parseInt(td.wins||0);
+var tl2=parseInt(td.losses||0);
 var wr=tt2>0?Math.round(tw2/tt2*100):0;
-th+='<div class="sum '+(cum>=0?'up':'dn')+'">';
-th+='<div class="mono" style="font-size:32px;font-weight:900;color:'+(cum>=0?'var(--gn)':'var(--rd)')+';letter-spacing:-1px">'+fmt(cum)+'pts</div>';
-th+='<div style="font-size:13px;color:var(--tx2);margin-top:4px;font-weight:600">'+rs(cum)+' \u00B7 '+tt2+' trades \u00B7 '+wr+'% win</div></div>';
+var dCls=dpts>=0?'up':'dn';
 
+// Today summary card
+th+='<div class="tr-sum '+dCls+'">';
+th+='<div class="tr-sum-pnl '+dCls+' mono">'+(dpts>=0?'+':'')+dpts.toFixed(1)+' pts</div>';
+th+='<div class="tr-sum-rs">'+rs(dpts)+(chg>0?' net (charges \u2013\u20B9'+Math.round(chg).toLocaleString('en-IN')+')':'')+'</div>';
+th+='<div class="tr-sum-meta">'+
+      '<div><div class="k">Trades</div><div class="v">'+tt2+'</div></div>'+
+      '<div><div class="k">W / L</div><div class="v"><span class="gn">'+tw2+'</span> / <span class="rd">'+tl2+'</span></div></div>'+
+      '<div><div class="k">Win %</div><div class="v">'+wr+'%</div></div>'+
+    '</div>';
+th+='</div>';
+
+// Trade list (newest first)
 if(trades&&trades.length){
+  th+='<div class="tr-list">';
   trades.slice().reverse().forEach(function(t){
-    var p=parseFloat(t.pnl_pts||t.pnl||0),w=p>0;
-    th+='<div class="tr '+(w?'w':'l')+'">';
-    th+='<div class="tp2 mono '+(w?'gn':'rd')+'">'+fmt(p)+'</div>';
-    th+='<div class="ti"><div class="tn">'+esc(shortSym(t.symbol,t.direction,t.strike));
-    var em2=t.entry_mode||t.mode||'';
-    // v15.x mode is EMA9_BREAKOUT; older modes show as LEGACY
-    if(em2&&em2!=='EMA9_BREAKOUT')em2='LEGACY';
-    var _bc2=em2==='LEGACY'?'':'bc';
-    var _bstyle=em2==='LEGACY'?'background:var(--bg2);color:var(--tx3);box-shadow:none':'';
-    if(em2)th+=' <span class="bg '+_bc2+'" style="font-size:7px;padding:2px 8px;'+_bstyle+'">'+esc(em2)+'</span>';
-    // v15.2: replay straddle Δ if logged
-    var _t_sd=t.entry_straddle_delta;
-    var _sd_str='';
-    if(_t_sd!=null&&_t_sd!==''){
-      var _v=parseFloat(_t_sd);
-      _sd_str=' \u00B7 \u0394 '+(_v>=0?'+':'')+_v.toFixed(1);
-    }
-    th+='</div><div class="tt">'+(t.entry_time||'')+' \u2192 '+(t.exit_time||'')+' \u00B7 '+(t.candles_held||0)+'c \u00B7 Peak '+fmt(t.peak_pnl||0)+_sd_str+'</div></div>';
-    th+='<div class="tre">'+esc(t.exit_reason||'')+'</div></div>';
+    var pnl=parseFloat(t.pnl_pts||t.pnl||0);
+    var pCls=pnl>=0?'up':'dn';
+    var sym=shortSym(t.symbol,t.direction,t.strike);
+    var emj=t.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
+    var em=t.entry_mode||t.mode||'';
+    var modeBadge='';
+    if(em&&em!=='EMA9_BREAKOUT')modeBadge='<span class="mode">'+esc(em)+'</span>';
+    var et=t.entry_time||'';
+    var xt=t.exit_time||'';
+    var pk=parseFloat(t.peak_pnl||0);
+    var ch=t.candles_held||0;
+    var meta=esc(et)+' \u2192 '+esc(xt)+' \u00B7 '+ch+'c \u00B7 Peak +'+pk.toFixed(1);
+
+    var reason=String(t.exit_reason||'').toUpperCase();
+    var reasonCls='';
+    var reasonLabel=reason;
+    if(reason==='VISHAL_TRAIL'){reasonCls='trail';reasonLabel='TRAIL'}
+    else if(reason==='EOD_EXIT'||reason==='EOD'||reason==='MARKET_CLOSE'){reasonCls='eod';reasonLabel='EOD'}
+    else if(reason==='EMERGENCY_SL'||reason==='HARD_SL'){reasonCls='emerg';reasonLabel='SL'}
+    else if(reason==='FORCE_EXIT'){reasonCls='emerg';reasonLabel='FORCE'}
+    else if(reason==='MANUAL'){reasonCls='';reasonLabel='MANUAL'}
+
+    th+='<div class="tr-row">'+
+          '<div class="tr-pnl '+pCls+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'</div>'+
+          '<div class="tr-info">'+
+            '<div class="tr-sym"><span class="emj">'+emj+'</span>'+esc(sym)+modeBadge+'</div>'+
+            '<div class="tr-meta">'+meta+'</div>'+
+          '</div>'+
+          '<div class="tr-reason '+reasonCls+'">'+esc(reasonLabel)+'</div>'+
+        '</div>';
   });
+  th+='</div>';
+}else{
+  th+='<div class="tr-empty">'+
+        '<div class="emj">\u270B</div>'+
+        '<div class="ttl">No trades today yet</div>'+
+        '<div class="sub">Watching for Golden 4 entry signals\u2026</div>'+
+      '</div>';
 }
-if(!(trades&&trades.length)){th+='<div style="text-align:center;color:var(--tx3);padding:30px 12px;font-size:12px">\u270b No trades today yet \u2014 watching for entry signals</div>';}
 document.getElementById('p-trd').innerHTML=th;
 document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN');
 }
@@ -894,30 +971,48 @@ function loadFiles(folder){
   fetch('/api/files'+(folder?'?folder='+folder:'')).then(function(r){return r.json()}).then(function(data){
     var h='';
     if(data.folders){
+      h+='<div class="fl-grid">';
       data.folders.forEach(function(f){
-        h+='<div class="ff" onclick="loadFiles(\''+f.key+'\')"><span class="fi2">\uD83D\uDCC1</span><span class="fn">'+esc(f.name)+'</span></div>';
+        var ico=f.icon||'\uD83D\uDCC1';
+        h+='<div class="fl-folder" onclick="loadFiles(\''+esc(f.key)+'\')">'+
+             '<span class="ico">'+ico+'</span>'+
+             '<span class="name">'+esc(f.name)+'</span>'+
+             '<span class="arr">\u203A</span>'+
+           '</div>';
       });
+      h+='</div>';
     }else{
-      h+='<div class="bk" onclick="loadFiles(\'\')">← Back</div>';
+      h+='<div class="fl-back" onclick="loadFiles(\'\')">\u2039 Back to folders</div>';
       if(data.files&&data.files.length){
         data.files.forEach(function(f){
-          h+='<a class="fi3" href="/api/download/'+f.path+'" target="_blank"><span>'+esc(f.name)+'</span><span class="fsz">'+f.size+'KB</span></a>';
+          var sz=f.size?(f.size>1024?(f.size/1024).toFixed(1)+'MB':f.size+'KB'):'';
+          h+='<a class="fl-file" href="/api/download/'+esc(f.path)+'" target="_blank">'+
+               '<span>'+esc(f.name)+'</span>'+
+               '<span class="sz">'+sz+'</span>'+
+             '</a>';
         });
-      }else h+='<div style="text-align:center;color:var(--tx3);padding:20px">No files</div>';
+      }else{
+        h+='<div class="tr-empty"><div class="emj">\uD83D\uDCC2</div><div class="ttl">Empty folder</div></div>';
+      }
     }
     document.getElementById('p-fil').innerHTML=h;
-  }).catch(function(){});
+  }).catch(function(){
+    document.getElementById('p-fil').innerHTML='<div class="tr-empty"><div class="emj">\u26A0\uFE0F</div><div class="ttl">File browser offline</div></div>';
+  });
 }
 
+// DATA CONTROLLER (Part 8) - dashboard + trades only after Market tab removal
 function go(){
   Promise.all([
     fetch('/api/dashboard').then(function(r){return r.json()}).catch(function(){return null}),
-    fetch('/api/trades').then(function(r){return r.json()}).catch(function(){return[]}),
-    fetch('/api/zones').then(function(r){return r.json()}).catch(function(){return{}}),
-    fetch('/api/multitf').then(function(r){return r.json()}).catch(function(){return{}})
-  ]).then(function(a){render(a[0],a[1],a[2],a[3])});
+    fetch('/api/trades').then(function(r){return r.json()}).catch(function(){return[]})
+  ]).then(function(a){
+    try{render(a[0],a[1],null,null)}
+    catch(e){console.error('render error',e)}
+  });
 }
-loadFiles('');go();setInterval(go,10000);
+go();
+setInterval(go,10000);
 </script>
 </body>
 </html>
