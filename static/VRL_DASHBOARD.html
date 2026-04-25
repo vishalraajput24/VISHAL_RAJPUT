@@ -227,6 +227,78 @@ body{
 }
 .trail-sl.dn b{color:var(--rd)}
 
+/* ── CE/PE SIGNAL CARDS (Part 5) ───────────── */
+.sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px;animation:slideup 0.5s ease}
+.sig-card{
+  background:var(--card);color:var(--ctx);
+  border:1px solid rgba(255,255,255,0.55);
+  border-radius:18px;overflow:hidden;
+  box-shadow:var(--sh);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:transform 0.25s ease, box-shadow 0.25s ease;
+}
+.sig-card.fired{
+  border-color:rgba(16,185,129,0.55);
+  box-shadow:0 0 0 3px rgba(16,185,129,0.15),var(--sh-gn);
+  transform:translateY(-2px);
+}
+.sig-hdr{
+  padding:12px 13px 10px;
+  display:flex;justify-content:space-between;align-items:baseline;
+  border-bottom:1px solid var(--cbd);
+}
+.sig-strk{font-size:13.5px;font-weight:900;letter-spacing:0.3px;color:var(--ctx)}
+.sig-ltp{font-size:13.5px;font-weight:800;color:var(--ctx);font-family:'JetBrains Mono',monospace}
+.sig-blk{padding:10px 13px;border-bottom:1px solid rgba(15,23,42,0.05)}
+.sig-blk-t{
+  font-size:8.5px;color:var(--ctx3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:800;margin-bottom:7px;
+}
+.sig-row{
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:11px;line-height:1.5;
+}
+.sig-row .lab{display:flex;align-items:center;gap:6px;color:var(--ctx2);font-weight:600;flex-shrink:0}
+.sig-row .lab .ico{font-size:11px;opacity:0.85}
+.sig-row .val{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ctx);text-align:right}
+.sig-row.high .lab{color:var(--rd)}
+.sig-row.low  .lab{color:var(--bl)}
+.sig-row.cls  .lab{color:var(--ctx)}
+.sig-row.cls  .lab{font-weight:800}
+.sig-gap{font-size:10px;color:var(--ctx3);font-weight:600;margin-left:4px}
+.sig-gap.up{color:var(--gn2)} .sig-gap.dn{color:var(--rd)}
+
+/* Golden 4 gate rows */
+.sig-g4-row{
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:11px;padding:5px 0;
+}
+.sig-g4-row .lab{color:var(--ctx2);font-weight:700;display:flex;align-items:center;gap:6px}
+.sig-g4-row .lab .ico{font-size:12px;line-height:1}
+.sig-g4-row .val{
+  font-family:'JetBrains Mono',monospace;font-weight:800;
+  font-size:10.5px;display:flex;align-items:center;gap:4px;
+}
+.sig-g4-row .val.ok{color:var(--gn2)}
+.sig-g4-row .val.no{color:var(--rd)}
+.sig-g4-row .val.flat{color:var(--yl2)}
+.sig-g4-row .val.muted{color:var(--ctx4);font-weight:600}
+
+/* Verdict footer */
+.sig-vd{
+  padding:12px 13px;text-align:center;
+  font-size:11px;font-weight:800;letter-spacing:0.4px;
+  line-height:1.3;
+}
+.sig-vd.fire{
+  color:#fff;background:var(--gn-grad);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.sig-vd.ready{color:var(--gn2);background:var(--gn-bg)}
+.sig-vd.wait{color:var(--ctx3);background:rgba(15,23,42,0.04)}
+.sig-vd.reject{color:var(--rd);background:var(--rd-bg)}
+.sig-vd.cool{color:var(--or2);background:var(--or-bg)}
+
 .sg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 12px}
 .sc{border-radius:18px;overflow:hidden;background:var(--white);border:1px solid var(--bd);box-shadow:var(--sh);transition:all 0.3s}
 .sc.fired{border-color:var(--gn-bd);box-shadow:0 0 0 3px rgba(16,185,129,0.12),var(--sh-gn)}
@@ -536,129 +608,103 @@ if(pos.in_trade){
 }
 document.getElementById('pos-area').innerHTML=pa;
 
-// Signals
+// Signals (Part 5) — CE/PE Golden 4 cards
 var sh='';
-if(cd&&cd.remaining>0)sh+='<div class="cb">\u23F3 COOLDOWN '+Math.ceil(cd.remaining)+'min \u2014 '+(cd.direction||'')+' blocked</div>';
-sh+='<div class="sg">';
+if(cd&&cd.remaining>0){
+  sh+='<div style="margin:12px;padding:10px 14px;border-radius:12px;text-align:center;background:rgba(249,115,22,0.18);border:1px solid rgba(249,115,22,0.42);color:#fdba74;font-size:11px;font-weight:700">'+
+       '\u23F3 COOLDOWN '+Math.ceil(cd.remaining)+'min \u00B7 '+(cd.direction||'')+' blocked</div>';
+}
+sh+='<div class="sig-grid">';
 [['CE',ce],['PE',pe]].forEach(function(p){
-  var t=p[0],s=p[1],sk=s.strike||mk['locked_'+t.toLowerCase()]||mk.atm||'';
-  // BUG-030: WARMUP card during indicator warmup period
-  if(s.status==='WARMUP'){
-    var _wp=parseInt(s.warmup_progress||0),_wn=parseInt(s.warmup_needed||14);
-    var _we=s.warmup_eta||'—';
-    var _pct=Math.min(Math.round((_wp/_wn)*100),100);
-    sh+='<div class="sc warmup" style="border-color:#fed7aa;box-shadow:0 0 0 3px rgba(249,115,22,0.08)">';
-    sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2" style="color:var(--or2);font-size:11px">WARMUP</span></div>';
-    sh+='<div style="padding:18px 14px;text-align:center;animation:wmpulse 2s ease-in-out infinite">';
-    sh+='<div style="font-size:36px;line-height:1">\u231B</div>';
-    sh+='<div style="font-size:12px;font-weight:700;color:var(--tx2);margin-top:8px">Indicator warmup in progress</div>';
-    sh+='<div style="font-size:10px;color:var(--tx3);margin-top:4px">Trades blocked until stable</div>';
-    sh+='<div style="margin:14px 8px 6px"><div style="height:8px;border-radius:4px;background:var(--bg2);overflow:hidden"><div style="height:100%;background:var(--or-grad);width:'+_pct+'%;transition:width 0.6s"></div></div></div>';
-    sh+='<div class="mono" style="font-size:10px;font-weight:700;color:var(--or2)">'+_wp+'/'+_wn+' candles</div>';
-    sh+='<div style="font-size:10px;color:var(--tx3);margin-top:4px">Trading resumes '+_we+'</div>';
-    sh+='</div></div>';
-    return;
+  var t=p[0],s=p[1]||{};
+  var sk=s.strike||(t==='CE'?(mk.locked_ce||mk.atm||''):(mk.locked_pe||mk.atm||''));
+  var ltp=parseFloat(s.ltp||0);
+  var fired=!!s.fired;
+
+  // Reject reason translation (matches engine reject_reason values)
+  function friendly(r){
+    if(!r)return '';
+    if(r==='close_below_ema9_low')return 'Close below EMA9-low';
+    if(r==='red_candle')return '(stale) Red candle';
+    if(r==='not_fresh_breakout')return '(stale) Not fresh breakout';
+    if(r==='insufficient_3m_data')return 'Warming up\u2026';
+    if(r.indexOf('tight_band_')===0)return 'Band too narrow ('+r.split('_').pop()+'pts < 7)';
+    if(r.indexOf('ema9_low_falling_')===0)return 'EMA9 falling ('+r.split('_').pop()+')';
+    if(r.indexOf('weak_body_')===0)return 'Body '+r.replace('weak_body_','').replace('pct','')+'% < 40%';
+    if(r.indexOf('before_')===0)return 'Pre-warmup (before '+r.replace('before_','')+')';
+    if(r.indexOf('after_')===0)return 'Past entry cutoff ('+r.replace('after_','')+')';
+    return r;
   }
-  var fi=s.fired,cc=fi?'fired':'';
-  // v15.0: Dual EMA9 Band Breakout display
-  var _close=parseFloat(s.close||s.ltp||0);
-  var _eh=parseFloat(s.ema9_high||0);
-  var _el=parseFloat(s.ema9_low||0);
-  var _gap=parseFloat(s.gap_from_ema9h||(_close-_eh));
-  var _body=parseFloat(s.body_pct||0);
-  var _green=s.candle_green;
-  var _pos=s.band_position||'';
-  var _bodyok=(_body>=40);
-  var _width=parseFloat(s.band_width||(_eh-_el));
-  var _widthok=(_width>=7);
 
-  // Band position visual
-  var _posColor='var(--tx3)',_posLabel='—',_posBg='var(--bg2)';
-  if(_pos==='ABOVE'){_posColor='var(--gn2)';_posLabel='ABOVE BAND ✓';_posBg='var(--gn-bg)';}
-  else if(_pos==='IN'){_posColor='var(--yl)';_posLabel='IN BAND ⚠';_posBg='var(--yl-bg)';}
-  else if(_pos==='BELOW'){_posColor='var(--rd)';_posLabel='BELOW BAND ✗';_posBg='var(--rd-bg)';}
+  // EMA9 band values
+  var eh=parseFloat(s.ema9_high||0);
+  var el=parseFloat(s.ema9_low||0);
+  var cl=parseFloat(s.close||0);
+  var bw=parseFloat(s.band_width||(eh-el));
+  var gap=cl-el;
+  var sl=parseFloat(s.ema9_low_slope||0);
+  var bd=parseFloat(s.body_pct||0);
+  var pos=String(s.band_position||'').toUpperCase();
+  var rj=s.reject_reason||'';
 
-  sh+='<div class="sc '+cc+'">';
-  sh+='<div class="sh2"><span class="st2">'+t+' '+sk+'</span><span class="sl2 mono">\u20B9'+(s.ltp||0)+'</span></div>';
-
-  sh+='<div class="ms"><div class="mt2">EMA9 Band</div>';
-  sh+='<div class="mr"><span class="ml f" style="color:var(--rd)">EMA9-high</span><span class="mv mono" style="margin-left:auto">\u20B9'+_eh.toFixed(1)+'</span></div>';
-  sh+='<div class="mr"><span class="ml c">Close</span><span class="mv mono" style="margin-left:auto;color:'+(_pos==='ABOVE'?'var(--gn2)':'var(--tx2)')+'">\u20B9'+_close.toFixed(1)+' ('+(_gap>=0?'+':'')+_gap.toFixed(1)+')</span></div>';
-  sh+='<div class="mr"><span class="ml e" style="color:var(--bl)">EMA9-low</span><span class="mv mono" style="margin-left:auto">\u20B9'+_el.toFixed(1)+'</span></div>';
-  sh+='</div>';
-
-    var _bodyShow = (_body>0)?(_body.toFixed(0)+'% '+(_bodyok?'\u2713':'\u2717 (<40)')):('\u2014 not computed');
-  var _bodyClr = (_body>0)?(_bodyok?'var(--gn2)':'var(--rd)'):'var(--tx3)';
-  sh+='<div class="sr"><span class="sk">Body</span><span class="sv mono" style="color:'+_bodyClr+';font-weight:800">'+_bodyShow+'</span></div>';
-  sh+='<div class="sr"><span class="sk">Band width</span><span class="sv mono" style="color:'+(_widthok?'var(--gn2)':'var(--yl)')+';font-weight:800">'+_width.toFixed(1)+'pts '+(_widthok?'\u2713':'\u26A0 (<7)')+'</span></div>';
-  var _slope=parseFloat(s.ema9_low_slope||0); var _slopeok=(_slope>=0);
-  var _slopeLbl=(_slope>0.05?'\u2713 rising':_slope<-0.05?'\u2717 falling':'\u2192 flat');
-  var _slopeClr=(_slope>0.05?'var(--gn2)':_slope<-0.05?'var(--rd)':'var(--yl)');
-  sh+='<div class="sr"><span class="sk">EMA9 slope</span><span class="sv mono" style="color:'+_slopeClr+';font-weight:800">'+(_slope>=0?'+':'')+_slope.toFixed(1)+' '+_slopeLbl+'</span></div>';
-  sh+='<div class="sr"><span class="sk">Candle</span><span class="sv mono" style="color:'+(_green?'var(--gn2)':'var(--tx3)')+'">'+(_green?'GREEN':'RED')+' (info)</span></div>';
-  sh+='<div class="sr"><span class="sk">Position</span><span class="sv" style="color:'+_posColor+';background:'+_posBg+';padding:2px 10px;border-radius:8px;font-size:9px;font-weight:800">'+_posLabel+'</span></div>';
-
-  // v15.2.5 Fix 5 — Straddle is display only (never blocks). Classification
-  // STRONG / NEUTRAL / WEAK / NA with color coding so the operator can
-  // eyeball momentum quality per side without threshold math.
-  var _sd=s.straddle_delta;
-  var _sinfo=(s.straddle_info||'').toString();
-  var _spr=s.straddle_period||(d.period||'');
-  var _savail=(s.straddle_available!==false);
-  if(_sd!=null || _sinfo){
-    var _sd_v=(_sd==null)?null:parseFloat(_sd);
-    var _label, _bg, _fg;
-    if(!_savail || _sd_v==null || _sinfo==='NA'){
-      _label='NA'; _bg='var(--or-bg)';  _fg='var(--or2)';
-    } else if(_sinfo==='STRONG'){
-      _label='STRONG';  _bg='var(--gn-bg)';  _fg='var(--gn2)';
-    } else if(_sinfo==='WEAK'){
-      _label='WEAK';    _bg='var(--yl-bg)';  _fg='#b45309';
-    } else {
-      _label='NEUTRAL'; _bg='var(--bg2)';    _fg='var(--tx2)';
-    }
-    var _sd_str=(_sd_v==null)?'n/a'
-                :((_sd_v>=0?'\u0394 +':'\u0394 ')+_sd_v.toFixed(1));
-    sh+='<div class="sr"><span class="sk">Straddle</span>'
-      + '<span class="sv mono" style="font-weight:800;color:'+_fg
-      + ';background:'+_bg
-      + ';padding:2px 8px;border-radius:6px">'+_sd_str
-      + ' ['+_label+'] ('+esc(_spr)+')</span></div>';
-  }
-  // v15.2 — VWAP confluence bonus (display only)
-  var _vw=parseFloat(s.spot_vwap||0);
-  var _vd=parseFloat(s.spot_vs_vwap||0);
-  var _vbn=s.vwap_bonus||'';
-  if(_vw>0||_vbn){
-    var _vbn_clr=_vbn==='CONFLUENCE'?'ok':_vbn==='AGAINST'?'fl':'';
-    var _vbn_icon=_vbn==='CONFLUENCE'?'\u2713':_vbn==='AGAINST'?'\u26A0':'';
-    sh+='<div class="sr"><span class="sk">VWAP</span><span class="sv mono '+_vbn_clr+'" style="font-weight:700">spot vs '+_vw.toFixed(0)+' ('+(_vd>=0?'+':'')+_vd.toFixed(0)+') '+esc(_vbn)+' '+_vbn_icon+'</span></div>';
-  }
+  // Golden 4 gate evaluation
+  var g_time=!rj||(rj.indexOf('before_')!==0&&rj.indexOf('after_')!==0);
+  var g_band=(cl>el)&&(bw>7);
+  var g_slope=sl>=-0.05;
+  var g_body=bd>=40;
+  var g_slopeFlat=Math.abs(sl)<0.05;
 
   // Verdict
-  var vc='vw',vt='WAIT';
-  if(fi){vc='vf';vt='READY TO FIRE \u2192 '+(s.entry_mode||'EMA9_BREAKOUT');}
-  else if(cd&&cd.remaining>0&&cd.direction===t){vc='vc';vt='COOLDOWN '+Math.ceil(cd.remaining)+'m';}
-  else if(s.reject_reason){
-  var _r=String(s.reject_reason||'');
-  var _rmap={
-    'close_below_ema9_low':'Close below EMA9-low',
-    'red_candle':'(stale) Red candle \u2014 bot needs restart',
-    'not_fresh_breakout':'(stale) Not fresh breakout',
-    'insufficient_3m_data':'Warming up\u2026 waiting for candles'
-  };
-  if(_rmap[_r])vt=_rmap[_r];
-  else if(_r.indexOf('tight_band_')===0)vt='Band too narrow ('+_r.split('_').pop()+'pts < 7)';
-  else if(_r.indexOf('ema9_low_falling_')===0)vt='EMA9 falling ('+_r.split('_').pop()+')';
-  else if(_r.indexOf('weak_body_')===0)vt='Body '+_r.replace('weak_body_','').replace('pct','')+'% < 40%';
-  else if(_r.indexOf('before_')===0)vt='Pre-warmup (before '+_r.replace('before_','')+')';
-  else if(_r.indexOf('after_')===0)vt='Past entry cutoff ('+_r.replace('after_','')+')';
-  else if(_r.indexOf('no_floor_test_gap_')===0)vt='(stale) Floor test gap';
-  else if(_r.indexOf('weak_breakout_gap_')===0)vt='(stale) Weak gap';
-  else vt=esc(_r);
-}
-  else if(_pos==='ABOVE'&&_bodyok&&_widthok&&_slopeok){vc='vr';vt='READY';}
-  sh+='<div class="vd '+vc+'">'+vt+'</div></div>';
+  var vd_html='';
+  if(fired){
+    vd_html='<div class="sig-vd fire">READY TO FIRE \uD83D\uDD25</div>';
+  }else if(rj){
+    vd_html='<div class="sig-vd reject">'+esc(friendly(rj))+'</div>';
+  }else if(cd&&cd.remaining>0&&cd.direction===t){
+    vd_html='<div class="sig-vd cool">COOLDOWN '+Math.ceil(cd.remaining)+'m</div>';
+  }else if(g_time&&g_band&&g_slope&&g_body){
+    vd_html='<div class="sig-vd ready">READY</div>';
+  }else{
+    vd_html='<div class="sig-vd wait">WAITING</div>';
+  }
+
+  sh+='<div class="sig-card '+(fired?'fired':'')+'">';
+  sh+='<div class="sig-hdr"><span class="sig-strk">'+t+' '+esc(sk)+'</span><span class="sig-ltp">\u20B9'+ltp.toFixed(1)+'</span></div>';
+
+  // EMA9 band block
+  sh+='<div class="sig-blk">';
+  sh+='<div class="sig-blk-t">EMA9 Band ('+bw.toFixed(1)+'pts)</div>';
+  sh+='<div class="sig-row high"><span class="lab"><span class="ico">\u25B2</span>High</span><span class="val">\u20B9'+eh.toFixed(1)+'</span></div>';
+  var gapCls=gap>=0?'up':'dn';
+  sh+='<div class="sig-row cls"><span class="lab"><span class="ico">\u25CF</span>Close</span><span class="val">\u20B9'+cl.toFixed(1)+'<span class="sig-gap '+gapCls+'">('+(gap>=0?'+':'')+gap.toFixed(1)+')</span></span></div>';
+  sh+='<div class="sig-row low"><span class="lab"><span class="ico">\u25BC</span>Low</span><span class="val">\u20B9'+el.toFixed(1)+'</span></div>';
+  sh+='</div>';
+
+  // Golden 4 gates
+  sh+='<div class="sig-blk">';
+  sh+='<div class="sig-blk-t">GOLDEN 4</div>';
+  // Time
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\u23F0</span>Time</span><span class="val '+(g_time?'ok':'no')+'">'+(g_time?'\u2713':'\u2717')+'</span></div>';
+  // Close + Band
+  var cbCls=g_band?'ok':'no';
+  var cbVal=g_band?('\u2713 '+bw.toFixed(0)):(cl<=el?'\u2717 below':'\u2717 narrow '+bw.toFixed(0));
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83C\uDFAF</span>Close+Band</span><span class="val '+cbCls+'">'+cbVal+'</span></div>';
+  // Slope
+  var slLab,slCls;
+  if(g_slopeFlat){slLab='\u2192 flat ('+(sl>=0?'+':'')+sl.toFixed(1)+')';slCls='flat'}
+  else if(sl>0){slLab='\u2713 rising ('+(sl>=0?'+':'')+sl.toFixed(1)+')';slCls='ok'}
+  else{slLab='\u2717 falling ('+sl.toFixed(1)+')';slCls='no'}
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
+  // Body
+  var bdLab,bdCls;
+  if(bd<=0){bdLab='\u2014 n/a';bdCls='muted'}
+  else if(g_body){bdLab='\u2713 '+bd.toFixed(0)+'%';bdCls='ok'}
+  else{bdLab='\u2717 '+bd.toFixed(0)+'%';bdCls='no'}
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>Body</span><span class="val '+bdCls+'">'+bdLab+'</span></div>';
+  sh+='</div>';
+
+  sh+=vd_html;
+  sh+='</div>';
 });
 sh+='</div>';
 document.getElementById('p-sig').innerHTML=sh;
