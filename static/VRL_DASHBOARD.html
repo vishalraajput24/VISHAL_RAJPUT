@@ -1040,17 +1040,30 @@ function go(){
   ]).then(function(a){
     try{render(a[0],a[1],null,null)}
     catch(e){console.error('render error',e)}
-    // Adapt refresh rate based on what the bot is doing
+    // Adapt refresh rate based on what the bot is doing AND
+    // what the user's clock says about IST market hours. Two
+    // sources of truth so we slow down even if the bot's
+    // market_open flag is stuck/missing/stale.
     var d=a[0]||{};
     var mk=d.market||{};
     var pos=d.position||{};
+    var inTrade=!!pos.in_trade;
+    // Phone-clock check: convert to IST, weekday + 09:15-15:30
+    var n=new Date();
+    var istMs=n.getTime()+(n.getTimezoneOffset()*60000)+(5.5*3600000);
+    var ist=new Date(istMs);
+    var dow=ist.getUTCDay();           // 0=Sun, 6=Sat
+    var hm=ist.getUTCHours()*60+ist.getUTCMinutes();
+    var clockSaysOpen=(dow!==0&&dow!==6)&&hm>=555&&hm<=930; // 9:15-15:30
+    // Bot says open AND phone clock agrees → live refresh
+    var botSaysOpen=(mk.market_open===true);
     var newMs;
-    if(pos.in_trade){
+    if(inTrade){
       newMs=REFRESH_TRADE;
-    }else if(mk.market_open===false){
-      newMs=REFRESH_CLOSED;
-    }else{
+    }else if(clockSaysOpen&&botSaysOpen){
       newMs=REFRESH_LIVE;
+    }else{
+      newMs=REFRESH_CLOSED;  // either source says closed → idle
     }
     if(newMs!==_refreshMs)_scheduleRefresh(newMs);
   });
@@ -1068,8 +1081,17 @@ document.addEventListener('visibilitychange',function(){
   }
 });
 
+// Initial schedule based on phone clock so we don't fire 10s
+// pulses for an hour before the first market_open=false arrives.
+(function(){
+  var n=new Date();
+  var ist=new Date(n.getTime()+(n.getTimezoneOffset()*60000)+(5.5*3600000));
+  var dow=ist.getUTCDay();
+  var hm=ist.getUTCHours()*60+ist.getUTCMinutes();
+  var openClock=(dow!==0&&dow!==6)&&hm>=555&&hm<=930;
+  _scheduleRefresh(openClock?REFRESH_LIVE:REFRESH_CLOSED);
+})();
 go();
-_scheduleRefresh(REFRESH_LIVE);
 </script>
 </body>
 </html>
