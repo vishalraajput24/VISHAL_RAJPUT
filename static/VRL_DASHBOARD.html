@@ -3,53 +3,73 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>VISHAL RAJPUT TRADE</title>
+<meta name="theme-color" content="#0a0a0f">
+<title>VISHAL RAJPUT TRADE v16.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
---bg:#faf8f4;--bg2:#f3f0ea;--bg3:#ede9e0;--white:#fff;--card:#fff;
---gn:#10b981;--gn2:#059669;--gn-bg:#ecfdf5;--gn-bd:#a7f3d0;
---rd:#ef4444;--rd2:#dc2626;--rd-bg:#fef2f2;--rd-bd:#fecaca;
---or:#f97316;--or2:#ea580c;--or-bg:#fff7ed;--or-bd:#fed7aa;
---bl:#3b82f6;--bl-bg:#eff6ff;--bl-bd:#bfdbfe;
---pu:#8b5cf6;--pu-bg:#f5f3ff;--yl:#f59e0b;--yl-bg:#fffbeb;
---tx:#1a1a2e;--tx2:#4a4a6a;--tx3:#8888a0;--tx4:#b0b0c0;
---bd:rgba(0,0,0,0.06);--bd2:rgba(0,0,0,0.1);
---sh:0 1px 3px rgba(0,0,0,0.04),0 6px 16px rgba(0,0,0,0.04);
---sh-lg:0 4px 20px rgba(0,0,0,0.06),0 12px 40px rgba(0,0,0,0.04);
---sh-gn:0 4px 20px rgba(16,185,129,0.15);--sh-rd:0 4px 20px rgba(239,68,68,0.12);
---sh-or:0 4px 20px rgba(249,115,22,0.15);
+--bg:#0a0a0f;--card:rgba(255,255,255,0.96);--card-glass:rgba(255,255,255,0.10);
+--gn:#10b981;--gn2:#34d399;--gn-bg:rgba(16,185,129,0.14);--gn-bd:rgba(16,185,129,0.42);
+--rd:#ef4444;--rd2:#f87171;--rd-bg:rgba(239,68,68,0.14);--rd-bd:rgba(239,68,68,0.42);
+--or:#f97316;--or2:#fb923c;--or-bg:rgba(249,115,22,0.14);--or-bd:rgba(249,115,22,0.42);
+--bl:#60a5fa;--bl2:#3b82f6;--bl-bg:rgba(96,165,250,0.14);--bl-bd:rgba(96,165,250,0.42);
+--pu:#a78bfa;--pu-bg:rgba(167,139,250,0.14);
+--yl:#fbbf24;--yl2:#d97706;--yl-bg:rgba(251,191,36,0.14);
+--tx:#f8fafc;--tx2:#cbd5e1;--tx3:#94a3b8;--tx4:#64748b;
+--ctx:#0f172a;--ctx2:#334155;--ctx3:#64748b;--ctx4:#94a3b8;
+--bd:rgba(255,255,255,0.12);--bd2:rgba(255,255,255,0.20);
+--cbd:rgba(0,0,0,0.06);--cbd2:rgba(0,0,0,0.10);
+--sh:0 4px 16px rgba(0,0,0,0.30);--sh-lg:0 8px 32px rgba(0,0,0,0.40);
+--sh-gn:0 6px 24px rgba(16,185,129,0.30);--sh-rd:0 6px 24px rgba(239,68,68,0.28);
+--sh-or:0 6px 24px rgba(249,115,22,0.30);
 --or-grad:linear-gradient(135deg,#f97316,#fb923c);
+--gn-grad:linear-gradient(135deg,#10b981,#34d399);
 --bl-grad:linear-gradient(135deg,#3b82f6,#60a5fa);
 }
-html{background:var(--bg);color:var(--tx);font-family:'Outfit',sans-serif;-webkit-font-smoothing:antialiased}
-body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
-.mono{font-family:'JetBrains Mono',monospace}
-.container{max-width:540px;margin:0 auto;padding-bottom:60px}
+html{background:var(--bg);color:var(--tx);font-family:'Outfit',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{
+  min-height:100vh;position:relative;overflow-x:hidden;
+  background:linear-gradient(180deg,rgba(10,10,15,0.55) 0%,rgba(10,10,15,0.72) 35%,rgba(10,10,15,0.86) 100%),url('/static/bg.jpg') center top / cover no-repeat fixed;
+}
+.mono{font-family:'JetBrains Mono',monospace;font-feature-settings:"tnum"}
+.gn{color:var(--gn2)}.rd{color:var(--rd2)}.yl{color:var(--yl)}.bl{color:var(--bl)}
+.container{max-width:540px;margin:0 auto;padding-bottom:80px}
+@keyframes lp{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,0.40)}50%{box-shadow:0 0 0 9px rgba(16,185,129,0.05)}}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
+@keyframes slideup{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+::-webkit-scrollbar{width:0;height:0}
 
-.header{padding:16px 16px 14px;background:var(--white);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:50;box-shadow:0 2px 16px rgba(0,0,0,0.03)}
-.logo{display:flex;align-items:center;justify-content:space-between}
-.logo-left{display:flex;align-items:baseline;gap:8px}
-.logo h1{font-size:16px;font-weight:900;letter-spacing:0.5px}
-.logo h1 span{background:var(--or-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.ver{font-size:9px;color:#fff;font-weight:800;background:var(--or-grad);padding:3px 12px;border-radius:20px;box-shadow:var(--sh-or)}
-.ldot{width:10px;height:10px;border-radius:50%;background:var(--gn);animation:lp 2s infinite;box-shadow:0 0 0 3px rgba(16,185,129,0.15)}
-@keyframes lp{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,0.15)}50%{box-shadow:0 0 0 6px rgba(16,185,129,0.08)}}
-@keyframes wmpulse{0%,100%{opacity:1}50%{opacity:0.6}}
-@keyframes wmtag{0%,100%{opacity:1}50%{opacity:0.55}}
-.tags{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
-.tag{padding:4px 12px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:0.3px}
-.tp{background:var(--bl-bg);color:var(--bl);border:1px solid var(--bl-bd)}
-.tl{background:var(--gn-bg);color:var(--gn2);border:1px solid var(--gn-bd)}
-.td{background:var(--bg2);color:var(--tx2);border:1px solid var(--bd2)}
-.tk{background:var(--or-bg);color:var(--or2);border:1px solid var(--or-bd)}
-.tv{color:var(--yl);background:var(--yl-bg);border:1px solid rgba(245,158,11,0.3)}
-.tbull{color:var(--gn2);background:var(--gn-bg);border:1px solid var(--gn-bd)}
-.tbear{color:var(--rd2);background:var(--rd-bg);border:1px solid var(--rd-bd)}
-.tpu{color:var(--pu);background:var(--pu-bg);border:1px solid rgba(139,92,246,0.2)}
-.tw{background:var(--yl-bg);color:#b45309;border:1px solid rgba(245,158,11,0.2);animation:wmtag 2s ease-in-out infinite;title:"Indicators warming up"}
+/* ── HEADER (Part 2) ───────────────────────── */
+.hdr{
+  padding:14px 16px 12px;
+  background:linear-gradient(180deg,rgba(10,10,15,0.78),rgba(10,10,15,0.55));
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-bottom:1px solid var(--bd);
+  position:sticky;top:0;z-index:50;animation:fadein 0.4s ease;
+}
+.hdr-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hdr-logo{display:flex;align-items:baseline;gap:8px;min-width:0}
+.hdr-logo h1{font-size:15px;font-weight:900;letter-spacing:0.4px;white-space:nowrap;color:var(--tx)}
+.hdr-logo h1 b{background:var(--or-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hdr-ver{font-size:9px;font-weight:800;color:#fff;background:var(--or-grad);padding:3px 11px;border-radius:20px;box-shadow:0 4px 14px rgba(249,115,22,0.45);letter-spacing:0.5px}
+.hdr-live{width:11px;height:11px;border-radius:50%;background:var(--gn);animation:lp 2s infinite;flex-shrink:0}
+.hdr-live.stale{background:var(--rd);animation:pulse 1.4s infinite;box-shadow:0 0 0 3px rgba(239,68,68,0.35)}
+.hdr-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.tag{padding:4px 11px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:0.4px;border:1px solid;white-space:nowrap;backdrop-filter:blur(10px)}
+.tag.tp{color:var(--bl);background:var(--bl-bg);border-color:var(--bl-bd)}
+.tag.tl{color:var(--gn);background:var(--gn-bg);border-color:var(--gn-bd)}
+.tag.td{color:var(--tx2);background:var(--card-glass);border-color:var(--bd2)}
+.tag.tk{color:var(--or);background:var(--or-bg);border-color:var(--or-bd)}
+.tag.tv{color:var(--yl);background:var(--yl-bg);border-color:rgba(251,191,36,0.42)}
+.tag.tbull{color:var(--gn);background:var(--gn-bg);border-color:var(--gn-bd)}
+.tag.tbear{color:var(--rd);background:var(--rd-bg);border-color:var(--rd-bd)}
+.tag.tpu{color:var(--pu);background:var(--pu-bg);border-color:rgba(167,139,250,0.42)}
+.tag.tw{color:#fcd34d;background:rgba(251,191,36,0.18);border-color:rgba(251,191,36,0.45);animation:pulse 2s infinite}
+
+/* ── (Parts 3-8 styles will replace below — kept legacy temporarily) ── */
 
 .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 12px 0}
 .stat{background:var(--white);border-radius:18px;padding:16px 12px;text-align:center;border:1px solid var(--bd);box-shadow:var(--sh);overflow:hidden}
@@ -157,10 +177,7 @@ body{min-height:100vh;background:linear-gradient(180deg,var(--bg),var(--bg2))}
 </head>
 <body>
 <div class="container">
-<div class="header">
-<div class="logo"><div class="logo-left"><h1><span>VISHAL RAJPUT</span> TRADE</h1><span class="ver" id="ver">v16.6</span></div><div class="ldot"></div></div>
-<div class="tags" id="tags"></div>
-</div>
+<header class="hdr" id="hdr"></header>
 <div class="stats" id="stats-area">
 <div class="stat" id="st-pnl-card"><div class="la">Day P&L</div><div class="va mono" id="st-pnl">0pts</div><div class="su" id="st-rs">₹0</div></div>
 <div class="stat"><div class="la">Trades</div><div class="va mono" id="st-trades">0</div><div class="su" id="st-wl">0W 0L</div></div>
@@ -189,25 +206,44 @@ function tagC(b){if(!b)return'td';b=String(b).toUpperCase();if(b.includes('BULL'
 function regC(r){if(!r)return'td';if(r.includes('TREND'))return'tbull';if(r==='NEUTRAL')return'tpu';return'tw'}
 function shortSym(sym,dir,strike){if(strike>0)return(dir||'')+ ' '+strike;return sym||''}
 
+function renderHeader(d){
+  var mk=d.market||{};
+  var mode=String(d.mode||'PAPER').toUpperCase();
+  var dte =mk.dte!=null?mk.dte:'?';
+  var ce  =mk.locked_ce||mk.atm||'?';
+  var pe  =mk.locked_pe||mk.atm||'?';
+  var vix =mk.vix?Number(mk.vix).toFixed(1):'?';
+  var bias=String(mk.bias||'').toUpperCase();
+  var reg =String(mk.regime||'').toUpperCase();
+  var per =String(d.period||'').toUpperCase();
+  var live=mk.market_open!==false;
+  var warm=mk.indicators_warm===false&&mk.market_open;
+  var ver =String(d.version||'v16.6').replace(/^v/,'');
+  var tg='';
+  tg+='<span class="tag '+(mode==='LIVE'?'tl':'tp')+'">'+mode+'</span>';
+  tg+='<span class="tag td">DTE '+dte+'</span>';
+  tg+='<span class="tag tk">CE '+ce+' \u00B7 PE '+pe+' \uD83D\uDD12</span>';
+  tg+='<span class="tag tv">VIX '+vix+'</span>';
+  if(bias==='BULL')tg+='<span class="tag tbull">'+bias+'</span>';
+  if(bias==='BEAR')tg+='<span class="tag tbear">'+bias+'</span>';
+  if(reg)         tg+='<span class="tag tl">'+reg+'</span>';
+  if(per)         tg+='<span class="tag tpu">'+per+'</span>';
+  if(warm)        tg+='<span class="tag tw">WARMUP '+(mk.warmup_progress||0)+'/'+(mk.warmup_needed||14)+'</span>';
+  document.getElementById('hdr').innerHTML=
+    '<div class="hdr-row">'+
+      '<div class="hdr-logo">'+
+        '<h1><b>VISHAL RAJPUT</b> TRADE</h1>'+
+        '<span class="hdr-ver">v'+ver+'</span>'+
+      '</div>'+
+      '<span class="hdr-live '+(live?'':'stale')+'" title="'+(live?'Market open':'Market closed')+'"></span>'+
+    '</div>'+
+    '<div class="hdr-tags">'+tg+'</div>';
+}
+
 function render(d,trades,zones,mtf){
 if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
-
-document.getElementById('ver').textContent=d.version||mk.version||'v16.3';
-var tg='';
-tg+='<span class="tag '+(mk.mode==='live'?'tl':'tp')+'">'+(mk.mode==='live'?'LIVE':'PAPER')+'</span>';
-tg+='<span class="tag td">DTE '+(mk.dte||0)+'</span>';
-tg+='<span class="tag tk">CE '+(mk.locked_ce||mk.atm||0)+' · PE '+(mk.locked_pe||mk.atm||0)+' 🔒</span>';
-if(mk.vix>0)tg+='<span class="tag tv">VIX '+mk.vix+'</span>';
-if(mk.bias)tg+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
-if(mk.regime){tg+='<span class="tag '+regC(mk.regime)+'">'+esc(mk.regime)+'</span>';}
-// v16.0 Batch 7: context confluence tag
-if(mk.context_tag==='TRIPLE_CONFLUENCE'){tg+='<span class="tag tg">\u2713 TRIPLE CONFLUENCE</span>';}
-else if(mk.context_tag==='MIXED_SIGNALS'){tg+='<span class="tag ta">\u26A0 MIXED SIGNALS</span>';}
-// v15.2 — period indicator (OPENING / MIDDAY / CLOSING)
-if(d.period){tg+='<span class="tag tpu">'+esc(d.period)+'</span>';}
-if(mk.market_open&&!mk.indicators_warm){var _wtxt='Indicators warming up';if(mk.warmup_progress!=null)_wtxt+=' ('+mk.warmup_progress+'/'+mk.warmup_needed+' candles, ETA '+(mk.warmup_eta||'—')+')';tg+='<span class="tag tw" title="'+_wtxt+'">WARMUP</span>';}
-document.getElementById('tags').innerHTML=tg;
+renderHeader(d);
 
 // BUG-025: include floating open PNL in day total
 var _realized=parseFloat(td.pnl||0);
