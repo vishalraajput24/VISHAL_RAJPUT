@@ -1142,6 +1142,29 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
+        elif p.startswith("/static/"):
+            # Serve any whitelisted asset under static/ (bg image, css, etc.)
+            # Whitelist file extensions to prevent directory traversal.
+            _allowed = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                        ".webp":"image/webp",".svg":"image/svg+xml",
+                        ".css":"text/css",".js":"application/javascript",
+                        ".ico":"image/x-icon"}
+            _name = p[len("/static/"):]
+            if "/" in _name or "\\" in _name or ".." in _name:
+                self.send_error(403); return
+            _ext = "." + _name.rsplit(".", 1)[-1].lower() if "." in _name else ""
+            if _ext not in _allowed:
+                self.send_error(404); return
+            _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", _name)
+            if not os.path.isfile(_path):
+                self.send_error(404); return
+            self.send_response(200)
+            self.send_header("Content-Type", _allowed[_ext])
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            with open(_path, "rb") as _sf:
+                self.wfile.write(_sf.read())
+            return
         elif p=="/api/zones":
             zp = os.path.join(STATE_DIR, "vrl_zones.json")
             if os.path.isfile(zp):
