@@ -2715,10 +2715,23 @@ def _cmd_pulse(args):
         except Exception:
             pass
 
-        # Status indicators
+        # Status indicators — distinguish ✅ healthy / ❌ broken / 💤 idle
         def _ok(b): return "✅" if b else "❌"
-        _market_str = "OPEN" if _market else "CLOSED"
-        _tick_str = (str(_tick_age) + "s ago") if _tick_age >= 0 else "never"
+        # Market: ✅ open · 💤 closed (not an error after-hours)
+        if _market:
+            _market_icon = "✅"; _market_str = "OPEN"
+        else:
+            _market_icon = "💤"; _market_str = "CLOSED (idle until 09:15 IST)"
+        # Tick: only flag ❌ when market is OPEN and tick is stale
+        if _spot > 0 and _spot_live:
+            _tick_icon = "✅"; _tick_str = str(round(_spot, 2)) + "  (" + str(_tick_age) + "s ago)"
+        elif not _market:
+            _tick_icon = "💤"
+            _tick_str = ("idle (last " + str(round(_se["ltp"], 2))
+                         + " · " + str(_tick_age // 60) + "m ago)") if _se else "idle (no history)"
+        else:
+            _tick_icon = "❌"
+            _tick_str = "STALE — " + (str(_tick_age) + "s ago" if _tick_age >= 0 else "never")
 
         msg = (
             "🩺 <b>PULSE CHECK</b> · " + now.strftime("%H:%M:%S") + " IST\n"
@@ -2727,12 +2740,11 @@ def _cmd_pulse(args):
             + _ok(True) + " v" + D.VERSION.replace("v", "") + " · uptime " + _up_str + "\n"
             + _ok(True) + " " + ("PAPER" if D.PAPER_MODE else "LIVE")
             + " · " + str(_lot) + " × 2 lots\n"
-            + _ok(_market) + " market " + _market_str + "\n"
+            + _market_icon + " market " + _market_str + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>DATA</b>\n"
             + _ok(_user != "?") + " token: " + str(_user) + "\n"
-            + _ok(_spot > 0 and _spot_live) + " spot tick: "
-            + (str(round(_spot, 2)) if _spot > 0 else "0") + "  (" + _tick_str + ")\n"
+            + _tick_icon + " spot tick: " + _tick_str + "\n"
             + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>TODAY</b>\n"
@@ -2750,9 +2762,10 @@ def _cmd_pulse(args):
             + _pos_str + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ENGINE</b>\n"
-            "Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
-            "Last scan: " + str(_last_scan) + "\n"
-            "Bias: " + str(state.get("daily_bias", "?")) + "\n"
+            + ("Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
+               + "Last scan: " + str(_last_scan) + "\n"
+               + "Bias: " + str(state.get("daily_bias", "?")) + "\n"
+               if _market else "💤 awaiting market open\n")
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>CONFIG</b>\n"
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
