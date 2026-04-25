@@ -46,6 +46,8 @@ import VRL_ENGINE as CHARGES
 # ── Loggers ─────────────────────────────────────────────────────
 logger     = setup_logger("vrl_live", D.LIVE_LOG_FILE)
 lab_logger = setup_logger("vrl_lab",  D.LAB_LOG_FILE)
+# Wall-clock at module import — used by /pulse to report bot uptime.
+_BOT_START_TS = time.time()
 
 # ── Telegram base ───────────────────────────────────────────────
 _TG_BASE = "https://api.telegram.org/bot"
@@ -2635,9 +2637,164 @@ def _why_blocked(st: dict) -> str:
     return "✅ Ready to enter"
 
 
+def _cmd_pulse(args):
+    """🩺 Doctor's pulse check — single-shot diagnostic dump.
+    Reports everything needed to spot a bug at a glance: bot/data/
+    market/today/position/engine/config/errors. Designed so the
+    output can be forwarded for remote diagnosis."""
+    try:
+        import VRL_CONFIG as _CFG
+        now = datetime.now()
+        # Uptime
+        _up_secs = int(time.time() - _BOT_START_TS)
+        _up_h = _up_secs // 3600
+        _up_m = (_up_secs % 3600) // 60
+        _up_str = (str(_up_h) + "h " if _up_h else "") + str(_up_m) + "m"
+
+        # Data layer health
+        _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        _spot_live = D.is_tick_live(D.NIFTY_SPOT_TOKEN)
+        with D._tick_lock:
+            _se = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+        _tick_age = int(time.time() - _se["ts"]) if _se else -1
+        _market = D.is_market_open()
+        _acct = D.get_account_info() if hasattr(D, "get_account_info") else {}
+        _user = _acct.get("name", "?")
+        _lot = D.get_lot_size()
+
+        # Today block
+        try:
+            _trades_today = _read_today_trades() if "_read_today_trades" in globals() else []
+        except Exception:
+            _trades_today = []
+        _td_pnl = sum(float(t.get("pnl_pts", 0) or 0) for t in _trades_today)
+        _td_wins = sum(1 for t in _trades_today if float(t.get("pnl_pts", 0) or 0) > 0)
+        _td_loss = len(_trades_today) - _td_wins
+        _last_t = _trades_today[-1] if _trades_today else None
+
+        # Position snapshot
+        _in_trade = state.get("in_trade", False)
+        _pos_str = "—"
+        if _in_trade:
+            _ep = float(state.get("entry_price", 0) or 0)
+            _ltp = D.get_ltp(state.get("token", 0))
+            _pn = round(_ltp - _ep, 1) if _ltp else 0
+            _pk = float(state.get("peak_pnl", 0) or 0)
+            _tier = state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
+            _sl = float(state.get("active_ratchet_sl", 0) or 0)
+            if _sl <= 0: _sl = round(_ep - 10, 2)
+            _lock = round(_sl - _ep, 1)
+            _room = round(_ltp - _sl, 1) if _ltp else 0
+            _dir_emj = "🟢" if state.get("direction") == "CE" else "🔴"
+            _sym = state.get("direction", "") + " " + str(state.get("strike", ""))
+            _pos_str = (
+                _dir_emj + " " + _sym + "  " + ("+" if _pn >= 0 else "") + str(_pn) + "pts\n"
+                + "Entry Rs" + str(_ep) + " → " + str(round(_ltp, 2)) + " · Peak +" + str(_pk) + "\n"
+                + "Tier: " + _tier + " @ Rs" + str(round(_sl, 2))
+                + " (Lock " + ("+" if _lock >= 0 else "") + str(_lock) + " · Room "
+                + ("+" if _room >= 0 else "") + str(_room) + ")"
+            )
+
+        # Engine state
+        _ce_lck = _locked_ce_strike or "?"
+        _pe_lck = _locked_pe_strike or "?"
+        _last_scan = state.get("_last_scan_minute", "?")
+
+        # Config snapshot
+        _eb = _CFG.get().get("entry", {}).get("ema9_band", {}) or {}
+        _xb = _CFG.get().get("exit", {}).get("ema9_band", {}) or {}
+        _cd = _CFG.entry_ema9_band("cooldown_minutes", 5) if hasattr(_CFG, "entry_ema9_band") else 5
+
+        # Recent errors (last 5 lines)
+        _err_lines = []
+        try:
+            _err_path = os.path.join(D.ERROR_LOG_DIR, date.today().strftime("%Y-%m-%d") + ".log")
+            if os.path.isfile(_err_path):
+                with open(_err_path) as _f:
+                    _err_lines = [ln.strip() for ln in _f.readlines()[-5:]]
+        except Exception:
+            pass
+
+        # Status indicators
+        def _ok(b): return "✅" if b else "❌"
+        _market_str = "OPEN" if _market else "CLOSED"
+        _tick_str = (str(_tick_age) + "s ago") if _tick_age >= 0 else "never"
+
+        msg = (
+            "🩺 <b>PULSE CHECK</b> · " + now.strftime("%H:%M:%S") + " IST\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>BOT</b>\n"
+            + _ok(True) + " v" + D.VERSION.replace("v", "") + " · uptime " + _up_str + "\n"
+            + _ok(True) + " " + ("PAPER" if D.PAPER_MODE else "LIVE")
+            + " · " + str(_lot) + " × 2 lots\n"
+            + _ok(_market) + " market " + _market_str + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>DATA</b>\n"
+            + _ok(_user != "?") + " token: " + str(_user) + "\n"
+            + _ok(_spot > 0 and _spot_live) + " spot tick: "
+            + (str(round(_spot, 2)) if _spot > 0 else "0") + "  (" + _tick_str + ")\n"
+            + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>TODAY</b>\n"
+            + str(len(_trades_today)) + " trades · "
+            + str(_td_wins) + "W " + str(_td_loss) + "L · "
+            + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
+            + ("Last: " + str(_last_t.get("entry_time", "?")) + " "
+               + str(_last_t.get("direction", "?")) + " "
+               + str(_last_t.get("strike", "?")) + " "
+               + ("+" if float(_last_t.get("pnl_pts", 0) or 0) >= 0 else "")
+               + str(_last_t.get("pnl_pts", "?")) + " ("
+               + str(_last_t.get("exit_reason", "?")) + ")\n" if _last_t else "")
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>POSITION</b>\n"
+            + _pos_str + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>ENGINE</b>\n"
+            "Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
+            "Last scan: " + str(_last_scan) + "\n"
+            "Bias: " + str(state.get("daily_bias", "?")) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>CONFIG</b>\n"
+            "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
+            + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts\n"
+            "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
+            + "SL: " + str(_xb.get("emergency_sl_pts", "?")) + "pts\n"
+            "Time: " + str(_eb.get("warmup_until", "?")) + " - "
+            + str(_eb.get("cutoff_after", "?")) + "  "
+            + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
+            "Cooldown: " + str(_cd) + "min\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>ERRORS</b> (today, last 5)\n"
+            + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
+               + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
+               if _err_lines else _ok(True) + " None\n")
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>SMART TRAIL v2+</b>\n"
+            "INITIAL  (peak <5)   entry-10\n"
+            "🛡️ BREAKEVEN(5-8)    entry\n"
+            "🔒 TRAIL_60 (8-15)   entry+60%\n"
+            "🔒🔒 TRAIL_75(15-30) entry+75%\n"
+            "🔒🔒 VISHAL_MAX(30-45) entry+85%\n"
+            "🔒🔒🔒 TRAIL_90(45+) entry+90%\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>GOLDEN 4 ENTRY</b>\n"
+            "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
+            + str(_eb.get("cutoff_after", "15:10")) + "\n"
+            "2. Close > EMA9_low + Band > " + str(_eb.get("band_width_min", 7)) + "\n"
+            "3. EMA9 slope flat or rising\n"
+            "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
+        )
+        _tg_send(msg)
+    except Exception as e:
+        _tg_send("🩺 Pulse error: " + str(e))
+
+
 def _cmd_help(args):
     _tg_send(
         "🤖 <b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>DIAGNOSTIC</b>\n"
+        "/pulse     — 🩺 full health check (one-shot)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
         "/status    — trade status + PNL\n"
@@ -2870,6 +3027,7 @@ def _cmd_trades(args):
 
 _DISPATCH = {
     "/help"      : _cmd_help,
+    "/pulse"     : _cmd_pulse,
     "/status"    : _cmd_status,
     "/trades"    : _cmd_trades,
     "/account"   : _cmd_account,
