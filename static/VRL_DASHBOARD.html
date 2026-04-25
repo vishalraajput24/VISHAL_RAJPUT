@@ -582,7 +582,7 @@ body{
   <div class="tb" data-t="trd" onclick="stab(1)"><span class="tb-ico">📋</span>Trades</div>
   <div class="tb" data-t="fil" onclick="stab(2)"><span class="tb-ico">📁</span>Files</div>
 </div>
-<div class="ref"><span class="rd2"></span>Auto-refresh 10s · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
+<div class="ref"><span class="rd2" id="rd2"></span><span id="ref-text">Auto-refresh 10s</span> · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
 <div id="pos-area"></div>
 <div class="tc show" id="p-sig"></div>
 <div class="tc" id="p-trd"></div>
@@ -1001,18 +1001,75 @@ function loadFiles(folder){
   });
 }
 
-// DATA CONTROLLER (Part 8) - dashboard + trades only after Market tab removal
+// ── DATA CONTROLLER (Part 8) — adaptive refresh ──
+// IN_TRADE        → 5s    (tight tracking)
+// MARKET_OPEN     → 10s   (normal scanning)
+// MARKET_CLOSED   → 1h    (nothing changes after-hours)
+// TAB_HIDDEN      → paused (resume on visibility change)
+var REFRESH_TRADE  = 5000;
+var REFRESH_LIVE   = 10000;
+var REFRESH_CLOSED = 3600000;  // 1 hour
+var _refreshTimer  = null;
+var _refreshMs     = REFRESH_LIVE;
+
+function _scheduleRefresh(ms){
+  if(_refreshTimer)clearInterval(_refreshTimer);
+  _refreshMs=ms;
+  _refreshTimer=setInterval(go,ms);
+  // Update status indicator
+  var rt=document.getElementById('ref-text');
+  var rd=document.getElementById('rd2');
+  if(rt){
+    if(ms>=600000){rt.textContent='Idle (market closed) · refresh 1h'}
+    else if(ms<=5000){rt.textContent='Live tracking · 5s'}
+    else{rt.textContent='Auto-refresh 10s'}
+  }
+  if(rd){
+    if(ms>=600000)rd.style.background='var(--tx4)';
+    else if(ms<=5000)rd.style.background='var(--yl)';
+    else rd.style.background='var(--gn)';
+  }
+}
+
 function go(){
+  // Skip when tab hidden (saves bandwidth + battery)
+  if(document.hidden)return;
   Promise.all([
     fetch('/api/dashboard').then(function(r){return r.json()}).catch(function(){return null}),
     fetch('/api/trades').then(function(r){return r.json()}).catch(function(){return[]})
   ]).then(function(a){
     try{render(a[0],a[1],null,null)}
     catch(e){console.error('render error',e)}
+    // Adapt refresh rate based on what the bot is doing
+    var d=a[0]||{};
+    var mk=d.market||{};
+    var pos=d.position||{};
+    var newMs;
+    if(pos.in_trade){
+      newMs=REFRESH_TRADE;
+    }else if(mk.market_open===false){
+      newMs=REFRESH_CLOSED;
+    }else{
+      newMs=REFRESH_LIVE;
+    }
+    if(newMs!==_refreshMs)_scheduleRefresh(newMs);
   });
 }
+
+// Resume immediately when tab regains focus (after being hidden)
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    var rt=document.getElementById('ref-text');
+    if(rt&&rt.textContent.indexOf('Paused')===0){go()}
+    go();
+  }else{
+    var rt=document.getElementById('ref-text');
+    if(rt)rt.textContent='Paused (tab in background)';
+  }
+});
+
 go();
-setInterval(go,10000);
+_scheduleRefresh(REFRESH_LIVE);
 </script>
 </body>
 </html>
