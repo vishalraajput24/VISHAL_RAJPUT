@@ -71,21 +71,75 @@ body{
 
 /* ── (Parts 3-8 styles will replace below — kept legacy temporarily) ── */
 
-.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 12px 0}
-.stat{background:var(--white);border-radius:18px;padding:16px 12px;text-align:center;border:1px solid var(--bd);box-shadow:var(--sh);overflow:hidden}
-.stat .la{font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:700}
-.stat .va{font-size:24px;font-weight:900;margin-top:4px;letter-spacing:-0.5px}
-.stat .su{font-size:9px;color:var(--tx3);margin-top:2px;font-weight:500}
-.va.gn{color:var(--gn)}.va.rd{color:var(--rd)}
-.st-up{background:linear-gradient(135deg,#ecfdf5,#d1fae5);border-color:var(--gn-bd);box-shadow:var(--sh-gn)}
-.st-dn{background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:var(--rd-bd);box-shadow:var(--sh-rd)}
+/* ── STATS ROW (Part 3) ───────────────────── */
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 12px 0;animation:slideup 0.5s ease}
+.stat{
+  background:var(--card);color:var(--ctx);
+  border-radius:18px;padding:14px 10px;text-align:center;
+  border:1px solid rgba(255,255,255,0.6);
+  box-shadow:var(--sh);overflow:hidden;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  transition:transform 0.25s ease;
+}
+.stat:active{transform:scale(0.97)}
+.stat .la{font-size:9px;color:var(--ctx3);text-transform:uppercase;letter-spacing:1.2px;font-weight:800}
+.stat .va{font-size:23px;font-weight:900;margin-top:4px;letter-spacing:-0.6px;line-height:1.05;color:var(--ctx)}
+.stat .va.sm{font-size:18px}
+.stat .su{font-size:9.5px;color:var(--ctx2);margin-top:3px;font-weight:600;line-height:1.3}
+.stat .va.gn{color:var(--gn2);text-shadow:0 1px 2px rgba(16,185,129,0.10)}
+.stat .va.rd{color:var(--rd);text-shadow:0 1px 2px rgba(239,68,68,0.10)}
+.st-up{
+  background:linear-gradient(150deg,rgba(220,252,231,0.95) 0%,rgba(187,247,208,0.92) 100%);
+  border-color:rgba(16,185,129,0.55);
+  box-shadow:var(--sh-gn);
+}
+.st-dn{
+  background:linear-gradient(150deg,rgba(254,226,226,0.95) 0%,rgba(252,165,165,0.92) 100%);
+  border-color:rgba(239,68,68,0.55);
+  box-shadow:var(--sh-rd);
+}
+.st-trade{
+  background:linear-gradient(150deg,rgba(254,243,199,0.95) 0%,rgba(253,230,138,0.92) 100%);
+  border-color:rgba(251,191,36,0.55);
+  box-shadow:0 6px 24px rgba(251,191,36,0.30);
+}
 
-.tbar{display:flex;margin:12px;background:var(--white);border-radius:16px;padding:4px;border:1px solid var(--bd);box-shadow:var(--sh);position:sticky;top:68px;z-index:40}
-.tb{flex:1;padding:10px 0;text-align:center;font-size:10px;font-weight:700;color:var(--tx3);letter-spacing:0.3px;cursor:pointer;border-radius:12px;transition:all 0.3s}
-.tb:hover{color:var(--tx2);background:var(--bg2)}
-.tb.on{color:#fff;background:var(--or-grad);box-shadow:var(--sh-or)}
-.tc{display:none;animation:fi 0.4s ease}.tc.show{display:block}
-@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+/* ── TAB BAR (Part 3) ─────────────────────── */
+.tbar{
+  display:flex;gap:2px;margin:14px 12px;padding:4px;
+  background:rgba(15,15,25,0.55);border:1px solid var(--bd);
+  border-radius:16px;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:var(--sh-lg);
+  position:sticky;top:84px;z-index:40;
+}
+.tb{
+  flex:1;padding:11px 0;text-align:center;
+  font-size:10.5px;font-weight:700;color:var(--tx3);
+  letter-spacing:0.3px;cursor:pointer;border-radius:12px;
+  transition:all 0.25s ease;user-select:none;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+}
+.tb:hover{color:var(--tx2);background:rgba(255,255,255,0.05)}
+.tb.on{
+  color:#fff;background:var(--or-grad);
+  box-shadow:0 4px 14px rgba(249,115,22,0.45);
+  transform:translateY(-1px);
+}
+.tb-ico{font-size:13px;line-height:1}
+.tc{display:none;animation:fadein 0.4s ease}
+.tc.show{display:block}
+
+/* ── REFRESH BAR ───────────────────────────── */
+.ref{
+  text-align:center;padding:10px 12px 4px;
+  font-size:9.5px;color:var(--tx3);font-weight:600;letter-spacing:0.3px;
+}
+.rd2{
+  display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--gn);margin-right:5px;animation:lp 2s infinite;
+  vertical-align:middle;
+}
 
 .ref{text-align:center;padding:8px;font-size:9px;color:var(--tx3);font-weight:500}
 .rd2{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gn);margin-right:4px;animation:lp 2s infinite}
@@ -179,15 +233,27 @@ body{
 <div class="container">
 <header class="hdr" id="hdr"></header>
 <div class="stats" id="stats-area">
-<div class="stat" id="st-pnl-card"><div class="la">Day P&L</div><div class="va mono" id="st-pnl">0pts</div><div class="su" id="st-rs">₹0</div></div>
-<div class="stat"><div class="la">Trades</div><div class="va mono" id="st-trades">0</div><div class="su" id="st-wl">0W 0L</div></div>
-<div class="stat"><div class="la">Status</div><div class="va" id="st-icon">⚡</div><div class="su" id="st-status">SCANNING</div></div>
+  <div class="stat" id="st-pnl-card">
+    <div class="la">Day P&amp;L</div>
+    <div class="va mono" id="st-pnl">+0.0</div>
+    <div class="su" id="st-rs">₹0</div>
+  </div>
+  <div class="stat" id="st-trd-card">
+    <div class="la">Trades</div>
+    <div class="va mono" id="st-trades">0</div>
+    <div class="su" id="st-wl">— —</div>
+  </div>
+  <div class="stat" id="st-status-card">
+    <div class="la">Status</div>
+    <div class="va sm" id="st-icon">⚡</div>
+    <div class="su" id="st-status">SCANNING</div>
+  </div>
 </div>
 <div class="tbar">
-<div class="tb on" data-t="sig" onclick="stab(0)">⚡ Signals</div>
-<div class="tb" data-t="mkt" onclick="stab(1)">📊 Market</div>
-<div class="tb" data-t="trd" onclick="stab(2)">📋 Trades</div>
-<div class="tb" data-t="fil" onclick="stab(3)">📁 Files</div>
+  <div class="tb on" data-t="sig" onclick="stab(0)"><span class="tb-ico">⚡</span>Signals</div>
+  <div class="tb" data-t="mkt" onclick="stab(1)"><span class="tb-ico">📊</span>Market</div>
+  <div class="tb" data-t="trd" onclick="stab(2)"><span class="tb-ico">📋</span>Trades</div>
+  <div class="tb" data-t="fil" onclick="stab(3)"><span class="tb-ico">📁</span>Files</div>
 </div>
 <div class="ref"><span class="rd2"></span>Auto-refresh 10s · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
 <div id="pos-area"></div>
@@ -245,24 +311,62 @@ if(!d)return;
 var mk=d.market||{},pos=d.position||{},ce=d.signals_ce||d.ce||{},pe=d.signals_pe||d.pe||{},cd=d.cooldown||{},td=d.today||{};
 renderHeader(d);
 
-// BUG-025: include floating open PNL in day total
+// Stats: P&L (with open) + Trades + Smart Status (Part 3)
 var _realized=parseFloat(td.pnl||0);
 var _open=pos.in_trade?parseFloat(pos.pnl||0):0;
-var dp=_realized+_open,dc=dp>=0?'gn':'rd';
+var dp=_realized+_open;
+var dc=dp>=0?'gn':'rd';
+
 document.getElementById('st-pnl').className='va mono '+dc;
-document.getElementById('st-pnl').textContent=fmt(dp)+'pts';
-var _rs_sub=rs(dp);
-if(pos.in_trade&&_open!==0)_rs_sub+='<br><span style="font-size:8px;color:var(--tx3)">Realized '+fmt(_realized)+' Open '+fmt(_open)+'</span>';
+document.getElementById('st-pnl').textContent=(dp>=0?'+':'')+dp.toFixed(1);
+var _rs_main=rs(dp);
+var _rs_sub=_rs_main;
+if(pos.in_trade&&_open!==0){
+  _rs_sub=_rs_main+'<br><span style="font-size:8px;color:var(--ctx3);font-weight:600">R '+fmt(_realized)+' \u00B7 O '+fmt(_open)+'</span>';
+}
 document.getElementById('st-rs').innerHTML=_rs_sub;
 document.getElementById('st-pnl-card').className='stat '+(dp>=0?'st-up':'st-dn');
-document.getElementById('st-trades').textContent=td.trades||0;
+
+// Trades card with W/L bars + win%
 var _w=td.wins||0,_l=td.losses||0,_tc=td.trades||0;
-var wlh='';for(var i=0;i<_w;i++)wlh+='<span style="display:inline-block;width:14px;height:6px;border-radius:3px;background:var(--gn);margin:0 1px"></span>';
-for(var i=0;i<_l;i++)wlh+='<span style="display:inline-block;width:14px;height:6px;border-radius:3px;background:var(--rd);margin:0 1px"></span>';
-if(!_tc)wlh='0W 0L';
-document.getElementById('st-wl').innerHTML=wlh||(_w+'W '+_l+'L');
-document.getElementById('st-icon').textContent=pos.in_trade?'🟢':'⚡';
-document.getElementById('st-status').textContent=pos.in_trade?'IN TRADE':'SCANNING';
+document.getElementById('st-trades').textContent=_tc;
+var wlh='';
+if(_tc>0){
+  var _maxBars=6;
+  var _wShow=Math.min(_w,_maxBars),_lShow=Math.min(_l,_maxBars);
+  for(var i=0;i<_wShow;i++)wlh+='<span style="display:inline-block;width:11px;height:5px;border-radius:2px;background:var(--gn2);margin:0 1px"></span>';
+  for(var i=0;i<_lShow;i++)wlh+='<span style="display:inline-block;width:11px;height:5px;border-radius:2px;background:var(--rd);margin:0 1px"></span>';
+  var _wr=Math.round(_w/_tc*100);
+  wlh+='<br><span style="font-size:8.5px;color:var(--ctx3);font-weight:700">'+_w+'W \u00B7 '+_l+'L \u00B7 '+_wr+'%</span>';
+}else{
+  wlh='<span style="color:var(--ctx3)">no trades yet</span>';
+}
+document.getElementById('st-wl').innerHTML=wlh;
+
+// Smart Status: 5 states
+var _stIcon='\u26A1',_stText='SCANNING',_stCard='stat',_stSub='';
+if(td.paused){
+  _stIcon='\u23F8\uFE0F'; _stText='PAUSED'; _stCard='stat st-dn';
+}else if(pos.in_trade){
+  _stIcon=pos.direction==='CE'?'\uD83D\uDFE2':'\uD83D\uDD34';
+  _stText='IN TRADE'; _stCard='stat st-trade';
+  var _sym=(pos.direction||'')+' '+(pos.strike||'');
+  var _pn=parseFloat(pos.pnl||0);
+  _stSub=esc(_sym)+' '+(_pn>=0?'+':'')+_pn.toFixed(1);
+}else if(cd&&cd.remaining>0){
+  _stIcon='\u23F3'; _stText='COOLDOWN';
+  _stSub=Math.ceil(cd.remaining)+'m \u00B7 '+(cd.direction||'');
+}else if(mk.market_open===false){
+  _stIcon='\uD83D\uDCA4'; _stText='MARKET CLOSED';
+}else if(!mk.indicators_warm&&mk.market_open){
+  _stIcon='\u231B'; _stText='WARMING UP';
+  _stSub=(mk.warmup_progress||0)+'/'+(mk.warmup_needed||14);
+}
+document.getElementById('st-icon').textContent=_stIcon;
+document.getElementById('st-status-card').className=_stCard;
+document.getElementById('st-status').innerHTML=
+  '<span style="color:var(--ctx2);font-weight:800">'+_stText+'</span>'+
+  (_stSub?'<br><span style="font-size:8.5px;color:var(--ctx3);font-weight:700">'+esc(_stSub)+'</span>':'');
 
 // Position card
 var pa='';
