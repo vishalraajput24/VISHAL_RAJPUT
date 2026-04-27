@@ -1806,6 +1806,19 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
                 "trail_tier":          st.get("active_ratchet_tier", ""),
                 "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
+                # v16.7 Cross-leg signal at entry (display in position card)
+                "xleg_signal":       st.get("_xleg_signal", "NA"),
+                "xleg_other_close":  round(float(st.get("_xleg_other_close", 0) or 0), 2),
+                "xleg_other_ema9l":  round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
+                "xleg_other_margin": round(float(st.get("_xleg_other_margin", 0) or 0), 2),
+                # v16.7 Anti-spike fill info (display in position card)
+                "spike_close":       round(float(st.get("_spike_close", 0) or 0), 2),
+                "spike_target":      round(float(st.get("_spike_target", 0) or 0), 2),
+                "spike_fill":        round(float(st.get("_spike_fill", 0) or 0), 2),
+                "spike_wait_used":   round(float(st.get("_spike_wait_used", 0) or 0), 1),
+                "spike_saved_pts":   round(float(st.get("_spike_close", 0) or 0)
+                                            - float(st.get("_spike_fill", 0) or 0), 2)
+                                       if st.get("_spike_fill") else 0,
                 # Legacy compat
                 "lots_split": False,
                 "current_floor": round(st.get("current_ema9_low", 0), 2),

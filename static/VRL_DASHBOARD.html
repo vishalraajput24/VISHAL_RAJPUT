@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#0a0a0f">
-<title>VISHAL RAJPUT TRADE v16.6</title>
+<title>VISHAL RAJPUT TRADE v16.7 (Vishal Clean)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -180,6 +180,38 @@ body{
 .pos2-meta b{color:var(--ctx);font-weight:800;font-family:'JetBrains Mono',monospace}
 .pos2-meta .arr{color:var(--ctx3);margin:0 4px;font-weight:400}
 .pos2-meta .sub{display:block;margin-top:3px;color:var(--ctx3);font-size:10px;font-weight:600}
+
+/* v16.7 Strategy pipeline strip — what the bot is doing right now */
+.strat-strip{margin:6px 12px 8px;padding:8px 10px;border-radius:12px;
+  background:linear-gradient(135deg,rgba(249,115,22,0.08),rgba(59,130,246,0.05));
+  border:1px solid rgba(249,115,22,0.18)}
+.strat-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.strat-cell{display:flex;flex-direction:column;align-items:center;text-align:center;
+  padding:6px 4px;border-radius:8px;background:rgba(255,255,255,0.55);
+  border:1px solid rgba(0,0,0,0.05)}
+.strat-num{font-size:9px;font-weight:800;color:#fff;background:var(--or-grad);
+  width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:3px}
+.strat-name{font-size:9.5px;font-weight:800;color:var(--tx);letter-spacing:0.3px}
+.strat-desc{font-size:7.5px;font-weight:600;color:var(--tx3);margin-top:2px;line-height:1.3}
+@media (max-width: 540px){
+  .strat-row{grid-template-columns:repeat(5,1fr)}
+  .strat-desc{font-size:6.8px}
+}
+
+/* v16.7 Filter context rows (X-Leg + Anti-Spike) */
+.pos2-filters{margin-top:10px;display:grid;gap:6px}
+.pos2-filter-row{
+  display:grid;grid-template-columns:64px auto 1fr;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:10px;
+  background:rgba(15,23,42,0.05);border:1px solid var(--cbd);
+  font-size:10.5px;font-weight:700;
+}
+.pos2-filter-row .lab{color:var(--ctx3);text-transform:uppercase;letter-spacing:0.5px;font-size:9.5px}
+.pos2-filter-row .val{font-weight:800;font-family:'JetBrains Mono',monospace}
+.pos2-filter-row .val.ok{color:var(--gn2)}
+.pos2-filter-row .val.no{color:var(--rd)}
+.pos2-filter-row .val.muted{color:var(--ctx4)}
+.pos2-filter-row .ctx{color:var(--ctx3);font-weight:600;font-size:10px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Vishal Clean v16.7 — SL Ladder */
 .trail-card{
@@ -583,6 +615,15 @@ body{
   <div class="tb" data-t="fil" onclick="stab(2)"><span class="tb-ico">📁</span>Files</div>
 </div>
 <div class="ref"><span class="rd2" id="rd2"></span><span id="ref-text">Auto-refresh 10s</span> · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
+<div class="strat-strip" id="strat-strip">
+  <div class="strat-row">
+    <div class="strat-cell"><span class="strat-num">1</span><span class="strat-name">3-GATE</span><span class="strat-desc">GREEN · Close&gt;EMA9L · Body≥40</span></div>
+    <div class="strat-cell"><span class="strat-num">2</span><span class="strat-name">X-LEG</span><span class="strat-desc">other side dying = PASS</span></div>
+    <div class="strat-cell"><span class="strat-num">3</span><span class="strat-name">ANTI-SPIKE</span><span class="strat-desc">close-2, 60s pullback</span></div>
+    <div class="strat-cell"><span class="strat-num">4</span><span class="strat-name">SL LADDER</span><span class="strat-desc">INITIAL→M5→3→5→8→15→DYN</span></div>
+    <div class="strat-cell"><span class="strat-num">5</span><span class="strat-name">EXIT</span><span class="strat-desc">Emerg-10 · EOD15:20 · Trail</span></div>
+  </div>
+</div>
 <div id="pos-area"></div>
 <div class="tc show" id="p-sig"></div>
 <div class="tc" id="p-trd"></div>
@@ -743,6 +784,40 @@ if(pos.in_trade){
         '<span class="sub">Hold <b>'+cn+'</b> candles \u00B7 since '+esc(et)+'</span>'+
       '</div>';
 
+  // v16.7 — Filter context (X-LEG signal + Anti-Spike fill at entry)
+  var _xls=String(pos.xleg_signal||'NA').toUpperCase();
+  var _xlm=parseFloat(pos.xleg_other_margin||0);
+  var _xlOther=pos.direction==='CE'?'PE':'CE';
+  var _xlBadge='', _xlText='';
+  if(_xls==='PASS'){
+    _xlBadge='\u2713 PASS'; _xlText=_xlOther+' dying ('+(_xlm>=0?'+':'')+_xlm.toFixed(1)+' below own EMA9L)';
+  }else if(_xls==='FAIL'){
+    _xlBadge='\u2717 FAIL'; _xlText=_xlOther+' holding ('+(_xlm>=0?'+':'')+_xlm.toFixed(1)+' above own EMA9L)';
+  }else{
+    _xlBadge='\u2014 NA';   _xlText='no data';
+  }
+  var _spkClose=parseFloat(pos.spike_close||0);
+  var _spkTarget=parseFloat(pos.spike_target||0);
+  var _spkFill=parseFloat(pos.spike_fill||0);
+  var _spkSaved=parseFloat(pos.spike_saved_pts||0);
+  var _spkText='';
+  if(_spkFill>0&&_spkClose>0){
+    _spkText='Filled \u20B9'+_spkFill.toFixed(2)+' (target \u20B9'+_spkTarget.toFixed(2)+', saved '+(_spkSaved>=0?'+':'')+_spkSaved.toFixed(1)+'pts)';
+  }else if(_spkClose>0){
+    _spkText='Immediate fill (no wait)';
+  }else{
+    _spkText='\u2014';
+  }
+
+  pa+='<div class="pos2-filters">'+
+        '<div class="pos2-filter-row"><span class="lab">X-Leg</span>'+
+          '<span class="val '+(_xls==='PASS'?'ok':(_xls==='FAIL'?'no':'muted'))+'">'+_xlBadge+'</span>'+
+          '<span class="ctx">'+esc(_xlText)+'</span></div>'+
+        '<div class="pos2-filter-row"><span class="lab">Anti-Spike</span>'+
+          '<span class="val '+(_spkSaved>0?'ok':'muted')+'">'+(_spkSaved>0?('\u2713 +'+_spkSaved.toFixed(1)+'pts'):'\u2014')+'</span>'+
+          '<span class="ctx">'+esc(_spkText)+'</span></div>'+
+      '</div>';
+
   // Vishal Clean v16.7 — peak-driven SL ladder
   var tiers=[
     {k:'INITIAL',  icon:'',                                       range:'<5',    sl:'entry-10',       min:0,  max:5},
@@ -893,12 +968,29 @@ sh+='<div class="sig-grid">';
   else if(g_body){bdLab='\u2713 '+bd.toFixed(0)+'%';bdCls='ok'}
   else{bdLab='\u2717 '+bd.toFixed(0)+'% (<40)';bdCls='no'}
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>Body</span><span class="val '+bdCls+'">'+bdLab+'</span></div>';
-  // Slope (display-only — drives FLAT_2X exit, not entry)
+  // Slope (display-only insight — never gates entries or exits in v16.7-final)
   var slLab,slCls;
-  if(g_slopeFlat){slLab='\u26A0 flat '+(sl>=0?'+':'')+sl.toFixed(1)+' (exit zone)';slCls='no'}
-  else if(sl>3){slLab='\u2713 rising +'+sl.toFixed(1);slCls='ok'}
-  else{slLab='\u2717 falling '+sl.toFixed(1);slCls='no'}
+  if(sl>3){slLab='\u2713 rising +'+sl.toFixed(1);slCls='ok'}
+  else if(sl>=0){slLab='\u2192 flat +'+sl.toFixed(1);slCls='muted'}
+  else{slLab='\u2193 falling '+sl.toFixed(1);slCls='muted'}
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
+
+  // X-LEG signal (HARD gate — blocks FAIL entries)
+  var _xls_s=String(s.xleg_signal||'').toUpperCase();
+  var _xlm_s=parseFloat(s.xleg_other_margin||0);
+  var _xlOther_s=t==='CE'?'PE':'CE';
+  var xlLab,xlCls;
+  if(_xls_s==='PASS'){
+    xlLab='\u2713 '+_xlOther_s+' dying ('+(_xlm_s>=0?'+':'')+_xlm_s.toFixed(1)+')';
+    xlCls='ok';
+  }else if(_xls_s==='FAIL'){
+    xlLab='\u2717 '+_xlOther_s+' holding (+'+_xlm_s.toFixed(1)+') BLOCK';
+    xlCls='no';
+  }else{
+    xlLab='\u2014 computed at entry';
+    xlCls='muted';
+  }
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDD17</span>X-Leg</span><span class="val '+xlCls+'">'+xlLab+'</span></div>';
   sh+='</div>';
 
   sh+=vd_html;
@@ -947,7 +1039,14 @@ if(trades&&trades.length){
     var xt=t.exit_time||'';
     var pk=parseFloat(t.peak_pnl||0);
     var ch=t.candles_held||0;
-    var meta=esc(et)+' \u2192 '+esc(xt)+' \u00B7 '+ch+'c \u00B7 Peak +'+pk.toFixed(1);
+    // v16.7 — surface x-leg signal + anti-spike fill in trade meta
+    var _trXl=String(t.xleg_signal||'').toUpperCase();
+    var _trXlBadge=_trXl==='PASS'?' \u00B7 X-Leg \u2713':(_trXl==='FAIL'?' \u00B7 X-Leg \u2717':'');
+    var _trSpkClose=parseFloat(t.spike_close||0);
+    var _trSpkFill=parseFloat(t.spike_fill||0);
+    var _trSpkSaved=(_trSpkClose>0&&_trSpkFill>0)?(_trSpkClose-_trSpkFill):0;
+    var _trSpkBadge=_trSpkSaved>0.05?(' \u00B7 Spk +'+_trSpkSaved.toFixed(1)):'';
+    var meta=esc(et)+' \u2192 '+esc(xt)+' \u00B7 '+ch+'c \u00B7 Peak +'+pk.toFixed(1)+_trXlBadge+_trSpkBadge;
 
     var reason=String(t.exit_reason||'').toUpperCase();
     var reasonCls='';
