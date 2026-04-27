@@ -35,16 +35,19 @@ lots:
 # green-candle check — replaced by band_width_min + slope gate.
 entry:
   ema9_band:
-    body_pct_min: 40
+    # Vishal's simple entry: GREEN candle + body >= 50% on the last
+    # closed 3-min candle, close above EMA9_low, band width > 7,
+    # EMA9_low slope per-candle (1-bar) flat or rising.
+    body_pct_min: 50
     warmup_until: "09:35"
     cutoff_after: "15:10"
     cooldown_minutes: 5
     # Minimum EMA9 band width (ema9_high - ema9_low) in points. Protects
     # against dead-zone entries during tight consolidation ranges.
     band_width_min: 7
-    # Candle lookback for EMA9_low slope check. Entry rejects when
-    # ema9_low(now) - ema9_low(N candles ago) < 0 (falling band).
-    ema9_slope_lookback: 3
+    # Per-candle slope check (1-bar lookback). Entry rejects when the
+    # last candle's ema9_low is lower than the previous candle's.
+    ema9_slope_lookback: 1
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
     # (body × gap). Disabled by default to keep WS token count low.

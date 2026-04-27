@@ -811,12 +811,12 @@ sh+='<div class="sig-grid">';
   function friendly(r){
     if(!r)return '';
     if(r==='close_below_ema9_low')return 'Close below EMA9-low';
-    if(r==='red_candle')return '(stale) Red candle';
     if(r==='not_fresh_breakout')return '(stale) Not fresh breakout';
     if(r==='insufficient_3m_data')return 'Warming up\u2026';
     if(r.indexOf('tight_band_')===0)return 'Band too narrow ('+r.split('_').pop()+'pts < 7)';
     if(r.indexOf('ema9_low_falling_')===0)return 'EMA9 falling ('+r.split('_').pop()+')';
-    if(r.indexOf('weak_body_')===0)return 'Body '+r.replace('weak_body_','').replace('pct','')+'% < 40%';
+    if(r==='red_candle')return 'Red candle (need GREEN)';
+    if(r.indexOf('weak_body_')===0)return 'Body '+r.replace('weak_body_','').replace('pct','')+'% < 50%';
     if(r.indexOf('before_')===0)return 'Pre-warmup (before '+r.replace('before_','')+')';
     if(r.indexOf('after_')===0)return 'Past entry cutoff ('+r.replace('after_','')+')';
     return r;
@@ -837,7 +837,7 @@ sh+='<div class="sig-grid">';
   var g_time=!rj||(rj.indexOf('before_')!==0&&rj.indexOf('after_')!==0);
   var g_band=(cl>el)&&(bw>7);
   var g_slope=sl>=-0.05;
-  var g_body=bd>=40;
+  var g_body=bd>=50&&_green;  // Vishal Simple: GREEN candle + body >= 50%
   var g_slopeFlat=Math.abs(sl)<0.05;
 
   // Verdict
@@ -882,10 +882,12 @@ sh+='<div class="sig-grid">';
   else{slLab='\u2717 falling ('+sl.toFixed(1)+')';slCls='no'}
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
   // Body
+  // Body row now requires GREEN + >=50%. Shows candle colour context.
   var bdLab,bdCls;
   if(bd<=0){bdLab='\u2014 n/a';bdCls='muted'}
-  else if(g_body){bdLab='\u2713 '+bd.toFixed(0)+'%';bdCls='ok'}
-  else{bdLab='\u2717 '+bd.toFixed(0)+'%';bdCls='no'}
+  else if(!_green){bdLab='\u2717 RED '+bd.toFixed(0)+'%';bdCls='no'}
+  else if(bd>=50){bdLab='\u2713 GREEN '+bd.toFixed(0)+'%';bdCls='ok'}
+  else{bdLab='\u2717 GREEN '+bd.toFixed(0)+'% (<50)';bdCls='no'}
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>Body</span><span class="val '+bdCls+'">'+bdLab+'</span></div>';
   sh+='</div>';
 

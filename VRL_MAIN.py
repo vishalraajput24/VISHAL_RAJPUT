@@ -755,10 +755,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6 (Vishal Golden 4)\n"
+        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6 (Vishal Simple)\n"
         "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
-        "Gates   : 4 — time window, close>ema9_low + band>7,\n"
-        "          ema9_low slope flat/rising, body>=40%\n"
+        "Gates   : time + close>EMA9L + band>7\n"
+        "          per-candle slope flat/rising\n"
+        "          GREEN candle + body>=50%\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
@@ -1010,7 +1011,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
         "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts (3 bars)\n"
-        "Body    " + str(_body) + "%\n"
+        "Body    " + str(_body) + "% green\n"
     )
 
     # Read the emergency SL from the same config key the engine uses

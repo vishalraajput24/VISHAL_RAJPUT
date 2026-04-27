@@ -68,11 +68,11 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, market_open: bool,
                                state: dict, straddle_delta, spot_vwap, spot_for_vwap: float,
                                atm_strike: int, silent: bool = False, other_opt_3m=None) -> dict:
-    # ── Golden 4 entry rules (Vishal V16.6 final) ──
+    # ── Vishal Simple Entry rules (v16.6 final) ──
     #   1. Time window 09:35 ≤ now ≤ 15:10
     #   2. Close > EMA9_low AND (ema9_high - ema9_low) > band_width_min
-    #   3. EMA9_low slope flat or rising (last - N candles ago ≥ 0)
-    #   4. Body ≥ body_pct_min (default 40%) of candle range
+    #   3. EMA9_low slope per-candle ≥ 0 (current candle's ema9_low ≥ previous's)
+    #   4. GREEN candle AND body ≥ body_pct_min (default 50%)
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -80,29 +80,31 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         "backbone_status": "N/A", "ema9_low_slope": 0.0,
     }
     try:
-        body_min = CFG.entry_ema9_band("body_pct_min", 40)
+        body_min = CFG.entry_ema9_band("body_pct_min", 50)
         warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:10")
         band_width_min = CFG.entry_ema9_band("band_width_min", 7)
-        slope_lookback = int(CFG.entry_ema9_band("ema9_slope_lookback", 3))
 
-        need_rows = max(4, slope_lookback + 2)
-        if opt_3m is None or opt_3m.empty or len(opt_3m) < need_rows:
+        # Per-candle slope (1-bar lookback) — needs only 4 candles total:
+        # iloc[-2] = last closed, iloc[-3] = previous closed, plus 2 more
+        # for ema9 stability. Faster post-strike-change entry vs the old
+        # 3-bar lookback that needed 5 candles.
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < 4:
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
         last = opt_3m.iloc[-2]
+        prev = opt_3m.iloc[-3]
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
-        # Slope: current ema9_low minus ema9_low N candles ago (points over N bars).
-        _ema9_low_past = float(opt_3m.iloc[-2 - slope_lookback].get("ema9_low", 0))
-        ema9_low_slope = round(ema9_low - _ema9_low_past, 2)
+        # Per-candle slope: current ema9_low - previous candle's ema9_low.
+        ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
 
-        # Always compute band_position + body_pct up-front so the
-        # dashboard has values even when an early gate rejects.
+        # Always compute band_position + body_pct + green up-front so
+        # the dashboard has values even when an early gate rejects.
         if close > ema9_high:
             _band_pos = "ABOVE"
         elif close < ema9_low:
@@ -112,6 +114,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         _candle_range = high - low
         _body_pct = round((abs(close - open_) / _candle_range * 100)
                           if _candle_range > 0 else 0, 1)
+        _is_green = (close > open_)
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
@@ -119,7 +122,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             "high": round(high, 2), "low": round(low, 2),
             "band_width": band_width,
             "ema9_low_slope": ema9_low_slope,
-            "candle_green": (close > open_),
+            "candle_green": _is_green,
             "band_position": _band_pos,
             "body_pct": _body_pct,
         })
@@ -149,8 +152,11 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             result["reject_reason"] = f"ema9_low_falling_{ema9_low_slope}"
             return result
 
-        # ── GATE 4: Body ≥ body_pct_min ──
-        # body_pct already computed up-front in result.update() above.
+        # ── GATE 4: GREEN candle AND Body ≥ body_pct_min ──
+        # body_pct + green flag already computed up-front above.
+        if not _is_green:
+            result["reject_reason"] = "red_candle"
+            return result
         if _body_pct < body_min:
             result["reject_reason"] = f"weak_body_{int(_body_pct)}pct"
             return result
