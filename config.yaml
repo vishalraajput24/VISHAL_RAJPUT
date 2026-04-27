@@ -44,6 +44,14 @@ entry:
     band_width_min: 7
     # Per-candle slope lookback (1 bar) — used by FLAT_2X exit.
     ema9_slope_lookback: 1
+    # ── v16.7 Anti-spike limit-pullback entry ──
+    # After 3-gate signal fires at candle close, target entry is set to
+    # close - spike_buffer_pts. Bot polls LTP for spike_wait_secs;
+    # fills at current LTP if it touches target (better entry, avoids
+    # buying the top of a spike). If timeout, skip — wait for fresh setup.
+    # Set buffer or wait to 0 to disable.
+    spike_buffer_pts: 2
+    spike_wait_secs: 60
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
     # (body × gap). Disabled by default to keep WS token count low.

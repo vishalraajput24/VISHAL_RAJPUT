@@ -464,6 +464,8 @@ TRADE_FIELDNAMES = [
     # v16.7 Cross-leg divergence (LOG ONLY — 1-week eval)
     "xleg_signal", "xleg_other_close", "xleg_other_ema9l",
     "xleg_other_dying", "xleg_other_margin",
+    # v16.7 Anti-spike pullback entry tracking
+    "spike_close", "spike_target", "spike_fill", "spike_wait_used",
 ]
 
 def _cleanup_trade_log():
@@ -562,6 +564,11 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "xleg_other_ema9l":    round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
         "xleg_other_dying":    bool(st.get("_xleg_other_dying", False)),
         "xleg_other_margin":   round(float(st.get("_xleg_other_margin", 0) or 0), 2),
+        # v16.7 Anti-spike pullback (close, target, fill, wait used)
+        "spike_close":         round(float(st.get("_spike_close", 0) or 0), 2),
+        "spike_target":        round(float(st.get("_spike_target", 0) or 0), 2),
+        "spike_fill":          round(float(st.get("_spike_fill", 0) or 0), 2),
+        "spike_wait_used":     round(float(st.get("_spike_wait_used", 0) or 0), 1),
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -952,6 +959,33 @@ def _generate_eod_report():
 #  ENTRY + EXIT EXECUTION
 # ═══════════════════════════════════════════════════════════════
 
+def _wait_for_pullback(token: int, target_price: float, timeout_secs: int) -> tuple:
+    """Anti-spike limit-pullback: poll LTP up to timeout_secs.
+    Fill at current LTP the moment it touches target (close-buffer).
+    Returns (fill_price, elapsed_secs) on fill, (None, elapsed_secs)
+    on timeout. Aborts early if bot paused or market closes.
+
+    Hard requirement: caller must not be in_trade (entry-path only).
+    """
+    if timeout_secs <= 0 or target_price <= 0 or token <= 0:
+        return None, 0
+    deadline = time.time() + timeout_secs
+    start = time.time()
+    while time.time() < deadline:
+        if state.get("paused"):
+            return None, round(time.time() - start, 1)
+        if not D.is_market_open():
+            return None, round(time.time() - start, 1)
+        try:
+            ltp = D.get_ltp(token)
+        except Exception:
+            ltp = 0
+        if ltp and ltp > 0 and ltp <= target_price:
+            return float(ltp), round(time.time() - start, 1)
+        time.sleep(1)
+    return None, float(timeout_secs)
+
+
 def _execute_entry(kite, option_info: dict, option_type: str,
                    entry_result: dict, profile: dict,
                    expiry, dte: int, session: str = "MORNING"):
@@ -1064,6 +1098,13 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_xleg_other_ema9l"]  = round(float(entry_result.get("xleg_other_ema9l", 0) or 0), 2)
         state["_xleg_other_dying"]  = bool(entry_result.get("xleg_other_dying", False))
         state["_xleg_other_margin"] = round(float(entry_result.get("xleg_other_margin", 0) or 0), 2)
+        # Anti-spike pullback (signal candle close, pull-back target,
+        # actual fill, seconds waited). Stamped in trade log so we can
+        # measure "saved pts" per trade after a week.
+        state["_spike_close"]       = round(float(entry_result.get("spike_close", 0) or 0), 2)
+        state["_spike_target"]      = round(float(entry_result.get("spike_target", 0) or 0), 2)
+        state["_spike_fill"]        = round(float(entry_result.get("spike_fill", 0) or 0), 2)
+        state["_spike_wait_used"]   = round(float(entry_result.get("spike_wait_used", 0) or 0), 1)
         state["current_ema9_high"]  = round(float(entry_result.get("ema9_high", 0)), 2)
         state["current_ema9_low"]   = round(float(entry_result.get("ema9_low", 0)), 2)
         state["last_band_check_ts"] = ""
@@ -2715,6 +2756,59 @@ def _strategy_loop(kite):
                                                 + "\n(window had " + str(_reentry_remaining)
                                                 + " candle(s) left)"
                                             )
+                                            # Anti-spike on re-entry too — same buffer + wait
+                                            _spk_buf_re = float(CFG.entry_ema9_band("spike_buffer_pts", 2))
+                                            _spk_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
+                                            _re_skip = False
+                                            if _spk_buf_re > 0 and _spk_wait_re > 0 and _re_close > 0:
+                                                _spk_target_re = round(_re_close - _spk_buf_re, 2)
+                                                _spk_cur_re = D.get_ltp(_re_token) or 0
+                                                if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
+                                                    _spk_fill_re = _spk_cur_re
+                                                    _spk_used_re = 0
+                                                else:
+                                                    _tg_send(
+                                                        "⏳ <b>ANTI-SPIKE (RE-ENTRY)</b>\n"
+                                                        + _re_dir + " " + str(_re_strike) + "\n"
+                                                        "Target Rs" + "{:.1f}".format(_spk_target_re)
+                                                        + "  | LTP Rs" + "{:.1f}".format(_spk_cur_re) + "\n"
+                                                        "Waiting " + str(_spk_wait_re) + "s for pullback"
+                                                    )
+                                                    _spk_fill_re, _spk_used_re = _wait_for_pullback(
+                                                        _re_token, _spk_target_re, _spk_wait_re)
+                                                if _spk_fill_re is None:
+                                                    _tg_send(
+                                                        "⏭ <b>RE-ENTRY SKIPPED</b>\n"
+                                                        + _re_dir + " " + str(_re_strike)
+                                                        + "  target Rs" + "{:.1f}".format(_spk_target_re) + "\n"
+                                                        "No pullback in " + str(_spk_wait_re) + "s."
+                                                    )
+                                                    logger.info("[ANTI-SPIKE][REENTRY] skip — no pullback")
+                                                    _re_skip = True
+                                                else:
+                                                    _re_result["close"] = _spk_fill_re
+                                                    _re_result["entry_price"] = _spk_fill_re
+                                                    _re_result["spike_close"] = _re_close
+                                                    _re_result["spike_target"] = _spk_target_re
+                                                    _re_result["spike_fill"] = _spk_fill_re
+                                                    _re_result["spike_wait_used"] = _spk_used_re
+                                                    _saved_re = round(_re_close - _spk_fill_re, 2)
+                                                    _tg_send(
+                                                        "✅ <b>RE-ENTRY FILLED</b>\n"
+                                                        + _re_dir + " " + str(_re_strike)
+                                                        + " Rs" + "{:.2f}".format(_spk_fill_re) + "\n"
+                                                        "Saved " + ("+" if _saved_re >= 0 else "")
+                                                        + "{:.1f}".format(_saved_re) + " pts vs spike close"
+                                                    )
+                                                    logger.info(
+                                                        "[ANTI-SPIKE][REENTRY] filled Rs"
+                                                        + str(_spk_fill_re) + " after "
+                                                        + str(_spk_used_re) + "s")
+                                            if _re_skip:
+                                                # Restore cooldown direction so normal scan respects it.
+                                                with _state_lock:
+                                                    state["last_exit_direction"] = _saved_lex
+                                                continue
                                             # Clear watcher BEFORE execute so a fresh
                                             # exit doesn't reset it mid-flow.
                                             with _state_lock:
@@ -2910,6 +3004,80 @@ def _strategy_loop(kite):
                                      dir_strikes=dir_strikes)
                 except Exception as _de:
                     logger.debug("[DASH] " + str(_de))
+
+                if best_result and best_opt_info:
+                    # ── Anti-spike limit-pullback ──────────────────────
+                    # User mandate: don't chase the spike. After 3-gate
+                    # signal fires at candle close, set target =
+                    # close - spike_buffer_pts (default 2). Wait up to
+                    # spike_wait_secs (default 60s) for LTP to touch the
+                    # target. If hit → fill at current LTP (better entry).
+                    # If timeout → skip, wait for fresh setup.
+                    _spike_buf = float(CFG.entry_ema9_band("spike_buffer_pts", 2))
+                    _spike_wait = int(CFG.entry_ema9_band("spike_wait_secs", 60))
+                    _entry_close_x = float(best_result.get("close", 0) or 0)
+                    if _spike_buf > 0 and _spike_wait > 0 and _entry_close_x > 0:
+                        _spk_target = round(_entry_close_x - _spike_buf, 2)
+                        _spk_tok = best_opt_info.get("token", 0)
+                        _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
+                        if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
+                            # Already at or below target — fill immediately
+                            _spk_fill = _spk_cur_ltp
+                            _spk_used = 0
+                            logger.info(
+                                "[ANTI-SPIKE] " + best_type + " immediate fill Rs"
+                                + str(_spk_fill) + " (target Rs" + str(_spk_target)
+                                + ", saved " + "{:.2f}".format(_entry_close_x - _spk_fill)
+                                + " pts)")
+                        else:
+                            _tg_send(
+                                "⏳ <b>ANTI-SPIKE WAIT</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                + best_type + " " + str(best_result.get("_strike", 0)) + "\n"
+                                "Close   Rs" + "{:.1f}".format(_entry_close_x) + "\n"
+                                "Target  Rs" + "{:.1f}".format(_spk_target)
+                                + "  (close − " + "{:.1f}".format(_spike_buf) + ")\n"
+                                "LTP     Rs" + "{:.1f}".format(_spk_cur_ltp) + "\n"
+                                "Wait    " + str(_spike_wait) + "s for pullback"
+                            )
+                            _spk_fill, _spk_used = _wait_for_pullback(
+                                _spk_tok, _spk_target, _spike_wait)
+                            if _spk_fill is None:
+                                _tg_send(
+                                    "⏭ <b>SKIPPED — no pullback</b>\n"
+                                    + best_type + " " + str(best_result.get("_strike", 0))
+                                    + "  target Rs" + "{:.1f}".format(_spk_target) + "\n"
+                                    "No retest in " + str(_spike_wait)
+                                    + "s. Waiting for fresh setup."
+                                )
+                                logger.info(
+                                    "[ANTI-SPIKE] " + best_type + " SKIP — no pullback in "
+                                    + str(_spike_wait) + "s")
+                                best_result = None
+                                best_opt_info = None
+                            else:
+                                _saved_pts = round(_entry_close_x - _spk_fill, 2)
+                                _tg_send(
+                                    "✅ <b>FILLED</b>\n"
+                                    + best_type + " " + str(best_result.get("_strike", 0))
+                                    + " Rs" + "{:.2f}".format(_spk_fill)
+                                    + "  (target Rs" + "{:.1f}".format(_spk_target) + ")\n"
+                                    "Saved   " + ("+" if _saved_pts >= 0 else "")
+                                    + "{:.1f}".format(_saved_pts) + " pts vs spike close\n"
+                                    "Wait    " + "{:.1f}".format(_spk_used) + "s"
+                                )
+                                logger.info(
+                                    "[ANTI-SPIKE] " + best_type + " filled Rs"
+                                    + str(_spk_fill) + " after " + str(_spk_used) + "s")
+                        if best_result is not None:
+                            # Update entry_price + close fields so _execute_entry
+                            # uses the pulled-back price, not the spike close.
+                            best_result["close"] = _spk_fill
+                            best_result["entry_price"] = _spk_fill
+                            best_result["spike_close"] = _entry_close_x
+                            best_result["spike_target"] = _spk_target
+                            best_result["spike_fill"] = _spk_fill
+                            best_result["spike_wait_used"] = _spk_used
 
                 if best_result and best_opt_info:
                     # ── Cross-leg divergence signal (LOG ONLY, 1-week eval) ──
