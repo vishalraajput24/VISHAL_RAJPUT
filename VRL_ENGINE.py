@@ -398,23 +398,21 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # ── FLAT_2X exit ──────────────────────────────────────────
-    # If EMA9_low slope is "flat" (0..+3 inclusive — weakly rising or
-    # zero) for 2 consecutive closed candles, the trend is dying.
-    # Exit on the close of the 2nd flat candle. Falling slope (<0)
-    # also counts as "not rising" and is included in the flat band
-    # so a turn-down doesn't have to wait past 0 to start the count.
-    # Rising slope (>3) resets the counter.
+    # ── FLAT_2X bookkeeping (no exit yet — see priority below) ──
+    # Update the flat-streak counter on every new closed candle so
+    # state["_flat_candle_streak"] is current. Whether the streak
+    # actually FIRES the exit depends on whether VISHAL_TRAIL has
+    # priority on this same candle (see ordering below).
     flat_max = float(CFG.exit_ema9_band("flat_slope_max", 3))
+    _flat_2x_pending = None  # populated if streak just hit 2
     if opt_3m_full is not None and len(opt_3m_full) >= 3:
         try:
-            _last = opt_3m_full.iloc[-2]
-            _prev = opt_3m_full.iloc[-3]
-            _last_close_t = (_last.name + timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M")
-            # Skip if we already counted this candle
+            _last_fl = opt_3m_full.iloc[-2]
+            _prev_fl = opt_3m_full.iloc[-3]
+            _last_close_t = (_last_fl.name + timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M")
             if state.get("_last_flat_check_ts", "") != _last_close_t:
-                _slope = round(float(_last.get("ema9_low", 0))
-                               - float(_prev.get("ema9_low", 0)), 2)
+                _slope = round(float(_last_fl.get("ema9_low", 0))
+                               - float(_prev_fl.get("ema9_low", 0)), 2)
                 _is_flat = _slope <= flat_max
                 _streak = int(state.get("_flat_candle_streak", 0) or 0)
                 if _is_flat:
@@ -425,24 +423,30 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 state["_last_flat_check_ts"] = _last_close_t
                 state["_last_ema9_low_slope"] = _slope
                 if _streak >= 2:
-                    # Reset before returning so a stale streak doesn't
-                    # leak into the next trade.
-                    state["_flat_candle_streak"] = 0
                     try:
-                        _trig_t = (_last.name + timedelta(minutes=3)).strftime("%H:%M")
+                        _trig_t = (_last_fl.name + timedelta(minutes=3)).strftime("%H:%M")
                     except Exception:
                         _trig_t = ""
-                    return [{
+                    _flat_2x_pending = {
                         "lot_id": "ALL",
                         "reason": "FLAT_2X",
-                        "price": float(_last["close"]),
-                        "trigger_close": round(float(_last["close"]), 2),
+                        "price": float(_last_fl["close"]),
+                        "trigger_close": round(float(_last_fl["close"]), 2),
                         "trigger_time": _trig_t,
                         "trigger_slope": _slope,
-                    }]
+                    }
         except Exception as _fe:
             logger.debug("[ENGINE] flat-2x check: " + str(_fe))
 
+    # ── VISHAL_TRAIL — checked BEFORE FLAT_2X ──────────────────
+    # Reasoning: once the SL ladder has armed (peak >= 8 → LOCK_3+),
+    # the trail SL represents a profit floor we already promised to
+    # honor. If the same candle that triggers FLAT_2X is also at or
+    # below the trail SL, we MUST exit at the trail (better outcome)
+    # rather than at the FLAT_2X candle close (lower).
+    # Bug fix: 2026-04-27 CE 24100 trade — peak +9.6 (LOCK_3 SL +3),
+    # candle closed below trail but FLAT_2X fired first → captured
+    # +1 instead of locking the +3 the ladder promised.
     trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
@@ -494,6 +498,15 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 "trigger_time": _trig_t,
                 "trigger_sl": round(trail_sl, 2),
             }]
+
+    # ── FLAT_2X — fires only if VISHAL_TRAIL didn't ────────────
+    # Soft signal: trend has stalled (slope <= +3 for 2 candles).
+    # Take whatever profit (or small loss) is on the table now
+    # rather than wait for the trail to drag it back further.
+    if _flat_2x_pending is not None:
+        # Reset streak so a stale flat doesn't leak into the next trade.
+        state["_flat_candle_streak"] = 0
+        return [_flat_2x_pending]
     return []
 
 def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int = 0) -> list:
