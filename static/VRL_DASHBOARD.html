@@ -636,6 +636,10 @@ function renderHeader(d){
   if(reg)         tg+='<span class="tag tl">'+reg+'</span>';
   if(per)         tg+='<span class="tag tpu">'+per+'</span>';
   if(warm)        tg+='<span class="tag tw">WARMUP '+(mk.warmup_progress||0)+'/'+(mk.warmup_needed||14)+'</span>';
+  // Post-exit observation badge — bot is keeping an exited strike alive
+  // for 10 min so VRL_LAB can capture post-exit candles for analysis.
+  var _peCnt = parseInt(d.post_exit_count||0);
+  if(_peCnt>0) tg+='<span class="tag td" title="Bot holding '+_peCnt+' exited strike(s) for 10-min lab capture">👁 OBSERVING '+_peCnt+'</span>';
   document.getElementById('hdr').innerHTML=
     '<div class="hdr-row">'+
       '<div class="hdr-logo">'+

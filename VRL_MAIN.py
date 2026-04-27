@@ -201,13 +201,24 @@ def _reset_strike_lock():
     Unsubscribes every currently-locked token first so the WebSocket
     doesn't leak stale CE/PE/OTM subscriptions across relocks. Without
     this, a full trading day of ~20 relocks leaves 60+ dead tokens
-    pinned against the Kite quota."""
+    pinned against the Kite quota.
+
+    EXCEPTION: tokens currently in the post-exit observation queue
+    are skipped — those need to stay subscribed for 10 min after exit
+    so VRL_LAB can capture post-exit candles + dashboard LTP stays warm.
+    The strategy-loop housekeeping unsubscribes them when their TTL
+    expires."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     try:
+        # Collect tokens currently being held for post-exit observation
+        with _post_exit_lock:
+            _post_exit_tokens = {tok for tok, _ in _post_exit_observation}
         _old = [v.get("token") for v in (_locked_tokens or {}).values()
                 if isinstance(v, dict) and v.get("token")]
-        if _old:
-            D.unsubscribe_tokens(_old)
+        # Don't unsubscribe anything still in the post-exit window
+        _to_drop = [t for t in _old if int(t) not in _post_exit_tokens]
+        if _to_drop:
+            D.unsubscribe_tokens(_to_drop)
     except Exception as _ue:
         logger.debug("[MAIN] reset_strike_lock unsubscribe: " + str(_ue))
     _locked_ce_strike = None
@@ -1819,6 +1830,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         else:
             _period = "CLOSING"
 
+        # Snapshot post-exit observation count under the lock.
+        with _post_exit_lock:
+            _post_exit_count = len(_post_exit_observation)
+
         # ── Full snapshot ──
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1862,6 +1877,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "used": D.get_account_info().get("used_margin", 0),
             },
             "rolling": rolling_block,
+            # Post-exit observation — surfaces on dashboard so the operator
+            # can see the bot is holding an exited strike alive 10 min for
+            # lab data capture (no longer just a Telegram /status field).
+            "post_exit_count": _post_exit_count,
         }
 
 
