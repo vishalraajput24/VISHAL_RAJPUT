@@ -1239,6 +1239,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_reason"] = reason
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
+            # Capture strike + direction BEFORE state.update() wipes them
+            # so we can register the exited strike with VRL_DATA for
+            # post-exit lab data capture.
+            old_strike = state.get("strike", 0)
+            old_dir    = state.get("direction", "")
             try:
                 D.clear_active_trade()
             except Exception:
@@ -1277,8 +1282,23 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _expire_at = _time_post.time() + (POST_EXIT_OBSERVATION_MINUTES * 60)
             with _post_exit_lock:
                 _post_exit_observation.append((int(old_token), _expire_at))
+            # Also register with VRL_DATA so VRL_LAB can persist post-exit
+            # candles to CSV/DB for the same window. Without this, WS stays
+            # subscribed (good for tick cache + dashboard LTP) but lab
+            # writes still cut off at exit.
+            try:
+                if old_strike:
+                    D.register_post_exit_observation(
+                        token=int(old_token),
+                        strike=int(old_strike),
+                        side=str(old_dir or ""),
+                        expire_at=_expire_at,
+                    )
+            except Exception as _re:
+                logger.debug("[POST_EXIT] register err: " + str(_re))
             logger.info(
                 "[POST_EXIT] Token " + str(old_token)
+                + " (" + str(old_dir) + " " + str(old_strike) + ")"
                 + " held " + str(POST_EXIT_OBSERVATION_MINUTES)
                 + " min for post-exit observation"
             )

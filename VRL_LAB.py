@@ -444,6 +444,15 @@ def collect_option_3min(kite, spot_ltp: float):
             logger.debug("[LAB] 3m active-trade wrote=" + str(_at_n))
     except Exception as _ate:
         logger.debug("[LAB] 3m active-trade err: " + str(_ate))
+    # Also collect for any post-exit observation strikes (10-min window
+    # after trade exit) so the data trail continues past the exit point.
+    try:
+        _pe_n = _collect_post_exit_candles(
+            kite, "3minute", today, now, today_ts)
+        if _pe_n:
+            logger.debug("[LAB] 3m post-exit wrote=" + str(_pe_n))
+    except Exception as _pee:
+        logger.debug("[LAB] 3m post-exit err: " + str(_pee))
 
 
 # ── persist active-trade strike candles through ATM rotation ──
@@ -537,6 +546,96 @@ def _collect_active_trade_candles(kite, interval: str, today, now,
                     pass
         except Exception as _e:
             logger.debug("[LAB] active-trade candle " + side
+                         + " " + interval + ": " + str(_e))
+    return n_written
+
+
+def _collect_post_exit_candles(kite, interval: str, today, now,
+                               already_written_keys: set = None):
+    """For each post-exit observation registered in VRL_DATA, fetch and
+    persist the just-closed candle so the data trail continues past
+    trade exit. Without this, lab CSV/DB cuts off at exit and we lose
+    visibility into what happened to the option after the bot got out.
+
+    interval: "3minute" or "minute".
+    Same dedup approach as _collect_active_trade_candles: skip rows
+    already written by the current pass.
+    """
+    try:
+        observations = D.get_post_exit_observations()
+    except Exception:
+        return 0
+    if not observations:
+        return 0
+    if _current_expiry is None:
+        return 0
+    from_dt = now - timedelta(minutes=180 if interval == "3minute" else 60)
+    to_dt   = now
+    dte     = D.calculate_dte(_current_expiry)
+    session = D.get_session_block(now.hour, now.minute)
+    spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+    n_written = 0
+    for obs in observations:
+        tok    = obs.get("token", 0)
+        strike = obs.get("strike", 0)
+        side   = obs.get("side", "")
+        if not tok or not strike or not side:
+            continue
+        try:
+            candles = _fetch_candles_with_warmup(
+                kite, int(tok), from_dt, to_dt, interval, 30)
+            if not candles or len(candles) < 2:
+                continue
+            last = candles[-2]
+            ts_str = (last["date"].strftime("%Y-%m-%d %H:%M:%S")
+                      if hasattr(last["date"], "strftime") else str(last["date"]))
+            key = (ts_str, str(strike), side)
+            if already_written_keys and key in already_written_keys:
+                continue
+            row = {
+                "timestamp"    : ts_str,
+                "strike"       : strike,
+                "type"         : side,
+                "open"         : round(last["open"], 2),
+                "high"         : round(last["high"], 2),
+                "low"          : round(last["low"],  2),
+                "close"        : round(last["close"], 2),
+                "volume"       : int(last["volume"]),
+                "spot_ref"     : round(spot_ltp, 2) if spot_ltp else 0,
+                "atm_distance" : round(abs((spot_ltp or 0) - strike), 0),
+                "dte"          : dte,
+                "session_block": session,
+            }
+            _adf = pd.DataFrame(candles)
+            _adf.rename(columns={"date": "timestamp"}, inplace=True)
+            _adf.set_index("timestamp", inplace=True)
+            _adf = D.add_indicators(_adf)
+            _arow = _adf.iloc[-2]
+            if interval == "3minute":
+                row.update({
+                    "rsi"      : round(float(_arow.get("RSI", 50)), 1),
+                    "ema9"     : round(float(_arow.get("EMA_9", last["close"])), 2),
+                    "ema21"    : round(float(_arow.get("EMA_21", last["close"])), 2),
+                    "ema9_high": round(float(_arow.get("ema9_high", last["high"])), 2),
+                    "ema9_low" : round(float(_arow.get("ema9_low", last["low"])), 2),
+                })
+                try:
+                    DB.insert_option_3min(row)
+                    n_written += 1
+                except Exception:
+                    pass
+            else:
+                row.update({
+                    "rsi" : round(float(_arow.get("RSI", 50)), 1),
+                    "ema9": round(float(_arow.get("EMA_9", last["close"])), 2),
+                })
+                try:
+                    DB.insert_option_1min(row)
+                    n_written += 1
+                except Exception:
+                    pass
+        except Exception as _e:
+            logger.debug("[LAB] post-exit candle " + side
                          + " " + interval + ": " + str(_e))
     return n_written
 
@@ -650,6 +749,14 @@ def collect_option_1min(kite, spot_ltp: float):
             logger.debug("[LAB] 1m active-trade wrote=" + str(_at_n))
     except Exception as _ate:
         logger.debug("[LAB] 1m active-trade err: " + str(_ate))
+    # Post-exit observation: keep writing 1-min candles for the just-
+    # exited strike for 10 min after exit so the data trail is complete.
+    try:
+        _pe_n = _collect_post_exit_candles(kite, "minute", today, now)
+        if _pe_n:
+            logger.debug("[LAB] 1m post-exit wrote=" + str(_pe_n))
+    except Exception as _pee:
+        logger.debug("[LAB] 1m post-exit err: " + str(_pee))
 
 
 # ─── BACKFILL — 3-MIN ─────────────────────────────────────────

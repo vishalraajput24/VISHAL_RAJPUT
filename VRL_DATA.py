@@ -463,6 +463,38 @@ def get_active_trade() -> dict:
         return dict(_active_trade) if _active_trade else None
 
 
+# ── Post-exit observation registry ───────────────────────────────
+# When a trade exits, VRL_MAIN registers the just-exited strike+token
+# here for N minutes so VRL_LAB can keep persisting candles for it
+# (otherwise CSV/DB cuts off at exit and we lose post-exit price data
+# for analysis). The registry is auto-pruned on every read.
+_post_exit_obs = []           # list of dicts: {strike, token, side, expire_at}
+_post_exit_obs_lock = threading.Lock()
+
+
+def register_post_exit_observation(token: int, strike: int, side: str,
+                                   expire_at: float):
+    """VRL_MAIN calls this on trade exit. expire_at is epoch seconds
+    after which the observation is dropped."""
+    global _post_exit_obs
+    with _post_exit_obs_lock:
+        _post_exit_obs.append({
+            "token": int(token), "strike": int(strike),
+            "side": str(side), "expire_at": float(expire_at),
+        })
+
+
+def get_post_exit_observations() -> list:
+    """VRL_LAB calls this every collection cycle. Returns currently
+    active (un-expired) observations as a list of dicts. Prunes
+    expired entries as a side-effect."""
+    global _post_exit_obs
+    now = time.time()
+    with _post_exit_obs_lock:
+        _post_exit_obs = [o for o in _post_exit_obs if o["expire_at"] > now]
+        return [dict(o) for o in _post_exit_obs]
+
+
 def notify_auth_refreshed():
     """Called by VRL_CONFIG on successful login / token refresh.
     Resets the auth-rejection flag so historical_data and WS
