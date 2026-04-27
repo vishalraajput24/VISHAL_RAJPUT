@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.6 — Central Configuration
-#  EMA9 Band Breakout (7 gates) + strict 3-rule exit chain
+#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — Central Configuration
+#  3-gate entry  +  4-rule exit chain  +  peak-driven SL ladder
 # ═══════════════════════════════════════════════════════════════
 
-version: "v16.6"
+version: "v16.7"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
@@ -29,24 +29,20 @@ lots:
   count: 2
   size: 65
 
-# ── v16.6 Entry configuration (Golden 4 rules) ─────────────────
-# 4 hard gates: time window, close>ema9_low + band width, ema9_low slope
-# flat/rising, body >= 40%. Removed gap>=3, floor test, fresh breakout,
-# green-candle check — replaced by band_width_min + slope gate.
+# ── v16.7 Entry configuration (Vishal Clean — 3 gates) ─────────
+# 3 hard gates: GREEN candle, close > EMA9_low, body >= body_pct_min.
+# Time window (warmup/cutoff) is an operational rail, not a strategy
+# gate. Slope and band width are display-only — they DO NOT block
+# entry, but EMA9_low slope drives the in-trade FLAT_2X exit.
 entry:
   ema9_band:
-    # Vishal final entry: GREEN + body >= 30%, close above EMA9_low,
-    # band > 7, EMA9_low slope per-candle flat or rising. Lowered from
-    # 50% — alignment of multiple modest filters > one strict filter.
-    body_pct_min: 30
+    body_pct_min: 40
     warmup_until: "09:35"
     cutoff_after: "15:10"
     cooldown_minutes: 5
-    # Minimum EMA9 band width (ema9_high - ema9_low) in points. Protects
-    # against dead-zone entries during tight consolidation ranges.
+    # Display-only — kept so dashboard / pulse can show band info.
     band_width_min: 7
-    # Per-candle slope check (1-bar lookback). Entry rejects when the
-    # last candle's ema9_low is lower than the previous candle's.
+    # Per-candle slope lookback (1 bar) — used by FLAT_2X exit.
     ema9_slope_lookback: 1
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
@@ -66,13 +62,19 @@ entry:
       enabled: true
       mode: display_only
 
-# ── v16.6 Exit configuration ──────────────────────────────────
-# 3 rules: EMERGENCY_SL, EOD, VISHAL_TRAIL. Trail logic is in
-# VRL_ENGINE.compute_trail_sl (Smart v2+: INITIAL/BREAKEVEN/TRAIL_60/TRAIL_75/VISHAL_MAX/TRAIL_90).
+# ── v16.7 Exit configuration ──────────────────────────────────
+# 4 rules: EMERGENCY_SL, FLAT_2X, EOD_EXIT, VISHAL_TRAIL.
+# Trail logic in VRL_ENGINE.compute_trail_sl
+# (INITIAL / LOCK_3 / LOCK_5 / LOCK_8 / LOCK_15 / LOCK_DYN).
 exit:
   ema9_band:
     emergency_sl_pts: -10
     eod_exit_time: "15:20"
+    # FLAT_2X: 2 consecutive candles with EMA9_low slope <= flat_slope_max
+    # exit the trade. Default 3 pts — slope between (-inf, +3] is "not
+    # rising strongly enough". Set higher to be more lenient (rare exits)
+    # or lower to be tighter (more frequent exits).
+    flat_slope_max: 3
 
 # ── Strike selection ───────────────────────────────────────────
 strike:

@@ -1,8 +1,24 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.6
-#  Entry: Golden 4 rules. Exit: strict 3 rules (Emergency / EOD / Vishal Trail).
-#  Smart Trail v2+: INITIAL → BREAKEVEN → TRAIL_60 → TRAIL_75 → VISHAL_MAX → TRAIL_90
-#  Exit on candle close, bulletproof margin check.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
+#  Entry: 3 gates only.
+#    1. GREEN candle (close > open)
+#    2. Close > EMA9_low
+#    3. Body % >= 40
+#  Exit chain (first match wins):
+#    1. EMERGENCY_SL    (PNL <= -10)
+#    2. FLAT_2X         (EMA9_low slope flat 0..+3 for 2 consecutive candles)
+#    3. EOD_EXIT        (15:20)
+#    4. VISHAL_TRAIL    (peak-driven SL ladder below)
+#  SL ladder (peak-driven ratchet, never moves down):
+#    peak < 8         → SL = entry - 10        (INITIAL)
+#    peak >=  8       → SL = entry +  3        (LOCK_3)
+#    peak >= 12       → SL = entry +  5        (LOCK_5)
+#    peak >= 15       → SL = entry +  8        (LOCK_8)
+#    peak >= 20       → SL = entry + 15        (LOCK_15)
+#    peak >= 21       → SL = entry + (peak-5)  (LOCK_DYN — 1pt added per peak pt)
+#  Re-entry: after exit, watch next 2 candles; GREEN candle closing above
+#  the original entry candle's close → re-enter same direction. Else fresh
+#  setup only.
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -68,11 +84,14 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, market_open: bool,
                                state: dict, straddle_delta, spot_vwap, spot_for_vwap: float,
                                atm_strike: int, silent: bool = False, other_opt_3m=None) -> dict:
-    # ── Vishal Simple Entry rules (v16.6 final) ──
-    #   1. Time window 09:35 ≤ now ≤ 15:10
-    #   2. Close > EMA9_low AND (ema9_high - ema9_low) > band_width_min
-    #   3. EMA9_low slope per-candle ≥ 0 (current candle's ema9_low ≥ previous's)
-    #   4. GREEN candle AND body ≥ body_pct_min (default 50%)
+    # ── Vishal Clean Entry (v16.7) — 3 hard gates ──
+    #   1. GREEN candle (close > open)
+    #   2. Close > EMA9_low
+    #   3. Body % >= 40
+    # Time window (warmup/cutoff) is an operational rail, not a strategy
+    # gate — kept so the bot never trades during indicator warmup or
+    # within 5 min of EOD. Slope and band-width are tracked for display
+    # + the in-trade FLAT_2X exit, but never block entry.
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -81,15 +100,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         "band_width_slope": 0.0, "quality_score": 0, "margin_above": 0,
     }
     try:
-        body_min = CFG.entry_ema9_band("body_pct_min", 50)
+        body_min = CFG.entry_ema9_band("body_pct_min", 40)
         warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:10")
-        band_width_min = CFG.entry_ema9_band("band_width_min", 7)
 
-        # Per-candle slope (1-bar lookback) — needs only 4 candles total:
-        # iloc[-2] = last closed, iloc[-3] = previous closed, plus 2 more
-        # for ema9 stability. Faster post-strike-change entry vs the old
-        # 3-bar lookback that needed 5 candles.
         if opt_3m is None or opt_3m.empty or len(opt_3m) < 4:
             result["reject_reason"] = "insufficient_3m_data"
             return result
@@ -100,18 +114,14 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
-        # Per-candle slope: current ema9_low - previous candle's ema9_low.
+        # Slope + band-width still computed for display + in-trade
+        # FLAT_2X exit — they DO NOT block entry.
         ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
-        # Band-width slope (DISPLAY-ONLY insight, never blocks):
-        # >0 expanding (volatility growing), 0 flat (dead),
-        # <0 contracting (likely SL).
         _prev_band_width = round(
             float(prev.get("ema9_high", 0)) - float(prev.get("ema9_low", 0)), 2)
         band_width_slope = round(band_width - _prev_band_width, 2)
 
-        # Always compute band_position + body_pct + green up-front so
-        # the dashboard has values even when an early gate rejects.
         if close > ema9_high:
             _band_pos = "ABOVE"
         elif close < ema9_low:
@@ -122,27 +132,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         _body_pct = round((abs(close - open_) / _candle_range * 100)
                           if _candle_range > 0 else 0, 1)
         _is_green = (close > open_)
-        # Distance above EMA9_low (margin) — also display-only.
         _margin = round(close - ema9_low, 2)
-
-        # Quality score 0-7 — sums alignment of factors, display only.
-        # Lets operator eyeball setup strength even when all hard gates
-        # pass. Factors: time / close-above / band-width / band-slope /
-        # ema9-slope / green / body. Each = 1 point (slope half-credit
-        # on flat).
-        _q = 0
-        # time gate evaluated below; skip here (would always be 1 on
-        # entry path). Add fixed +1 for time since we're inside try.
-        _q += 1
-        if close > ema9_low:                _q += 1
-        if band_width > band_width_min:     _q += 1
-        if band_width_slope > 0:            _q += 1
-        elif abs(band_width_slope) < 0.1:   _q += 0.5
-        if ema9_low_slope > 0:              _q += 1
-        elif abs(ema9_low_slope) < 0.05:    _q += 0.5
-        if _is_green:                       _q += 1
-        if _body_pct >= body_min:           _q += 1
-        _quality = round(_q, 1)
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
@@ -154,11 +144,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
             "candle_green": _is_green,
             "band_position": _band_pos,
             "body_pct": _body_pct,
-            "quality_score": _quality,
             "margin_above": _margin,
         })
 
-        # ── GATE 1: Time window (09:35-15:10) ──
+        # ── Operational rail: time window ──
         if market_open:
             mins = now.hour * 60 + now.minute
             warmup_mins = int(warmup_until.split(":")[0])*60 + int(warmup_until.split(":")[1])
@@ -170,46 +159,36 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 2: Close > EMA9_low AND band_width > threshold ──
-        if close <= ema9_low:
-            result["reject_reason"] = "close_below_ema9_low"
-            return result
-        if band_width <= band_width_min:
-            result["reject_reason"] = f"tight_band_{band_width}"
-            return result
-
-        # ── GATE 3: EMA9_low slope flat or rising ──
-        if ema9_low_slope < 0:
-            result["reject_reason"] = f"ema9_low_falling_{ema9_low_slope}"
-            return result
-
-        # ── GATE 4: GREEN candle AND Body ≥ body_pct_min ──
-        # body_pct + green flag already computed up-front above.
+        # ── GATE 1: GREEN candle ──
         if not _is_green:
             result["reject_reason"] = "red_candle"
             return result
+
+        # ── GATE 2: Close > EMA9_low ──
+        if close <= ema9_low:
+            result["reject_reason"] = "close_below_ema9_low"
+            return result
+
+        # ── GATE 3: Body % >= body_pct_min ──
         if _body_pct < body_min:
             result["reject_reason"] = f"weak_body_{int(_body_pct)}pct"
             return result
 
-        # ── All 4 gates passed ──
+        # ── All 3 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         result["ema9h_confirmed"] = (close > ema9_high)
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
-                        f"ema9l={round(ema9_low,1)} band={band_width} "
-                        f"slope={ema9_low_slope} body={int(_body_pct)}%")
+                        f"ema9l={round(ema9_low,1)} body={int(_body_pct)}% "
+                        f"(slope={ema9_low_slope} band={band_width} display-only)")
         return result
 
     except Exception as e:
         logger.error("[ENGINE] Entry error: " + str(e))
-        # CRITICAL: also reset fired=False so a NameError or other
-        # exception in the success-path log line doesn't leave the
-        # result with fired=True, which would let the main scan loop
-        # enter a trade based on a corrupted result. (Found 2026-04-27
-        # 09:35:35: body_pct→_body_pct refactor leftover threw
-        # NameError after gates passed; trade fired anyway, lost 10 pts.)
+        # CRITICAL: reset fired=False so an exception in the success-path
+        # log line doesn't leave the result with fired=True (cost a -10
+        # trade on 2026-04-27 — body_pct→_body_pct rename leftover).
         result["fired"] = False
         result["reject_reason"] = "error_" + str(e)[:50]
         return result
@@ -231,17 +210,12 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 
 def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
                     silent: bool = False, state: dict = None) -> dict:
-    """1-min early peek — hybrid entry that uses 3-min EMA9 trend +
-    1-min candle freshness. Fires BEFORE the 3-min closes if the
-    just-closed 1-min candle confirms the breakout.
+    """1-min early peek — same 3 gates as 3-min, but evaluated on the
+    just-closed 1-min candle so a fresh breakout fires 1-2 minutes
+    sooner than waiting for the 3-min boundary. EMA9_low is read from
+    the latest 3-min row (still the strategy's reference band).
 
-    Same gates as 3-min entry except evaluated on 1-min candle's
-    open/close/body. Trend filters (ema9_low position, band_width,
-    band slope) read from the latest 3-min row — so we get FAST
-    trigger on STABLE trend.
-
-    Marked entry_mode='FAST' so the trade log + exit alert can show
-    this was an early entry."""
+    Marked entry_mode='FAST' for the trade log + alerts."""
     if state is None: state = {}
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
@@ -256,18 +230,15 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
         market_open = D.is_market_open()
         now = datetime.now()
 
-        body_min = CFG.entry_ema9_band("body_pct_min", 30)
+        body_min = CFG.entry_ema9_band("body_pct_min", 40)
         warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:10")
-        band_width_min = CFG.entry_ema9_band("band_width_min", 7)
 
-        # Need at least 4 of each — 3-min for trend, 1-min for trigger
         if (opt_3m is None or opt_3m.empty or len(opt_3m) < 4
                 or opt_1m is None or opt_1m.empty or len(opt_1m) < 4):
             result["reject_reason"] = "insufficient_1m_or_3m"
             return result
 
-        # Trend from 3-min (last closed)
         last_3m = opt_3m.iloc[-2]
         prev_3m = opt_3m.iloc[-3]
         ema9_high = float(last_3m.get("ema9_high", 0))
@@ -278,7 +249,6 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
             float(prev_3m.get("ema9_high", 0)) - float(prev_3m.get("ema9_low", 0)), 2)
         band_width_slope = round(band_width - _prev_band_width, 2)
 
-        # Trigger from 1-min (last closed)
         last_1m = opt_1m.iloc[-2]
         close = float(last_1m["close"]); open_ = float(last_1m["open"])
         high = float(last_1m["high"]); low = float(last_1m["low"])
@@ -298,7 +268,6 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
             "margin_above": round(close - ema9_low, 2),
         })
 
-        # Same gate sequence as 3-min path
         if market_open:
             mins = now.hour * 60 + now.minute
             warmup_mins = int(warmup_until.split(":")[0])*60 + int(warmup_until.split(":")[1])
@@ -307,34 +276,20 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
                 result["reject_reason"] = "before_" + warmup_until; return result
             if mins >= cutoff_mins:
                 result["reject_reason"] = "after_" + cutoff_after; return result
-        if close <= ema9_low:
-            result["reject_reason"] = "close_below_ema9_low_1m"; return result
-        if band_width <= band_width_min:
-            result["reject_reason"] = f"tight_band_1m_{band_width}"; return result
-        if ema9_low_slope < 0:
-            result["reject_reason"] = f"ema9_low_falling_1m_{ema9_low_slope}"; return result
+
+        # Same 3 gates as 3-min path: GREEN, close>EMA9_low, body>=min
         if not _is_green:
             result["reject_reason"] = "red_candle_1m"; return result
+        if close <= ema9_low:
+            result["reject_reason"] = "close_below_ema9_low_1m"; return result
         if _body_pct < body_min:
             result["reject_reason"] = f"weak_body_1m_{int(_body_pct)}pct"; return result
 
-        # Quality score (same factors)
-        _q = 1
-        if close > ema9_low:                _q += 1
-        if band_width > band_width_min:     _q += 1
-        if band_width_slope > 0:            _q += 1
-        elif abs(band_width_slope) < 0.1:   _q += 0.5
-        if ema9_low_slope > 0:              _q += 1
-        elif abs(ema9_low_slope) < 0.05:    _q += 0.5
-        if _is_green:                       _q += 1
-        if _body_pct >= body_min:           _q += 1
-        result["quality_score"] = round(_q, 1)
-
         result["fired"] = True
-        result["entry_mode"] = "FAST"  # 1-min peek marker
+        result["entry_mode"] = "FAST"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FAST(1m) FIRED close={round(close,1)} "
-                        f"ema9l={round(ema9_low,1)} band={band_width} body={int(_body_pct)}%")
+                        f"ema9l={round(ema9_low,1)} body={int(_body_pct)}%")
         return result
     except Exception as e:
         logger.error("[ENGINE] 1-min peek error: " + str(e))
@@ -347,34 +302,35 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "") -> tuple:
-    """Smart Trail v2+ (Vishal V16.6 final).
-    Priority: don't lose money. A BREAKEVEN tier snaps SL to entry once
-    peak reaches +5, so trades that show any real profit never drop
-    back into the Emergency SL zone.
+    """Vishal Clean SL ladder (v16.7) — peak-driven ratchet, never moves down.
 
     Tiers (ascending peak):
-      peak <5:    INITIAL      SL = entry - 10       (Emergency zone)
-      peak 5-8:   BREAKEVEN    SL = entry            (zero-loss guarantee)
-      peak 8-15:  TRAIL_60     SL = entry + peak*0.60
-      peak 15-30: TRAIL_75     SL = entry + peak*0.75
-      peak 30-45: VISHAL_MAX   SL = entry + peak*0.85
-      peak 45+:   TRAIL_90     SL = entry + peak*0.90
+      peak <  8:  INITIAL    SL = entry - 10            (Emergency zone)
+      peak >= 8:  LOCK_3     SL = entry +  3
+      peak >=12:  LOCK_5     SL = entry +  5
+      peak >=15:  LOCK_8     SL = entry +  8
+      peak >=20:  LOCK_15    SL = entry + 15            (wick-capture sweet spot)
+      peak >=21:  LOCK_DYN   SL = entry + (peak - 5)    (1pt added per peak pt)
+
+    Examples:
+      peak 21 → SL +16    peak 25 → SL +20
+      peak 30 → SL +25    peak 50 → SL +45
     """
-    if peak_pnl >= 45:
-        sl = entry_price + peak_pnl * 0.90
-        tier = "TRAIL_90"
-    elif peak_pnl >= 30:
-        sl = entry_price + peak_pnl * 0.85
-        tier = "VISHAL_MAX"
+    if peak_pnl >= 21:
+        sl = entry_price + (peak_pnl - 5)
+        tier = "LOCK_DYN"
+    elif peak_pnl >= 20:
+        sl = entry_price + 15
+        tier = "LOCK_15"
     elif peak_pnl >= 15:
-        sl = entry_price + peak_pnl * 0.75
-        tier = "TRAIL_75"
+        sl = entry_price + 8
+        tier = "LOCK_8"
+    elif peak_pnl >= 12:
+        sl = entry_price + 5
+        tier = "LOCK_5"
     elif peak_pnl >= 8:
-        sl = entry_price + peak_pnl * 0.60
-        tier = "TRAIL_60"
-    elif peak_pnl >= 5:
-        sl = entry_price
-        tier = "BREAKEVEN"
+        sl = entry_price + 3
+        tier = "LOCK_3"
     else:
         sl = entry_price - 10
         tier = "INITIAL"
@@ -398,6 +354,52 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
             eod_mins = 15 * 60 + 20  # safe default
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
+
+    # ── FLAT_2X exit ──────────────────────────────────────────
+    # If EMA9_low slope is "flat" (0..+3 inclusive — weakly rising or
+    # zero) for 2 consecutive closed candles, the trend is dying.
+    # Exit on the close of the 2nd flat candle. Falling slope (<0)
+    # also counts as "not rising" and is included in the flat band
+    # so a turn-down doesn't have to wait past 0 to start the count.
+    # Rising slope (>3) resets the counter.
+    flat_max = float(CFG.exit_ema9_band("flat_slope_max", 3))
+    if opt_3m_full is not None and len(opt_3m_full) >= 3:
+        try:
+            _last = opt_3m_full.iloc[-2]
+            _prev = opt_3m_full.iloc[-3]
+            _last_close_t = (_last.name + timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M")
+            # Skip if we already counted this candle
+            if state.get("_last_flat_check_ts", "") != _last_close_t:
+                _slope = round(float(_last.get("ema9_low", 0))
+                               - float(_prev.get("ema9_low", 0)), 2)
+                _is_flat = _slope <= flat_max
+                _streak = int(state.get("_flat_candle_streak", 0) or 0)
+                if _is_flat:
+                    _streak += 1
+                else:
+                    _streak = 0
+                state["_flat_candle_streak"] = _streak
+                state["_last_flat_check_ts"] = _last_close_t
+                state["_last_ema9_low_slope"] = _slope
+                if _streak >= 2:
+                    # Reset before returning so a stale streak doesn't
+                    # leak into the next trade.
+                    state["_flat_candle_streak"] = 0
+                    try:
+                        _trig_t = (_last.name + timedelta(minutes=3)).strftime("%H:%M")
+                    except Exception:
+                        _trig_t = ""
+                    return [{
+                        "lot_id": "ALL",
+                        "reason": "FLAT_2X",
+                        "price": float(_last["close"]),
+                        "trigger_close": round(float(_last["close"]), 2),
+                        "trigger_time": _trig_t,
+                        "trigger_slope": _slope,
+                    }]
+        except Exception as _fe:
+            logger.debug("[ENGINE] flat-2x check: " + str(_fe))
+
     trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl

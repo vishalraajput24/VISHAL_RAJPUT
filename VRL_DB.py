@@ -1102,10 +1102,10 @@ LEGACY_MODES = (
     "BOTH", "EMA", "MINIMAL", "EXPIRY_BREAKOUT", "CONVICTION",
 )
 
-# v16.6 — exit reasons accepted by validation
+# v16.7 — exit reasons accepted by validation
 VALID_EXIT_REASONS = (
-    # Strict 3-rule exit chain
-    "EMERGENCY_SL", "EOD_EXIT", "VISHAL_TRAIL",
+    # Vishal Clean 4-rule exit chain
+    "EMERGENCY_SL", "FLAT_2X", "EOD_EXIT", "VISHAL_TRAIL",
     # Safety / manual
     "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
     # Historical back-compat for old trade log rows

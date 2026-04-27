@@ -1,8 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.6
-#  Master orchestration. EMA9 Band Breakout strategy.
-#  Entry: close > EMA9-low (fresh) + green + body ≥ 40%
-#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail (60/85/80/LOCK+40 tiers).
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
+#  Master orchestration.
+#  Entry: 3 gates — GREEN candle + close > EMA9_low + body ≥ 40%
+#  Exit: 4-rule chain — Emergency -10, FLAT_2X, EOD 15:20, Vishal Trail
+#        (INITIAL/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
+#  Re-entry: 2-candle window for GREEN break of original entry close.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -99,6 +101,17 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
+    # v16.7 FLAT_2X exit tracking
+    "_flat_candle_streak"  : 0,
+    "_last_flat_check_ts"  : "",
+    "_last_ema9_low_slope" : 0.0,
+    # v16.7 re-entry watcher (next 2 candles after exit)
+    "_reentry_watch_remaining" : 0,
+    "_reentry_trigger_close"   : 0.0,
+    "_reentry_direction"       : "",
+    "_reentry_token"           : 0,
+    "_reentry_strike"          : 0,
+    "_reentry_last_check_ts"   : "",
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -773,25 +786,30 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  EMA9 Band Breakout v16.6 (Vishal Simple)\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7\n"
         "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
-        "Gates   : time + close>EMA9L + band>7\n"
-        "          per-candle slope flat/rising\n"
-        "          GREEN candle + body>=50%\n"
+        "Gates   : 1) GREEN candle\n"
+        "          2) close > EMA9_low\n"
+        "          3) body >= 40%\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
         "1. Emergency -10pts\n"
-        "2. EOD 15:20\n"
-        "3. Vishal Trail (see tiers)\n"
+        "2. FLAT_2X (slope 0..3 for 2 candles)\n"
+        "3. EOD 15:20\n"
+        "4. Vishal Trail (peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SMART TRAIL v2+</b>\n"
-        "peak <5    SL = entry-10          (INITIAL)\n"
-        "peak 5-8   SL = entry             (BREAKEVEN)\n"
-        "peak 8-15  SL = entry+peak*0.60   (TRAIL_60)\n"
-        "peak 15-30 SL = entry+peak*0.75   (TRAIL_75)\n"
-        "peak 30-45 SL = entry+peak*0.85   (VISHAL_MAX)\n"
-        "peak 45+   SL = entry+peak*0.90   (TRAIL_90)\n"
+        "<b>SL LADDER</b> (peak-driven ratchet)\n"
+        "peak <8    SL = entry-10        (INITIAL)\n"
+        "peak >=8   SL = entry+3         (LOCK_3)\n"
+        "peak >=12  SL = entry+5         (LOCK_5)\n"
+        "peak >=15  SL = entry+8         (LOCK_8)\n"
+        "peak >=20  SL = entry+15        (LOCK_15)\n"
+        "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>RE-ENTRY</b>  watch next 2 candles\n"
+        "GREEN candle closing above original entry close\n"
+        "→ re-enter same side. Else fresh setup only.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1025,29 +1043,14 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _slope = float(entry_result.get("ema9_low_slope", 0) or 0)
     _slope_tag = "+" if _slope >= 0 else ""
     _bw = float(entry_result.get("band_width", 0))
-    _bws = float(entry_result.get("band_width_slope", 0) or 0)
-    if _bws > 0.1:
-        _bws_str = "🚀 expanding (+" + "{:.1f}".format(_bws) + ")"
-    elif _bws < -0.1:
-        _bws_str = "⚠ contracting (" + "{:.1f}".format(_bws) + ")"
-    else:
-        _bws_str = "→ flat"
-    _qscore = entry_result.get("quality_score", 0)
-    if _qscore >= 7:
-        _qtag = "🚀 STRONG"
-    elif _qscore >= 6:
-        _qtag = "✓ GOOD"
-    elif _qscore >= 5:
-        _qtag = "⚠ MIXED"
-    else:
-        _qtag = "weak"
+    _entry_mode_tag = entry_result.get("entry_mode", "EMA9_BREAKOUT")
     _core = (
         "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
-        "Quality " + str(_qscore) + "/7  " + _qtag + "\n"
+        "Mode    " + str(_entry_mode_tag) + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
-        "Band    " + "{:.1f}".format(_bw) + " pts  " + _bws_str + "\n"
-        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle\n"
-        "Body    " + str(_body) + "% green\n"
+        "Body    " + str(_body) + "% GREEN\n"
+        "Band    " + "{:.1f}".format(_bw) + " pts  (display)\n"
+        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
     # Read the emergency SL from the same config key the engine uses
@@ -1059,7 +1062,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Breakeven at +5, trail arms at +8 (Smart v2+)\n"
+        "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
     )
 
     # Backbone display removed — check_entry() never passes other-side
@@ -1255,6 +1258,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             # post-exit lab data capture.
             old_strike = state.get("strike", 0)
             old_dir    = state.get("direction", "")
+            old_entry_close = float(state.get("entry_price", 0) or 0)
             try:
                 D.clear_active_trade()
             except Exception:
@@ -1269,6 +1273,19 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 # Trail state — clear so next trade starts at INITIAL
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
+                # FLAT_2X tracker — clear so next trade starts fresh
+                "_flat_candle_streak": 0,
+                "_last_flat_check_ts": "",
+                "_last_ema9_low_slope": 0.0,
+                # Re-entry watcher: 2 candles to spot a green close above
+                # the original entry candle close. Set here from old_*
+                # captures because state.update() is about to zero them.
+                "_reentry_watch_remaining": 2,
+                "_reentry_trigger_close":   round(old_entry_close, 2),
+                "_reentry_direction":       str(old_dir or ""),
+                "_reentry_token":           int(old_token or 0),
+                "_reentry_strike":          int(old_strike or 0),
+                "_reentry_last_check_ts":   "",
                 # Entry context (v15.0 band + body)
                 "entry_mode": "",
                 "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
@@ -1350,6 +1367,16 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
                                 + "close Rs" + "{:.1f}".format(_trig_close)
                                 + " (≤ SL Rs" + "{:.1f}".format(_trig_sl) + ")\n")
+        elif reason == "FLAT_2X":
+            # 2 consecutive flat (slope 0..3) candles → trend dying
+            _trig_close = exit_info.get("trigger_close")
+            _trig_time = exit_info.get("trigger_time", "")
+            _trig_slope = exit_info.get("trigger_slope")
+            _reason_line = "Slope flat 2× (trend dying)\n"
+            if _trig_close is not None and _trig_slope is not None:
+                _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
+                                + "close Rs" + "{:.1f}".format(_trig_close)
+                                + " slope " + "{:+.1f}".format(_trig_slope) + "\n")
         # Capture percentage — show — when peak is too small (mathematical
         # noise: 0.2 peak with -10 pnl gives misleading -5000% etc).
         _capture_line = ""
@@ -2278,15 +2305,15 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier == "BREAKEVEN":
+                            if _new_tier == "LOCK_3":
                                 _icon = "🛡️"
-                            elif _new_tier == "TRAIL_60":
+                            elif _new_tier == "LOCK_5":
                                 _icon = "🔒"
-                            elif _new_tier == "TRAIL_75":
+                            elif _new_tier == "LOCK_8":
                                 _icon = "🔒🔒"
-                            elif _new_tier == "VISHAL_MAX":
+                            elif _new_tier == "LOCK_15":
                                 _icon = "🔒🔒"
-                            elif _new_tier == "TRAIL_90":
+                            elif _new_tier == "LOCK_DYN":
                                 _icon = "🔒🔒🔒"
                             # Old→New SL line — shows the ratchet jump
                             # clearly so the operator can see "SL moved
@@ -2326,7 +2353,7 @@ def _strategy_loop(kite):
                         # boundaries (5/8/15/30/45) plus a few mid steps
                         # so the operator sees peak progress + SL status
                         # at every major point.
-                        for _m in [5, 8, 10, 15, 20, 25, 30, 40, 50]:
+                        for _m in [8, 10, 12, 15, 20, 25, 30, 40, 50]:
                             if _peak >= _m and _last_ms < _m:
                                 with _state_lock:
                                     state["_last_milestone"] = _m
@@ -2339,11 +2366,11 @@ def _strategy_loop(kite):
                                 _room = round(option_ltp - _r_sl, 1)
                                 # Icon by tier strength
                                 _ms_icon = "📈"
-                                if _r_tier == "BREAKEVEN":
+                                if _r_tier == "LOCK_3":
                                     _ms_icon = "🛡️"
-                                elif _r_tier in ("TRAIL_60", "TRAIL_75"):
+                                elif _r_tier in ("LOCK_5", "LOCK_8"):
                                     _ms_icon = "🔒"
-                                elif _r_tier in ("VISHAL_MAX", "TRAIL_90"):
+                                elif _r_tier in ("LOCK_15", "LOCK_DYN"):
                                     _ms_icon = "🔒🔒"
                                 _lock_str = (("+" if _lock >= 0 else "")
                                              + "{:.1f}".format(_lock))
@@ -2516,6 +2543,128 @@ def _strategy_loop(kite):
 
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
+
+                # ── v16.7 RE-ENTRY WATCHER ─────────────────────────
+                # After an exit, watch the next 2 candles. If a GREEN
+                # candle closes ABOVE the original entry candle's close,
+                # re-enter same direction. Else 2 candles pass and the
+                # watcher clears — fresh setup only.
+                _reentry_remaining = int(state.get("_reentry_watch_remaining", 0) or 0)
+                if _reentry_remaining > 0 and not state.get("in_trade"):
+                    _re_dir   = str(state.get("_reentry_direction", "") or "")
+                    _re_token = int(state.get("_reentry_token", 0) or 0)
+                    _re_strike = int(state.get("_reentry_strike", 0) or 0)
+                    _re_trigger = float(state.get("_reentry_trigger_close", 0) or 0)
+                    _re_last_ts = state.get("_reentry_last_check_ts", "")
+                    if _re_dir and _re_token and _re_trigger > 0:
+                        try:
+                            _re_3m = D.get_option_3min(_re_token, lookback=10)
+                            if _re_3m is not None and len(_re_3m) >= 2:
+                                _re_last = _re_3m.iloc[-2]
+                                _re_close_t = _re_last.name.strftime("%Y-%m-%d %H:%M")
+                                if _re_close_t != _re_last_ts:
+                                    _re_close = float(_re_last["close"])
+                                    _re_open = float(_re_last["open"])
+                                    _is_green = _re_close > _re_open
+                                    _broke = _re_close > _re_trigger
+                                    with _state_lock:
+                                        state["_reentry_last_check_ts"] = _re_close_t
+                                        state["_reentry_watch_remaining"] = _reentry_remaining - 1
+                                    if _is_green and _broke:
+                                        # Trigger satisfied — force re-entry same side.
+                                        # Build a synthetic entry result so _execute_entry
+                                        # can ride the same path as a normal scan entry.
+                                        _re_sym = ("NIFTY" if _re_strike else "")  # placeholder; real symbol resolved below
+                                        _re_oi = {"token": _re_token, "symbol": ""}
+                                        # Need real symbol — resolve via locked tokens or fresh fetch
+                                        try:
+                                            _re_match = None
+                                            for _k, _v in (_locked_tokens or {}).items():
+                                                if int(_v.get("token", 0) or 0) == _re_token:
+                                                    _re_match = _v; break
+                                            if _re_match:
+                                                _re_oi = {"token": _re_token, "symbol": _re_match.get("symbol", "")}
+                                            elif kite and expiry and _re_strike:
+                                                _re_tk = D.get_option_tokens(kite, _re_strike, expiry) or {}
+                                                _re_side_info = _re_tk.get(_re_dir) or {}
+                                                if _re_side_info.get("symbol"):
+                                                    _re_oi = {"token": _re_token,
+                                                              "symbol": _re_side_info.get("symbol", "")}
+                                        except Exception:
+                                            pass
+                                        # Run the standard 3-gate engine on the candle
+                                        # to populate ema9_high/low/body fields for the
+                                        # alert. If gates fail (rare since GREEN+close
+                                        # check passed), we still force-enter — the
+                                        # re-entry rule overrides body_pct.
+                                        _re_result = check_entry(
+                                            token=_re_token, option_type=_re_dir,
+                                            spot_ltp=spot_ltp, dte=dte,
+                                            expiry_date=expiry, kite=kite,
+                                            silent=True, state=state)
+                                        _re_result["fired"] = True
+                                        _re_result["entry_mode"] = "REENTRY"
+                                        _re_result["_strike"] = _re_strike
+                                        _re_result["_strike_label"] = "REENTRY"
+                                        _re_result["_symbol"] = _re_oi.get("symbol", "")
+                                        # Pre-entry checks — bypass cooldown for re-entry
+                                        # by clearing last_exit_direction temporarily.
+                                        _saved_lex = state.get("last_exit_direction", "")
+                                        with _state_lock:
+                                            state["last_exit_direction"] = ""
+                                        _re_ltp = D.get_ltp(_re_token)
+                                        if _re_ltp <= 0:
+                                            _re_ltp = _re_close
+                                        ok, why = pre_entry_checks(
+                                            kite, _re_token, state,
+                                            _re_ltp, profile, session,
+                                            direction=_re_dir)
+                                        if ok and _re_oi.get("symbol"):
+                                            logger.info("[REENTRY] " + _re_dir
+                                                + " " + str(_re_strike) + " GREEN close "
+                                                + str(round(_re_close, 1)) + " > trigger "
+                                                + str(round(_re_trigger, 1)) + " — re-entering")
+                                            _tg_send(
+                                                "🔄 <b>RE-ENTRY " + _re_dir + " "
+                                                + str(_re_strike) + "</b>\n"
+                                                "GREEN " + "{:.1f}".format(_re_close)
+                                                + " > prev entry " + "{:.1f}".format(_re_trigger)
+                                                + "\n(window had " + str(_reentry_remaining)
+                                                + " candle(s) left)"
+                                            )
+                                            # Clear watcher BEFORE execute so a fresh
+                                            # exit doesn't reset it mid-flow.
+                                            with _state_lock:
+                                                state["_reentry_watch_remaining"] = 0
+                                                state["_reentry_trigger_close"] = 0.0
+                                                state["_reentry_direction"] = ""
+                                                state["_reentry_token"] = 0
+                                                state["_reentry_strike"] = 0
+                                            _execute_entry(kite, _re_oi, _re_dir,
+                                                           _re_result, profile,
+                                                           expiry, dte, session)
+                                            if state.get("in_trade"):
+                                                D.mark_trade_taken(_re_dir)
+                                                time.sleep(0.5)
+                                                continue
+                                        else:
+                                            # Restore cooldown direction so normal
+                                            # scan respects it.
+                                            with _state_lock:
+                                                state["last_exit_direction"] = _saved_lex
+                                            logger.info("[REENTRY] blocked: " + str(why))
+                                    # Watcher counter decremented above; if expired clear it.
+                                    if state.get("_reentry_watch_remaining", 0) <= 0:
+                                        with _state_lock:
+                                            state["_reentry_watch_remaining"] = 0
+                                            state["_reentry_trigger_close"] = 0.0
+                                            state["_reentry_direction"] = ""
+                                            state["_reentry_token"] = 0
+                                            state["_reentry_strike"] = 0
+                                            state["_reentry_last_check_ts"] = ""
+                                        logger.info("[REENTRY] window closed — fresh setup only")
+                        except Exception as _ree:
+                            logger.debug("[REENTRY] check error: " + str(_ree))
 
                 # v16.3.2: dual-strike evaluation (ATM + OTM per side)
                 # CE candidates: ATM CE + ATM+50 CE (OTM)
@@ -2941,20 +3090,25 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SMART TRAIL v2+</b>\n"
-            "INITIAL  (peak <5)   entry-10\n"
-            "🛡️ BREAKEVEN(5-8)    entry\n"
-            "🔒 TRAIL_60 (8-15)   entry+60%\n"
-            "🔒🔒 TRAIL_75(15-30) entry+75%\n"
-            "🔒🔒 VISHAL_MAX(30-45) entry+85%\n"
-            "🔒🔒🔒 TRAIL_90(45+) entry+90%\n"
+            "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
+            "INITIAL    (peak <8)    entry-10\n"
+            "🛡️ LOCK_3   (peak >=8)   entry+3\n"
+            "🔒 LOCK_5   (peak >=12)  entry+5\n"
+            "🔒🔒 LOCK_8 (peak >=15)  entry+8\n"
+            "🔒🔒 LOCK_15(peak >=20)  entry+15\n"
+            "🔒🔒🔒 LOCK_DYN(>=21)   entry+(peak-5)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>GOLDEN 4 ENTRY</b>\n"
+            "<b>3-GATE ENTRY</b>\n"
             "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
             + str(_eb.get("cutoff_after", "15:10")) + "\n"
-            "2. Close > EMA9_low + Band > " + str(_eb.get("band_width_min", 7)) + "\n"
-            "3. EMA9 slope flat or rising\n"
+            "2. GREEN candle (close > open)\n"
+            "3. Close > EMA9_low\n"
             "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>EXIT CHAIN</b>\n"
+            "1. Emergency -10 | 2. FLAT_2X | 3. EOD | 4. Trail\n"
+            "FLAT_2X = slope 0..3 for 2 consecutive candles\n"
+            "Re-entry: 2 candles to GREEN-break previous entry close\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -2983,9 +3137,8 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.6 — EMA9 Band Breakout, "
-        "7 entry gates, 3-rule exit chain "
-        "(Emergency SL / EOD 15:20 / Vishal Trail), "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — 3-gate entry, "
+        "4-rule exit chain (Emergency SL / FLAT_2X / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"

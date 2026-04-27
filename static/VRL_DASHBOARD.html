@@ -181,7 +181,7 @@ body{
 .pos2-meta .arr{color:var(--ctx3);margin:0 4px;font-weight:400}
 .pos2-meta .sub{display:block;margin-top:3px;color:var(--ctx3);font-size:10px;font-weight:600}
 
-/* Smart Trail v2+ Ladder */
+/* Vishal Clean v16.7 — SL Ladder */
 .trail-card{
   margin-top:14px;border-radius:14px;overflow:hidden;
   border:1px solid var(--cbd2);background:rgba(15,23,42,0.03);
@@ -713,7 +713,7 @@ document.getElementById('st-status').innerHTML=
   '<span style="color:var(--ctx2);font-weight:800">'+_stText+'</span>'+
   (_stSub?'<br><span style="font-size:8.5px;color:var(--ctx3);font-weight:700">'+esc(_stSub)+'</span>':'');
 
-// Position card (Part 4) — Smart Trail v2+ tier ladder
+// Position card (Part 4) — Vishal Clean v16.7 SL ladder
 var pa='';
 if(pos.in_trade){
   var sym=(pos.direction||'')+' '+(pos.strike||'');
@@ -743,14 +743,14 @@ if(pos.in_trade){
         '<span class="sub">Hold <b>'+cn+'</b> candles \u00B7 since '+esc(et)+'</span>'+
       '</div>';
 
-  // Smart Trail v2+ tiers
+  // Vishal Clean v16.7 — peak-driven SL ladder
   var tiers=[
-    {k:'INITIAL',   icon:'',          range:'<5',    sl:'entry-10',  min:0,  max:5},
-    {k:'BREAKEVEN', icon:'\uD83D\uDEE1\uFE0F', range:'5-8',  sl:'entry',     min:5,  max:8},
-    {k:'TRAIL_60',  icon:'\uD83D\uDD12',     range:'8-15', sl:'+60% peak', min:8,  max:15},
-    {k:'TRAIL_75',  icon:'\uD83D\uDD12\uD83D\uDD12', range:'15-30',sl:'+75% peak', min:15, max:30},
-    {k:'VISHAL_MAX',icon:'\uD83D\uDD12\uD83D\uDD12', range:'30-45',sl:'+85% peak', min:30, max:45},
-    {k:'TRAIL_90',  icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'45+',  sl:'+90% peak', min:45, max:9999},
+    {k:'INITIAL',  icon:'',                                       range:'<8',    sl:'entry-10',       min:0,  max:8},
+    {k:'LOCK_3',   icon:'\uD83D\uDEE1\uFE0F',                    range:'>=8',   sl:'entry+3',        min:8,  max:12},
+    {k:'LOCK_5',   icon:'\uD83D\uDD12',                          range:'>=12',  sl:'entry+5',        min:12, max:15},
+    {k:'LOCK_8',   icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=15',  sl:'entry+8',        min:15, max:20},  
+    {k:'LOCK_15',  icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=20',  sl:'entry+15',       min:20, max:21},  
+    {k:'LOCK_DYN', icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'>=21',  sl:'entry+(peak-5)', min:21, max:9999},
   ];
   var curTier=String(pos.active_ratchet_tier||pos.trail_tier||'').toUpperCase();
   // Fallback: derive from peak if engine hasn't populated yet
@@ -776,7 +776,7 @@ if(pos.in_trade){
   }
 
   pa+='<div class="trail-card">'+
-        '<div class="trail-hd"><span class="ico">\uD83D\uDD12</span>SMART TRAIL v2+</div>'+
+        '<div class="trail-hd"><span class="ico">\uD83D\uDD12</span>SL LADDER (CLEAN)</div>'+
         '<div class="trail-tbl">'+rows+'</div>'+
       '</div>';
 
@@ -817,10 +817,13 @@ sh+='<div class="sig-grid">';
     if(r==='close_below_ema9_low')return 'Close below EMA9-low';
     if(r==='not_fresh_breakout')return '(stale) Not fresh breakout';
     if(r==='insufficient_3m_data')return 'Warming up\u2026';
-    if(r.indexOf('tight_band_')===0)return 'Band too narrow ('+r.split('_').pop()+'pts < 7)';
-    if(r.indexOf('ema9_low_falling_')===0)return 'EMA9 falling ('+r.split('_').pop()+')';
+    if(r.indexOf('tight_band_')===0)return 'Band info '+r.split('_').pop()+'pts (display only)';
+    if(r.indexOf('ema9_low_falling_')===0)return 'EMA9 falling '+r.split('_').pop()+' (display only)';
     if(r==='red_candle')return 'Red candle (need GREEN)';
-    if(r.indexOf('weak_body_')===0)return 'Body '+r.replace('weak_body_','').replace('pct','')+'% < 50%';
+    if(r==='red_candle_1m')return 'Red 1-min candle';
+    if(r==='close_below_ema9_low_1m')return 'Close below EMA9-low (1m)';
+    if(r.indexOf('weak_body_1m_')===0)return 'Body '+r.replace('weak_body_1m_','').replace('pct','')+'% < 40% (1m)';
+    if(r.indexOf('weak_body_')===0)return 'Body '+r.replace('weak_body_','').replace('pct','')+'% < 40%';
     if(r.indexOf('before_')===0)return 'Pre-warmup (before '+r.replace('before_','')+')';
     if(r.indexOf('after_')===0)return 'Past entry cutoff ('+r.replace('after_','')+')';
     return r;
@@ -837,12 +840,12 @@ sh+='<div class="sig-grid">';
   var pos=String(s.band_position||'').toUpperCase();
   var rj=s.reject_reason||'';
 
-  // Golden 4 gate evaluation
+  // Vishal Clean v16.7 — 3-gate entry evaluation
   var g_time=!rj||(rj.indexOf('before_')!==0&&rj.indexOf('after_')!==0);
-  var g_band=(cl>el)&&(bw>7);
-  var g_slope=sl>=-0.05;
-  var g_body=bd>=50&&_green;  // Vishal Simple: GREEN candle + body >= 50%
-  var g_slopeFlat=Math.abs(sl)<0.05;
+  var g_green=_green;
+  var g_break=cl>el;
+  var g_body=bd>=40;
+  var g_slopeFlat=sl>=0&&sl<=3;  // FLAT_2X exit zone (display)
 
   // Verdict
   var vd_html='';
@@ -852,7 +855,7 @@ sh+='<div class="sig-grid">';
     vd_html='<div class="sig-vd reject">'+esc(friendly(rj))+'</div>';
   }else if(cd&&cd.remaining>0&&cd.direction===t){
     vd_html='<div class="sig-vd cool">COOLDOWN '+Math.ceil(cd.remaining)+'m</div>';
-  }else if(g_time&&g_band&&g_slope&&g_body){
+  }else if(g_time&&g_green&&g_break&&g_body){
     vd_html='<div class="sig-vd ready">READY</div>';
   }else{
     vd_html='<div class="sig-vd wait">WAITING</div>';
@@ -870,29 +873,31 @@ sh+='<div class="sig-grid">';
   sh+='<div class="sig-row low"><span class="lab"><span class="ico">\u25BC</span>Low</span><span class="val">\u20B9'+el.toFixed(1)+'</span></div>';
   sh+='</div>';
 
-  // Golden 4 gates
+  // Vishal Clean — 3 entry gates
   sh+='<div class="sig-blk">';
-  sh+='<div class="sig-blk-t">GOLDEN 4</div>';
-  // Time
+  sh+='<div class="sig-blk-t">3-GATE ENTRY</div>';
+  // Gate 1: Time
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\u23F0</span>Time</span><span class="val '+(g_time?'ok':'no')+'">'+(g_time?'\u2713':'\u2717')+'</span></div>';
-  // Close + Band
-  var cbCls=g_band?'ok':'no';
-  var cbVal=g_band?('\u2713 '+bw.toFixed(0)):(cl<=el?'\u2717 below':'\u2717 narrow '+bw.toFixed(0));
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83C\uDFAF</span>Close+Band</span><span class="val '+cbCls+'">'+cbVal+'</span></div>';
-  // Slope
-  var slLab,slCls;
-  if(g_slopeFlat){slLab='\u2192 flat ('+(sl>=0?'+':'')+sl.toFixed(1)+')';slCls='flat'}
-  else if(sl>0){slLab='\u2713 rising ('+(sl>=0?'+':'')+sl.toFixed(1)+')';slCls='ok'}
-  else{slLab='\u2717 falling ('+sl.toFixed(1)+')';slCls='no'}
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
-  // Body
-  // Body row now requires GREEN + >=50%. Shows candle colour context.
+  // Gate 2: GREEN candle
+  var grLab=_green?'\u2713 GREEN':'\u2717 RED';
+  var grCls=_green?'ok':'no';
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDFE2</span>Green</span><span class="val '+grCls+'">'+grLab+'</span></div>';
+  // Gate 3: Close > EMA9_low
+  var brCls=g_break?'ok':'no';
+  var brLab=g_break?('\u2713 +'+(cl-el).toFixed(1)):'\u2717 below';
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83C\uDFAF</span>Close&gt;EMA9L</span><span class="val '+brCls+'">'+brLab+'</span></div>';
+  // Gate 4: Body >= 40
   var bdLab,bdCls;
   if(bd<=0){bdLab='\u2014 n/a';bdCls='muted'}
-  else if(!_green){bdLab='\u2717 RED '+bd.toFixed(0)+'%';bdCls='no'}
-  else if(bd>=50){bdLab='\u2713 GREEN '+bd.toFixed(0)+'%';bdCls='ok'}
-  else{bdLab='\u2717 GREEN '+bd.toFixed(0)+'% (<50)';bdCls='no'}
+  else if(g_body){bdLab='\u2713 '+bd.toFixed(0)+'%';bdCls='ok'}
+  else{bdLab='\u2717 '+bd.toFixed(0)+'% (<40)';bdCls='no'}
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>Body</span><span class="val '+bdCls+'">'+bdLab+'</span></div>';
+  // Slope (display-only — drives FLAT_2X exit, not entry)
+  var slLab,slCls;
+  if(g_slopeFlat){slLab='\u26A0 flat '+(sl>=0?'+':'')+sl.toFixed(1)+' (exit zone)';slCls='no'}
+  else if(sl>3){slLab='\u2713 rising +'+sl.toFixed(1);slCls='ok'}
+  else{slLab='\u2717 falling '+sl.toFixed(1);slCls='no'}
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
   sh+='</div>';
 
   sh+=vd_html;
