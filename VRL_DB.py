@@ -1222,10 +1222,20 @@ def validate_entry(state, entry_result, kite=None):
     except Exception as e:
         failures.append("CHECK8_ERR: " + str(e))
 
-    # CHECK 9: WebSocket has live LTP for the token
+    # CHECK 9: WebSocket has live LTP for the token.
+    # Poll up to 3 seconds — Kite WS often takes 1-2s to deliver the
+    # first tick after subscribe, so checking immediately after entry
+    # produces false WEBSOCKET failures even though the trade is fine.
     try:
+        import time as _time_v
         token  = state.get("token", 0)
         ws_ltp = D.get_ltp(token) if token else 0
+        if ws_ltp <= 0 and token:
+            for _i in range(6):
+                _time_v.sleep(0.5)
+                ws_ltp = D.get_ltp(token)
+                if ws_ltp > 0:
+                    break
         if ws_ltp <= 0:
             failures.append("WEBSOCKET: no LTP for token=" + str(token))
     except Exception as e:
