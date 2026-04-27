@@ -592,6 +592,39 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     except Exception:
         pass
 
+    # One-shot header migration: if the existing CSV header is missing
+    # any TRADE_FIELDNAMES column, rewrite the file with the new header
+    # so DictReader can map the new cells (xleg_*, etc.) correctly when
+    # /xleg reads them back. Without this, new rows have extra cells
+    # the old header can't name → DictReader buckets them into the
+    # None key and accuracy stats look like 100% NA.
+    if not is_new:
+        try:
+            with open(D.TRADE_LOG_PATH, "r", newline="") as _f_chk:
+                _r_chk = csv.reader(_f_chk)
+                _hdr = next(_r_chk, None) or []
+                _missing = [c for c in TRADE_FIELDNAMES if c not in _hdr]
+            if _missing:
+                logger.info("[MAIN] Trade-log header upgrade: adding "
+                            + ", ".join(_missing))
+                # Read existing rows with old header
+                with open(D.TRADE_LOG_PATH, "r", newline="") as _f_rd:
+                    _old_rows = list(csv.DictReader(_f_rd))
+                # Rewrite with new header — old rows get blanks for new cols
+                with open(D.TRADE_LOG_PATH, "w", newline="") as _f_wr:
+                    _w = csv.DictWriter(_f_wr, fieldnames=TRADE_FIELDNAMES,
+                                        extrasaction="ignore")
+                    _w.writeheader()
+                    for _orow in _old_rows:
+                        # Fill missing keys with empty so writer doesn't error
+                        for _c in _missing:
+                            _orow.setdefault(_c, "")
+                        _w.writerow(_orow)
+                logger.info("[MAIN] Trade-log header upgrade: rewrote "
+                            + str(len(_old_rows)) + " rows with new schema")
+        except Exception as _me:
+            logger.warning("[MAIN] Trade-log header migration error: " + str(_me))
+
     try:
         with open(D.TRADE_LOG_PATH, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
