@@ -192,8 +192,9 @@ def evaluate_xleg(other_candle):
 # ─────────────────────────────────────────────────────────────
 def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
     """Walk forward from entry_idx, applying SL ladder + FLAT_2X.
-    Returns (entry_price, exit_price, pnl_pts, peak, exit_reason,
-             candles_held, spike_used).
+    Returns dict with entry_price, exit_price, pnl, peak, reason,
+    candles, spike_used, exit_idx, exit_ts. Returns None if anti-spike
+    skipped the entry.
     Entry candle = leg_3m[entry_idx]. Trade enters at end-of-candle.
     """
     entry_candle = leg_3m[entry_idx]
@@ -214,8 +215,11 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
                 next_1m = c1
                 break
         if next_1m and next_1m["low"] <= target:
-            # Fill at target (limit-pullback semantics — first touch)
-            entry_price = target
+            # Fill at the BETTER of target or actual low (limit-pullback
+            # semantics, user chose "fill at LTP"). If LTP plunged below
+            # target during the 60s window, our limit order would fill
+            # at the lower price.
+            entry_price = min(target, next_1m["low"])
             spike_used = True
         else:
             # No pullback within 60s → skip trade
@@ -223,6 +227,7 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
             return None
     else:
         entry_price = raw_close
+        target = 0
 
     peak = 0.0
     flat_streak = 0
@@ -248,32 +253,29 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
 
         # 1. Emergency SL — if candle's low touched/crossed entry-10
         if candle_min_pnl <= EMERGENCY_SL_PTS:
-            exit_reason = "EMERGENCY_SL"
-            exit_price = entry_price + EMERGENCY_SL_PTS
-            return _result(entry_price, exit_price, peak, exit_reason,
-                           j - entry_idx, raw_close, target if anti_spike else 0,
-                           spike_used)
+            return _result(entry_price, entry_price + EMERGENCY_SL_PTS, peak,
+                           "EMERGENCY_SL", j - entry_idx, raw_close,
+                           target if anti_spike else 0, spike_used,
+                           exit_idx=j, exit_ts=c["ts"])
 
         # 2. EOD cutoff
         try:
             t = c["ts"][-8:-3]
             hh, mm = int(t[:2]), int(t[3:])
             if hh * 60 + mm >= EOD_HHMM[0] * 60 + EOD_HHMM[1]:
-                exit_reason = "EOD_EXIT"
-                exit_price = c_close
-                return _result(entry_price, exit_price, peak, exit_reason,
-                               j - entry_idx, raw_close, target if anti_spike else 0,
-                               spike_used)
+                return _result(entry_price, c_close, peak, "EOD_EXIT",
+                               j - entry_idx, raw_close,
+                               target if anti_spike else 0, spike_used,
+                               exit_idx=j, exit_ts=c["ts"])
         except Exception:
             pass
 
         # 3. VISHAL_TRAIL — if candle close <= trail SL
         if sl > 0 and c_close <= sl:
-            exit_reason = "VISHAL_TRAIL"
-            exit_price = sl  # filled at SL price
-            return _result(entry_price, exit_price, peak, exit_reason,
-                           j - entry_idx, raw_close, target if anti_spike else 0,
-                           spike_used)
+            return _result(entry_price, sl, peak, "VISHAL_TRAIL",
+                           j - entry_idx, raw_close,
+                           target if anti_spike else 0, spike_used,
+                           exit_idx=j, exit_ts=c["ts"])
 
         # 4. FLAT_2X — slope 0..3 for 2 consecutive candles
         slope = round(c["ema9_low"] - prev["ema9_low"], 2)
@@ -282,22 +284,23 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
         else:
             flat_streak = 0
         if flat_streak >= FLAT_STREAK_MIN:
-            exit_reason = "FLAT_2X"
-            exit_price = c_close
-            return _result(entry_price, exit_price, peak, exit_reason,
-                           j - entry_idx, raw_close, target if anti_spike else 0,
-                           spike_used)
+            return _result(entry_price, c_close, peak, "FLAT_2X",
+                           j - entry_idx, raw_close,
+                           target if anti_spike else 0, spike_used,
+                           exit_idx=j, exit_ts=c["ts"])
 
     # Ran out of candles (end of day) — close at last candle close
     if leg_3m:
         last_c = leg_3m[-1]
         return _result(entry_price, last_c["close"], peak, "EOD_EXIT",
                        len(leg_3m) - entry_idx - 1, raw_close,
-                       target if anti_spike else 0, spike_used)
+                       target if anti_spike else 0, spike_used,
+                       exit_idx=len(leg_3m) - 1, exit_ts=last_c["ts"])
     return None
 
 
-def _result(entry, exit_p, peak, reason, candles, raw_close, target, spike_used):
+def _result(entry, exit_p, peak, reason, candles, raw_close, target,
+            spike_used, exit_idx=0, exit_ts=""):
     return {
         "entry": round(entry, 2),
         "exit":  round(exit_p, 2),
@@ -308,14 +311,27 @@ def _result(entry, exit_p, peak, reason, candles, raw_close, target, spike_used)
         "raw_close": round(raw_close, 2),
         "spike_target": round(target, 2),
         "spike_used":   spike_used,
+        "exit_idx":     exit_idx,
+        "exit_ts":      exit_ts,
     }
 
 
 # ─────────────────────────────────────────────────────────────
 # Day replay
 # ─────────────────────────────────────────────────────────────
+def _ts_to_min(ts):
+    """Convert 'YYYY-MM-DD HH:MM:SS' or similar → minutes-since-midnight."""
+    try:
+        t = ts[-8:-3]  # HH:MM
+        return int(t[:2]) * 60 + int(t[3:])
+    except Exception:
+        return 0
+
+
 def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
-    """Replay one trading day. Returns list of trade result dicts."""
+    """Replay one trading day with MULTI-trade support + cooldown.
+    Returns list of trade result dicts (incl. spike-skips).
+    """
     legs_3m = load_3m_day(d)
     if not legs_3m:
         return None
@@ -327,40 +343,48 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
         if not rows: continue
         if atm_only:
             atm_d = abs(rows[0].get("atm_distance", 999))
-            if atm_d <= 50:  # ATM and ATM±50
+            if atm_d <= 50:
                 strikes_used.add(strike)
         else:
             strikes_used.add(strike)
 
-    trades = []
-    in_trade = False  # one position at a time across the day
-    cooldown_until_idx = -1
-    cooldown_dir = ""
-
-    # Build a unified timeline by 3-min ts
-    timeline_keys = set()
+    # Build a unified timeline of 3-min ts in chronological order
+    timeline_set = set()
     for (s, side), rows in legs_3m.items():
         if s in strikes_used:
             for r in rows:
-                timeline_keys.add(r["ts"])
-    timeline = sorted(timeline_keys)
+                timeline_set.add(r["ts"])
+    timeline = sorted(timeline_set)
+    if not timeline:
+        return []
 
-    # Maps for fast access
-    leg_idx = defaultdict(dict)  # (strike,side) -> {ts: index}
+    # Fast (strike,side,ts)→idx map
+    leg_idx = defaultdict(dict)
     for (s, side), rows in legs_3m.items():
         for i, r in enumerate(rows):
             leg_idx[(s, side)][r["ts"]] = i
 
+    trades = []
+    # next_ok_ts_by_side[side] = earliest ts at which we can re-enter
+    # this direction (5-min same-direction cooldown after exit).
+    next_ok_ts_by_side = {"CE": "", "PE": ""}
+    # ts cursor — when we're in a trade, advance past its exit_ts
+    blocked_until_ts = ""
+
     for ts in timeline:
-        if in_trade: break  # 1 trade simulated per day for clarity (can extend)
+        if blocked_until_ts and ts <= blocked_until_ts:
+            continue  # in trade, skip until exit ts
 
         # Evaluate every (strike, side) candidate at this ts
         candidates = []
         for s in strikes_used:
             for side in ("CE", "PE"):
+                # Same-direction cooldown
+                if next_ok_ts_by_side[side] and ts <= next_ok_ts_by_side[side]:
+                    continue
                 rows = legs_3m.get((s, side), [])
                 idx = leg_idx[(s, side)].get(ts)
-                if idx is None or idx < 1:  # need prev for slope
+                if idx is None or idx < 1:
                     continue
                 c = rows[idx]
                 prev_c = rows[idx - 1]
@@ -373,11 +397,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
                 other_idx = leg_idx[(s, other)].get(ts)
                 other_c = other_rows[other_idx] if other_idx is not None else None
                 xl_sig, xl_margin = evaluate_xleg(other_c)
-
                 if xleg_gate and xl_sig == "FAIL":
-                    continue  # filtered by cross-leg gate
-
-                # Score by body × gap (matches live)
+                    continue
                 gap = c["close"] - c["ema9_low"]
                 score = body * max(gap, 0.1)
                 candidates.append({
@@ -392,16 +413,11 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
         candidates.sort(key=lambda x: -x["score"])
         best = candidates[0]
 
-        # Cooldown: 5 min same-direction
-        if cooldown_dir == best["side"] and ts <= cooldown_until_idx:
-            continue
-
-        # Simulate
         leg_1m_rows = legs_1m.get((best["strike"], best["side"]), [])
         result = simulate_trade(best["idx"], best["rows_3m"], leg_1m_rows,
                                 anti_spike=anti_spike)
         if result is None:
-            # Spike-skipped — record as a non-trade entry
+            # Spike-skipped — log + continue scanning
             trades.append({
                 "date": d.isoformat(), "ts": ts, "strike": best["strike"],
                 "side": best["side"], "xleg": best["xleg"],
@@ -422,10 +438,22 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
         result["body"]   = best["body"]
         result["spike_skipped"] = False
         trades.append(result)
-        in_trade = True
-        cooldown_dir = best["side"]
-        # cooldown_until_idx logic skipped for simplicity — we only do 1 trade/day here
-        break
+
+        # Block timeline until exit ts; same-side cooldown 5 min after exit
+        blocked_until_ts = result.get("exit_ts", "")
+        ex_min = _ts_to_min(blocked_until_ts)
+        # Cooldown ts = ex_min + 5 min — convert back to lookup-friendly
+        # form. Since we compare by ts string lexicographically, build a
+        # marker like "YYYY-MM-DD HH:MM:00" at ex_min+5.
+        try:
+            cool_min = ex_min + 5
+            cool_hh = cool_min // 60
+            cool_mm = cool_min % 60
+            cool_marker = (blocked_until_ts[:11]
+                           + f"{cool_hh:02d}:{cool_mm:02d}:59")
+        except Exception:
+            cool_marker = blocked_until_ts
+        next_ok_ts_by_side[best["side"]] = cool_marker
 
     return trades
 
