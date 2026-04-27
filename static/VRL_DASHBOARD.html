@@ -1081,6 +1081,27 @@ document.addEventListener('visibilitychange',function(){
   }
 });
 
+// Clock watchdog — runs every 60s independent of refresh interval.
+// Detects when phone clock crosses 09:15 IST (market opens) or
+// 15:30 IST (market closes) and triggers an immediate go() to
+// re-evaluate. Without this, a 1h after-hours interval set at
+// midnight would not notice market opening at 09:15 until 01:00
+// or later. Lightweight — no fetch, just clock check.
+var _wdLastClockOpen=null;
+setInterval(function(){
+  if(document.hidden)return;
+  var n=new Date();
+  var ist=new Date(n.getTime()+(n.getTimezoneOffset()*60000)+(5.5*3600000));
+  var dow=ist.getUTCDay();
+  var hm=ist.getUTCHours()*60+ist.getUTCMinutes();
+  var nowOpen=(dow!==0&&dow!==6)&&hm>=555&&hm<=930;
+  if(_wdLastClockOpen===null){_wdLastClockOpen=nowOpen;return}
+  if(nowOpen!==_wdLastClockOpen){
+    _wdLastClockOpen=nowOpen;
+    go(); // market state transitioned — fetch + reschedule immediately
+  }
+},60000);
+
 // Initial schedule based on phone clock so we don't fire 10s
 // pulses for an hour before the first market_open=false arrives.
 (function(){
