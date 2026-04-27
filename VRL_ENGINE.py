@@ -81,9 +81,9 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
             return False, "Margin check failed"
     return True, ""
 
-def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, market_open: bool,
-                               state: dict, straddle_delta, spot_vwap, spot_for_vwap: float,
-                               atm_strike: int, silent: bool = False, other_opt_3m=None) -> dict:
+def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
+                               market_open: bool, state: dict,
+                               atm_strike: int, silent: bool = False) -> dict:
     # ── Vishal Clean Entry (v16.7) — 3 hard gates ──
     #   1. GREEN candle (close > open)
     #   2. Close > EMA9_low
@@ -95,8 +95,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
-        "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
-        "backbone_status": "N/A", "ema9_low_slope": 0.0,
+        "band_width": 0, "reject_reason": "", "band_position": "",
+        "ema9_low_slope": 0.0,
         "band_width_slope": 0.0, "margin_above": 0,
     }
     try:
@@ -203,9 +203,8 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
     atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
     return _evaluate_entry_gates_pure(
         opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp, now=now,
-        market_open=market_open, state=state, straddle_delta=None,
-        spot_vwap=None, spot_for_vwap=spot_ltp, atm_strike=atm_strike,
-        silent=silent, other_opt_3m=None)
+        market_open=market_open, state=state, atm_strike=atm_strike,
+        silent=silent)
 
 
 def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
@@ -220,8 +219,8 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
-        "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
-        "backbone_status": "N/A", "ema9_low_slope": 0.0,
+        "band_width": 0, "reject_reason": "", "band_position": "",
+        "ema9_low_slope": 0.0,
         "band_width_slope": 0.0, "margin_above": 0,
     }
     try:

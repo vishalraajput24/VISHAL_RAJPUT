@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_CONFIG.py — VISHAL RAJPUT TRADE v14.0
+#  VRL_CONFIG.py — VISHAL RAJPUT TRADE v16.7
 #  Central config loader. Loads config.yaml, validates required
-#  v14.0 sections, exposes typed accessors.
+#  v16.7 sections, exposes typed accessors.
 #  Immutable at runtime — restart to reload.
 # ═══════════════════════════════════════════════════════════════
 

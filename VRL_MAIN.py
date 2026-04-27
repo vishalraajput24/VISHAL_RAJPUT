@@ -1109,11 +1109,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["current_ema9_low"]   = round(float(entry_result.get("ema9_low", 0)), 2)
         state["last_band_check_ts"] = ""
         state["other_token"]        = _other_token_entry
-        # v15.2: capture straddle + VWAP context for exit alert + dashboard
-        _sd_at_entry = entry_result.get("straddle_delta")
-        # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA straddle classification
-        # v16.0 Batch 7: band slope + context tag (display only)
-        state["backbone_status"]          = entry_result.get("backbone_status", "N/A")
 
     _save_state()
 
@@ -1703,9 +1698,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "candle_green": False, "fired": False,
                     "verdict": "NO DATA", "ltp": 0, "entry_mode": "",
                     "strike": dir_strikes.get(opt_type, atm_strike),
-                    "straddle_delta": None, "straddle_threshold": 0,
-                    "straddle_period": "",
-                    "spot_vwap": 0, "spot_vs_vwap": 0, "vwap_bonus": "",
                 }
             _fired = result.get("fired", False)
             _mode = result.get("entry_mode", "")
@@ -1750,16 +1742,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "entry_mode": _mode,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
-                "bonus": result.get("bonus", {}),
                 # v16.7 display-only — slope of EMA9_low (drives FLAT_2X exit, not entry)
                 "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
-                # v15.2 straddle filter context
-                "straddle_delta":     result.get("straddle_delta"),
-                "straddle_threshold": result.get("straddle_threshold", 0),
-                "straddle_period":    result.get("straddle_period", ""),
-                "atm_strike_used":    result.get("atm_strike_used", 0),
-                # Legacy compat
-                "rsi": 0, "ema9": round(_eh, 2), "ema21": 0,
+                # Cross-leg signal (computed in scan path, surfaces here for dashboard)
+                "xleg_signal":        result.get("xleg_signal", ""),
+                "xleg_other_margin":  round(float(result.get("xleg_other_margin", 0) or 0), 2),
             }
 
         # Warmup metadata is still consumed by the dashboard header
@@ -1828,15 +1815,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "stop": _stop_price,
                 "stop_dist": round(opt_ltp - _stop_price, 2)
                               if opt_ltp > 0 and _stop_price > 0 else 0,
-                # v16.2 trail state (state key preserved for back-compat)
+                # v16.7 trail state (key names preserved for dashboard back-compat)
                 "active_ratchet_tier": st.get("active_ratchet_tier", ""),
                 "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
                 "trail_tier":          st.get("active_ratchet_tier", ""),
                 "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
-                "backbone_status":     st.get("backbone_status", "CONFIRMED"),
-                # v16.0 Batch 7 context display (bands + straddle + VWAP)
-                # v15.2 entry context (replayed at exit on dashboard)
-                # v15.2.5 velocity stall telemetry (sparkline + number)
                 # Legacy compat
                 "lots_split": False,
                 "current_floor": round(st.get("current_ema9_low", 0), 2),
@@ -2407,14 +2390,6 @@ def _strategy_loop(kite):
                     except Exception as _re:
                         logger.debug("[MAIN] trail tier alert error: " + str(_re))
 
-                    # v16.0 Batch 7: refresh bands_state once per new 3-min candle
-                    try:
-                        _ctx_tok = state.get("token")
-                        if _ctx_tok:
-                            _df_ctx = D.get_option_3min(_ctx_tok, lookback=10)
-                    except Exception:
-                        pass
-
                     # v15.0: Peak milestone alerts + exchange SL-M band update
                     if state.get("in_trade"):
                         _peak = state.get("peak_pnl", 0)
@@ -2701,6 +2676,25 @@ def _strategy_loop(kite):
                                                 )
                                         except Exception as _xre:
                                             logger.debug("[XLEG][REENTRY] " + str(_xre))
+
+                                        # ── X-LEG hard gate on re-entry too ──
+                                        _xl_gate_re = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
+                                        _xl_sig_re = _re_result.get("xleg_signal", "NA")
+                                        if _xl_gate_re and _xl_sig_re == "FAIL":
+                                            _xl_other_dt_re = "PE" if _re_dir == "CE" else "CE"
+                                            _xl_margin_re = float(_re_result.get("xleg_other_margin", 0) or 0)
+                                            _tg_send(
+                                                "🚫 <b>RE-ENTRY BLOCKED — X-LEG FAIL</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + "  | " + _xl_other_dt_re + " holding "
+                                                + ("+" if _xl_margin_re >= 0 else "")
+                                                + "{:.1f}".format(_xl_margin_re)
+                                                + " above own EMA9L"
+                                            )
+                                            logger.info("[XLEG-GATE][REENTRY] " + _re_dir
+                                                + " blocked (FAIL) — waiting next candle/fresh setup")
+                                            continue
+
                                         # Pre-entry checks — bypass cooldown for re-entry
                                         # by clearing last_exit_direction temporarily.
                                         _saved_lex = state.get("last_exit_direction", "")

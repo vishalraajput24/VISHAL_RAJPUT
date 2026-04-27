@@ -1,8 +1,13 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DB.py — VISHAL RAJPUT TRADE v13.7
+#  VRL_DB.py — VISHAL RAJPUT TRADE v16.7
 #  SQLite database helper. WAL mode for concurrent reads.
 #  All lab data + trades in ~/lab_data/vrl_data.db
+#
+#  Schema retains legacy columns (entry_straddle_*, entry_spot_vwap,
+#  entry_vwap_bonus) for back-compat with v15.x trade history. New
+#  v16.7 inserts populate them with default 0/'' — readers should
+#  ignore. Drop in a future major version (would break old history).
 # ═══════════════════════════════════════════════════════════════
 
 import csv

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VRL_WEB.py — VISHAL RAJPUT TRADE v16.6
+VRL_WEB.py — VISHAL RAJPUT TRADE v16.7
 Dashboard server with admin login + subscriber token access.
 """
 import csv, json, os, hashlib, secrets, time, threading, logging
@@ -1197,7 +1197,7 @@ class H(BaseHTTPRequestHandler):
         else:self.send_error(404)
 
 def _bind_host():
-    """v15.2.5 BUG-M: fail-safe bind selection.
+    """Fail-safe bind selection.
     If ADMIN_PASS_HASH is empty, admin login is impossible but the
     process would still happily listen on 0.0.0.0 and expose
     subscriber-token endpoints + /api/* to the public internet.
@@ -1252,6 +1252,6 @@ def _bind_host():
 if __name__=="__main__":
     _host = _bind_host()
     s=HTTPServer((_host,PORT),H)
-    print("VRL War Room v15.2.5 — http://" + _host + ":" + str(PORT))
+    print("VRL War Room v16.7 — http://" + _host + ":" + str(PORT))
     try:s.serve_forever()
     except KeyboardInterrupt:s.server_close()
