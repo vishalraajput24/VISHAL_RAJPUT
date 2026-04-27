@@ -587,7 +587,8 @@ def _on_close(ws, code, reason):
         _set_auth_rejected()
         try:
             if _ticker: _ticker.close()
-        except: pass
+        except Exception as _ce:
+            logger.debug("[WS] ticker.close() on 403 failed: " + str(_ce))
         return
     if _ws_reconnect_attempts < 10:
         delay = min(_ws_reconnect_delay * (2 ** _ws_reconnect_attempts), _ws_max_delay)

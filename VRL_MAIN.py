@@ -16,7 +16,6 @@ import signal
 import sys
 import threading
 import time
-import zipfile
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 
@@ -454,6 +453,7 @@ TRADE_FIELDNAMES = [
     "peak_pnl", "exit_reason",
     "dte", "candles_held", "session", "sl_pts",
     "vix_at_entry", "entry_mode",
+    "bias", "hourly_rsi",
     "brokerage", "stt", "exchange_charges", "gst", "stamp_duty",
     "total_charges", "num_exit_orders", "qty_exited",
     "entry_slippage", "exit_slippage", "lot_id",
@@ -991,7 +991,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                    expiry, dte: int, session: str = "MORNING"):
     token       = option_info["token"]
     symbol      = option_info["symbol"]
-    entry_price = entry_result.get("entry_level") or entry_result["entry_price"]
+    entry_price = entry_result["entry_price"]
 
     import VRL_CONFIG as CFG
     lot_count = CFG.get().get("lots", {}).get("count", 2)
@@ -1364,8 +1364,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "lot1_exit_reason": "", "lot1_exit_time": "",
                 "lot2_exit_price": 0.0, "lot2_exit_pnl": 0.0,
                 "lot2_exit_reason": "",
-                "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
-                "entry_mode": "",
             })
         if old_token:
             # Keep token subscribed for 10 min so lab records post-exit

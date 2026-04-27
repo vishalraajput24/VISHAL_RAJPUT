@@ -178,7 +178,6 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         # ── All 3 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
-        result["ema9h_confirmed"] = (close > ema9_high)
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} body={int(_body_pct)}% "
@@ -469,7 +468,10 @@ def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int 
     opt_3m_full = None
     try:
         opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
-    except: pass
+    except Exception as _e:
+        # Log instead of silent swallow — if get_option_3min keeps failing
+        # the trail check will skip and we'd lose visibility on why.
+        logger.warning("[ENGINE] manage_exit get_option_3min failed: " + str(_e))
     return _evaluate_exit_chain_pure(state, option_ltp, opt_3m_full, datetime.now(), D.is_market_open())
 
 
