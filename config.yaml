@@ -35,10 +35,10 @@ lots:
 # green-candle check — replaced by band_width_min + slope gate.
 entry:
   ema9_band:
-    # Vishal's simple entry: GREEN candle + body >= 50% on the last
-    # closed 3-min candle, close above EMA9_low, band width > 7,
-    # EMA9_low slope per-candle (1-bar) flat or rising.
-    body_pct_min: 50
+    # Vishal final entry: GREEN + body >= 30%, close above EMA9_low,
+    # band > 7, EMA9_low slope per-candle flat or rising. Lowered from
+    # 50% — alignment of multiple modest filters > one strict filter.
+    body_pct_min: 30
     warmup_until: "09:35"
     cutoff_after: "15:10"
     cooldown_minutes: 5

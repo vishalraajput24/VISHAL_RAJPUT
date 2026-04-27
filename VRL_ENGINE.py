@@ -78,6 +78,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
         "backbone_status": "N/A", "ema9_low_slope": 0.0,
+        "band_width_slope": 0.0, "quality_score": 0, "margin_above": 0,
     }
     try:
         body_min = CFG.entry_ema9_band("body_pct_min", 50)
@@ -102,6 +103,12 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         # Per-candle slope: current ema9_low - previous candle's ema9_low.
         ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
+        # Band-width slope (DISPLAY-ONLY insight, never blocks):
+        # >0 expanding (volatility growing), 0 flat (dead),
+        # <0 contracting (likely SL).
+        _prev_band_width = round(
+            float(prev.get("ema9_high", 0)) - float(prev.get("ema9_low", 0)), 2)
+        band_width_slope = round(band_width - _prev_band_width, 2)
 
         # Always compute band_position + body_pct + green up-front so
         # the dashboard has values even when an early gate rejects.
@@ -115,16 +122,40 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         _body_pct = round((abs(close - open_) / _candle_range * 100)
                           if _candle_range > 0 else 0, 1)
         _is_green = (close > open_)
+        # Distance above EMA9_low (margin) — also display-only.
+        _margin = round(close - ema9_low, 2)
+
+        # Quality score 0-7 — sums alignment of factors, display only.
+        # Lets operator eyeball setup strength even when all hard gates
+        # pass. Factors: time / close-above / band-width / band-slope /
+        # ema9-slope / green / body. Each = 1 point (slope half-credit
+        # on flat).
+        _q = 0
+        # time gate evaluated below; skip here (would always be 1 on
+        # entry path). Add fixed +1 for time since we're inside try.
+        _q += 1
+        if close > ema9_low:                _q += 1
+        if band_width > band_width_min:     _q += 1
+        if band_width_slope > 0:            _q += 1
+        elif abs(band_width_slope) < 0.1:   _q += 0.5
+        if ema9_low_slope > 0:              _q += 1
+        elif abs(ema9_low_slope) < 0.05:    _q += 0.5
+        if _is_green:                       _q += 1
+        if _body_pct >= body_min:           _q += 1
+        _quality = round(_q, 1)
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
             "ema9_low": round(ema9_low, 2), "close": round(close, 2), "open": round(open_, 2),
             "high": round(high, 2), "low": round(low, 2),
             "band_width": band_width,
+            "band_width_slope": band_width_slope,
             "ema9_low_slope": ema9_low_slope,
             "candle_green": _is_green,
             "band_position": _band_pos,
             "body_pct": _body_pct,
+            "quality_score": _quality,
+            "margin_above": _margin,
         })
 
         # ── GATE 1: Time window (09:35-15:10) ──
@@ -196,6 +227,120 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
         market_open=market_open, state=state, straddle_delta=None,
         spot_vwap=None, spot_for_vwap=spot_ltp, atm_strike=atm_strike,
         silent=silent, other_opt_3m=None)
+
+
+def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
+                    silent: bool = False, state: dict = None) -> dict:
+    """1-min early peek — hybrid entry that uses 3-min EMA9 trend +
+    1-min candle freshness. Fires BEFORE the 3-min closes if the
+    just-closed 1-min candle confirms the breakout.
+
+    Same gates as 3-min entry except evaluated on 1-min candle's
+    open/close/body. Trend filters (ema9_low position, band_width,
+    band slope) read from the latest 3-min row — so we get FAST
+    trigger on STABLE trend.
+
+    Marked entry_mode='FAST' so the trade log + exit alert can show
+    this was an early entry."""
+    if state is None: state = {}
+    result = {
+        "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
+        "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
+        "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
+        "backbone_status": "N/A", "ema9_low_slope": 0.0,
+        "band_width_slope": 0.0, "quality_score": 0, "margin_above": 0,
+    }
+    try:
+        opt_3m = D.get_option_3min(token, lookback=15)
+        opt_1m = D.get_option_1min(token, lookback=15)
+        market_open = D.is_market_open()
+        now = datetime.now()
+
+        body_min = CFG.entry_ema9_band("body_pct_min", 30)
+        warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
+        cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:10")
+        band_width_min = CFG.entry_ema9_band("band_width_min", 7)
+
+        # Need at least 4 of each — 3-min for trend, 1-min for trigger
+        if (opt_3m is None or opt_3m.empty or len(opt_3m) < 4
+                or opt_1m is None or opt_1m.empty or len(opt_1m) < 4):
+            result["reject_reason"] = "insufficient_1m_or_3m"
+            return result
+
+        # Trend from 3-min (last closed)
+        last_3m = opt_3m.iloc[-2]
+        prev_3m = opt_3m.iloc[-3]
+        ema9_high = float(last_3m.get("ema9_high", 0))
+        ema9_low  = float(last_3m.get("ema9_low", 0))
+        ema9_low_slope = round(ema9_low - float(prev_3m.get("ema9_low", 0)), 2)
+        band_width = round(ema9_high - ema9_low, 2)
+        _prev_band_width = round(
+            float(prev_3m.get("ema9_high", 0)) - float(prev_3m.get("ema9_low", 0)), 2)
+        band_width_slope = round(band_width - _prev_band_width, 2)
+
+        # Trigger from 1-min (last closed)
+        last_1m = opt_1m.iloc[-2]
+        close = float(last_1m["close"]); open_ = float(last_1m["open"])
+        high = float(last_1m["high"]); low = float(last_1m["low"])
+        _candle_range = high - low
+        _body_pct = round((abs(close - open_) / _candle_range * 100)
+                          if _candle_range > 0 else 0, 1)
+        _is_green = (close > open_)
+
+        result.update({
+            "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
+            "ema9_low": round(ema9_low, 2), "close": round(close, 2), "open": round(open_, 2),
+            "high": round(high, 2), "low": round(low, 2),
+            "band_width": band_width, "band_width_slope": band_width_slope,
+            "ema9_low_slope": ema9_low_slope, "candle_green": _is_green,
+            "body_pct": _body_pct,
+            "band_position": "ABOVE" if close > ema9_high else ("BELOW" if close < ema9_low else "IN"),
+            "margin_above": round(close - ema9_low, 2),
+        })
+
+        # Same gate sequence as 3-min path
+        if market_open:
+            mins = now.hour * 60 + now.minute
+            warmup_mins = int(warmup_until.split(":")[0])*60 + int(warmup_until.split(":")[1])
+            cutoff_mins = int(cutoff_after.split(":")[0])*60 + int(cutoff_after.split(":")[1])
+            if mins < warmup_mins:
+                result["reject_reason"] = "before_" + warmup_until; return result
+            if mins >= cutoff_mins:
+                result["reject_reason"] = "after_" + cutoff_after; return result
+        if close <= ema9_low:
+            result["reject_reason"] = "close_below_ema9_low_1m"; return result
+        if band_width <= band_width_min:
+            result["reject_reason"] = f"tight_band_1m_{band_width}"; return result
+        if ema9_low_slope < 0:
+            result["reject_reason"] = f"ema9_low_falling_1m_{ema9_low_slope}"; return result
+        if not _is_green:
+            result["reject_reason"] = "red_candle_1m"; return result
+        if _body_pct < body_min:
+            result["reject_reason"] = f"weak_body_1m_{int(_body_pct)}pct"; return result
+
+        # Quality score (same factors)
+        _q = 1
+        if close > ema9_low:                _q += 1
+        if band_width > band_width_min:     _q += 1
+        if band_width_slope > 0:            _q += 1
+        elif abs(band_width_slope) < 0.1:   _q += 0.5
+        if ema9_low_slope > 0:              _q += 1
+        elif abs(ema9_low_slope) < 0.05:    _q += 0.5
+        if _is_green:                       _q += 1
+        if _body_pct >= body_min:           _q += 1
+        result["quality_score"] = round(_q, 1)
+
+        result["fired"] = True
+        result["entry_mode"] = "FAST"  # 1-min peek marker
+        if not silent:
+            logger.info(f"[ENGINE] {option_type} FAST(1m) FIRED close={round(close,1)} "
+                        f"ema9l={round(ema9_low,1)} band={band_width} body={int(_body_pct)}%")
+        return result
+    except Exception as e:
+        logger.error("[ENGINE] 1-min peek error: " + str(e))
+        result["fired"] = False
+        result["reject_reason"] = "error_1m_" + str(e)[:50]
+        return result
 
 def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
@@ -288,7 +433,22 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
             except Exception:
                 pass  # fail open — use candle as before
         if _use and _candle["close"] <= trail_sl:
-            return [{"lot_id": "ALL", "reason": "VISHAL_TRAIL", "price": trail_sl}]
+            # Include the triggering candle data so the exit alert can
+            # show "10:27 candle closed Rs93.85 (below SL Rs97.88)"
+            # — eliminates the "price still above SL" confusion when
+            # market bounces back AFTER the bot's decision.
+            try:
+                _trig_t = (_candle.name + timedelta(minutes=3)).strftime("%H:%M")
+            except Exception:
+                _trig_t = ""
+            return [{
+                "lot_id": "ALL",
+                "reason": "VISHAL_TRAIL",
+                "price": trail_sl,
+                "trigger_close": round(float(_candle["close"]), 2),
+                "trigger_time": _trig_t,
+                "trigger_sl": round(trail_sl, 2),
+            }]
     return []
 
 def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int = 0) -> list:

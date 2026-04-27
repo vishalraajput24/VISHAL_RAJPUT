@@ -1006,11 +1006,29 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _slope = float(entry_result.get("ema9_low_slope", 0) or 0)
     _slope_tag = "+" if _slope >= 0 else ""
+    _bw = float(entry_result.get("band_width", 0))
+    _bws = float(entry_result.get("band_width_slope", 0) or 0)
+    if _bws > 0.1:
+        _bws_str = "🚀 expanding (+" + "{:.1f}".format(_bws) + ")"
+    elif _bws < -0.1:
+        _bws_str = "⚠ contracting (" + "{:.1f}".format(_bws) + ")"
+    else:
+        _bws_str = "→ flat"
+    _qscore = entry_result.get("quality_score", 0)
+    if _qscore >= 7:
+        _qtag = "🚀 STRONG"
+    elif _qscore >= 6:
+        _qtag = "✓ GOOD"
+    elif _qscore >= 5:
+        _qtag = "⚠ MIXED"
+    else:
+        _qtag = "weak"
     _core = (
         "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
+        "Quality " + str(_qscore) + "/7  " + _qtag + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
-        "Band    " + "{:.1f}".format(float(entry_result.get("band_width", 0))) + " pts\n"
-        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts (3 bars)\n"
+        "Band    " + "{:.1f}".format(_bw) + " pts  " + _bws_str + "\n"
+        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle\n"
         "Body    " + str(_body) + "% green\n"
     )
 
@@ -1273,13 +1291,27 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _tier = _tier_snapshot
         if reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
-        # capture percentage (v16.2 display)
+            # Show the triggering candle close vs SL so the user can
+            # verify the exit was based on a real candle close below SL
+            # — kills the "price was still above SL" confusion when
+            # market bounces back after the candle closed.
+            _trig_close = exit_info.get("trigger_close")
+            _trig_time = exit_info.get("trigger_time", "")
+            _trig_sl = exit_info.get("trigger_sl")
+            if _trig_close is not None and _trig_sl is not None:
+                _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
+                                + "close Rs" + "{:.1f}".format(_trig_close)
+                                + " (≤ SL Rs" + "{:.1f}".format(_trig_sl) + ")\n")
+        # Capture percentage — show — when peak is too small (mathematical
+        # noise: 0.2 peak with -10 pnl gives misleading -5000% etc).
         _capture_line = ""
         try:
             _peak_f = float(peak) if peak else 0
-            if _peak_f > 0:
+            if _peak_f >= 1.0:
                 _cap = int(round(pnl / _peak_f * 100))
                 _capture_line = "Capture " + str(_cap) + "%\n"
+            elif _peak_f > 0:
+                _capture_line = "Capture —\n"
         except Exception:
             pass
 
@@ -2423,6 +2455,24 @@ def _strategy_loop(kite):
                             other_token=_other_tok,
                             state=state,
                         )
+                        # 1-min early peek: if 3-min didn't fire, try the
+                        # 1-min hybrid path (3-min trend + 1-min trigger).
+                        # Whichever fires first wins. Catches breakouts
+                        # 1-2 minutes earlier than waiting for 3-min close.
+                        if not result.get("fired"):
+                            try:
+                                from VRL_ENGINE import check_1min_peek as _peek_1m
+                                _r1m = _peek_1m(
+                                    token=_oi["token"],
+                                    option_type=opt_type,
+                                    spot_ltp=spot_ltp,
+                                    silent=True,
+                                    state=state,
+                                )
+                                if _r1m.get("fired"):
+                                    result = _r1m
+                            except Exception as _pe:
+                                logger.debug("[MAIN] 1-min peek error: " + str(_pe))
                         result["_strike"] = _strike_val
                         result["_strike_label"] = _label
                         result["_symbol"] = _oi.get("symbol", "")

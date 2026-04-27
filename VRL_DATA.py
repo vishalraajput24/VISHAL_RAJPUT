@@ -962,6 +962,18 @@ def get_option_3min(token: int, lookback: int = 10) -> pd.DataFrame:
     return add_indicators(df)
 
 
+def get_option_1min(token: int, lookback: int = 10) -> pd.DataFrame:
+    """v16.6: Fetch option 1-min OHLC + EMA9 bands. Used for the
+    1-min "early peek" entry path so the bot can fire BEFORE the
+    full 3-min candle closes when momentum confirms early.
+    Same indexing convention as get_option_3min: iloc[-1] is the
+    live forming candle, iloc[-2] is the last closed."""
+    df = get_historical_data(token, "minute", lookback)
+    if df.empty:
+        return df
+    return add_indicators(df)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  v15.2 STRADDLE EXPANSION HELPERS — used by Gate 7
 #  Read live ATM CE+PE 3-min closes and compare current vs N min ago.
