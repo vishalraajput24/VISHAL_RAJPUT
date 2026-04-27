@@ -535,6 +535,8 @@ def main():
         ("V3  + both filters     ", True,  True),
     ]
 
+    # Track trades per variant for detail dump
+    variant_trades = {}
     for label, anti_spike, xleg_gate in variants:
         all_trades = []
         for d in found:
@@ -543,6 +545,55 @@ def main():
             if day_trades:
                 all_trades.extend(day_trades)
         aggregate(all_trades, label)
+        variant_trades[label.strip()] = all_trades
+
+    # Per-trade detail dump for V1 + V3 (the winners)
+    for vlabel in ("V1  + anti-spike", "V3  + both filters"):
+        trades_v = variant_trades.get(vlabel, [])
+        real_v = [t for t in trades_v if not t.get("spike_skipped")]
+        if not real_v:
+            continue
+        print(f"\n{'='*90}")
+        print(f"{vlabel} — TRADE-BY-TRADE DETAIL ({len(real_v)} trades)")
+        print(f"{'='*90}")
+        print(f"{'#':>3} {'Date':10} {'Time':5} {'Sid':3} {'Strike':>6} "
+              f"{'RawCl':>6} {'Tgt':>6} {'Fill':>6} {'Sav':>5} "
+              f"{'Peak':>5} {'Tier':9} {'SL@pk':>6} "
+              f"{'Exit':>6} {'PNL':>6} {'Reason':14} {'Held':>4} {'XL':4}")
+        print("-"*90)
+        for i, t in enumerate(real_v, 1):
+            entry = t.get("entry", 0)
+            peak = t.get("peak", 0)
+            sl_at_peak, tier = compute_trail_sl(entry, peak)
+            raw_close = t.get("raw_close", 0)
+            target = t.get("spike_target", 0) or 0
+            saved = (raw_close - entry) if t.get("spike_used") else 0
+            t_short = t.get("ts","")[-8:-3]  # HH:MM
+            print(
+                f"{i:>3} {t['date']} {t_short} {t['side']:3} "
+                f"{t['strike']:>6} "
+                f"{raw_close:>6.1f} {target:>6.1f} {entry:>6.1f} "
+                f"{saved:>+5.1f} "
+                f"{peak:>+5.1f} {tier:9} {sl_at_peak:>6.1f} "
+                f"{t.get('exit',0):>6.1f} {t.get('pnl',0):>+6.1f} "
+                f"{t.get('reason',''):14} "
+                f"{t.get('candles',0):>4} {t.get('xleg','NA'):4}"
+            )
+
+        # Summary by tier reached
+        print(f"\n{vlabel} — SUMMARY BY PEAK TIER REACHED")
+        print("-"*90)
+        tier_grp = defaultdict(list)
+        for t in real_v:
+            _, tier = compute_trail_sl(t.get("entry",0), t.get("peak",0))
+            tier_grp[tier].append(t.get("pnl",0))
+        for tier in ("LOCK_DYN","LOCK_15","LOCK_8","LOCK_5","LOCK_3","INITIAL"):
+            pts = tier_grp.get(tier, [])
+            if not pts: continue
+            w = sum(1 for p in pts if p > 0)
+            avg = sum(pts)/len(pts)
+            print(f"  {tier:9}  {len(pts):>3} trades  W={w}/{len(pts)} ({w/len(pts)*100:.0f}%)  "
+                  f"avg={avg:+.2f}  total={sum(pts):+.1f}")
 
     print("\n" + "=" * 60)
     print("VERDICT GUIDE")
