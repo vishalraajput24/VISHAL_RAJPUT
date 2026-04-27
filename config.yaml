@@ -65,6 +65,13 @@ entry:
     # vs +570.2 baseline (+5.4 improvement, INIT trades 18→8).
     # Set false to revert to plain INITIAL → LOCK_3 ladder.
     early_lock_5_enabled: true
+    # ── v16.7-final ATM lock hysteresis + neighbor pre-warm ──
+    # Hysteresis buffer (pts) — only relock to a new ATM strike when
+    # spot has crossed the strike midpoint by at least this many pts.
+    # Default 10: spot must be 25+10 = 35 pts from current locked
+    # center before relock fires. Slow drift stays on the same strike
+    # (indicators stay warm). Set higher for stickier, lower for jitterier.
+    lock_shift_pts: 10
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
     # (body × gap). Disabled by default to keep WS token count low.

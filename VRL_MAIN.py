@@ -158,8 +158,10 @@ _last_dash_args = {}  # cached dashboard args for post-exit refresh
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
-    v16.7 final: ATM-only by default. OTM tokens added only when
-    entry.ema9_band.multi_candidate_enabled = true.
+    v16.7 final: ATM CE+PE for trading + ATM±50 CE+PE for pre-warm.
+    Pre-warmed neighbors mean zero indicator-warmup gap when spot
+    drifts past hysteresis buffer and relock fires.
+    Multi-candidate scan (when enabled) uses the same neighbor tokens.
     """
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     _locked_ce_strike = D.resolve_strike_for_direction(spot, "CE", dte)
@@ -168,31 +170,33 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     _locked_tokens = {}
 
     if kite and expiry:
+        # Active legs (ATM)
         for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
 
-        _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
-        if _multi:
-            _ce_otm_strike = _locked_ce_strike + 50
-            _pe_otm_strike = _locked_pe_strike - 50
-            _ce_otm_tk = D.get_option_tokens(kite, _ce_otm_strike, expiry)
-            if _ce_otm_tk.get("CE"):
-                _locked_tokens["CE_OTM"] = _ce_otm_tk["CE"]
-            _pe_otm_tk = D.get_option_tokens(kite, _pe_otm_strike, expiry)
-            if _pe_otm_tk.get("PE"):
-                _locked_tokens["PE_OTM"] = _pe_otm_tk["PE"]
+        # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
+        # Keys: CE_UP / CE_DN / PE_UP / PE_DN
+        # When relock fires, the new ATM was already WS-warm + lab-data warm.
+        for _suffix, _delta in (("UP", +50), ("DN", -50)):
+            _ce_n_strike = _locked_ce_strike + _delta
+            _pe_n_strike = _locked_pe_strike + _delta
+            _ce_n_tk = D.get_option_tokens(kite, _ce_n_strike, expiry)
+            if _ce_n_tk.get("CE"):
+                _locked_tokens["CE_" + _suffix] = _ce_n_tk["CE"]
+            _pe_n_tk = D.get_option_tokens(kite, _pe_n_strike, expiry)
+            if _pe_n_tk.get("PE"):
+                _locked_tokens["PE_" + _suffix] = _pe_n_tk["PE"]
 
         _sub_tokens = [v["token"] for v in _locked_tokens.values() if v.get("token")]
         if _sub_tokens:
             D.subscribe_tokens(_sub_tokens)
 
-    logger.info("[MAIN] Strikes LOCKED: CE=" + str(_locked_ce_strike)
-                + "+" + str(_locked_ce_strike + 50)
-                + " PE=" + str(_locked_pe_strike)
-                + "+" + str(_locked_pe_strike - 50)
-                + " at spot=" + str(round(spot, 1)))
+    logger.info("[MAIN] Strikes LOCKED: ATM=" + str(_locked_ce_strike)
+                + " (neighbors " + str(_locked_ce_strike - 50)
+                + "/" + str(_locked_ce_strike + 50)
+                + " pre-warmed) at spot=" + str(round(spot, 1)))
     if kite and expiry and _locked_ce_strike:
         try:
             _r11 = D.ensure_option_history(
@@ -2044,7 +2048,7 @@ def _strategy_loop(kite):
                     try:
                         _lock_set = set()
                         # Module-level _locked_tokens is a dict like
-                        # {"CE": {...}, "PE": {...}, "CE_OTM": {...}, ...}
+                        # {"CE": {...}, "PE": {...}, "CE_UP": {...}, ...}
                         # whose values carry "token". Collect them all.
                         if _locked_tokens:
                             for _v in _locked_tokens.values():
@@ -2518,15 +2522,28 @@ def _strategy_loop(kite):
                     _relock = True
                     _is_initial_lock = True
                 else:
+                    # Hysteresis: relock only when spot has decisively crossed
+                    # the strike midpoint by >= lock_shift_pts buffer. With
+                    # buffer=10, spot must be 25+10 = 35+ pts from current
+                    # locked center before relock fires. Slow drift stays put,
+                    # indicators stay warm. Pre-warmed neighbors mean the new
+                    # strike is already WS+lab ready when relock does fire.
                     _target_atm = int(round(spot_ltp / 50) * 50)
-                    if _target_atm != _locked_ce_strike:
+                    _lock_buffer = int(CFG.entry_ema9_band("lock_shift_pts", 10))
+                    _dist_from_lock = abs(spot_ltp - _locked_ce_strike)
+                    if (_target_atm != _locked_ce_strike
+                            and _dist_from_lock >= 25 + _lock_buffer):
                         _relock = True
                         _spot_move = round(spot_ltp - _locked_at_spot, 1)
                         _old_ce = _locked_ce_strike
                         _old_pe = _locked_pe_strike
-                        logger.info("[MAIN] ATM drift: locked=" + str(_locked_ce_strike)
-                                    + " target=" + str(_target_atm)
-                                    + " spot=" + str(round(spot_ltp, 1)) + " — RELOCKING")
+                        logger.info("[MAIN] ATM drift past hysteresis: locked="
+                                    + str(_locked_ce_strike) + " target="
+                                    + str(_target_atm) + " spot="
+                                    + str(round(spot_ltp, 1))
+                                    + " (dist=" + "{:.1f}".format(_dist_from_lock)
+                                    + " > " + str(25 + _lock_buffer)
+                                    + ") — RELOCKING (neighbor pre-warmed)")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
@@ -2805,23 +2822,21 @@ def _strategy_loop(kite):
                 _candidates = []
                 for opt_type in ("CE", "PE"):
                     _other_tok = _pe_tok_v15 if opt_type == "CE" else _ce_tok_v15
-                    _otm_key = opt_type + "_OTM"
                     _atm_info = dir_tokens.get(opt_type)
-                    _otm_info = _locked_tokens.get(_otm_key)
-                    # get_option_tokens() returns {token, symbol} only — no
-                    # strike key — so we track the real strike per label
-                    # here. Before this fix, both ATM and OTM candidates
-                    # ended up tagged with the ATM strike, making the log
-                    # and state["strike"] disagree with the traded symbol.
                     _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
-                    _otm_strike_v = (_atm_strike_v + 50) if opt_type == "CE" else (_atm_strike_v - 50)
-                    # v16.7 final: ATM-only by default. OTM scanning enabled
-                    # only when entry.ema9_band.multi_candidate_enabled = true
-                    # (defaults false). Cleaner picture, fewer false candidates.
+                    # v16.7 final: ATM-only by default. Multi-candidate scan
+                    # uses pre-warmed UP+DN neighbors (subscribed in
+                    # _lock_strikes for hysteresis handoff). Enable via
+                    # entry.ema9_band.multi_candidate_enabled.
                     _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
                     _iter = [("ATM", _atm_info, _atm_strike_v)]
                     if _multi:
-                        _iter.append(("OTM", _otm_info, _otm_strike_v))
+                        _up_info = _locked_tokens.get(opt_type + "_UP")
+                        _dn_info = _locked_tokens.get(opt_type + "_DN")
+                        if _up_info:
+                            _iter.append(("UP", _up_info, _atm_strike_v + 50))
+                        if _dn_info:
+                            _iter.append(("DN", _dn_info, _atm_strike_v - 50))
                     for _label, _oi, _strike_val in _iter:
                         if not _oi or not _strike_val:
                             continue
