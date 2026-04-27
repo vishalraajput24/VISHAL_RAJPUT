@@ -51,7 +51,10 @@ LAB_1M_DIR = os.path.expanduser("~/lab_data/options_1min")
 # ─────────────────────────────────────────────────────────────
 # SL ladder (mirror of VRL_ENGINE.compute_trail_sl)
 # ─────────────────────────────────────────────────────────────
-def compute_trail_sl(entry_price, peak_pnl):
+def compute_trail_sl(entry_price, peak_pnl, early_lock_5=False):
+    """v16.7 SL ladder. Optional early_lock_5 tier:
+       peak >=5 → SL = entry-5 (caps max loss at -5 instead of -10).
+    """
     if peak_pnl >= 21:
         return round(entry_price + (peak_pnl - 5), 2), "LOCK_DYN"
     if peak_pnl >= 20:
@@ -62,6 +65,8 @@ def compute_trail_sl(entry_price, peak_pnl):
         return round(entry_price + 5, 2), "LOCK_5"
     if peak_pnl >= 8:
         return round(entry_price + 3, 2), "LOCK_3"
+    if early_lock_5 and peak_pnl >= 5:
+        return round(entry_price - 5, 2), "LOCK_M5"
     return round(entry_price - 10, 2), "INITIAL"
 
 
@@ -190,13 +195,17 @@ def evaluate_xleg(other_candle):
 # ─────────────────────────────────────────────────────────────
 # Single-trade simulator
 # ─────────────────────────────────────────────────────────────
-def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
+def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
+                   spike_buf=None, early_lock_5=False):
     """Walk forward from entry_idx, applying SL ladder + FLAT_2X.
+    spike_buf overrides SPIKE_BUFFER_PTS for the parameter sweep.
+    early_lock_5 enables LOCK_M5 tier (peak>=5 → SL=entry-5).
     Returns dict with entry_price, exit_price, pnl, peak, reason,
     candles, spike_used, exit_idx, exit_ts. Returns None if anti-spike
     skipped the entry.
-    Entry candle = leg_3m[entry_idx]. Trade enters at end-of-candle.
     """
+    if spike_buf is None:
+        spike_buf = SPIKE_BUFFER_PTS
     entry_candle = leg_3m[entry_idx]
     raw_close = entry_candle["close"]
     spike_used = False
@@ -206,7 +215,7 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
     # within the next 60s. We approximate by checking the FIRST 1-min
     # candle whose ts is strictly AFTER entry_candle["ts"].
     if anti_spike:
-        target = round(raw_close - SPIKE_BUFFER_PTS, 2)
+        target = round(raw_close - spike_buf, 2)
         ent_ts = entry_candle["ts"]
         # Find next 1-min candle (only the first one — represents 60s window)
         next_1m = None
@@ -248,8 +257,8 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike):
         if candle_peak_pnl > peak:
             peak = candle_peak_pnl
 
-        # Compute current SL based on peak
-        sl, tier = compute_trail_sl(entry_price, peak)
+        # Compute current SL based on peak (early_lock_5 toggle)
+        sl, tier = compute_trail_sl(entry_price, peak, early_lock_5=early_lock_5)
 
         # 1. Emergency SL — if candle's low touched/crossed entry-10
         if candle_min_pnl <= EMERGENCY_SL_PTS:
@@ -328,8 +337,11 @@ def _ts_to_min(ts):
         return 0
 
 
-def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
+def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
+               spike_buf=None, early_lock_5=False):
     """Replay one trading day with MULTI-trade support + cooldown.
+    spike_buf overrides SPIKE_BUFFER_PTS for the parameter sweep.
+    early_lock_5 enables peak>=5 → SL=entry-5 tier.
     Returns list of trade result dicts (incl. spike-skips).
     """
     legs_3m = load_3m_day(d)
@@ -414,16 +426,18 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False):
         best = candidates[0]
 
         leg_1m_rows = legs_1m.get((best["strike"], best["side"]), [])
+        _buf = spike_buf if spike_buf is not None else SPIKE_BUFFER_PTS
         result = simulate_trade(best["idx"], best["rows_3m"], leg_1m_rows,
-                                anti_spike=anti_spike)
+                                anti_spike=anti_spike,
+                                spike_buf=_buf,
+                                early_lock_5=early_lock_5)
         if result is None:
-            # Spike-skipped — log + continue scanning
             trades.append({
                 "date": d.isoformat(), "ts": ts, "strike": best["strike"],
                 "side": best["side"], "xleg": best["xleg"],
                 "xleg_margin": best["xleg_margin"], "body": best["body"],
                 "raw_close": best["candle"]["close"],
-                "spike_target": round(best["candle"]["close"] - SPIKE_BUFFER_PTS, 2),
+                "spike_target": round(best["candle"]["close"] - _buf, 2),
                 "spike_skipped": True, "pnl": 0, "peak": 0,
                 "reason": "SPIKE_SKIP", "entry": 0, "exit": 0, "candles": 0,
             })
@@ -499,11 +513,87 @@ def aggregate(trades, label):
         print(f"    {sig:5}  {len(pts):>3}  W={w}/{len(pts)} ({wr_x:.0f}%)  total={sum(pts):+.1f}")
 
 
+def run_sweep(found, atm_only):
+    """Parameter sweep — anti-spike buffer 1..6 × early_lock_5 on/off.
+    Both filters always on (xleg_gate + anti_spike) — V3 baseline.
+    """
+    print("\n" + "=" * 90)
+    print("PARAMETER SWEEP — anti-spike buffer × early-lock-5 toggle")
+    print("=" * 90)
+    print("All variants run with V3 (anti-spike ON + xleg gate ON).")
+    print()
+
+    buffers = [1, 2, 3, 4, 5, 6]
+    rows = []
+    for buf in buffers:
+        for early in (False, True):
+            all_trades = []
+            for d in found:
+                day_trades = replay_day(d, atm_only=atm_only,
+                                         anti_spike=True, xleg_gate=True,
+                                         spike_buf=buf,
+                                         early_lock_5=early)
+                if day_trades:
+                    all_trades.extend(day_trades)
+            real = [t for t in all_trades if not t.get("spike_skipped")]
+            skips = [t for t in all_trades if t.get("spike_skipped")]
+            wins = [t for t in real if t["pnl"] > 0]
+            total_pts = sum(t["pnl"] for t in real)
+            avg_w = (sum(t["pnl"] for t in wins) / len(wins)) if wins else 0
+            avg_l = (sum(t["pnl"] for t in real if t["pnl"] <= 0)
+                     / max(len(real) - len(wins), 1))
+            wr = (len(wins) / len(real) * 100) if real else 0
+            # Tier counts
+            tier_count = defaultdict(int)
+            for t in real:
+                _, tier = compute_trail_sl(t["entry"], t["peak"],
+                                           early_lock_5=early)
+                tier_count[tier] += 1
+            # Exit reason counts
+            esl = sum(1 for t in real if t["reason"] == "EMERGENCY_SL")
+            tr = sum(1 for t in real if t["reason"] == "VISHAL_TRAIL")
+            f2 = sum(1 for t in real if t["reason"] == "FLAT_2X")
+            rows.append({
+                "buf": buf, "early": early, "trades": len(real),
+                "skips": len(skips), "wr": wr, "total": total_pts,
+                "avg_w": avg_w, "avg_l": avg_l,
+                "esl": esl, "tr": tr, "f2": f2,
+                "tier_m5": tier_count.get("LOCK_M5", 0),
+                "tier_init": tier_count.get("INITIAL", 0),
+            })
+
+    # Print table
+    print(f"{'Buf':>4} {'Early-5':>8} {'Trd':>4} {'Skp':>4} {'WR%':>5} "
+          f"{'Total':>7} {'AvgW':>5} {'AvgL':>5} {'ESL':>4} {'TR':>4} {'F2':>4} "
+          f"{'M5':>3} {'INIT':>4}")
+    print("-" * 90)
+    best = max(rows, key=lambda r: r["total"])
+    for r in rows:
+        marker = " ←" if r is best else ""
+        print(
+            f"{r['buf']:>4} {('YES' if r['early'] else 'no'):>8} "
+            f"{r['trades']:>4} {r['skips']:>4} {r['wr']:>5.1f} "
+            f"{r['total']:>+7.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f} "
+            f"{r['esl']:>4} {r['tr']:>4} {r['f2']:>4} "
+            f"{r['tier_m5']:>3} {r['tier_init']:>4}{marker}"
+        )
+    print()
+    print(f"BEST: buf={best['buf']}, early-lock-5={'YES' if best['early'] else 'no'} "
+          f"→ {best['total']:+.1f} pts on {best['trades']} trades ({best['wr']:.1f}% WR)")
+    print()
+    print("Columns: Buf=spike buffer, Early-5=peak>=5 LOCK_M5 tier on/off,")
+    print("  Trd=actual trades, Skp=spike-skipped, WR%=win rate,")
+    print("  Total=total pts, AvgW/L=avg winner/loser, ESL=Emergency SL count,")
+    print("  TR=VISHAL_TRAIL exits, F2=FLAT_2X exits, M5=trades that armed LOCK_M5,")
+    print("  INIT=trades stuck at INITIAL tier")
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
     if len(sys.argv) > 2 and sys.argv[2].upper() == "ALL":
         atm_only = False
+    sweep_mode = (len(sys.argv) > 3 and sys.argv[3].lower() == "sweep")
 
     dates = trading_dates(n)
     print(f"Backtesting {len(dates)} trading days: "
@@ -525,6 +615,10 @@ def main():
     if not found:
         print("\nNo historical 3-min data found. Aborting.")
         sys.exit(1)
+
+    if sweep_mode:
+        run_sweep(found, atm_only)
+        return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
 
