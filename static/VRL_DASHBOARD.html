@@ -268,7 +268,7 @@ body{
 .sig-gap{font-size:10px;color:var(--ctx3);font-weight:600;margin-left:4px}
 .sig-gap.up{color:var(--gn2)} .sig-gap.dn{color:var(--rd)}
 
-/* Golden 4 gate rows */
+/* 3-Gate entry rows */
 .sig-g4-row{
   display:flex;justify-content:space-between;align-items:center;
   font-size:11px;padding:5px 0;
@@ -798,7 +798,7 @@ if(pos.in_trade){
 }
 document.getElementById('pos-area').innerHTML=pa;
 
-// Signals (Part 5) — CE/PE Golden 4 cards
+// Signals (Part 5) — CE/PE 3-gate entry cards (v16.7)
 var sh='';
 if(cd&&cd.remaining>0){
   sh+='<div style="margin:12px;padding:10px 14px;border-radius:12px;text-align:center;background:rgba(249,115,22,0.18);border:1px solid rgba(249,115,22,0.42);color:#fdba74;font-size:11px;font-weight:700">'+
@@ -971,7 +971,7 @@ if(trades&&trades.length){
   th+='<div class="tr-empty">'+
         '<div class="emj">\u270B</div>'+
         '<div class="ttl">No trades today yet</div>'+
-        '<div class="sub">Watching for Golden 4 entry signals\u2026</div>'+
+        '<div class="sub">Watching for 3-gate entry signals\u2026</div>'+
       '</div>';
 }
 document.getElementById('p-trd').innerHTML=th;

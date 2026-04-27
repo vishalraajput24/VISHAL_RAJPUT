@@ -1168,39 +1168,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
     )
 
-    # Backbone display removed — check_entry() never passes other-side
-    # candle data to the engine, so backbone_status was permanently "N/A"
-    # and the entry alert carried a dead line. State key is still written
-    # above for back-compat with the dashboard field.
-    _backbone_block = ""
-
-    _ctx_lines = []
-    _ehs = int(float(entry_result.get("ema9_high_slope_5c", 0) or 0))
-    _els = int(float(entry_result.get("ema9_low_slope_5c", 0) or 0))
-    _bstate = entry_result.get("bands_state", "")
-    if _bstate == "RISING":
-        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  RISING OK")
-    elif _bstate == "FLAT":
-        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  FLAT WARN")
-    elif _bstate:
-        _ctx_lines.append("Bands     +" + str(_ehs) + " / +" + str(_els) + "  " + _bstate)
-
-    _sinfo = entry_result.get("straddle_info", "") or ""
-    _sd    = entry_result.get("straddle_delta")
-    _savail = entry_result.get("straddle_available", True)
-    if _savail and _sinfo and _sinfo != "NA" and _sd is not None:
-        _ctx_lines.append("Straddle  \u0394" + "{:+.1f}".format(float(_sd)) + "  " + _sinfo)
-
-    _ctag = entry_result.get("context_tag", "NORMAL")
-    if _ctag == "TRIPLE_CONFLUENCE":
-        _ctx_header = "<b>CONTEXT  \u2713 TRIPLE CONFLUENCE</b>\n"
-    elif _ctag == "MIXED_SIGNALS":
-        _ctx_header = "<b>CONTEXT  \u26A0 MIXED SIGNALS</b>\n"
-    else:
-        _ctx_header = "<b>CONTEXT</b>\n"
-
-    _ctx_block = _ctx_header + "\n".join(_ctx_lines) + "\n"
-
+    # v16.7 cleanup: removed dead context block (bands_state /
+    # straddle_info / context_tag / backbone_status — engine no longer
+    # computes any of these in v16.7 Vishal Clean). Removed _ctx_block
+    # computation that was never sent. Removed empty _backbone_block
+    # placeholder. Entry alert now shows only what's actually populated.
     _slip_block = ""
     if _entry_slippage and abs(float(_entry_slippage)) > 0.05:
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
@@ -1211,9 +1183,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _core +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _stop_block +
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        + _backbone_block
+        + _stop_block
         + _slip_block +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -1283,7 +1253,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
         # Snapshot the active trail tier BEFORE state.update() wipes it below,
-        # so the exit alert reports the real tier (BREAKEVEN/TRAIL_60/TRAIL_75/VISHAL_MAX/TRAIL_90)
+        # so the exit alert reports the real tier (LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN)
         # instead of always falling back to INITIAL.
         _tier_snapshot = state.get("active_ratchet_tier", "") or "INITIAL"
         # v15.0: entry confirmation = band position at entry
@@ -1781,7 +1751,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "bonus": result.get("bonus", {}),
-                # v16.6 Golden 4 — slope of EMA9_low over last N candles
+                # v16.7 display-only — slope of EMA9_low (drives FLAT_2X exit, not entry)
                 "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
                 # v15.2 straddle filter context
                 "straddle_delta":     result.get("straddle_delta"),
@@ -2452,8 +2422,8 @@ def _strategy_loop(kite):
                         _cur_el = round(float(state.get("current_ema9_low", 0)), 1)
                         _entry_px = state.get("entry_price", 0)
                         # Fire milestone alert once per threshold crossed.
-                        # Thresholds now align with Smart Trail v2+ tier
-                        # boundaries (5/8/15/30/45) plus a few mid steps
+                        # Thresholds align with Vishal Clean v16.7 tier
+                        # boundaries (8/12/15/20/21) plus a few mid steps
                         # so the operator sees peak progress + SL status
                         # at every major point.
                         for _m in [8, 10, 12, 15, 20, 25, 30, 40, 50]:

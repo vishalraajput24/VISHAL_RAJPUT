@@ -97,7 +97,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
         "backbone_status": "N/A", "ema9_low_slope": 0.0,
-        "band_width_slope": 0.0, "quality_score": 0, "margin_above": 0,
+        "band_width_slope": 0.0, "margin_above": 0,
     }
     try:
         body_min = CFG.entry_ema9_band("body_pct_min", 40)
@@ -222,7 +222,7 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "reject_reason": "", "band_position": "", "straddle_delta": None,
         "backbone_status": "N/A", "ema9_low_slope": 0.0,
-        "band_width_slope": 0.0, "quality_score": 0, "margin_above": 0,
+        "band_width_slope": 0.0, "margin_above": 0,
     }
     try:
         opt_3m = D.get_option_3min(token, lookback=15)

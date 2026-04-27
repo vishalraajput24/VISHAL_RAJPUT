@@ -80,11 +80,12 @@ def _validate(cfg: dict):
             raise ConfigError("lots." + k + " is required")
         if not isinstance(lots[k], int) or lots[k] <= 0:
             raise ConfigError("lots." + k + " must be a positive integer")
-    # v16.6 validation: Golden 4 entry keys required so tuning
-    # changes land instead of silently falling back to defaults.
+    # v16.7 validation: 3-gate entry + Vishal Clean filters required so
+    # tuning changes land instead of silently falling back to defaults.
+    # band_width_min / ema9_slope_lookback are optional display-only now
+    # but kept in config for the dashboard's reject-reason translator.
     eb = (cfg.get("entry") or {}).get("ema9_band") or {}
-    for k in ("body_pct_min", "warmup_until", "cutoff_after",
-              "band_width_min", "ema9_slope_lookback"):
+    for k in ("body_pct_min", "warmup_until", "cutoff_after"):
         if k not in eb:
             raise ConfigError("entry.ema9_band." + k + " is required")
     # warmup_until / cutoff_after must be HH:MM. A typo like "9:35"
