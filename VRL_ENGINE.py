@@ -403,6 +403,19 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     # state["_flat_candle_streak"] is current. Whether the streak
     # actually FIRES the exit depends on whether VISHAL_TRAIL has
     # priority on this same candle (see ordering below).
+    #
+    # CRITICAL pre-entry guard: only count candles whose close-time
+    # is strictly AFTER entry_time. Without this, the very first
+    # manage_exit() call after a fresh entry counts the just-closed
+    # candle that BEGAN before the entry tick — its slope is from
+    # pre-entry data and has nothing to do with the new trade. Worse,
+    # pandas reports candle.name = bucket-start, so a 14:27-14:30
+    # candle with close at 14:30 looks "post-entry" if entry was 14:30:30
+    # but is actually fully pre-entry. Same guard the trail uses.
+    # Bug seen 2026-04-27 PE 24100 re-entry: peak +14.4 → exit at
+    # entry price because pre-entry 14:30 candle's slope contributed
+    # to streak, FLAT_2X fired at Rs 89.8 (=entry) BEFORE trail at
+    # LOCK_5 (Rs 94.8) could trigger.
     flat_max = float(CFG.exit_ema9_band("flat_slope_max", 3))
     _flat_2x_pending = None  # populated if streak just hit 2
     if opt_3m_full is not None and len(opt_3m_full) >= 3:
@@ -410,7 +423,19 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
             _last_fl = opt_3m_full.iloc[-2]
             _prev_fl = opt_3m_full.iloc[-3]
             _last_close_t = (_last_fl.name + timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M")
-            if state.get("_last_flat_check_ts", "") != _last_close_t:
+            # Pre-entry guard: skip if candle's close-time <= entry_time.
+            _post_entry = True
+            _et_str = state.get("entry_time") or ""
+            if _et_str:
+                try:
+                    _h, _m, _s = (int(p) for p in _et_str.split(":"))
+                    _et_t = _dtime(_h, _m, _s)
+                    _candle_close_t_fl = (_last_fl.name + timedelta(minutes=3)).time()
+                    if _candle_close_t_fl <= _et_t:
+                        _post_entry = False
+                except Exception:
+                    pass  # fail open — count as post-entry
+            if _post_entry and state.get("_last_flat_check_ts", "") != _last_close_t:
                 _slope = round(float(_last_fl.get("ema9_low", 0))
                                - float(_prev_fl.get("ema9_low", 0)), 2)
                 _is_flat = _slope <= flat_max

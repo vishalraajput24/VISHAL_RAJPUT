@@ -2669,6 +2669,27 @@ def _strategy_loop(kite):
                                         _re_result["_strike"] = _re_strike
                                         _re_result["_strike_label"] = "REENTRY"
                                         _re_result["_symbol"] = _re_oi.get("symbol", "")
+                                        # Cross-leg divergence on the OTHER side — same as
+                                        # the regular scan path. Without this, re-entries
+                                        # show "X-Leg — no data" in the alert and the trade
+                                        # log row gets xleg_signal=NA, polluting /xleg stats.
+                                        try:
+                                            from VRL_ENGINE import evaluate_cross_leg as _xleg_re
+                                            _other_dt_re = "PE" if _re_dir == "CE" else "CE"
+                                            _other_oi_re = (_locked_tokens or {}).get(_other_dt_re) or {}
+                                            _other_tok_re = int(_other_oi_re.get("token", 0) or 0)
+                                            if _other_tok_re:
+                                                _other_3m_re = D.get_option_3min(_other_tok_re, lookback=10)
+                                                _xl_re_info = _xleg_re(_re_dir, _other_3m_re)
+                                                _re_result.update(_xl_re_info)
+                                                logger.info(
+                                                    "[XLEG][REENTRY] " + _re_dir + " — other "
+                                                    + _other_dt_re + " margin "
+                                                    + "{:+.2f}".format(_xl_re_info.get("xleg_other_margin", 0))
+                                                    + " → " + str(_xl_re_info.get("xleg_signal"))
+                                                )
+                                        except Exception as _xre:
+                                            logger.debug("[XLEG][REENTRY] " + str(_xre))
                                         # Pre-entry checks — bypass cooldown for re-entry
                                         # by clearing last_exit_direction temporarily.
                                         _saved_lex = state.get("last_exit_direction", "")

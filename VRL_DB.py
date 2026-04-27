@@ -1093,7 +1093,7 @@ def db_stats() -> dict:
 # Zero impact on trading speed (runs after orders, not in critical path).
 
 # v15.2 — single live entry mode
-VALID_ENTRY_MODES = ("EMA9_BREAKOUT",)
+VALID_ENTRY_MODES = ("EMA9_BREAKOUT", "REENTRY")
 
 # Old strings that may still appear in historical trades; do NOT raise
 # errors on them, but they're not allowed as fresh entries either.
