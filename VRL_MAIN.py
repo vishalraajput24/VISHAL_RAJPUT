@@ -461,6 +461,9 @@ TRADE_FIELDNAMES = [
     "exit_ema9_high", "exit_ema9_low",
     "entry_band_position", "exit_band_position",
     "entry_body_pct",
+    # v16.7 Cross-leg divergence (LOG ONLY — 1-week eval)
+    "xleg_signal", "xleg_other_close", "xleg_other_ema9l",
+    "xleg_other_dying", "xleg_other_margin",
 ]
 
 def _cleanup_trade_log():
@@ -553,7 +556,12 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
                                     st.get("current_ema9_high", 0),
                                     st.get("current_ema9_low", 0)),
         "entry_body_pct":      round(float(st.get("entry_body_pct", 0) or 0), 1),
-        # v15.2.5 Fix 5: straddle classification captured at entry
+        # v16.7 Cross-leg divergence (LOG ONLY — see /xleg for accuracy)
+        "xleg_signal":         st.get("_xleg_signal", "NA") or "NA",
+        "xleg_other_close":    round(float(st.get("_xleg_other_close", 0) or 0), 2),
+        "xleg_other_ema9l":    round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
+        "xleg_other_dying":    bool(st.get("_xleg_other_dying", False)),
+        "xleg_other_margin":   round(float(st.get("_xleg_other_margin", 0) or 0), 2),
     }
 
     # Fix strike: use locked strike from state, fallback to ATM calculation
@@ -1017,6 +1025,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["entry_ema9_low"]     = round(float(entry_result.get("ema9_low", 0)), 2)
         state["entry_band_position"] = entry_result.get("band_position", "ABOVE")
         state["entry_body_pct"]     = round(float(entry_result.get("body_pct", 0)), 1)
+        # Cross-leg divergence (LOG ONLY for 1-week eval; never blocks)
+        state["_xleg_signal"]       = entry_result.get("xleg_signal", "NA")
+        state["_xleg_other_close"]  = round(float(entry_result.get("xleg_other_close", 0) or 0), 2)
+        state["_xleg_other_ema9l"]  = round(float(entry_result.get("xleg_other_ema9l", 0) or 0), 2)
+        state["_xleg_other_dying"]  = bool(entry_result.get("xleg_other_dying", False))
+        state["_xleg_other_margin"] = round(float(entry_result.get("xleg_other_margin", 0) or 0), 2)
         state["current_ema9_high"]  = round(float(entry_result.get("ema9_high", 0)), 2)
         state["current_ema9_low"]   = round(float(entry_result.get("ema9_low", 0)), 2)
         state["last_band_check_ts"] = ""
@@ -1044,11 +1058,26 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _slope_tag = "+" if _slope >= 0 else ""
     _bw = float(entry_result.get("band_width", 0))
     _entry_mode_tag = entry_result.get("entry_mode", "EMA9_BREAKOUT")
+
+    # Cross-leg divergence — display only, /xleg shows weekly accuracy
+    _xls = entry_result.get("xleg_signal", "NA")
+    _xl_other = "PE" if option_type == "CE" else "CE"
+    _xl_margin = float(entry_result.get("xleg_other_margin", 0) or 0)
+    if _xls == "PASS":
+        _xl_line = ("X-Leg   ✓ " + _xl_other + " dying ("
+                    + "{:+.1f}".format(_xl_margin) + " below own EMA9L)\n")
+    elif _xls == "FAIL":
+        _xl_line = ("X-Leg   ✗ " + _xl_other + " holding ("
+                    + "{:+.1f}".format(_xl_margin) + " above own EMA9L)\n")
+    else:
+        _xl_line = "X-Leg   — no data\n"
+
     _core = (
         "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
         "Mode    " + str(_entry_mode_tag) + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
         "Body    " + str(_body) + "% GREEN\n"
+        + _xl_line +
         "Band    " + "{:.1f}".format(_bw) + " pts  (display)\n"
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
@@ -2829,6 +2858,29 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
+                    # ── Cross-leg divergence signal (LOG ONLY, 1-week eval) ──
+                    # Read OTHER side's last 3-min candle, see if it's dying
+                    # (close < ema9_low) which would confirm a real trend.
+                    # Never blocks entry — just stamps the trade log so we
+                    # can compute accuracy after a week.
+                    try:
+                        from VRL_ENGINE import evaluate_cross_leg as _xleg
+                        _other_dt = "PE" if best_type == "CE" else "CE"
+                        _other_oi = (_locked_tokens or {}).get(_other_dt) or {}
+                        _other_tok_xl = int(_other_oi.get("token", 0) or 0)
+                        if _other_tok_xl:
+                            _other_3m_xl = D.get_option_3min(_other_tok_xl, lookback=10)
+                            _xl_info = _xleg(best_type, _other_3m_xl)
+                            best_result.update(_xl_info)
+                            logger.info(
+                                "[XLEG] " + best_type + " entry — other "
+                                + _other_dt + " close=" + str(_xl_info.get("xleg_other_close"))
+                                + " ema9l=" + str(_xl_info.get("xleg_other_ema9l"))
+                                + " margin=" + "{:+.2f}".format(_xl_info.get("xleg_other_margin", 0))
+                                + " → " + str(_xl_info.get("xleg_signal"))
+                            )
+                    except Exception as _xe:
+                        logger.debug("[XLEG] " + str(_xe))
                     _execute_entry(kite, best_opt_info, best_type,
                                    best_result, profile, expiry, dte, session)
                     if state.get("in_trade"):
@@ -3121,6 +3173,7 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DIAGNOSTIC</b>\n"
         "/pulse     — 🩺 full health check (one-shot)\n"
+        "/xleg      — 📊 cross-leg divergence accuracy (7-day)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
         "/status    — trade status + PNL\n"
@@ -3360,6 +3413,82 @@ def _cmd_trades(args):
     )
 
 
+def _cmd_xleg(args):
+    """Cross-leg divergence accuracy report (1-week eval window).
+    Reads vrl_trade_log.csv and computes win rate by signal class:
+      PASS = other leg was dying at entry  (real trend prediction)
+      FAIL = other leg was holding at entry (chop prediction)
+    If PASS-win-rate is meaningfully higher than FAIL-win-rate,
+    promote to a hard gate. Threshold target: PASS > 55%.
+    """
+    try:
+        import csv as _csv
+        from datetime import date as _date, timedelta as _td
+        path = D.TRADE_LOG_PATH
+        if not os.path.isfile(path):
+            _tg_send("📊 X-LEG: no trade log yet")
+            return
+        # Last 7 days
+        cutoff = (_date.today() - _td(days=7)).isoformat()
+        rows = []
+        with open(path, "r") as f:
+            rdr = _csv.DictReader(f)
+            for r in rdr:
+                if (r.get("date") or "") >= cutoff:
+                    rows.append(r)
+        if not rows:
+            _tg_send("📊 X-LEG: no trades in last 7 days")
+            return
+
+        def _wins_losses(group):
+            w = sum(1 for r in group if float(r.get("pnl_pts", 0) or 0) > 0)
+            l = len(group) - w
+            wr = round(w / len(group) * 100, 1) if group else 0.0
+            avg_pts = (round(sum(float(r.get("pnl_pts", 0) or 0) for r in group)
+                             / len(group), 2) if group else 0.0)
+            return w, l, wr, avg_pts
+
+        pass_rows = [r for r in rows if (r.get("xleg_signal") or "") == "PASS"]
+        fail_rows = [r for r in rows if (r.get("xleg_signal") or "") == "FAIL"]
+        na_rows   = [r for r in rows if (r.get("xleg_signal") or "") in ("", "NA")]
+
+        pw, pl, pwr, pavg = _wins_losses(pass_rows)
+        fw, fl, fwr, favg = _wins_losses(fail_rows)
+        total = len(rows)
+
+        # Verdict — only fire if both groups have >=5 samples
+        _verdict = "—  insufficient data (need >=5 each)"
+        if len(pass_rows) >= 5 and len(fail_rows) >= 5:
+            if pwr >= 55 and pwr - fwr >= 10:
+                _verdict = "✅ READY TO PROMOTE — PASS-WR " + str(pwr) + "% > 55% AND > FAIL by " + str(round(pwr-fwr,1)) + "%"
+            elif pwr >= 55:
+                _verdict = "⚠ PASS hits 55% but edge over FAIL is thin"
+            else:
+                _verdict = "❌ NOT READY — PASS-WR " + str(pwr) + "% < 55%"
+
+        msg = (
+            "📊 <b>X-LEG ACCURACY (last 7 days)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Total trades : " + str(total) + "\n"
+            "PASS (other dying) : " + str(len(pass_rows)) + "\n"
+            "FAIL (other hold)  : " + str(len(fail_rows)) + "\n"
+            "NA   (no data)     : " + str(len(na_rows)) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>PASS</b>  " + str(pw) + "W / " + str(pl) + "L  ("
+            + str(pwr) + "%)   avg " + ("+" if pavg>=0 else "") + str(pavg) + " pts\n"
+            "<b>FAIL</b>  " + str(fw) + "W / " + str(fl) + "L  ("
+            + str(fwr) + "%)   avg " + ("+" if favg>=0 else "") + str(favg) + " pts\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>Verdict</b>  " + _verdict + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Target: PASS-WR >55% with >=10pt gap over FAIL\n"
+            "(LOG ONLY — never blocks entries this week)"
+        )
+        _tg_send(msg)
+    except Exception as e:
+        _tg_send("📊 X-LEG error: " + str(e))
+
+
 _DISPATCH = {
     "/help"      : _cmd_help,
     "/pulse"     : _cmd_pulse,
@@ -3372,6 +3501,7 @@ _DISPATCH = {
     "/restart"   : _cmd_restart,
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
+    "/xleg"      : _cmd_xleg,
 }
 
 

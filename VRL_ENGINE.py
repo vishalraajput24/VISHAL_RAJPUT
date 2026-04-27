@@ -297,6 +297,49 @@ def check_1min_peek(token: int, option_type: str, spot_ltp: float = 0,
         result["reject_reason"] = "error_1m_" + str(e)[:50]
         return result
 
+def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
+    """Cross-leg divergence signal — LOG ONLY for 1-week evaluation.
+
+    Theory: a real bull move kills PE (PE_close < PE_ema9_low).
+            A real bear move kills CE (CE_close < CE_ema9_low).
+            If the OTHER leg is still holding above its own EMA9_low
+            while THIS leg breaks out, the move is chop / fake.
+
+    PASS = other leg dying (other_close < other_ema9_low) → real trend.
+    FAIL = other leg holding (other_close >= other_ema9_low) → chop.
+    NA   = no usable data on the other leg.
+
+    NEVER blocks entry. Tracked in trade log so we can compute
+    accuracy after a week and decide whether to promote it to a
+    hard gate. Threshold target: PASS-win-rate > 55%.
+    """
+    out = {
+        "xleg_signal":       "NA",
+        "xleg_other_close":  0.0,
+        "xleg_other_ema9l":  0.0,
+        "xleg_other_dying":  False,
+        "xleg_other_margin": 0.0,
+    }
+    try:
+        if opt_3m_other is None or opt_3m_other.empty or len(opt_3m_other) < 2:
+            return out
+        last = opt_3m_other.iloc[-2]
+        other_close = float(last["close"])
+        other_ema9l = float(last.get("ema9_low", 0))
+        # Guard against junk EMA9_low (token mid-warmup) — if 0, NA.
+        if other_ema9l <= 0:
+            return out
+        other_dying = other_close < other_ema9l
+        out["xleg_other_close"]  = round(other_close, 2)
+        out["xleg_other_ema9l"]  = round(other_ema9l, 2)
+        out["xleg_other_dying"]  = bool(other_dying)
+        out["xleg_other_margin"] = round(other_close - other_ema9l, 2)
+        out["xleg_signal"]       = "PASS" if other_dying else "FAIL"
+    except Exception as e:
+        logger.debug("[XLEG] eval err: " + str(e))
+    return out
+
+
 def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
 
