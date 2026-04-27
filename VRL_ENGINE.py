@@ -347,16 +347,17 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
     """Vishal Clean SL ladder (v16.7) — peak-driven ratchet, never moves down.
 
     Tiers (ascending peak):
-      peak <  8:  INITIAL    SL = entry - 10            (Emergency zone)
+      peak <  5:  INITIAL    SL = entry - 10            (Emergency zone)
+      peak >= 5:  LOCK_M5    SL = entry -  5  (optional, gated by config)
       peak >= 8:  LOCK_3     SL = entry +  3
       peak >=12:  LOCK_5     SL = entry +  5
       peak >=15:  LOCK_8     SL = entry +  8
       peak >=20:  LOCK_15    SL = entry + 15            (wick-capture sweet spot)
       peak >=21:  LOCK_DYN   SL = entry + (peak - 5)    (1pt added per peak pt)
 
-    Examples:
-      peak 21 → SL +16    peak 25 → SL +20
-      peak 30 → SL +25    peak 50 → SL +45
+    LOCK_M5 caps the max loss at -5 once the trade shows any traction.
+    Backtest sweep (5d): adding LOCK_M5 = +5.4 pts at buf=2, INIT trades
+    drop 18 → 8 (some marginal losers exit at -5 instead of -10).
     """
     if peak_pnl >= 21:
         sl = entry_price + (peak_pnl - 5)
@@ -374,8 +375,14 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
         sl = entry_price + 3
         tier = "LOCK_3"
     else:
-        sl = entry_price - 10
-        tier = "INITIAL"
+        # LOCK_M5 — early loss cap when trade shows traction (peak >= 5)
+        _early_5 = bool(CFG.entry_ema9_band("early_lock_5_enabled", True))
+        if _early_5 and peak_pnl >= 5:
+            sl = entry_price - 5
+            tier = "LOCK_M5"
+        else:
+            sl = entry_price - 10
+            tier = "INITIAL"
     return round(sl, 2), tier
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, market_open: bool) -> list:

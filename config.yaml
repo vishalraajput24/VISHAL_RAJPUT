@@ -58,6 +58,13 @@ entry:
     # gain from also blocking FAIL signals. Promoted to hard gate.
     # Set false to revert to display-only mode.
     xleg_gate_enabled: true
+    # ── v16.7+ Early loss-cap tier (LOCK_M5) ──
+    # When peak >= 5, move SL from entry-10 up to entry-5. Caps the
+    # max loss at -5 once the trade has shown any meaningful traction.
+    # Backtest sweep (5d, 12 variants): buf=2 + early-5 = +575.6 pts
+    # vs +570.2 baseline (+5.4 improvement, INIT trades 18→8).
+    # Set false to revert to plain INITIAL → LOCK_3 ladder.
+    early_lock_5_enabled: true
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
     # (body × gap). Disabled by default to keep WS token count low.

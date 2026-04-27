@@ -745,7 +745,8 @@ if(pos.in_trade){
 
   // Vishal Clean v16.7 — peak-driven SL ladder
   var tiers=[
-    {k:'INITIAL',  icon:'',                                       range:'<8',    sl:'entry-10',       min:0,  max:8},
+    {k:'INITIAL',  icon:'',                                       range:'<5',    sl:'entry-10',       min:0,  max:5},
+    {k:'LOCK_M5',  icon:'⚠️',                            range:'>=5',   sl:'entry-5',        min:5,  max:8},
     {k:'LOCK_3',   icon:'\uD83D\uDEE1\uFE0F',                    range:'>=8',   sl:'entry+3',        min:8,  max:12},
     {k:'LOCK_5',   icon:'\uD83D\uDD12',                          range:'>=12',  sl:'entry+5',        min:12, max:15},
     {k:'LOCK_8',   icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=15',  sl:'entry+8',        min:15, max:20},  

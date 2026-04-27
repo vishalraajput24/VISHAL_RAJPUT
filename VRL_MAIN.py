@@ -848,7 +848,8 @@ def _alert_bot_started():
         "4. Vishal Trail (peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>SL LADDER</b> (peak-driven ratchet)\n"
-        "peak <8    SL = entry-10        (INITIAL)\n"
+        "peak <5    SL = entry-10        (INITIAL)\n"
+        "peak >=5   SL = entry-5         (LOCK_M5)\n"
         "peak >=8   SL = entry+3         (LOCK_3)\n"
         "peak >=12  SL = entry+5         (LOCK_5)\n"
         "peak >=15  SL = entry+8         (LOCK_8)\n"
@@ -2361,7 +2362,9 @@ def _strategy_loop(kite):
                                                  state.get("strike", 0))
                             # Lock icon escalates with tier strength
                             _icon = "🔒"
-                            if _new_tier == "LOCK_3":
+                            if _new_tier == "LOCK_M5":
+                                _icon = "⚠️"
+                            elif _new_tier == "LOCK_3":
                                 _icon = "🛡️"
                             elif _new_tier == "LOCK_5":
                                 _icon = "🔒"
@@ -2401,7 +2404,7 @@ def _strategy_loop(kite):
                         # boundaries (8/12/15/20/21) plus a few mid steps
                         # so the operator sees peak progress + SL status
                         # at every major point.
-                        for _m in [8, 10, 12, 15, 20, 25, 30, 40, 50]:
+                        for _m in [5, 8, 10, 12, 15, 20, 25, 30, 40, 50]:
                             if _peak >= _m and _last_ms < _m:
                                 with _state_lock:
                                     state["_last_milestone"] = _m
@@ -2414,7 +2417,9 @@ def _strategy_loop(kite):
                                 _room = round(option_ltp - _r_sl, 1)
                                 # Icon by tier strength
                                 _ms_icon = "📈"
-                                if _r_tier == "LOCK_3":
+                                if _r_tier == "LOCK_M5":
+                                    _ms_icon = "⚠️"
+                                elif _r_tier == "LOCK_3":
                                     _ms_icon = "🛡️"
                                 elif _r_tier in ("LOCK_5", "LOCK_8"):
                                     _ms_icon = "🔒"
@@ -3351,7 +3356,8 @@ def _cmd_pulse(args):
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
-            "INITIAL    (peak <8)    entry-10\n"
+            "INITIAL    (peak <5)    entry-10\n"
+            "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
             "🛡️ LOCK_3   (peak >=8)   entry+3\n"
             "🔒 LOCK_5   (peak >=12)  entry+5\n"
             "🔒🔒 LOCK_8 (peak >=15)  entry+8\n"
