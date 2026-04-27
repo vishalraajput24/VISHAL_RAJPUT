@@ -5,7 +5,7 @@ Dashboard server with admin login + subscriber token access.
 """
 import csv, json, os, hashlib, secrets, time, threading, logging
 from datetime import date, datetime, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from http.cookies import SimpleCookie
 
@@ -1251,7 +1251,13 @@ def _bind_host():
 
 if __name__=="__main__":
     _host = _bind_host()
-    s=HTTPServer((_host,PORT),H)
+    # ThreadingHTTPServer — each request handled in its own thread.
+    # Single-threaded HTTPServer was causing the listen queue to fill
+    # up + curl-timeouts when one request blocked (e.g. slow trade-log
+    # read, big bg.jpg static fetch). Threaded server prevents head-of-
+    # line blocking. daemon_threads = True so threads die with parent.
+    s = ThreadingHTTPServer((_host, PORT), H)
+    s.daemon_threads = True
     print("VRL War Room v16.7 — http://" + _host + ":" + str(PORT))
-    try:s.serve_forever()
-    except KeyboardInterrupt:s.server_close()
+    try: s.serve_forever()
+    except KeyboardInterrupt: s.server_close()
