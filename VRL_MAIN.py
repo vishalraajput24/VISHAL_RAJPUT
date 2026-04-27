@@ -2,7 +2,7 @@
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
 #  Master orchestration.
 #  Entry: 3 gates — GREEN candle + close > EMA9_low + body ≥ 40%
-#  Exit: 4-rule chain — Emergency -10, FLAT_2X, EOD 15:20, Vishal Trail
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
 #        (INITIAL/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
 #  Re-entry: 2-candle window for GREEN break of original entry close.
 # ═══════════════════════════════════════════════════════════════
@@ -101,10 +101,6 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
-    # v16.7 FLAT_2X exit tracking
-    "_flat_candle_streak"  : 0,
-    "_last_flat_check_ts"  : "",
-    "_last_ema9_low_slope" : 0.0,
     # v16.7 re-entry watcher (next 2 candles after exit)
     "_reentry_watch_remaining" : 0,
     "_reentry_trigger_close"   : 0.0,
@@ -161,7 +157,10 @@ _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
-    """Lock CE/PE strikes (ATM + OTM) and subscribe 4 tokens."""
+    """Lock ATM strikes and subscribe tokens.
+    v16.7 final: ATM-only by default. OTM tokens added only when
+    entry.ema9_band.multi_candidate_enabled = true.
+    """
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     _locked_ce_strike = D.resolve_strike_for_direction(spot, "CE", dte)
     _locked_pe_strike = D.resolve_strike_for_direction(spot, "PE", dte)
@@ -169,24 +168,21 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     _locked_tokens = {}
 
     if kite and expiry:
-        # v16.3.2: subscribe ATM + OTM for each side (4 tokens total)
-        # CE: ATM + ATM+50 (OTM call)
-        # PE: ATM + ATM-50 (OTM put)
-        _ce_otm_strike = _locked_ce_strike + 50
-        _pe_otm_strike = _locked_pe_strike - 50
-
         for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
 
-        # OTM tokens
-        _ce_otm_tk = D.get_option_tokens(kite, _ce_otm_strike, expiry)
-        if _ce_otm_tk.get("CE"):
-            _locked_tokens["CE_OTM"] = _ce_otm_tk["CE"]
-        _pe_otm_tk = D.get_option_tokens(kite, _pe_otm_strike, expiry)
-        if _pe_otm_tk.get("PE"):
-            _locked_tokens["PE_OTM"] = _pe_otm_tk["PE"]
+        _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
+        if _multi:
+            _ce_otm_strike = _locked_ce_strike + 50
+            _pe_otm_strike = _locked_pe_strike - 50
+            _ce_otm_tk = D.get_option_tokens(kite, _ce_otm_strike, expiry)
+            if _ce_otm_tk.get("CE"):
+                _locked_tokens["CE_OTM"] = _ce_otm_tk["CE"]
+            _pe_otm_tk = D.get_option_tokens(kite, _pe_otm_strike, expiry)
+            if _pe_otm_tk.get("PE"):
+                _locked_tokens["PE_OTM"] = _pe_otm_tk["PE"]
 
         _sub_tokens = [v["token"] for v in _locked_tokens.values() if v.get("token")]
         if _sub_tokens:
@@ -843,9 +839,8 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
         "1. Emergency -10pts\n"
-        "2. FLAT_2X (slope 0..3 for 2 candles)\n"
-        "3. EOD 15:20\n"
-        "4. Vishal Trail (peak ladder)\n"
+        "2. EOD 15:20\n"
+        "3. Vishal Trail (peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>SL LADDER</b> (peak-driven ratchet)\n"
         "peak <5    SL = entry-10        (INITIAL)\n"
@@ -1342,10 +1337,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 # Trail state — clear so next trade starts at INITIAL
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # FLAT_2X tracker — clear so next trade starts fresh
-                "_flat_candle_streak": 0,
-                "_last_flat_check_ts": "",
-                "_last_ema9_low_slope": 0.0,
                 # Re-entry watcher: 2 candles to spot a green close above
                 # the original entry candle close. Set here from old_*
                 # captures because state.update() is about to zero them.
@@ -1436,16 +1427,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
                                 + "close Rs" + "{:.1f}".format(_trig_close)
                                 + " (≤ SL Rs" + "{:.1f}".format(_trig_sl) + ")\n")
-        elif reason == "FLAT_2X":
-            # 2 consecutive flat (slope 0..3) candles → trend dying
-            _trig_close = exit_info.get("trigger_close")
-            _trig_time = exit_info.get("trigger_time", "")
-            _trig_slope = exit_info.get("trigger_slope")
-            _reason_line = "Slope flat 2× (trend dying)\n"
-            if _trig_close is not None and _trig_slope is not None:
-                _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
-                                + "close Rs" + "{:.1f}".format(_trig_close)
-                                + " slope " + "{:+.1f}".format(_trig_slope) + "\n")
         # Capture percentage — show — when peak is too small (mathematical
         # noise: 0.2 peak with -10 pnl gives misleading -5000% etc).
         _capture_line = ""
@@ -1743,7 +1724,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "entry_mode": _mode,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
-                # v16.7 display-only — slope of EMA9_low (drives FLAT_2X exit, not entry)
+                # v16.7 display-only — slope of EMA9_low (dashboard insight, never gates)
                 "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
                 # Cross-leg signal (computed in scan path, surfaces here for dashboard)
                 "xleg_signal":        result.get("xleg_signal", ""),
@@ -2834,8 +2815,13 @@ def _strategy_loop(kite):
                     # and state["strike"] disagree with the traded symbol.
                     _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
                     _otm_strike_v = (_atm_strike_v + 50) if opt_type == "CE" else (_atm_strike_v - 50)
-                    _iter = [("ATM", _atm_info, _atm_strike_v),
-                             ("OTM", _otm_info, _otm_strike_v)]
+                    # v16.7 final: ATM-only by default. OTM scanning enabled
+                    # only when entry.ema9_band.multi_candidate_enabled = true
+                    # (defaults false). Cleaner picture, fewer false candidates.
+                    _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
+                    _iter = [("ATM", _atm_info, _atm_strike_v)]
+                    if _multi:
+                        _iter.append(("OTM", _otm_info, _otm_strike_v))
                     for _label, _oi, _strike_val in _iter:
                         if not _oi or not _strike_val:
                             continue
@@ -3372,8 +3358,7 @@ def _cmd_pulse(args):
             "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
-            "1. Emergency -10 | 2. FLAT_2X | 3. EOD | 4. Trail\n"
-            "FLAT_2X = slope 0..3 for 2 consecutive candles\n"
+            "1. Emergency -10 | 2. EOD 15:20 | 3. Vishal Trail\n"
             "Re-entry: 2 candles to GREEN-break previous entry close\n"
         )
         _tg_send(msg)
@@ -3405,7 +3390,7 @@ def _cmd_help(args):
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — 3-gate entry, "
-        "4-rule exit chain (Emergency SL / FLAT_2X / EOD 15:20 / Vishal Trail), "
+        "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"

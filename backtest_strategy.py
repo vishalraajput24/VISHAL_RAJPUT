@@ -3,8 +3,8 @@
 
 Strategy under test:
   ENTRY: 3 gates (GREEN + close > EMA9_low + body >= 40)
-  EXIT:  EMERGENCY_SL (-10) → VISHAL_TRAIL (peak ladder) → FLAT_2X
-         (slope 0..3 for 2 candles)
+  EXIT:  EMERGENCY_SL (-10) → EOD_EXIT → VISHAL_TRAIL (peak ladder)
+         No slope-based / time-based soft exits — trail is the only path.
   TRAIL: INITIAL → LOCK_3 (+8) → LOCK_5 (+12) → LOCK_8 (+15) →
          LOCK_15 (+20) → LOCK_DYN (peak-5)
 
@@ -286,17 +286,6 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
                            target if anti_spike else 0, spike_used,
                            exit_idx=j, exit_ts=c["ts"])
 
-        # 4. FLAT_2X — slope 0..3 for 2 consecutive candles
-        slope = round(c["ema9_low"] - prev["ema9_low"], 2)
-        if slope <= FLAT_SLOPE_MAX:
-            flat_streak += 1
-        else:
-            flat_streak = 0
-        if flat_streak >= FLAT_STREAK_MIN:
-            return _result(entry_price, c_close, peak, "FLAT_2X",
-                           j - entry_idx, raw_close,
-                           target if anti_spike else 0, spike_used,
-                           exit_idx=j, exit_ts=c["ts"])
 
     # Ran out of candles (end of day) — close at last candle close
     if leg_3m:
@@ -552,7 +541,7 @@ def run_sweep(found, atm_only):
             # Exit reason counts
             esl = sum(1 for t in real if t["reason"] == "EMERGENCY_SL")
             tr = sum(1 for t in real if t["reason"] == "VISHAL_TRAIL")
-            f2 = sum(1 for t in real if t["reason"] == "FLAT_2X")
+            f2 = 0  # FLAT_2X removed in v16.7-final, kept for table compat
             rows.append({
                 "buf": buf, "early": early, "trades": len(real),
                 "skips": len(skips), "wr": wr, "total": total_pts,
@@ -564,7 +553,7 @@ def run_sweep(found, atm_only):
 
     # Print table
     print(f"{'Buf':>4} {'Early-5':>8} {'Trd':>4} {'Skp':>4} {'WR%':>5} "
-          f"{'Total':>7} {'AvgW':>5} {'AvgL':>5} {'ESL':>4} {'TR':>4} {'F2':>4} "
+          f"{'Total':>7} {'AvgW':>5} {'AvgL':>5} {'ESL':>4} {'TR':>4} "
           f"{'M5':>3} {'INIT':>4}")
     print("-" * 90)
     best = max(rows, key=lambda r: r["total"])
@@ -574,7 +563,7 @@ def run_sweep(found, atm_only):
             f"{r['buf']:>4} {('YES' if r['early'] else 'no'):>8} "
             f"{r['trades']:>4} {r['skips']:>4} {r['wr']:>5.1f} "
             f"{r['total']:>+7.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f} "
-            f"{r['esl']:>4} {r['tr']:>4} {r['f2']:>4} "
+            f"{r['esl']:>4} {r['tr']:>4} "
             f"{r['tier_m5']:>3} {r['tier_init']:>4}{marker}"
         )
     print()
@@ -584,7 +573,7 @@ def run_sweep(found, atm_only):
     print("Columns: Buf=spike buffer, Early-5=peak>=5 LOCK_M5 tier on/off,")
     print("  Trd=actual trades, Skp=spike-skipped, WR%=win rate,")
     print("  Total=total pts, AvgW/L=avg winner/loser, ESL=Emergency SL count,")
-    print("  TR=VISHAL_TRAIL exits, F2=FLAT_2X exits, M5=trades that armed LOCK_M5,")
+    print("  TR=VISHAL_TRAIL exits, M5=trades that armed LOCK_M5,")
     print("  INIT=trades stuck at INITIAL tier")
 
 

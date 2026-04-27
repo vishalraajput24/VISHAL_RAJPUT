@@ -1,16 +1,16 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — final)
 #  Entry: 3 gates only.
 #    1. GREEN candle (close > open)
 #    2. Close > EMA9_low
 #    3. Body % >= 40
 #  Exit chain (first match wins):
 #    1. EMERGENCY_SL    (PNL <= -10)
-#    2. FLAT_2X         (EMA9_low slope flat 0..+3 for 2 consecutive candles)
-#    3. EOD_EXIT        (15:20)
-#    4. VISHAL_TRAIL    (peak-driven SL ladder below)
+#    2. EOD_EXIT        (15:20)
+#    3. VISHAL_TRAIL    (peak-driven SL ladder below)
 #  SL ladder (peak-driven ratchet, never moves down):
-#    peak < 8         → SL = entry - 10        (INITIAL)
+#    peak <  5        → SL = entry - 10        (INITIAL)
+#    peak >=  5       → SL = entry -  5        (LOCK_M5  — early loss cap)
 #    peak >=  8       → SL = entry +  3        (LOCK_3)
 #    peak >= 12       → SL = entry +  5        (LOCK_5)
 #    peak >= 15       → SL = entry +  8        (LOCK_8)
@@ -90,8 +90,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
     #   3. Body % >= 40
     # Time window (warmup/cutoff) is an operational rail, not a strategy
     # gate — kept so the bot never trades during indicator warmup or
-    # within 5 min of EOD. Slope and band-width are tracked for display
-    # + the in-trade FLAT_2X exit, but never block entry.
+    # within 5 min of EOD. Slope and band-width are tracked for
+    # display only — they never block entry or trigger an exit.
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -114,8 +114,9 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
-        # Slope + band-width still computed for display + in-trade
-        # FLAT_2X exit — they DO NOT block entry.
+        # Slope + band-width computed for display only (dashboard +
+        # entry alert). They do NOT block entry and are NOT used as
+        # an exit signal in v16.7 final.
         ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
         _prev_band_width = round(
@@ -404,80 +405,11 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # ── FLAT_2X bookkeeping (no exit yet — see priority below) ──
-    # Update the flat-streak counter on every new closed candle so
-    # state["_flat_candle_streak"] is current. Whether the streak
-    # actually FIRES the exit depends on whether VISHAL_TRAIL has
-    # priority on this same candle (see ordering below).
-    #
-    # CRITICAL pre-entry guard: only count candles whose close-time
-    # is strictly AFTER entry_time. Without this, the very first
-    # manage_exit() call after a fresh entry counts the just-closed
-    # candle that BEGAN before the entry tick — its slope is from
-    # pre-entry data and has nothing to do with the new trade. Worse,
-    # pandas reports candle.name = bucket-start, so a 14:27-14:30
-    # candle with close at 14:30 looks "post-entry" if entry was 14:30:30
-    # but is actually fully pre-entry. Same guard the trail uses.
-    # Bug seen 2026-04-27 PE 24100 re-entry: peak +14.4 → exit at
-    # entry price because pre-entry 14:30 candle's slope contributed
-    # to streak, FLAT_2X fired at Rs 89.8 (=entry) BEFORE trail at
-    # LOCK_5 (Rs 94.8) could trigger.
-    flat_max = float(CFG.exit_ema9_band("flat_slope_max", 3))
-    _flat_2x_pending = None  # populated if streak just hit 2
-    if opt_3m_full is not None and len(opt_3m_full) >= 3:
-        try:
-            _last_fl = opt_3m_full.iloc[-2]
-            _prev_fl = opt_3m_full.iloc[-3]
-            _last_close_t = (_last_fl.name + timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M")
-            # Pre-entry guard: skip if candle's close-time <= entry_time.
-            _post_entry = True
-            _et_str = state.get("entry_time") or ""
-            if _et_str:
-                try:
-                    _h, _m, _s = (int(p) for p in _et_str.split(":"))
-                    _et_t = _dtime(_h, _m, _s)
-                    _candle_close_t_fl = (_last_fl.name + timedelta(minutes=3)).time()
-                    if _candle_close_t_fl <= _et_t:
-                        _post_entry = False
-                except Exception:
-                    pass  # fail open — count as post-entry
-            if _post_entry and state.get("_last_flat_check_ts", "") != _last_close_t:
-                _slope = round(float(_last_fl.get("ema9_low", 0))
-                               - float(_prev_fl.get("ema9_low", 0)), 2)
-                _is_flat = _slope <= flat_max
-                _streak = int(state.get("_flat_candle_streak", 0) or 0)
-                if _is_flat:
-                    _streak += 1
-                else:
-                    _streak = 0
-                state["_flat_candle_streak"] = _streak
-                state["_last_flat_check_ts"] = _last_close_t
-                state["_last_ema9_low_slope"] = _slope
-                if _streak >= 2:
-                    try:
-                        _trig_t = (_last_fl.name + timedelta(minutes=3)).strftime("%H:%M")
-                    except Exception:
-                        _trig_t = ""
-                    _flat_2x_pending = {
-                        "lot_id": "ALL",
-                        "reason": "FLAT_2X",
-                        "price": float(_last_fl["close"]),
-                        "trigger_close": round(float(_last_fl["close"]), 2),
-                        "trigger_time": _trig_t,
-                        "trigger_slope": _slope,
-                    }
-        except Exception as _fe:
-            logger.debug("[ENGINE] flat-2x check: " + str(_fe))
-
-    # ── VISHAL_TRAIL — checked BEFORE FLAT_2X ──────────────────
-    # Reasoning: once the SL ladder has armed (peak >= 8 → LOCK_3+),
-    # the trail SL represents a profit floor we already promised to
-    # honor. If the same candle that triggers FLAT_2X is also at or
-    # below the trail SL, we MUST exit at the trail (better outcome)
-    # rather than at the FLAT_2X candle close (lower).
-    # Bug fix: 2026-04-27 CE 24100 trade — peak +9.6 (LOCK_3 SL +3),
-    # candle closed below trail but FLAT_2X fired first → captured
-    # +1 instead of locking the +3 the ladder promised.
+    # ── VISHAL_TRAIL — sole post-Emergency/EOD exit path ──
+    # Once the SL ladder arms (peak >= 5 → LOCK_M5 / +8 → LOCK_3+),
+    # the trail SL is the only thing that closes the trade. No
+    # slope-based or time-based soft exit. Either price closes ≤
+    # the trail SL (we exit at the SL) or we hold.
     trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
@@ -530,14 +462,6 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 "trigger_sl": round(trail_sl, 2),
             }]
 
-    # ── FLAT_2X — fires only if VISHAL_TRAIL didn't ────────────
-    # Soft signal: trend has stalled (slope <= +3 for 2 candles).
-    # Take whatever profit (or small loss) is on the table now
-    # rather than wait for the trail to drag it back further.
-    if _flat_2x_pending is not None:
-        # Reset streak so a stale flat doesn't leak into the next trade.
-        state["_flat_candle_streak"] = 0
-        return [_flat_2x_pending]
     return []
 
 def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int = 0) -> list:

@@ -32,8 +32,8 @@ lots:
 # ── v16.7 Entry configuration (Vishal Clean — 3 gates) ─────────
 # 3 hard gates: GREEN candle, close > EMA9_low, body >= body_pct_min.
 # Time window (warmup/cutoff) is an operational rail, not a strategy
-# gate. Slope and band width are display-only — they DO NOT block
-# entry, but EMA9_low slope drives the in-trade FLAT_2X exit.
+# gate. Slope and band-width are tracked for dashboard display only —
+# they never gate entry or trigger exits in v16.7 final.
 entry:
   ema9_band:
     body_pct_min: 40
@@ -42,7 +42,7 @@ entry:
     cooldown_minutes: 5
     # Display-only — kept so dashboard / pulse can show band info.
     band_width_min: 7
-    # Per-candle slope lookback (1 bar) — used by FLAT_2X exit.
+    # Per-candle slope lookback (1 bar) — display-only.
     ema9_slope_lookback: 1
     # ── v16.7 Anti-spike limit-pullback entry ──
     # After 3-gate signal fires at candle close, target entry is set to
@@ -72,18 +72,13 @@ entry:
     multi_candidate_strike_range: 50
 
 # ── v16.7 Exit configuration ──────────────────────────────────
-# 4 rules: EMERGENCY_SL, FLAT_2X, EOD_EXIT, VISHAL_TRAIL.
+# 3 rules: EMERGENCY_SL, EOD_EXIT, VISHAL_TRAIL.
 # Trail logic in VRL_ENGINE.compute_trail_sl
-# (INITIAL / LOCK_3 / LOCK_5 / LOCK_8 / LOCK_15 / LOCK_DYN).
+# (INITIAL / LOCK_M5 / LOCK_3 / LOCK_5 / LOCK_8 / LOCK_15 / LOCK_DYN).
 exit:
   ema9_band:
     emergency_sl_pts: -10
     eod_exit_time: "15:20"
-    # FLAT_2X: 2 consecutive candles with EMA9_low slope <= flat_slope_max
-    # exit the trade. Default 3 pts — slope between (-inf, +3] is "not
-    # rising strongly enough". Set higher to be more lenient (rare exits)
-    # or lower to be tighter (more frequent exits).
-    flat_slope_max: 3
 
 # ── Strike selection ───────────────────────────────────────────
 strike:

@@ -1109,11 +1109,12 @@ LEGACY_MODES = (
 
 # v16.7 — exit reasons accepted by validation
 VALID_EXIT_REASONS = (
-    # Vishal Clean 4-rule exit chain
-    "EMERGENCY_SL", "FLAT_2X", "EOD_EXIT", "VISHAL_TRAIL",
+    # Vishal Clean 3-rule exit chain (final)
+    "EMERGENCY_SL", "EOD_EXIT", "VISHAL_TRAIL",
     # Safety / manual
     "MARKET_CLOSE", "MANUAL", "FORCE_EXIT", "CIRCUIT_BREAKER_EXIT",
-    # Historical back-compat for old trade log rows
+    # Historical back-compat for old trade log rows (no longer emitted)
+    "FLAT_2X",          # removed in v16.7-final
     "TRAIL_FLOOR",
     "HARD_SL", "PROFIT_FLOOR", "FLOOR_SL",
     "RSI_BLOWOFF", "RSI_SPIKE", "ATR_TRAIL", "SCOUT_SL",
