@@ -61,6 +61,13 @@ _kite = None
 
 _state_lock = threading.Lock()
 
+# Post-exit observation queue: tokens kept subscribed for 10 min after
+# exit so VRL_LAB can record post-exit price action for analysis.
+# Format: [(token, unsubscribe_at_timestamp_epoch), ...]
+_post_exit_observation = []
+_post_exit_lock = threading.Lock()
+POST_EXIT_OBSERVATION_MINUTES = 10
+
 DEFAULT_STATE = {
     # ── Position ───────────────────────────────────────────
     "in_trade"           : False,
@@ -1264,7 +1271,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "entry_mode": "",
             })
         if old_token:
-            D.unsubscribe_tokens([old_token])
+            # Keep token subscribed for 10 min so lab records post-exit
+            # price action. Unsubscribed in the strategy loop's housekeeping.
+            import time as _time_post
+            _expire_at = _time_post.time() + (POST_EXIT_OBSERVATION_MINUTES * 60)
+            with _post_exit_lock:
+                _post_exit_observation.append((int(old_token), _expire_at))
+            logger.info(
+                "[POST_EXIT] Token " + str(old_token)
+                + " held " + str(POST_EXIT_OBSERVATION_MINUTES)
+                + " min for post-exit observation"
+            )
         _reset_strike_lock()
         _day_pnl    = state.get("daily_pnl", 0)
         _sym_short  = _short_sym(symbol, direction, _exit_strike)
@@ -1897,6 +1914,58 @@ def _strategy_loop(kite):
         try:
             now   = datetime.now()
             today = date.today()
+
+            # Post-exit observation cleanup: unsubscribe tokens whose 10-min
+            # observation window has expired. Runs every iteration regardless
+            # of trade state so tokens don't linger past their TTL.
+            try:
+                import time as _t_obs
+                _now_epoch = _t_obs.time()
+                _expired = []
+                with _post_exit_lock:
+                    _kept = []
+                    for tok, expire_at in _post_exit_observation:
+                        if _now_epoch >= expire_at:
+                            _expired.append(tok)
+                        else:
+                            _kept.append((tok, expire_at))
+                    _post_exit_observation[:] = _kept
+                if _expired:
+                    # Don't unsubscribe tokens that are now part of an active
+                    # trade or part of the locked CE/PE pairs.
+                    with _state_lock:
+                        _active_token = state.get("token") or 0
+                    _safe_to_drop = [t for t in _expired if t != _active_token]
+                    # Also exclude any token currently in the locked strike pair
+                    try:
+                        _lock_set = set()
+                        # Module-level _locked_tokens is a dict like
+                        # {"CE": {...}, "PE": {...}, "CE_OTM": {...}, ...}
+                        # whose values carry "token". Collect them all.
+                        if _locked_tokens:
+                            for _v in _locked_tokens.values():
+                                if isinstance(_v, dict):
+                                    _tk = _v.get("token")
+                                    if _tk:
+                                        _lock_set.add(int(_tk))
+                        # Also legacy state.* keys if any
+                        with _state_lock:
+                            for k in ("_locked_ce_token", "_locked_pe_token",
+                                      "_locked_ce_token_2", "_locked_pe_token_2"):
+                                _t = state.get(k)
+                                if _t:
+                                    _lock_set.add(int(_t))
+                        _safe_to_drop = [t for t in _safe_to_drop if t not in _lock_set]
+                    except Exception:
+                        pass
+                    if _safe_to_drop:
+                        D.unsubscribe_tokens(_safe_to_drop)
+                        logger.info(
+                            "[POST_EXIT] Unsubscribed after observation: "
+                            + str(_safe_to_drop)
+                        )
+            except Exception as _pe_err:
+                logger.debug("[POST_EXIT] Cleanup error: " + str(_pe_err))
 
             if today.isoformat() != today_str:
                 today_str = today.isoformat()
@@ -2888,6 +2957,14 @@ def _cmd_status(args):
     global _kite
     with _state_lock:
         st = dict(state)
+    # Post-exit observation count — surfaces when bot is holding tokens
+    # subscribed past their trade exit for lab data capture.
+    with _post_exit_lock:
+        _post_n = len(_post_exit_observation)
+    _post_exit_line = ""
+    if _post_n:
+        _post_exit_line = ("Post-exit watching: " + str(_post_n)
+                           + " token(s)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
     if not st.get("in_trade"):
         last_scan = st.get("_last_scan", {})
@@ -2914,6 +2991,7 @@ def _cmd_status(args):
             "📊 <b>STATUS — NO TRADE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + _warmup_line +
+            _post_exit_line +
             "PNL    : " + str(round(st.get("daily_pnl", 0), 1)) + "pts\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Last scan : " + last_scan.get("time", "—") + "\n"
@@ -2962,6 +3040,7 @@ def _cmd_status(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        + _post_exit_line +
         "Day PNL: " + str(round(st.get("daily_pnl", 0), 1)) + "pts"
     )
 
