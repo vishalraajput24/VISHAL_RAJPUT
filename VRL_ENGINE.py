@@ -162,11 +162,18 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now, m
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} band={band_width} "
-                        f"slope={ema9_low_slope} body={int(body_pct)}%")
+                        f"slope={ema9_low_slope} body={int(_body_pct)}%")
         return result
 
     except Exception as e:
         logger.error("[ENGINE] Entry error: " + str(e))
+        # CRITICAL: also reset fired=False so a NameError or other
+        # exception in the success-path log line doesn't leave the
+        # result with fired=True, which would let the main scan loop
+        # enter a trade based on a corrupted result. (Found 2026-04-27
+        # 09:35:35: body_pct→_body_pct refactor leftover threw
+        # NameError after gates passed; trade fired anyway, lost 10 pts.)
+        result["fired"] = False
         result["reject_reason"] = "error_" + str(e)[:50]
         return result
 
