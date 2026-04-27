@@ -3080,11 +3080,13 @@ def _strategy_loop(kite):
                             best_result["spike_wait_used"] = _spk_used
 
                 if best_result and best_opt_info:
-                    # ── Cross-leg divergence signal (LOG ONLY, 1-week eval) ──
-                    # Read OTHER side's last 3-min candle, see if it's dying
-                    # (close < ema9_low) which would confirm a real trend.
-                    # Never blocks entry — just stamps the trade log so we
-                    # can compute accuracy after a week.
+                    # ── Cross-leg divergence signal ──
+                    # Read OTHER side's last 3-min candle. PASS=other dying
+                    # (real trend), FAIL=other holding (chop).
+                    # Backtest verdict: with anti-spike on, V3 (gate also
+                    # blocks FAIL) > V1 (no gate) by 56pts/5d. Gate ON by
+                    # default — flip xleg_gate_enabled in config to revert.
+                    _xl_signal = "NA"
                     try:
                         from VRL_ENGINE import evaluate_cross_leg as _xleg
                         _other_dt = "PE" if best_type == "CE" else "CE"
@@ -3094,15 +3096,35 @@ def _strategy_loop(kite):
                             _other_3m_xl = D.get_option_3min(_other_tok_xl, lookback=10)
                             _xl_info = _xleg(best_type, _other_3m_xl)
                             best_result.update(_xl_info)
+                            _xl_signal = _xl_info.get("xleg_signal", "NA")
                             logger.info(
                                 "[XLEG] " + best_type + " entry — other "
                                 + _other_dt + " close=" + str(_xl_info.get("xleg_other_close"))
                                 + " ema9l=" + str(_xl_info.get("xleg_other_ema9l"))
                                 + " margin=" + "{:+.2f}".format(_xl_info.get("xleg_other_margin", 0))
-                                + " → " + str(_xl_info.get("xleg_signal"))
+                                + " → " + str(_xl_signal)
                             )
                     except Exception as _xe:
                         logger.debug("[XLEG] " + str(_xe))
+
+                    # ── Hard gate: skip FAIL signals (when enabled) ──
+                    _xl_gate = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
+                    if _xl_gate and _xl_signal == "FAIL":
+                        _xl_other_dt = "PE" if best_type == "CE" else "CE"
+                        _xl_margin = float(best_result.get("xleg_other_margin", 0) or 0)
+                        _tg_send(
+                            "🚫 <b>X-LEG GATE — entry blocked</b>\n"
+                            + best_type + " " + str(best_result.get("_strike", 0))
+                            + "  | " + _xl_other_dt + " holding "
+                            + ("+" if _xl_margin >= 0 else "")
+                            + "{:.1f}".format(_xl_margin)
+                            + " above own EMA9L\n"
+                            "Backtest: blocking FAIL trades = +56 pts/5d"
+                        )
+                        logger.info("[XLEG-GATE] " + best_type
+                            + " blocked (FAIL signal) — waiting fresh setup")
+                        best_result = None
+                        best_opt_info = None
                     _execute_entry(kite, best_opt_info, best_type,
                                    best_result, profile, expiry, dte, session)
                     if state.get("in_trade"):
@@ -3688,6 +3710,10 @@ def _cmd_xleg(args):
             else:
                 _verdict = "❌ NOT READY — PASS-WR " + str(pwr) + "% < 55%"
 
+        _gate_on = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
+        _gate_line = ("🛡 GATE ENABLED — FAIL signals blocked at entry"
+                      if _gate_on else
+                      "ℹ GATE DISABLED — display-only logging")
         msg = (
             "📊 <b>X-LEG ACCURACY (last 7 days)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -3703,8 +3729,8 @@ def _cmd_xleg(args):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>Verdict</b>  " + _verdict + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Target: PASS-WR >55% with >=10pt gap over FAIL\n"
-            "(LOG ONLY — never blocks entries this week)"
+            + _gate_line + "\n"
+            "Backtest 5d: V3 (both filters) +570 pts vs +163 baseline"
         )
         _tg_send(msg)
     except Exception as e:

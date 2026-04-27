@@ -52,6 +52,12 @@ entry:
     # Set buffer or wait to 0 to disable.
     spike_buffer_pts: 2
     spike_wait_secs: 60
+    # ── v16.7+ Cross-leg divergence GATE ──
+    # Backtest (5 days, 72-78 trades): with anti-spike on, V3 (both
+    # filters) +570 pts vs V1 (anti-spike only) +514 pts — net +56 pts
+    # gain from also blocking FAIL signals. Promoted to hard gate.
+    # Set false to revert to display-only mode.
+    xleg_gate_enabled: true
     # Multi-candidate strike scanning (ATM-50/ATM/ATM+50). When enabled,
     # evaluates all 6 CE/PE candidates per scan and picks the best by
     # (body × gap). Disabled by default to keep WS token count low.
