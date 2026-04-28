@@ -2302,29 +2302,10 @@ def _strategy_loop(kite):
                         if cur_1m != state.get("_last_candle_held_min", ""):
                             state["_last_candle_held_min"] = cur_1m
                             state["candles_held"] = state.get("candles_held", 0) + 1
-                            # v13.5: reset candle_low on new 1-min candle boundary
+                            # Reset candle_low on new 1-min candle boundary
                             state["_candle_low"] = option_ltp
-                            # v13.5: 3-min CONFIRMED upgrade during FAST trade
-                            if state.get("entry_mode") == "FAST" and not state.get("_3m_confirmed"):
-                                try:
-                                    _upg_token = state.get("token")
-                                    _df3u = D.get_historical_data(_upg_token, "3minute", 10)
-                                    if _df3u is not None and len(_df3u) >= 6:
-                                        _prev3u = _df3u.iloc[-3]
-                                        _ref3u = float(_df3u.iloc[-6]["close"])
-                                        _mom3u = round(float(_prev3u["close"]) - _ref3u, 2)
-                                        _cfg_up = CFG.get().get("entry", {})
-                                        _conf_thr = _cfg_up.get("confirmed_momentum_pts", 20)
-                                        if _mom3u >= _conf_thr:
-                                            with _state_lock:
-                                                state["entry_mode"] = "CONFIRMED"
-                                                state["_3m_confirmed"] = True
-                                            logger.info("[MAIN] 3-min CONFIRMED upgrade: mom_3m=" + str(_mom3u))
-                                            _tg_send("★★ 3-min CONFIRMED — "
-                                                + state.get("direction", "") + " +" + str(_mom3u) + "pts (3m)\n"
-                                                + "Trail widened: keep 65% from +20 🔥")
-                                except Exception as _ue:
-                                    logger.debug("[MAIN] 3m upgrade: " + str(_ue))
+                            # v16.7-final: FAST→CONFIRMED upgrade block REMOVED
+                            # since FAST 1-min peek path is gone. Pure 3-min only.
 
                     _mex_other_tok = state.get("other_token", 0)
                     # Snapshot the previous tier AND SL BEFORE manage_exit
@@ -2733,10 +2714,16 @@ def _strategy_loop(kite):
                                         _re_high = float(_re_result.get("high", 0) or 0)
                                         _re_low  = float(_re_result.get("low",  0) or 0)
                                         _re_close = float(_re_result.get("close", 0) or 0)
+                                        _re_ema9l = float(_re_result.get("ema9_low", 0) or 0)
                                         _spike_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
                                         _re_skip = False
                                         if _re_high > 0 and _re_low > 0 and _spike_wait_re > 0:
-                                            _spk_target_re = round((_re_high + _re_low) / 2.0, 2)
+                                            _re_mid = (_re_high + _re_low) / 2.0
+                                            # Same clamp as regular entry — never below EMA9_low
+                                            if _re_ema9l > 0 and _re_mid < _re_ema9l:
+                                                _spk_target_re = round(_re_ema9l, 2)
+                                            else:
+                                                _spk_target_re = round(_re_mid, 2)
                                             _spk_cur_re = D.get_ltp(_re_token) or 0
                                             if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
                                                 _spk_fill_re = _spk_cur_re
@@ -2849,24 +2836,11 @@ def _strategy_loop(kite):
                             other_token=_other_tok,
                             state=state,
                         )
-                        # 1-min early peek: if 3-min didn't fire, try the
-                        # 1-min hybrid path (3-min trend + 1-min trigger).
-                        # Whichever fires first wins. Catches breakouts
-                        # 1-2 minutes earlier than waiting for 3-min close.
-                        if not result.get("fired"):
-                            try:
-                                from VRL_ENGINE import check_1min_peek as _peek_1m
-                                _r1m = _peek_1m(
-                                    token=_oi["token"],
-                                    option_type=opt_type,
-                                    spot_ltp=spot_ltp,
-                                    silent=True,
-                                    state=state,
-                                )
-                                if _r1m.get("fired"):
-                                    result = _r1m
-                            except Exception as _pe:
-                                logger.debug("[MAIN] 1-min peek error: " + str(_pe))
+                        # v16.7-final: 1-min FAST peek REMOVED.
+                        # Pure 3-min entries only. The FAST path was firing
+                        # signals on 1-min candles whose 3-min EMA9 reference
+                        # could be stale, leading to entries below EMA9_low
+                        # post-fill. Strict 3-min keeps the breakout integrity.
                         result["_strike"] = _strike_val
                         result["_strike_label"] = _label
                         result["_symbol"] = _oi.get("symbol", "")
@@ -2977,8 +2951,21 @@ def _strategy_loop(kite):
                     _entry_close_x = float(best_result.get("close", 0) or 0)
                     _entry_high_x  = float(best_result.get("high", 0) or 0)
                     _entry_low_x   = float(best_result.get("low", 0) or 0)
+                    _entry_ema9l_x = float(best_result.get("ema9_low", 0) or 0)
                     if _spike_wait > 0 and _entry_high_x > 0 and _entry_low_x > 0:
-                        _spk_target = round((_entry_high_x + _entry_low_x) / 2.0, 2)
+                        _midpoint = (_entry_high_x + _entry_low_x) / 2.0
+                        # CRITICAL: never fill below the EMA9_low breakout band.
+                        # If the candle is so wide that midpoint < EMA9_low,
+                        # clamp target to EMA9_low so we preserve the
+                        # 'close > EMA9_low' breakout integrity at fill time.
+                        if _entry_ema9l_x > 0 and _midpoint < _entry_ema9l_x:
+                            _spk_target = round(_entry_ema9l_x, 2)
+                            logger.info(
+                                "[CANDLE/2] target clamped to EMA9_low Rs"
+                                + str(_spk_target) + " (midpoint Rs"
+                                + "{:.2f}".format(_midpoint) + " was below band)")
+                        else:
+                            _spk_target = round(_midpoint, 2)
                         _spk_tok = best_opt_info.get("token", 0)
                         _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
                         if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
