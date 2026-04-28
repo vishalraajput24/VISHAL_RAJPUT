@@ -51,22 +51,32 @@ LAB_1M_DIR = os.path.expanduser("~/lab_data/options_1min")
 # ─────────────────────────────────────────────────────────────
 # SL ladder (mirror of VRL_ENGINE.compute_trail_sl)
 # ─────────────────────────────────────────────────────────────
-def compute_trail_sl(entry_price, peak_pnl, early_lock_5=False):
-    """v16.7 SL ladder. Optional early_lock_5 tier:
-       peak >=5 → SL = entry-5 (caps max loss at -5 instead of -10).
+def compute_trail_sl(entry_price, peak_pnl, early_lock_5=False,
+                     m5_offset=-5, lock3_peak=8, lock3_offset=3,
+                     lock5_peak=12, lock5_offset=5,
+                     lock8_peak=15, lock8_offset=8,
+                     lock15_peak=20, lock15_offset=15,
+                     dyn_peak=21, dyn_giveback=5):
+    """v16.7 SL ladder. All tier thresholds + offsets are tunable for
+    parameter sweeps. Defaults match current production.
+
+       peak >=5 → SL = entry+m5_offset (LOCK_M5, default -5)
+       peak >=8 → SL = entry+lock3_offset (LOCK_3, default +3)
+       peak >=12→ SL = entry+lock5_offset (LOCK_5, default +5)
+       ...
     """
-    if peak_pnl >= 21:
-        return round(entry_price + (peak_pnl - 5), 2), "LOCK_DYN"
-    if peak_pnl >= 20:
-        return round(entry_price + 15, 2), "LOCK_15"
-    if peak_pnl >= 15:
-        return round(entry_price + 8, 2), "LOCK_8"
-    if peak_pnl >= 12:
-        return round(entry_price + 5, 2), "LOCK_5"
-    if peak_pnl >= 8:
-        return round(entry_price + 3, 2), "LOCK_3"
+    if peak_pnl >= dyn_peak:
+        return round(entry_price + (peak_pnl - dyn_giveback), 2), "LOCK_DYN"
+    if peak_pnl >= lock15_peak:
+        return round(entry_price + lock15_offset, 2), "LOCK_15"
+    if peak_pnl >= lock8_peak:
+        return round(entry_price + lock8_offset, 2), "LOCK_8"
+    if peak_pnl >= lock5_peak:
+        return round(entry_price + lock5_offset, 2), "LOCK_5"
+    if peak_pnl >= lock3_peak:
+        return round(entry_price + lock3_offset, 2), "LOCK_3"
     if early_lock_5 and peak_pnl >= 5:
-        return round(entry_price - 5, 2), "LOCK_M5"
+        return round(entry_price + m5_offset, 2), "LOCK_M5"
     return round(entry_price - 10, 2), "INITIAL"
 
 
@@ -198,7 +208,7 @@ def evaluate_xleg(other_candle):
 # ─────────────────────────────────────────────────────────────
 def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
                    spike_buf=None, early_lock_5=False,
-                   entry_mode="close"):
+                   entry_mode="close", ladder_kwargs=None):
     """Walk forward from entry_idx, applying SL ladder.
     entry_mode:
       "close"       - fill at signal candle's close (V0 baseline)
@@ -263,7 +273,9 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
             peak = candle_peak_pnl
 
         # Compute current SL based on peak (early_lock_5 toggle)
-        sl, tier = compute_trail_sl(entry_price, peak, early_lock_5=early_lock_5)
+        _lk = ladder_kwargs or {}
+        sl, tier = compute_trail_sl(entry_price, peak,
+                                    early_lock_5=early_lock_5, **_lk)
 
         # 1. Emergency SL — if candle's low touched/crossed entry-10
         if candle_min_pnl <= EMERGENCY_SL_PTS:
@@ -334,7 +346,8 @@ def _ts_to_min(ts):
 def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                spike_buf=None, early_lock_5=False,
                entry_mode="close", reentry_mode="off",
-               max_stretch=999, min_body=BODY_MIN):
+               max_stretch=999, min_body=BODY_MIN,
+               ladder_kwargs=None):
     """Replay one trading day with MULTI-trade support + cooldown.
     entry_mode: "close" / "anti_spike" / "candle_half"
     reentry_mode:
@@ -433,7 +446,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                                 anti_spike=anti_spike,
                                 spike_buf=_buf,
                                 early_lock_5=early_lock_5,
-                                entry_mode=entry_mode)
+                                entry_mode=entry_mode,
+                                ladder_kwargs=ladder_kwargs)
         if result is None:
             trades.append({
                 "date": d.isoformat(), "ts": ts, "strike": best["strike"],
@@ -842,6 +856,116 @@ def run_stretch_sweep(found, atm_only):
     print()
 
 
+def _run_variant(found, atm_only, ladder_kwargs):
+    """Run a single backtest variant — V3-equivalent (anti-spike on,
+    no x-leg gate, candle/2 entry style)."""
+    all_trades = []
+    for d in found:
+        day = replay_day(d, atm_only=atm_only,
+                         anti_spike=True, xleg_gate=False,
+                         spike_buf=2, early_lock_5=True,
+                         entry_mode="anti_spike", reentry_mode="off",
+                         max_stretch=999, min_body=40,
+                         ladder_kwargs=ladder_kwargs)
+        if day:
+            all_trades.extend(day)
+    real = [t for t in all_trades if not t.get("spike_skipped")]
+    wins = [t for t in real if t["pnl"] > 0]
+    total = sum(t["pnl"] for t in real)
+    avg_w = sum(t["pnl"] for t in wins) / max(len(wins), 1)
+    losses = [t for t in real if t["pnl"] <= 0]
+    avg_l = sum(t["pnl"] for t in losses) / max(len(losses), 1)
+    wr = len(wins) / max(len(real), 1) * 100
+    return {"trades": len(real), "wins": len(wins), "wr": wr,
+            "total": total, "avg_w": avg_w, "avg_l": avg_l, "all": real}
+
+
+def run_ladder_sweep(found, atm_only):
+    """Sweep SL ladder parameters to find the most profitable curve.
+    Tests three dimensions:
+      A. LOCK_M5 SL offset (-7, -5, -3, 0)
+      B. LOCK_3 peak threshold (6, 7, 8, 9, 10)
+      C. LOCK_3 SL offset (+1, +3, +5)
+    """
+    print("\n" + "=" * 90)
+    print("SL LADDER SWEEP — find optimal ratchet curve")
+    print("=" * 90)
+    base = _run_variant(found, atm_only, ladder_kwargs={})
+    print(f"\nBaseline (current ladder): {base['trades']} trades, "
+          f"{base['wr']:.1f}% WR, {base['total']:+.1f} pts "
+          f"(avgW {base['avg_w']:+.1f}, avgL {base['avg_l']:+.1f})\n")
+
+    # Dimension A: LOCK_M5 offset sweep
+    print("--- A. LOCK_M5 offset sweep (peak >= 5 → SL = entry + offset) ---\n")
+    print(f"{'M5 offset':>10}  {'Trd':>4} {'WR%':>5} {'Total':>8} {'AvgW':>5} {'AvgL':>5}  vs base")
+    print("-" * 65)
+    for m5 in [-7, -6, -5, -4, -3, -2, 0]:
+        r = _run_variant(found, atm_only,
+                         ladder_kwargs={"m5_offset": m5})
+        delta = r["total"] - base["total"]
+        marker = " ★" if r["total"] > base["total"] else ""
+        print(f"{m5:>+10} {r['trades']:>5} {r['wr']:>5.1f} "
+              f"{r['total']:>+8.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f}  "
+              f"{delta:>+7.1f}{marker}")
+
+    # Dimension B: LOCK_3 peak threshold
+    print("\n--- B. LOCK_3 peak threshold (when does ladder lock first profit?) ---\n")
+    print(f"{'lock3_peak':>11}  {'Trd':>4} {'WR%':>5} {'Total':>8} {'AvgW':>5} {'AvgL':>5}  vs base")
+    print("-" * 65)
+    for pk in [6, 7, 8, 9, 10, 11]:
+        r = _run_variant(found, atm_only,
+                         ladder_kwargs={"lock3_peak": pk})
+        delta = r["total"] - base["total"]
+        marker = " ★" if r["total"] > base["total"] else ""
+        print(f"peak >={pk:>3}  {r['trades']:>5} {r['wr']:>5.1f} "
+              f"{r['total']:>+8.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f}  "
+              f"{delta:>+7.1f}{marker}")
+
+    # Dimension C: LOCK_3 SL offset
+    print("\n--- C. LOCK_3 SL offset (how much profit do we lock?) ---\n")
+    print(f"{'lock3_off':>10}  {'Trd':>4} {'WR%':>5} {'Total':>8} {'AvgW':>5} {'AvgL':>5}  vs base")
+    print("-" * 65)
+    for off in [0, 1, 2, 3, 4, 5]:
+        r = _run_variant(found, atm_only,
+                         ladder_kwargs={"lock3_offset": off})
+        delta = r["total"] - base["total"]
+        marker = " ★" if r["total"] > base["total"] else ""
+        print(f"  +{off:>+2}     {r['trades']:>5} {r['wr']:>5.1f} "
+              f"{r['total']:>+8.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f}  "
+              f"{delta:>+7.1f}{marker}")
+
+    # Dimension D: dynamic giveback (LOCK_DYN tier — how much we give back from peak)
+    print("\n--- D. LOCK_DYN giveback (peak >=21, SL = entry + peak - giveback) ---\n")
+    print(f"{'giveback':>10}  {'Trd':>4} {'WR%':>5} {'Total':>8} {'AvgW':>5} {'AvgL':>5}  vs base")
+    print("-" * 65)
+    for gb in [3, 4, 5, 6, 7, 8]:
+        r = _run_variant(found, atm_only,
+                         ladder_kwargs={"dyn_giveback": gb})
+        delta = r["total"] - base["total"]
+        marker = " ★" if r["total"] > base["total"] else ""
+        print(f"  -{gb:>+2}     {r['trades']:>5} {r['wr']:>5.1f} "
+              f"{r['total']:>+8.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f}  "
+              f"{delta:>+7.1f}{marker}")
+
+    # Combined best — search 3-D space
+    print("\n--- E. 3-D SEARCH (best combo of M5 offset × LOCK_3 peak × LOCK_3 offset) ---\n")
+    best = base
+    best_kwargs = {}
+    for m5 in [-5, -3, 0]:
+        for pk in [7, 8, 9]:
+            for off in [2, 3, 4]:
+                k = {"m5_offset": m5, "lock3_peak": pk, "lock3_offset": off}
+                r = _run_variant(found, atm_only, ladder_kwargs=k)
+                if r["total"] > best["total"]:
+                    best = r; best_kwargs = k
+    print(f"BEST combo: {best_kwargs}")
+    print(f"  → {best['trades']} trades, {best['wr']:.1f}% WR, "
+          f"{best['total']:+.1f} pts (vs baseline +{base['total']:.1f})")
+    print(f"  Improvement: {(best['total'] - base['total']):+.1f} pts over 5 days")
+    print(f"  Per trade:   {(best['total']/max(best['trades'],1)):+.2f} avg")
+    print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
@@ -879,6 +1003,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "stretch":
         run_stretch_sweep(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "ladder":
+        run_ladder_sweep(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
