@@ -196,47 +196,51 @@ def evaluate_xleg(other_candle):
 # Single-trade simulator
 # ─────────────────────────────────────────────────────────────
 def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
-                   spike_buf=None, early_lock_5=False):
-    """Walk forward from entry_idx, applying SL ladder + FLAT_2X.
-    spike_buf overrides SPIKE_BUFFER_PTS for the parameter sweep.
-    early_lock_5 enables LOCK_M5 tier (peak>=5 → SL=entry-5).
-    Returns dict with entry_price, exit_price, pnl, peak, reason,
-    candles, spike_used, exit_idx, exit_ts. Returns None if anti-spike
-    skipped the entry.
+                   spike_buf=None, early_lock_5=False,
+                   entry_mode="close"):
+    """Walk forward from entry_idx, applying SL ladder.
+    entry_mode:
+      "close"       - fill at signal candle's close (V0 baseline)
+      "anti_spike"  - target = close - spike_buf, fill at LTP if next 1m
+                      low touches; else SKIP (current production)
+      "candle_half" - target = (signal candle high + low) / 2, fill if
+                      next 1m low touches; else SKIP (NEW idea 1)
+    Returns dict on fill, None on skip.
     """
     if spike_buf is None:
         spike_buf = SPIKE_BUFFER_PTS
     entry_candle = leg_3m[entry_idx]
     raw_close = entry_candle["close"]
     spike_used = False
-    spike_skipped = False
 
-    # Anti-spike: target = close - 2. Look at the very next 1-min candle
-    # within the next 60s. We approximate by checking the FIRST 1-min
-    # candle whose ts is strictly AFTER entry_candle["ts"].
-    if anti_spike:
+    # Determine target price based on entry_mode + legacy anti_spike flag.
+    # Legacy: anti_spike=True is shorthand for entry_mode="anti_spike".
+    if entry_mode == "candle_half":
+        # Idea 1: target = midpoint of signal candle's range
+        target = round((entry_candle["high"] + entry_candle["low"]) / 2.0, 2)
+        wait_for_pullback = True
+    elif anti_spike or entry_mode == "anti_spike":
         target = round(raw_close - spike_buf, 2)
+        wait_for_pullback = True
+    else:
+        target = 0
+        wait_for_pullback = False
+
+    if wait_for_pullback:
         ent_ts = entry_candle["ts"]
-        # Find next 1-min candle (only the first one — represents 60s window)
         next_1m = None
         for c1 in leg_1m:
             if c1["ts"] > ent_ts:
                 next_1m = c1
                 break
         if next_1m and next_1m["low"] <= target:
-            # Fill at the BETTER of target or actual low (limit-pullback
-            # semantics, user chose "fill at LTP"). If LTP plunged below
-            # target during the 60s window, our limit order would fill
-            # at the lower price.
+            # Fill at min(target, low) — limit-pullback semantics
             entry_price = min(target, next_1m["low"])
             spike_used = True
         else:
-            # No pullback within 60s → skip trade
-            spike_skipped = True
-            return None
+            return None  # no pullback → skip
     else:
         entry_price = raw_close
-        target = 0
 
     peak = 0.0
     flat_streak = 0
@@ -327,10 +331,16 @@ def _ts_to_min(ts):
 
 
 def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
-               spike_buf=None, early_lock_5=False):
+               spike_buf=None, early_lock_5=False,
+               entry_mode="close", reentry_mode="off"):
     """Replay one trading day with MULTI-trade support + cooldown.
-    spike_buf overrides SPIKE_BUFFER_PTS for the parameter sweep.
-    early_lock_5 enables peak>=5 → SL=entry-5 tier.
+    entry_mode: "close" / "anti_spike" / "candle_half"
+    reentry_mode:
+      "off"          - no re-entry watcher (closest to V3 backtest)
+      "current"      - 2-candle window, green break of original entry close
+      "wait_3min"    - wait for next FULL 3-min candle to close, must
+                       independently pass 3-gate, then re-enter using
+                       entry_mode (NEW Idea 2)
     Returns list of trade result dicts (incl. spike-skips).
     """
     legs_3m = load_3m_day(d)
@@ -419,7 +429,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
         result = simulate_trade(best["idx"], best["rows_3m"], leg_1m_rows,
                                 anti_spike=anti_spike,
                                 spike_buf=_buf,
-                                early_lock_5=early_lock_5)
+                                early_lock_5=early_lock_5,
+                                entry_mode=entry_mode)
         if result is None:
             trades.append({
                 "date": d.isoformat(), "ts": ts, "strike": best["strike"],
@@ -445,9 +456,6 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
         # Block timeline until exit ts; same-side cooldown 5 min after exit
         blocked_until_ts = result.get("exit_ts", "")
         ex_min = _ts_to_min(blocked_until_ts)
-        # Cooldown ts = ex_min + 5 min — convert back to lookup-friendly
-        # form. Since we compare by ts string lexicographically, build a
-        # marker like "YYYY-MM-DD HH:MM:00" at ex_min+5.
         try:
             cool_min = ex_min + 5
             cool_hh = cool_min // 60
@@ -457,6 +465,53 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
         except Exception:
             cool_marker = blocked_until_ts
         next_ok_ts_by_side[best["side"]] = cool_marker
+
+        # ── Re-entry watcher (Idea 2: wait_3min) ──
+        # After exit, look at the next 3-min candle on the SAME leg
+        # AFTER exit ts. If it independently passes the 3-gate AND
+        # x-leg, fire a re-entry using the same entry_mode as the
+        # original trade. Skip cooldown for this re-entry.
+        if reentry_mode == "wait_3min":
+            re_idx = result["exit_idx"] + 1
+            if re_idx < len(best["rows_3m"]) - 1:
+                re_candle = best["rows_3m"][re_idx]
+                re_prev   = best["rows_3m"][re_idx - 1]
+                fired_re, _why, _body, _slope = evaluate_gates(re_candle, re_prev)
+                if fired_re:
+                    # Cross-leg snapshot at re-entry time
+                    other_side = "PE" if best["side"] == "CE" else "CE"
+                    other_rows = legs_3m.get((best["strike"], other_side), [])
+                    other_idx_re = leg_idx[(best["strike"], other_side)].get(re_candle["ts"])
+                    other_c_re = other_rows[other_idx_re] if other_idx_re is not None else None
+                    re_xl, re_xlm = evaluate_xleg(other_c_re)
+                    if not (xleg_gate and re_xl == "FAIL"):
+                        # Fire re-entry
+                        re_result = simulate_trade(
+                            re_idx, best["rows_3m"], leg_1m_rows,
+                            anti_spike=anti_spike,
+                            spike_buf=_buf,
+                            early_lock_5=early_lock_5,
+                            entry_mode=entry_mode,
+                        )
+                        if re_result is not None:
+                            re_result["date"]   = d.isoformat()
+                            re_result["ts"]     = re_candle["ts"]
+                            re_result["strike"] = best["strike"]
+                            re_result["side"]   = best["side"]
+                            re_result["xleg"]   = re_xl
+                            re_result["xleg_margin"] = re_xlm
+                            re_result["body"]   = _body
+                            re_result["spike_skipped"] = False
+                            re_result["mode"]   = "REENTRY_WAIT3"
+                            trades.append(re_result)
+                            blocked_until_ts = re_result.get("exit_ts", "")
+                            try:
+                                ex_min2 = _ts_to_min(blocked_until_ts)
+                                cool_marker2 = (blocked_until_ts[:11]
+                                    + f"{(ex_min2+5)//60:02d}:{(ex_min2+5)%60:02d}:59")
+                                next_ok_ts_by_side[best["side"]] = cool_marker2
+                            except Exception:
+                                pass
 
     return trades
 
@@ -577,12 +632,74 @@ def run_sweep(found, atm_only):
     print("  INIT=trades stuck at INITIAL tier")
 
 
+def run_idea_sweep(found, atm_only):
+    """User's Idea sweep: compare baseline strategies + the 2 new ideas
+    in isolation and combined.
+    """
+    print("\n" + "=" * 90)
+    print("STRATEGY ENHANCEMENT SWEEP — 5d backtest")
+    print("=" * 90)
+    print()
+
+    # variants: (label, anti_spike, xleg_gate, entry_mode, reentry_mode)
+    variants = [
+        ("V0  baseline 3-gate (close fill)         ", False, False, "close",       "off"),
+        ("V0+ 3-gate + X-LEG only                   ", False, True,  "close",       "off"),
+        ("V1  3-gate + X-LEG + anti-spike (PROD)   ", True,  True,  "anti_spike",  "off"),
+        ("Vc  3-gate + X-LEG + candle/2 (idea 1)   ", False, True,  "candle_half", "off"),
+        ("Vr  3-gate + X-LEG + candle/2 + ReWait3  ", False, True,  "candle_half", "wait_3min"),
+        ("Vrx 3-gate + anti-spike + ReWait3 (no xl) ", True,  False, "anti_spike",  "wait_3min"),
+        ("Vfull 3-gate + X-LEG + anti-spike + ReW3 ", True,  True,  "anti_spike",  "wait_3min"),
+    ]
+
+    print(f"{'Variant':<46} {'Trd':>4} {'Skp':>4} {'WR%':>5} {'Total':>7} {'AvgW':>5} {'AvgL':>5} {'ESL':>4} {'TR':>4}")
+    print("-" * 95)
+
+    rows = []
+    for label, anti_spike, xleg, em, rm in variants:
+        all_trades = []
+        for d in found:
+            day_trades = replay_day(d, atm_only=atm_only,
+                                    anti_spike=anti_spike, xleg_gate=xleg,
+                                    spike_buf=2, early_lock_5=True,
+                                    entry_mode=em, reentry_mode=rm)
+            if day_trades:
+                all_trades.extend(day_trades)
+        real = [t for t in all_trades if not t.get("spike_skipped")]
+        skips = [t for t in all_trades if t.get("spike_skipped")]
+        wins = [t for t in real if t["pnl"] > 0]
+        losses = [t for t in real if t["pnl"] <= 0]
+        total = sum(t["pnl"] for t in real)
+        avg_w = (sum(t["pnl"] for t in wins) / len(wins)) if wins else 0
+        avg_l = (sum(t["pnl"] for t in losses) / len(losses)) if losses else 0
+        wr = (len(wins) / len(real) * 100) if real else 0
+        esl = sum(1 for t in real if t.get("reason") == "EMERGENCY_SL")
+        tr = sum(1 for t in real if t.get("reason") == "VISHAL_TRAIL")
+        print(f"{label:<46} {len(real):>4} {len(skips):>4} {wr:>5.1f} "
+              f"{total:>+7.1f} {avg_w:>+5.1f} {avg_l:>+5.1f} {esl:>4} {tr:>4}")
+        rows.append({"label": label.strip(), "total": total, "trades": len(real)})
+
+    print()
+    best = max(rows, key=lambda r: r["total"])
+    print(f"BEST: {best['label']}  → {best['total']:+.1f} pts on {best['trades']} trades")
+    print()
+    print("Decode:")
+    print("  V0       = pure 3-gate, no filters, fill at close (closest to raw signal)")
+    print("  V0+      = + X-LEG gate alone (test x-leg's contribution)")
+    print("  V1       = current production (anti-spike + x-leg)")
+    print("  Vc       = candle/2 fill (idea 1) + x-leg, no re-entry")
+    print("  Vr       = candle/2 + x-leg + new re-entry rule (wait 3-min + 3-gate)")
+    print("  Vrx      = anti-spike + new re-entry (without x-leg) — isolates re-entry effect")
+    print("  Vfull    = anti-spike + x-leg + new re-entry rule")
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
     if len(sys.argv) > 2 and sys.argv[2].upper() == "ALL":
         atm_only = False
     sweep_mode = (len(sys.argv) > 3 and sys.argv[3].lower() == "sweep")
+    idea_mode = (len(sys.argv) > 3 and sys.argv[3].lower() == "ideas")
 
     dates = trading_dates(n)
     print(f"Backtesting {len(dates)} trading days: "
@@ -607,6 +724,9 @@ def main():
 
     if sweep_mode:
         run_sweep(found, atm_only)
+        return
+    if idea_mode:
+        run_idea_sweep(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
