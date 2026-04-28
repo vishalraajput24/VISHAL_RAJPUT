@@ -3116,7 +3116,9 @@ def _strategy_loop(kite):
                 _update_dashboard_ltp()
 
         except Exception as e:
-            logger.error("[MAIN] Loop error: " + str(e))
+            import traceback as _tb
+            _tb_str = _tb.format_exc()
+            logger.error("[MAIN] Loop error: " + str(e) + "\n" + _tb_str)
             time.sleep(2)
 
         time.sleep(1)
