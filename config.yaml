@@ -53,11 +53,15 @@ entry:
     spike_buffer_pts: 2
     spike_wait_secs: 60
     # ── v16.7+ Cross-leg divergence GATE ──
-    # Backtest (5 days, 72-78 trades): with anti-spike on, V3 (both
-    # filters) +570 pts vs V1 (anti-spike only) +514 pts — net +56 pts
-    # gain from also blocking FAIL signals. Promoted to hard gate.
-    # Set false to revert to display-only mode.
-    xleg_gate_enabled: true
+    # Backtest history is SPLIT on x-leg's value:
+    #   Apr 20-24 sweep: x-leg ADDED +56 pts (V3 vs V1)
+    #   Apr 21-27 sweep: x-leg HURT  -69 pts (Vrx vs Vfull)
+    # Within sample noise. Live data on Apr 27-28 also showed x-leg
+    # blocking entries that would have won. Disabling for now to
+    # collect more honest data — signal still computed + logged so
+    # /xleg accuracy report keeps building, just doesn't block trades.
+    # Set true to re-enable hard gating.
+    xleg_gate_enabled: false
     # ── v16.7+ Early loss-cap tier (LOCK_M5) ──
     # When peak >= 5, move SL from entry-10 up to entry-5. Caps the
     # max loss at -5 once the trade has shown any meaningful traction.
