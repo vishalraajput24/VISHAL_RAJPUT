@@ -4,7 +4,7 @@
 #  Entry: 3 gates — GREEN candle + close > EMA9_low + body ≥ 40%
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
 #        (INITIAL/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
-#  Re-entry: 2-candle window for GREEN break of original entry close.
+#  Re-entry: wait 1 full 3-min candle after exit, must pass 3-gate, then candle/2 fill.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -100,13 +100,12 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
-    # v16.7 re-entry watcher (next 2 candles after exit)
-    "_reentry_watch_remaining" : 0,
-    "_reentry_trigger_close"   : 0.0,
-    "_reentry_direction"       : "",
-    "_reentry_token"           : 0,
-    "_reentry_strike"          : 0,
-    "_reentry_last_check_ts"   : "",
+    # v16.7-final re-entry watcher (wait next full 3-min candle)
+    "_reentry_armed"     : False,
+    "_reentry_exit_ts"   : "",
+    "_reentry_direction" : "",
+    "_reentry_token"     : 0,
+    "_reentry_strike"    : 0,
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -855,8 +854,8 @@ def _alert_bot_started():
         "peak >=20  SL = entry+15        (LOCK_15)\n"
         "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RE-ENTRY</b>  watch next 2 candles\n"
-        "GREEN candle closing above original entry close\n"
+        "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
+        "Confirmation candle must pass 3-gate, then candle/2 fill\n"
         "→ re-enter same side. Else fresh setup only.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
@@ -1341,15 +1340,16 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 # Trail state — clear so next trade starts at INITIAL
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher: 2 candles to spot a green close above
-                # the original entry candle close. Set here from old_*
-                # captures because state.update() is about to zero them.
-                "_reentry_watch_remaining": 2,
-                "_reentry_trigger_close":   round(old_entry_close, 2),
-                "_reentry_direction":       str(old_dir or ""),
-                "_reentry_token":           int(old_token or 0),
-                "_reentry_strike":          int(old_strike or 0),
-                "_reentry_last_check_ts":   "",
+                # Re-entry watcher (v16.7-final): wait for next FULL
+                # 3-min candle to close. If that candle independently
+                # passes 3-gate, re-enter on same side using candle/2
+                # fill. Else drop. Replaces previous "GREEN break of
+                # original entry close" rule.
+                "_reentry_armed":      True,
+                "_reentry_exit_ts":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "_reentry_direction":  str(old_dir or ""),
+                "_reentry_token":      int(old_token or 0),
+                "_reentry_strike":     int(old_strike or 0),
                 # Entry context (v15.0 band + body)
                 "entry_mode": "",
                 "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
@@ -2606,73 +2606,77 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # ── v16.7 RE-ENTRY WATCHER ─────────────────────────
-                # After an exit, watch the next 2 candles. If a GREEN
-                # candle closes ABOVE the original entry candle's close,
-                # re-enter same direction. Else 2 candles pass and the
-                # watcher clears — fresh setup only.
-                _reentry_remaining = int(state.get("_reentry_watch_remaining", 0) or 0)
-                if _reentry_remaining > 0 and not state.get("in_trade"):
+                # ── v16.7-final RE-ENTRY WATCHER (wait-3min + 3-gate) ──
+                # After an exit, wait for the NEXT FULL 3-min candle to close.
+                # If that candle independently passes all 3 entry gates
+                # (GREEN, close > EMA9_low, body >= 40), re-enter on the
+                # SAME side using candle/2 fill on the new candle.
+                # Else: drop, fresh setup only.
+                # Replaces previous "GREEN break of original entry close"
+                # rule which fired too eagerly on chop spikes.
+                _re_armed = bool(state.get("_reentry_armed", False))
+                if _re_armed and not state.get("in_trade"):
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
-                    _re_trigger = float(state.get("_reentry_trigger_close", 0) or 0)
-                    _re_last_ts = state.get("_reentry_last_check_ts", "")
-                    if _re_dir and _re_token and _re_trigger > 0:
+                    _re_exit_ts = state.get("_reentry_exit_ts", "")
+                    if _re_dir and _re_token and _re_exit_ts:
                         try:
                             _re_3m = D.get_option_3min(_re_token, lookback=10)
-                            if _re_3m is not None and len(_re_3m) >= 2:
+                            if _re_3m is not None and len(_re_3m) >= 4:
                                 _re_last = _re_3m.iloc[-2]
-                                _re_close_t = _re_last.name.strftime("%Y-%m-%d %H:%M")
-                                if _re_close_t != _re_last_ts:
-                                    _re_close = float(_re_last["close"])
-                                    _re_open = float(_re_last["open"])
-                                    _is_green = _re_close > _re_open
-                                    _broke = _re_close > _re_trigger
-                                    with _state_lock:
-                                        state["_reentry_last_check_ts"] = _re_close_t
-                                        state["_reentry_watch_remaining"] = _reentry_remaining - 1
-                                    if _is_green and _broke:
-                                        # Trigger satisfied — force re-entry same side.
-                                        # Build a synthetic entry result so _execute_entry
-                                        # can ride the same path as a normal scan entry.
-                                        _re_sym = ("NIFTY" if _re_strike else "")  # placeholder; real symbol resolved below
-                                        _re_oi = {"token": _re_token, "symbol": ""}
-                                        # Need real symbol — resolve via locked tokens or fresh fetch
-                                        try:
-                                            _re_match = None
-                                            for _k, _v in (_locked_tokens or {}).items():
-                                                if int(_v.get("token", 0) or 0) == _re_token:
-                                                    _re_match = _v; break
-                                            if _re_match:
-                                                _re_oi = {"token": _re_token, "symbol": _re_match.get("symbol", "")}
-                                            elif kite and expiry and _re_strike:
-                                                _re_tk = D.get_option_tokens(kite, _re_strike, expiry) or {}
-                                                _re_side_info = _re_tk.get(_re_dir) or {}
-                                                if _re_side_info.get("symbol"):
-                                                    _re_oi = {"token": _re_token,
-                                                              "symbol": _re_side_info.get("symbol", "")}
-                                        except Exception:
-                                            pass
-                                        # Run the standard 3-gate engine on the candle
-                                        # to populate ema9_high/low/body fields for the
-                                        # alert. If gates fail (rare since GREEN+close
-                                        # check passed), we still force-enter — the
-                                        # re-entry rule overrides body_pct.
-                                        _re_result = check_entry(
-                                            token=_re_token, option_type=_re_dir,
-                                            spot_ltp=spot_ltp, dte=dte,
-                                            expiry_date=expiry, kite=kite,
-                                            silent=True, state=state)
-                                        _re_result["fired"] = True
+                                # Candle close time = bucket start + 3 min.
+                                # Only fire if THIS candle closed strictly AFTER
+                                # the exit (i.e. it's a fresh candle post-exit).
+                                _re_close_dt = _re_last.name + timedelta(minutes=3)
+                                _re_close_ts = _re_close_dt.strftime("%Y-%m-%d %H:%M:%S")
+                                if _re_close_ts > _re_exit_ts:
+                                    # Found the confirmation candle — run 3-gate
+                                    _re_result = check_entry(
+                                        token=_re_token, option_type=_re_dir,
+                                        spot_ltp=spot_ltp, dte=dte,
+                                        expiry_date=expiry, kite=kite,
+                                        silent=False, state=state)
+                                    _passed = _re_result.get("fired", False)
+                                    if not _passed:
+                                        _why = _re_result.get("reject_reason", "?")
+                                        _tg_send(
+                                            "🚫 <b>RE-ENTRY DROPPED</b>\n"
+                                            + _re_dir + " " + str(_re_strike)
+                                            + " — confirmation candle FAILED 3-gate\n"
+                                            "Reason: " + str(_why) + "\n"
+                                            "Waiting for fresh setup."
+                                        )
+                                        logger.info("[REENTRY] confirmation candle "
+                                            + _re_close_ts + " failed: " + str(_why))
+                                        # Disarm watcher
+                                        with _state_lock:
+                                            state["_reentry_armed"] = False
+                                            state["_reentry_exit_ts"] = ""
+                                            state["_reentry_direction"] = ""
+                                            state["_reentry_token"] = 0
+                                            state["_reentry_strike"] = 0
+                                    else:
+                                        # 3-gate passed → arm candle/2 entry
                                         _re_result["entry_mode"] = "REENTRY"
                                         _re_result["_strike"] = _re_strike
                                         _re_result["_strike_label"] = "REENTRY"
+                                        # Resolve symbol
+                                        _re_oi = {"token": _re_token, "symbol": ""}
+                                        try:
+                                            for _k, _v in (_locked_tokens or {}).items():
+                                                if int(_v.get("token", 0) or 0) == _re_token:
+                                                    _re_oi = {"token": _re_token,
+                                                              "symbol": _v.get("symbol", "")}; break
+                                            if not _re_oi.get("symbol") and kite and expiry and _re_strike:
+                                                _re_tk = D.get_option_tokens(kite, _re_strike, expiry) or {}
+                                                _re_si = _re_tk.get(_re_dir) or {}
+                                                if _re_si.get("symbol"):
+                                                    _re_oi["symbol"] = _re_si.get("symbol", "")
+                                        except Exception:
+                                            pass
                                         _re_result["_symbol"] = _re_oi.get("symbol", "")
-                                        # Cross-leg divergence on the OTHER side — same as
-                                        # the regular scan path. Without this, re-entries
-                                        # show "X-Leg — no data" in the alert and the trade
-                                        # log row gets xleg_signal=NA, polluting /xleg stats.
+                                        # Cross-leg snapshot (logged regardless of gate)
                                         try:
                                             from VRL_ENGINE import evaluate_cross_leg as _xleg_re
                                             _other_dt_re = "PE" if _re_dir == "CE" else "CE"
@@ -2682,144 +2686,119 @@ def _strategy_loop(kite):
                                                 _other_3m_re = D.get_option_3min(_other_tok_re, lookback=10)
                                                 _xl_re_info = _xleg_re(_re_dir, _other_3m_re)
                                                 _re_result.update(_xl_re_info)
-                                                logger.info(
-                                                    "[XLEG][REENTRY] " + _re_dir + " — other "
-                                                    + _other_dt_re + " margin "
-                                                    + "{:+.2f}".format(_xl_re_info.get("xleg_other_margin", 0))
-                                                    + " → " + str(_xl_re_info.get("xleg_signal"))
-                                                )
                                         except Exception as _xre:
                                             logger.debug("[XLEG][REENTRY] " + str(_xre))
-
-                                        # ── X-LEG hard gate on re-entry too ──
+                                        # X-LEG hard gate (respects config flag — currently OFF)
                                         _xl_gate_re = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
                                         _xl_sig_re = _re_result.get("xleg_signal", "NA")
                                         if _xl_gate_re and _xl_sig_re == "FAIL":
-                                            _xl_other_dt_re = "PE" if _re_dir == "CE" else "CE"
-                                            _xl_margin_re = float(_re_result.get("xleg_other_margin", 0) or 0)
                                             _tg_send(
                                                 "🚫 <b>RE-ENTRY BLOCKED — X-LEG FAIL</b>\n"
-                                                + _re_dir + " " + str(_re_strike)
-                                                + "  | " + _xl_other_dt_re + " holding "
-                                                + ("+" if _xl_margin_re >= 0 else "")
-                                                + "{:.1f}".format(_xl_margin_re)
-                                                + " above own EMA9L"
+                                                + _re_dir + " " + str(_re_strike) + " confirmation candle was good but x-leg said no."
                                             )
-                                            logger.info("[XLEG-GATE][REENTRY] " + _re_dir
-                                                + " blocked (FAIL) — waiting next candle/fresh setup")
-                                            continue
-
-                                        # Pre-entry checks — bypass cooldown for re-entry
-                                        # by clearing last_exit_direction temporarily.
-                                        _saved_lex = state.get("last_exit_direction", "")
-                                        with _state_lock:
-                                            state["last_exit_direction"] = ""
-                                        _re_ltp = D.get_ltp(_re_token)
-                                        if _re_ltp <= 0:
-                                            _re_ltp = _re_close
-                                        ok, why = pre_entry_checks(
-                                            kite, _re_token, state,
-                                            _re_ltp, profile, session,
-                                            direction=_re_dir)
-                                        if ok and _re_oi.get("symbol"):
-                                            logger.info("[REENTRY] " + _re_dir
-                                                + " " + str(_re_strike) + " GREEN close "
-                                                + str(round(_re_close, 1)) + " > trigger "
-                                                + str(round(_re_trigger, 1)) + " — re-entering")
-                                            _tg_send(
-                                                "🔄 <b>RE-ENTRY " + _re_dir + " "
-                                                + str(_re_strike) + "</b>\n"
-                                                "GREEN " + "{:.1f}".format(_re_close)
-                                                + " > prev entry " + "{:.1f}".format(_re_trigger)
-                                                + "\n(window had " + str(_reentry_remaining)
-                                                + " candle(s) left)"
-                                            )
-                                            # Anti-spike on re-entry too — same buffer + wait
-                                            _spk_buf_re = float(CFG.entry_ema9_band("spike_buffer_pts", 2))
-                                            _spk_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
-                                            _re_skip = False
-                                            if _spk_buf_re > 0 and _spk_wait_re > 0 and _re_close > 0:
-                                                _spk_target_re = round(_re_close - _spk_buf_re, 2)
-                                                _spk_cur_re = D.get_ltp(_re_token) or 0
-                                                if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
-                                                    _spk_fill_re = _spk_cur_re
-                                                    _spk_used_re = 0
-                                                else:
-                                                    _tg_send(
-                                                        "⏳ <b>ANTI-SPIKE (RE-ENTRY)</b>\n"
-                                                        + _re_dir + " " + str(_re_strike) + "\n"
-                                                        "Target Rs" + "{:.1f}".format(_spk_target_re)
-                                                        + "  | LTP Rs" + "{:.1f}".format(_spk_cur_re) + "\n"
-                                                        "Waiting " + str(_spk_wait_re) + "s for pullback"
-                                                    )
-                                                    _spk_fill_re, _spk_used_re = _wait_for_pullback(
-                                                        _re_token, _spk_target_re, _spk_wait_re)
-                                                if _spk_fill_re is None:
-                                                    _tg_send(
-                                                        "⏭ <b>RE-ENTRY SKIPPED</b>\n"
-                                                        + _re_dir + " " + str(_re_strike)
-                                                        + "  target Rs" + "{:.1f}".format(_spk_target_re) + "\n"
-                                                        "No pullback in " + str(_spk_wait_re) + "s."
-                                                    )
-                                                    logger.info("[ANTI-SPIKE][REENTRY] skip — no pullback")
-                                                    _re_skip = True
-                                                else:
-                                                    _re_result["close"] = _spk_fill_re
-                                                    _re_result["entry_price"] = _spk_fill_re
-                                                    _re_result["spike_close"] = _re_close
-                                                    _re_result["spike_target"] = _spk_target_re
-                                                    _re_result["spike_fill"] = _spk_fill_re
-                                                    _re_result["spike_wait_used"] = _spk_used_re
-                                                    _saved_re = round(_re_close - _spk_fill_re, 2)
-                                                    _tg_send(
-                                                        "✅ <b>RE-ENTRY FILLED</b>\n"
-                                                        + _re_dir + " " + str(_re_strike)
-                                                        + " Rs" + "{:.2f}".format(_spk_fill_re) + "\n"
-                                                        "Saved " + ("+" if _saved_re >= 0 else "")
-                                                        + "{:.1f}".format(_saved_re) + " pts vs spike close"
-                                                    )
-                                                    logger.info(
-                                                        "[ANTI-SPIKE][REENTRY] filled Rs"
-                                                        + str(_spk_fill_re) + " after "
-                                                        + str(_spk_used_re) + "s")
-                                            if _re_skip:
-                                                # Restore cooldown direction so normal scan respects it.
-                                                with _state_lock:
-                                                    state["last_exit_direction"] = _saved_lex
-                                                continue
-                                            # Clear watcher BEFORE execute so a fresh
-                                            # exit doesn't reset it mid-flow.
                                             with _state_lock:
-                                                state["_reentry_watch_remaining"] = 0
-                                                state["_reentry_trigger_close"] = 0.0
+                                                state["_reentry_armed"] = False
+                                                state["_reentry_exit_ts"] = ""
                                                 state["_reentry_direction"] = ""
                                                 state["_reentry_token"] = 0
                                                 state["_reentry_strike"] = 0
-                                            _execute_entry(kite, _re_oi, _re_dir,
-                                                           _re_result, profile,
-                                                           expiry, dte, session)
-                                            if state.get("in_trade"):
-                                                D.mark_trade_taken(_re_dir)
-                                                time.sleep(0.5)
-                                                continue
-                                        else:
-                                            # Restore cooldown direction so normal
-                                            # scan respects it.
+                                            continue
+                                        # Pre-entry checks (bypass cooldown — re-entry is the green flag)
+                                        _saved_lex = state.get("last_exit_direction", "")
+                                        with _state_lock:
+                                            state["last_exit_direction"] = ""
+                                        _re_ltp_now = D.get_ltp(_re_token)
+                                        if _re_ltp_now <= 0:
+                                            _re_ltp_now = float(_re_last["close"])
+                                        ok, why = pre_entry_checks(
+                                            kite, _re_token, state,
+                                            _re_ltp_now, profile, session,
+                                            direction=_re_dir)
+                                        if not (ok and _re_oi.get("symbol")):
                                             with _state_lock:
                                                 state["last_exit_direction"] = _saved_lex
-                                            logger.info("[REENTRY] blocked: " + str(why))
-                                    # Watcher counter decremented above; if expired clear it.
-                                    if state.get("_reentry_watch_remaining", 0) <= 0:
+                                                state["_reentry_armed"] = False
+                                                state["_reentry_exit_ts"] = ""
+                                            logger.info("[REENTRY] pre-entry blocked: " + str(why))
+                                            continue
+                                        _tg_send(
+                                            "🔄 <b>RE-ENTRY CONFIRMED " + _re_dir + " "
+                                            + str(_re_strike) + "</b>\n"
+                                            "Confirmation candle " + _re_close_ts[-8:-3]
+                                            + ": GREEN body "
+                                            + str(int(_re_result.get("body_pct", 0))) + "%\n"
+                                            "Proceeding to candle/2 entry"
+                                        )
+                                        # Candle/2 fill on the CONFIRMATION candle
+                                        _re_high = float(_re_result.get("high", 0) or 0)
+                                        _re_low  = float(_re_result.get("low",  0) or 0)
+                                        _re_close = float(_re_result.get("close", 0) or 0)
+                                        _spike_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
+                                        _re_skip = False
+                                        if _re_high > 0 and _re_low > 0 and _spike_wait_re > 0:
+                                            _spk_target_re = round((_re_high + _re_low) / 2.0, 2)
+                                            _spk_cur_re = D.get_ltp(_re_token) or 0
+                                            if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
+                                                _spk_fill_re = _spk_cur_re
+                                                _spk_used_re = 0
+                                            else:
+                                                _tg_send(
+                                                    "⏳ <b>CANDLE/2 (RE-ENTRY)</b>\n"
+                                                    + _re_dir + " " + str(_re_strike) + "\n"
+                                                    "Target Rs" + "{:.1f}".format(_spk_target_re)
+                                                    + " · LTP Rs" + "{:.1f}".format(_spk_cur_re) + "\n"
+                                                    "Waiting " + str(_spike_wait_re) + "s for pullback"
+                                                )
+                                                _spk_fill_re, _spk_used_re = _wait_for_pullback(
+                                                    _re_token, _spk_target_re, _spike_wait_re)
+                                            if _spk_fill_re is None:
+                                                _tg_send(
+                                                    "⏭ <b>RE-ENTRY SKIPPED</b>\n"
+                                                    + _re_dir + " " + str(_re_strike)
+                                                    + " · target Rs" + "{:.1f}".format(_spk_target_re)
+                                                    + " · no pullback in " + str(_spike_wait_re) + "s"
+                                                )
+                                                _re_skip = True
+                                            else:
+                                                _re_result["close"] = _spk_fill_re
+                                                _re_result["entry_price"] = _spk_fill_re
+                                                _re_result["spike_close"] = _re_close
+                                                _re_result["spike_target"] = _spk_target_re
+                                                _re_result["spike_fill"] = _spk_fill_re
+                                                _re_result["spike_wait_used"] = _spk_used_re
+                                                _saved_re = round(_re_close - _spk_fill_re, 2)
+                                                _tg_send(
+                                                    "✅ <b>RE-ENTRY FILLED</b>\n"
+                                                    + _re_dir + " " + str(_re_strike)
+                                                    + " Rs" + "{:.2f}".format(_spk_fill_re)
+                                                    + " (target Rs" + "{:.1f}".format(_spk_target_re) + ")\n"
+                                                    "Saved " + ("+" if _saved_re >= 0 else "")
+                                                    + "{:.1f}".format(_saved_re) + " pts vs candle close"
+                                                )
+                                        if _re_skip:
+                                            with _state_lock:
+                                                state["last_exit_direction"] = _saved_lex
+                                                state["_reentry_armed"] = False
+                                                state["_reentry_exit_ts"] = ""
+                                            continue
+                                        # Disarm watcher BEFORE execute so a fresh exit doesn\'t reset
                                         with _state_lock:
-                                            state["_reentry_watch_remaining"] = 0
-                                            state["_reentry_trigger_close"] = 0.0
+                                            state["_reentry_armed"] = False
+                                            state["_reentry_exit_ts"] = ""
                                             state["_reentry_direction"] = ""
                                             state["_reentry_token"] = 0
                                             state["_reentry_strike"] = 0
-                                            state["_reentry_last_check_ts"] = ""
-                                        logger.info("[REENTRY] window closed — fresh setup only")
+                                        _execute_entry(kite, _re_oi, _re_dir,
+                                                       _re_result, profile,
+                                                       expiry, dte, session)
+                                        if state.get("in_trade"):
+                                            D.mark_trade_taken(_re_dir)
+                                            time.sleep(0.5)
+                                            continue
                         except Exception as _ree:
-                            logger.debug("[REENTRY] check error: " + str(_ree))
+                            import traceback as _tb_re
+                            logger.error("[REENTRY] check error: " + str(_ree)
+                                         + "\n" + _tb_re.format_exc())
 
                 # v16.3.2: dual-strike evaluation (ATM + OTM per side)
                 # CE candidates: ATM CE + ATM+50 CE (OTM)
@@ -2987,37 +2966,40 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
-                    # ── Anti-spike limit-pullback ──────────────────────
-                    # User mandate: don't chase the spike. After 3-gate
-                    # signal fires at candle close, set target =
-                    # close - spike_buffer_pts (default 2). Wait up to
-                    # spike_wait_secs (default 60s) for LTP to touch the
-                    # target. If hit → fill at current LTP (better entry).
-                    # If timeout → skip, wait for fresh setup.
-                    _spike_buf = float(CFG.entry_ema9_band("spike_buffer_pts", 2))
+                    # ── Candle/2 limit-pullback entry (v16.7-final) ──
+                    # Target = midpoint of the signal candle's range (high+low)/2.
+                    # This adapts to candle size: wide spike candle = bigger
+                    # required pullback. Wait spike_wait_secs (default 60s) for
+                    # LTP to touch the target. If hit → fill at LTP (or target,
+                    # whichever lower). If timeout → skip, wait for fresh setup.
+                    # Replaces previous fixed-2pt "anti-spike" logic.
                     _spike_wait = int(CFG.entry_ema9_band("spike_wait_secs", 60))
                     _entry_close_x = float(best_result.get("close", 0) or 0)
-                    if _spike_buf > 0 and _spike_wait > 0 and _entry_close_x > 0:
-                        _spk_target = round(_entry_close_x - _spike_buf, 2)
+                    _entry_high_x  = float(best_result.get("high", 0) or 0)
+                    _entry_low_x   = float(best_result.get("low", 0) or 0)
+                    if _spike_wait > 0 and _entry_high_x > 0 and _entry_low_x > 0:
+                        _spk_target = round((_entry_high_x + _entry_low_x) / 2.0, 2)
                         _spk_tok = best_opt_info.get("token", 0)
                         _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
                         if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
-                            # Already at or below target — fill immediately
+                            # Already at or below midpoint — fill immediately
                             _spk_fill = _spk_cur_ltp
                             _spk_used = 0
                             logger.info(
-                                "[ANTI-SPIKE] " + best_type + " immediate fill Rs"
+                                "[CANDLE/2] " + best_type + " immediate fill Rs"
                                 + str(_spk_fill) + " (target Rs" + str(_spk_target)
                                 + ", saved " + "{:.2f}".format(_entry_close_x - _spk_fill)
-                                + " pts)")
+                                + " pts vs close)")
                         else:
                             _tg_send(
-                                "⏳ <b>ANTI-SPIKE WAIT</b>\n"
+                                "⏳ <b>CANDLE/2 WAIT</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                 + best_type + " " + str(best_result.get("_strike", 0)) + "\n"
-                                "Close   Rs" + "{:.1f}".format(_entry_close_x) + "\n"
+                                "Candle  H " + "{:.1f}".format(_entry_high_x)
+                                + " · L " + "{:.1f}".format(_entry_low_x)
+                                + " · C " + "{:.1f}".format(_entry_close_x) + "\n"
                                 "Target  Rs" + "{:.1f}".format(_spk_target)
-                                + "  (close − " + "{:.1f}".format(_spike_buf) + ")\n"
+                                + "  ((H+L)/2)\n"
                                 "LTP     Rs" + "{:.1f}".format(_spk_cur_ltp) + "\n"
                                 "Wait    " + str(_spike_wait) + "s for pullback"
                             )
@@ -3025,26 +3007,26 @@ def _strategy_loop(kite):
                                 _spk_tok, _spk_target, _spike_wait)
                             if _spk_fill is None:
                                 _tg_send(
-                                    "⏭ <b>SKIPPED — no pullback</b>\n"
+                                    "⏭ <b>SKIPPED — no pullback to midpoint</b>\n"
                                     + best_type + " " + str(best_result.get("_strike", 0))
                                     + "  target Rs" + "{:.1f}".format(_spk_target) + "\n"
                                     "No retest in " + str(_spike_wait)
                                     + "s. Waiting for fresh setup."
                                 )
                                 logger.info(
-                                    "[ANTI-SPIKE] " + best_type + " SKIP — no pullback in "
+                                    "[CANDLE/2] " + best_type + " SKIP — no pullback in "
                                     + str(_spike_wait) + "s")
                                 best_result = None
                                 best_opt_info = None
                             else:
                                 _saved_pts = round(_entry_close_x - _spk_fill, 2)
                                 _tg_send(
-                                    "✅ <b>FILLED</b>\n"
+                                    "✅ <b>FILLED at midpoint</b>\n"
                                     + best_type + " " + str(best_result.get("_strike", 0))
                                     + " Rs" + "{:.2f}".format(_spk_fill)
                                     + "  (target Rs" + "{:.1f}".format(_spk_target) + ")\n"
                                     "Saved   " + ("+" if _saved_pts >= 0 else "")
-                                    + "{:.1f}".format(_saved_pts) + " pts vs spike close\n"
+                                    + "{:.1f}".format(_saved_pts) + " pts vs candle close\n"
                                     "Wait    " + "{:.1f}".format(_spk_used) + "s"
                                 )
                                 logger.info(
@@ -3387,7 +3369,7 @@ def _cmd_pulse(args):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
             "1. Emergency -10 | 2. EOD 15:20 | 3. Vishal Trail\n"
-            "Re-entry: 2 candles to GREEN-break previous entry close\n"
+            "Re-entry: wait 1 full 3-min candle, must pass 3-gate, then candle/2 fill\n"
         )
         _tg_send(msg)
     except Exception as e:

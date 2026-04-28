@@ -44,12 +44,15 @@ entry:
     band_width_min: 7
     # Per-candle slope lookback (1 bar) — display-only.
     ema9_slope_lookback: 1
-    # ── v16.7 Anti-spike limit-pullback entry ──
+    # ── v16.7-final Candle/2 limit-pullback entry ──
     # After 3-gate signal fires at candle close, target entry is set to
-    # close - spike_buffer_pts. Bot polls LTP for spike_wait_secs;
-    # fills at current LTP if it touches target (better entry, avoids
-    # buying the top of a spike). If timeout, skip — wait for fresh setup.
-    # Set buffer or wait to 0 to disable.
+    # the MIDPOINT of the signal candle's range — (high + low) / 2.
+    # This adapts the buffer to candle volatility: wide spike candle =
+    # bigger required pullback, narrow consolidation candle = smaller
+    # buffer. Bot polls LTP for spike_wait_secs; fills at min(target,
+    # ltp) if reached. If timeout → skip, wait for fresh setup.
+    # Replaces previous fixed-2pt anti-spike logic.
+    # spike_buffer_pts retained (legacy back-compat) but not used.
     spike_buffer_pts: 2
     spike_wait_secs: 60
     # ── v16.7+ Cross-leg divergence GATE ──
