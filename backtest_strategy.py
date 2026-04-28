@@ -150,37 +150,38 @@ def load_1m_day(d):
 # ─────────────────────────────────────────────────────────────
 # Per-candle gate evaluation
 # ─────────────────────────────────────────────────────────────
-def evaluate_gates(candle, prev_candle):
-    """Returns (fired, reject_reason, body_pct, slope)."""
+def evaluate_gates(candle, prev_candle, max_stretch=999, min_body=BODY_MIN):
+    """Returns (fired, reject_reason, body_pct, slope, stretch)."""
     o, h, l, c = candle["open"], candle["high"], candle["low"], candle["close"]
     el = candle["ema9_low"]
     if el <= 0 or h <= 0:
-        return False, "no_data", 0, 0
+        return False, "no_data", 0, 0, 0
 
-    # Time window
     try:
-        t = candle["ts"][-8:-3]  # "HH:MM"
+        t = candle["ts"][-8:-3]
         hh, mm = int(t[:2]), int(t[3:])
     except Exception:
-        return False, "ts_parse", 0, 0
+        return False, "ts_parse", 0, 0, 0
     mins = hh * 60 + mm
     w_min = WARMUP_HHMM[0] * 60 + WARMUP_HHMM[1]
     c_min = CUTOFF_HHMM[0] * 60 + CUTOFF_HHMM[1]
     if mins < w_min:
-        return False, f"before_{WARMUP_HHMM[0]:02d}:{WARMUP_HHMM[1]:02d}", 0, 0
+        return False, f"before_{WARMUP_HHMM[0]:02d}:{WARMUP_HHMM[1]:02d}", 0, 0, 0
     if mins >= c_min:
-        return False, f"after_{CUTOFF_HHMM[0]:02d}:{CUTOFF_HHMM[1]:02d}", 0, 0
+        return False, f"after_{CUTOFF_HHMM[0]:02d}:{CUTOFF_HHMM[1]:02d}", 0, 0, 0
 
-    # Body + green
     rng = h - l
     body_pct = round((abs(c - o) / rng * 100) if rng > 0 else 0, 1)
     is_green = c > o
     slope = round(el - (prev_candle["ema9_low"] if prev_candle else el), 2)
+    stretch = round(c - el, 2)
 
-    if not is_green:                    return False, "red_candle",  body_pct, slope
-    if c <= el:                          return False, "below_ema9l", body_pct, slope
-    if body_pct < BODY_MIN:              return False, f"weak_body_{int(body_pct)}", body_pct, slope
-    return True, "", body_pct, slope
+    if not is_green:                    return False, "red_candle",  body_pct, slope, stretch
+    if c <= el:                          return False, "below_ema9l", body_pct, slope, stretch
+    if body_pct < min_body:              return False, f"weak_body_{int(body_pct)}", body_pct, slope, stretch
+    # NEW v17 filter: stretch (close - ema9_low) must be <= max_stretch
+    if stretch > max_stretch:           return False, f"stretched_{stretch:.1f}", body_pct, slope, stretch
+    return True, "", body_pct, slope, stretch
 
 
 def evaluate_xleg(other_candle):
@@ -332,7 +333,8 @@ def _ts_to_min(ts):
 
 def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                spike_buf=None, early_lock_5=False,
-               entry_mode="close", reentry_mode="off"):
+               entry_mode="close", reentry_mode="off",
+               max_stretch=999, min_body=BODY_MIN):
     """Replay one trading day with MULTI-trade support + cooldown.
     entry_mode: "close" / "anti_spike" / "candle_half"
     reentry_mode:
@@ -399,7 +401,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                     continue
                 c = rows[idx]
                 prev_c = rows[idx - 1]
-                fired, why, body, slope = evaluate_gates(c, prev_c)
+                fired, why, body, slope, stretch = evaluate_gates(
+                    c, prev_c, max_stretch=max_stretch, min_body=min_body)
                 if not fired:
                     continue
                 # Cross-leg
@@ -476,7 +479,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
             if re_idx < len(best["rows_3m"]) - 1:
                 re_candle = best["rows_3m"][re_idx]
                 re_prev   = best["rows_3m"][re_idx - 1]
-                fired_re, _why, _body, _slope = evaluate_gates(re_candle, re_prev)
+                fired_re, _why, _body, _slope, _stretch = evaluate_gates(
+                    re_candle, re_prev, max_stretch=max_stretch, min_body=min_body)
                 if fired_re:
                     # Cross-leg snapshot at re-entry time
                     other_side = "PE" if best["side"] == "CE" else "CE"
@@ -693,6 +697,151 @@ def run_idea_sweep(found, atm_only):
     print("  Vfull    = anti-spike + x-leg + new re-entry rule")
 
 
+def run_stretch_sweep(found, atm_only):
+    """Stress test: stretch threshold × body% threshold matrix +
+    day-by-day breakdown + walk-forward validation.
+    Always uses V3-equivalent (anti-spike + early_lock_5 ON, no x-leg).
+    """
+    print("\n" + "=" * 100)
+    print("STRESS TEST — Stretch filter on 5-day historical replay")
+    print("=" * 100)
+
+    # 1) Threshold sweep (single-dimension stretch)
+    print(f"\n--- 1. STRETCH THRESHOLD SWEEP (body min=40, no x-leg) ---\n")
+    print(f"{'max_stretch':>12} {'Trd':>4} {'Skp':>4} {'WR%':>5} {'Total':>8} "
+          f"{'AvgW':>5} {'AvgL':>5} {'ESL':>4} {'TR':>4}")
+    print("-" * 80)
+    threshold_rows = []
+    for mx in [3, 5, 6, 7, 8, 10, 12, 15, 999]:
+        all_trades = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=True, xleg_gate=False,
+                             spike_buf=2, early_lock_5=True,
+                             entry_mode="anti_spike", reentry_mode="off",
+                             max_stretch=mx, min_body=40)
+            if day:
+                all_trades.extend(day)
+        real = [t for t in all_trades if not t.get("spike_skipped")]
+        skips = [t for t in all_trades if t.get("spike_skipped")]
+        wins = [t for t in real if t["pnl"] > 0]
+        total = sum(t["pnl"] for t in real)
+        avg_w = sum(t["pnl"] for t in wins) / max(len(wins), 1)
+        avg_l = sum(t["pnl"] for t in real if t["pnl"] <= 0) / max(len(real)-len(wins), 1)
+        wr = len(wins)/max(len(real),1)*100
+        esl = sum(1 for t in real if t.get("reason") == "EMERGENCY_SL")
+        tr = sum(1 for t in real if t.get("reason") == "VISHAL_TRAIL")
+        label = f"≤ {mx}" if mx < 999 else "no filter"
+        print(f"{label:>12} {len(real):>4} {len(skips):>4} {wr:>5.1f} "
+              f"{total:>+8.1f} {avg_w:>+5.1f} {avg_l:>+5.1f} {esl:>4} {tr:>4}")
+        threshold_rows.append({"mx": mx, "total": total, "trades": len(real), "wr": wr})
+
+    # 2) 2D matrix: stretch × body
+    print(f"\n--- 2. STRETCH × BODY 2D MATRIX (Total pts) ---\n")
+    body_thresholds = [40, 45, 50, 55, 60]
+    stretch_thresholds = [5, 6, 8, 10, 999]
+    print(f"{'stretch':>10} | " + " | ".join(f"body≥{b:>2}" for b in body_thresholds))
+    print("-" * 70)
+    for mx in stretch_thresholds:
+        row = []
+        for body in body_thresholds:
+            all_trades = []
+            for d in found:
+                day = replay_day(d, atm_only=atm_only,
+                                 anti_spike=True, xleg_gate=False,
+                                 spike_buf=2, early_lock_5=True,
+                                 entry_mode="anti_spike", reentry_mode="off",
+                                 max_stretch=mx, min_body=body)
+                if day:
+                    all_trades.extend(day)
+            real = [t for t in all_trades if not t.get("spike_skipped")]
+            total = sum(t["pnl"] for t in real)
+            row.append(f"{total:>+7.1f}({len(real):>2})")
+        label = f"≤ {mx}" if mx < 999 else "no max"
+        print(f"{label:>10} | " + " | ".join(row))
+    print(f"\n  format: total_pts(num_trades). Higher = better.\n")
+
+    # 3) Day-by-day breakdown for the chosen winner
+    best = max(threshold_rows, key=lambda r: r["total"])
+    best_mx = best["mx"]
+    print(f"\n--- 3. DAY-BY-DAY BREAKDOWN (stretch ≤ {best_mx} vs no filter) ---\n")
+    print(f"{'Date':<12} {'Filter Trd':>11} {'Filter PNL':>11} {'Raw Trd':>9} {'Raw PNL':>9} {'Δ':>8}")
+    print("-" * 70)
+    cumul_filter = 0
+    cumul_raw = 0
+    for d in found:
+        f_day = replay_day(d, atm_only=atm_only, anti_spike=True, xleg_gate=False,
+                           spike_buf=2, early_lock_5=True,
+                           entry_mode="anti_spike", reentry_mode="off",
+                           max_stretch=best_mx, min_body=40)
+        r_day = replay_day(d, atm_only=atm_only, anti_spike=True, xleg_gate=False,
+                           spike_buf=2, early_lock_5=True,
+                           entry_mode="anti_spike", reentry_mode="off",
+                           max_stretch=999, min_body=40)
+        f_real = [t for t in (f_day or []) if not t.get("spike_skipped")]
+        r_real = [t for t in (r_day or []) if not t.get("spike_skipped")]
+        f_total = sum(t["pnl"] for t in f_real)
+        r_total = sum(t["pnl"] for t in r_real)
+        delta = f_total - r_total
+        cumul_filter += f_total
+        cumul_raw += r_total
+        print(f"{d.isoformat():<12} {len(f_real):>11} {f_total:>+11.1f} "
+              f"{len(r_real):>9} {r_total:>+9.1f} {delta:>+8.1f}")
+    print("-" * 70)
+    print(f"{'CUMUL':<12} {'':>11} {cumul_filter:>+11.1f} {'':>9} {cumul_raw:>+9.1f} "
+          f"{(cumul_filter - cumul_raw):>+8.1f}")
+
+    # 4) Walk-forward (split days into halves)
+    print(f"\n--- 4. WALK-FORWARD (split sample to avoid lookahead) ---\n")
+    n = len(found)
+    if n >= 4:
+        half = n // 2
+        train_days = found[:half]
+        test_days = found[half:]
+        print(f"Train days ({half}): {[d.isoformat() for d in train_days]}")
+        print(f"Test days ({n-half}): {[d.isoformat() for d in test_days]}")
+        # Pick best stretch on train
+        best_train = None; best_train_total = -9999
+        for mx in [3, 5, 6, 7, 8, 10, 12, 999]:
+            tot = 0
+            for d in train_days:
+                day = replay_day(d, atm_only=atm_only, anti_spike=True, xleg_gate=False,
+                                 spike_buf=2, early_lock_5=True,
+                                 entry_mode="anti_spike", reentry_mode="off",
+                                 max_stretch=mx, min_body=40)
+                tot += sum(t["pnl"] for t in (day or []) if not t.get("spike_skipped"))
+            if tot > best_train_total:
+                best_train_total = tot; best_train = mx
+        # Apply best to test
+        test_filtered = 0; test_raw = 0
+        for d in test_days:
+            f_day = replay_day(d, atm_only=atm_only, anti_spike=True, xleg_gate=False,
+                               spike_buf=2, early_lock_5=True,
+                               entry_mode="anti_spike", reentry_mode="off",
+                               max_stretch=best_train, min_body=40)
+            r_day = replay_day(d, atm_only=atm_only, anti_spike=True, xleg_gate=False,
+                               spike_buf=2, early_lock_5=True,
+                               entry_mode="anti_spike", reentry_mode="off",
+                               max_stretch=999, min_body=40)
+            test_filtered += sum(t["pnl"] for t in (f_day or []) if not t.get("spike_skipped"))
+            test_raw += sum(t["pnl"] for t in (r_day or []) if not t.get("spike_skipped"))
+        print(f"\nBest stretch on TRAIN: ≤ {best_train} (train P&L: {best_train_total:+.1f})")
+        print(f"Applied to TEST:")
+        print(f"  Filtered P&L: {test_filtered:+.1f}")
+        print(f"  Raw     P&L: {test_raw:+.1f}")
+        print(f"  Delta:        {(test_filtered - test_raw):+.1f}  "
+              f"({'POSITIVE — filter generalizes' if test_filtered > test_raw else 'NEGATIVE — overfit, do not ship'})")
+    else:
+        print("  (Need >= 4 days for walk-forward — skipping)")
+
+    # 5) Decision summary
+    print(f"\n--- 5. DECISION ---\n")
+    print(f"  Best threshold (full sample):  ≤ {best_mx}  → +{best['total']:.1f} pts on {best['trades']} trades")
+    print(f"  Walk-forward result:           {'✓ generalizes' if test_filtered > test_raw else '✗ overfit risk'}")
+    print(f"  Trade count drop:              {best['trades']} of ~75 unfiltered ({best['trades']/75*100:.0f}%)")
+    print()
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
@@ -727,6 +876,9 @@ def main():
         return
     if idea_mode:
         run_idea_sweep(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "stretch":
+        run_stretch_sweep(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
