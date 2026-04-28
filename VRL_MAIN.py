@@ -103,6 +103,8 @@ DEFAULT_STATE = {
     # v16.7-final re-entry watcher (wait next full 3-min candle)
     "_reentry_armed"     : False,
     "_reentry_exit_ts"   : "",
+    # v16.7-final candle/2 cooldown (3 min after every attempt)
+    "_next_candle2_after": 0.0,
     "_reentry_direction" : "",
     "_reentry_token"     : 0,
     "_reentry_strike"    : 0,
@@ -2940,6 +2942,20 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
+                    # ── 3-min cooldown after any candle/2 attempt ──
+                    # Prevents re-evaluating the SAME 3-min candle on
+                    # subsequent 1-min scan boundaries. After every
+                    # candle/2 attempt (skip OR fill), set cooldown to
+                    # now+3min. Next attempt allowed only after that.
+                    _cd_until = float(state.get("_next_candle2_after", 0) or 0)
+                    if _cd_until > time.time():
+                        _wait_left = round(_cd_until - time.time(), 0)
+                        logger.info("[CANDLE/2] cooldown active — silent skip ("
+                                    + str(int(_wait_left)) + "s left)")
+                        best_result = None
+                        best_opt_info = None
+
+                if best_result and best_opt_info:
                     # ── Candle/2 limit-pullback entry (v16.7-final) ──
                     # Target = midpoint of the signal candle's range (high+low)/2.
                     # This adapts to candle size: wide spike candle = bigger
@@ -2966,6 +2982,11 @@ def _strategy_loop(kite):
                                 + "{:.2f}".format(_midpoint) + " was below band)")
                         else:
                             _spk_target = round(_midpoint, 2)
+                        # Set 3-min cooldown NOW — covers all 3 outcomes
+                        # below (immediate fill / wait+fill / wait+skip).
+                        # Prevents re-evaluating the same 3-min candle on
+                        # subsequent 1-min scan boundaries.
+                        state["_next_candle2_after"] = time.time() + 180
                         _spk_tok = best_opt_info.get("token", 0)
                         _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
                         if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
