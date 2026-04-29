@@ -231,6 +231,12 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
         # Idea 1: target = midpoint of signal candle's range
         target = round((entry_candle["high"] + entry_candle["low"]) / 2.0, 2)
         wait_for_pullback = True
+    elif entry_mode == "open_high_mid":
+        # VRL5: target = midpoint of OPEN and HIGH (ignore lower wick).
+        # On wide green candles, sits between open and close — buy on
+        # pullback into the upper half of the candle's bullish range.
+        target = round((entry_candle["open"] + entry_candle["high"]) / 2.0, 2)
+        wait_for_pullback = True
     elif entry_mode == "tier_60":
         # Body >= 60 → buy at close immediately (catch runners).
         # Body 40-59 → candle/2 midpoint (still demand pullback on
@@ -289,7 +295,23 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
             peak = candle_peak_pnl
 
         # Compute current SL based on peak (early_lock_5 toggle)
-        _lk = ladder_kwargs or {}
+        _lk_full = ladder_kwargs or {}
+        # VRL5: time-segmented ladder. If morning_kw/afternoon_kw are
+        # both present, pick which kwargs to use based on current candle
+        # time. Split defaults to 11:00 IST.
+        _morning_kw = _lk_full.get("morning_kw")
+        _afternoon_kw = _lk_full.get("afternoon_kw")
+        _split = _lk_full.get("split_hhmm", (11, 0))
+        if _morning_kw is not None and _afternoon_kw is not None:
+            try:
+                t = c["ts"][-8:-3]
+                hh, mm = int(t[:2]), int(t[3:])
+                _is_morning = hh * 60 + mm < _split[0] * 60 + _split[1]
+            except Exception:
+                _is_morning = False
+            _lk = _morning_kw if _is_morning else _afternoon_kw
+        else:
+            _lk = _lk_full
         # ── Custom trail mode: structure-based (EMA9_low close break)
         # When trail_mode == "ema_band" and peak >= ema_arm_peak, we
         # skip the peak-driven ladder entirely. SL becomes the prior
@@ -310,12 +332,14 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
             # emergency_sl is consumed in this function, not by compute_trail_sl
             _lk_clean = {k: v for k, v in _lk.items()
                          if k not in ("emergency_sl", "trail_mode",
-                                      "ema_arm_peak")}
+                                      "ema_arm_peak", "morning_kw",
+                                      "afternoon_kw", "split_hhmm")}
             sl, tier = compute_trail_sl(entry_price, peak,
                                         early_lock_5=early_lock_5, **_lk_clean)
 
-        # 1. Emergency SL — if candle's low touched/crossed entry-10
-        _emer = (ladder_kwargs or {}).get("emergency_sl", EMERGENCY_SL_PTS)
+        # 1. Emergency SL — uses time-segmented _lk so morning/afternoon
+        # can have different floors. Falls back to global default.
+        _emer = _lk.get("emergency_sl", EMERGENCY_SL_PTS)
         if candle_min_pnl <= _emer:
             return _result(entry_price, entry_price + _emer, peak,
                            "EMERGENCY_SL", j - entry_idx, raw_close,
@@ -1016,6 +1040,106 @@ def run_ladder_sweep(found, atm_only):
     print(f"  Improvement: {(best['total'] - base['total']):+.1f} pts over 5 days")
     print(f"  Per trade:   {(best['total']/max(best['trades'],1)):+.2f} avg")
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
+
+
+def run_vrl5_test(found, atm_only):
+    """Vishal v5 spec — TIME-SEGMENTED ladder + new entry math:
+      ENTRY     : (open + high) / 2 midpoint, body >= 50
+      MORNING   : 9:35-11:00 → emergency -18, current PROD ladder
+      AFTERNOON : 11:00-15:10 → emergency -10
+                  ladder: pk5→-5, pk8→+3, pk12→+5, pk15→+10,
+                          pk20→+20 (floor), pk25+→peak-5 (chandelier)
+    Logic: morning is volatile (give room), afternoon is calmer
+    (tighter locks capture available pts).
+    """
+    print("\nVRL5 BACKTEST — time-segmented ladder + (O+H)/2 entry")
+    print("(morning -18 / afternoon -10, body 50)")
+    print("-" * 65)
+
+    # Morning ladder = current PROD with emergency -18
+    morning_kw = {
+        "emergency_sl": -18,
+        "m5_offset": -5,
+        "lock3_peak": 8,  "lock3_offset":  3,
+        "lock5_peak": 12, "lock5_offset":  5,
+        "lock8_peak": 15, "lock8_offset":  8,
+        "lock15_peak": 20, "lock15_offset": 15,
+        "dyn_peak":   21, "dyn_giveback":  5,
+    }
+    # Afternoon ladder per Vishal's spec (Option B floor at +20)
+    afternoon_kw = {
+        "emergency_sl": -10,
+        "m5_offset": -5,
+        "lock3_peak": 8,  "lock3_offset":  3,
+        "lock5_peak": 12, "lock5_offset":  5,
+        "lock8_peak": 15, "lock8_offset":  10,   # tighter at peak 15
+        "lock15_peak": 20, "lock15_offset": 20,  # floor at +20
+        "dyn_peak":   25, "dyn_giveback":  5,    # chandelier only above pk25
+    }
+    timesplit_kw = {
+        "morning_kw":   morning_kw,
+        "afternoon_kw": afternoon_kw,
+        "split_hhmm":   (11, 0),
+    }
+    prod_kw = {"emergency_sl": -18}
+
+    # (label, ladder_kw, entry_mode, body_min)
+    variants = [
+        ("V0 PROD live                 ", prod_kw,      "candle_half",    40),
+        ("V1 NEW entry only (O+H)/2 b50", prod_kw,      "open_high_mid",  50),
+        ("V2 NEW ladder only (time-seg)", timesplit_kw, "candle_half",    40),
+        ("V3 FULL VRL5 (entry+ladder)  ", timesplit_kw, "open_high_mid",  50),
+        ("V4 VRL5 + body 40            ", timesplit_kw, "open_high_mid",  40),
+        ("V5 VRL5 + (H+L)/2 entry      ", timesplit_kw, "candle_half",    50),
+    ]
+
+    print(f"{'Variant':<32} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Max':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for label, lk, em, mb in variants:
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             early_lock_5=True,
+                             entry_mode=em, reentry_mode="wait_3min",
+                             min_body=mb, ladder_kwargs=lk)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        max_w = max((x["pnl"] for x in real), default=0)
+        rows.append((label, n, wr, avg_w, avg_l, max_w, total))
+        print(f"{label:<32} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {max_w:>+5.1f} {total:>+7.1f}")
+
+    base = rows[0]; full = rows[3]
+    print("-" * 65)
+    print(f"PROD  : {base[6]:+.1f} pts ({base[1]} trades, {base[2]:.0f}% WR)")
+    print(f"VRL5  : {full[6]:+.1f} pts ({full[1]} trades, {full[2]:.0f}% WR)")
+    print(f"DELTA : {(full[6]-base[6]):+.1f} pts")
+
+    print("\nIsolated component impact:")
+    print(f"  entry math only        : {(rows[1][6]-base[6]):+.1f} pts")
+    print(f"  time-seg ladder only   : {(rows[2][6]-base[6]):+.1f} pts")
+    print(f"  VRL5 with body 40      : {(rows[4][6]-base[6]):+.1f} pts")
+    print(f"  VRL5 with old (H+L)/2  : {(rows[5][6]-base[6]):+.1f} pts")
+
+    print()
+    delta = full[6] - base[6]
+    if delta >= 30:
+        print("VERDICT : SHIP — clear improvement")
+    elif delta >= 0:
+        print("VERDICT : MARGINAL — gain not worth change risk")
+    else:
+        print("VERDICT : DO NOT SHIP — VRL5 worse than PROD")
 
 
 def run_vrl4_test(found, atm_only):
@@ -1869,6 +1993,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl4":
         run_vrl4_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl5":
+        run_vrl5_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
