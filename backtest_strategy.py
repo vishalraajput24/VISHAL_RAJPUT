@@ -230,6 +230,21 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
         # Idea 1: target = midpoint of signal candle's range
         target = round((entry_candle["high"] + entry_candle["low"]) / 2.0, 2)
         wait_for_pullback = True
+    elif entry_mode == "tier_60":
+        # Body >= 60 → buy at close immediately (catch runners).
+        # Body 40-59 → candle/2 midpoint (still demand pullback on
+        #              borderline candles where spike-reversal risk is
+        #              higher).
+        _o, _h, _l, _c = (entry_candle["open"], entry_candle["high"],
+                          entry_candle["low"], entry_candle["close"])
+        _rng = _h - _l
+        _body_pct = (abs(_c - _o) / _rng * 100) if _rng > 0 else 0
+        if _body_pct >= 60:
+            target = 0
+            wait_for_pullback = False
+        else:
+            target = round((_h + _l) / 2.0, 2)
+            wait_for_pullback = True
     elif anti_spike or entry_mode == "anti_spike":
         target = round(raw_close - spike_buf, 2)
         wait_for_pullback = True
@@ -1201,6 +1216,60 @@ def run_emah_test(found, atm_only):
     print(f"  vs current production (+535/5d backtest)")
 
 
+def run_body60_test(found, atm_only):
+    """Body-cutoff sweep: enter at close immediately for strong-body
+    candles. Re-entry ON (wait_3min). X-leg gate OFF (matches current
+    production config). Compact mobile-friendly output.
+    """
+    print("\nBODY-CUTOFF SWEEP — entry=CLOSE imm., reentry=ON, xleg=OFF")
+    print("-" * 60)
+
+    # (label, body_min, entry_mode)
+    variants = [
+        ("PROD       (b40, candle/2)", 40, "candle_half"),
+        ("B55  imm   (b55, close)   ", 55, "close"),
+        ("B60  imm   (b60, close)   ", 60, "close"),
+        ("B65  imm   (b65, close)   ", 65, "close"),
+        ("B70  imm   (b70, close)   ", 70, "close"),
+        ("Tier60     (b40, tier:60+)", 40, "tier_60"),
+        ("Tier60-rs  (b40, tier+xl) ", 40, "tier_60"),  # +xleg gate
+    ]
+
+    rows = []
+    for label, bmin, em in variants:
+        all_t = []
+        for d in found:
+            xl_gate = label.endswith("(b40, tier+xl) ")
+            t = replay_day(d, atm_only=atm_only,
+                           anti_spike=False, xleg_gate=xl_gate,
+                           entry_mode=em, reentry_mode="wait_3min",
+                           min_body=bmin)
+            if t: all_t.extend(t)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        skip = sum(1 for x in all_t if x.get("spike_skipped"))
+        wins = sum(1 for x in real if x["pnl"] > 0)
+        n = len(real)
+        wr = (wins / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        rows.append((label, n, skip, wr, total))
+
+    print(f"{'Variant':<28} {'N':>3} {'Sk':>3} {'WR%':>5} {'Total':>7}")
+    print("-" * 60)
+    for label, n, skip, wr, total in rows:
+        print(f"{label:<28} {n:>3} {skip:>3} {wr:>5.1f} {total:>+7.1f}")
+
+    # Best (excluding PROD baseline row)
+    cand = [r for r in rows if not r[0].startswith("PROD")]
+    best = max(cand, key=lambda r: r[4])
+    prod = next((r for r in rows if r[0].startswith("PROD")), None)
+    print("-" * 60)
+    print(f"BEST: {best[0].strip()}  =  {best[4]:+.1f} pts ({best[1]} trades, {best[3]:.0f}% WR)")
+    if prod:
+        delta = best[4] - prod[4]
+        print(f"vs PROD: {delta:+.1f} pts")
+    print(f"SHIP gate (>= +400): {'PASS ✓' if best[4] >= 400 else 'FAIL ✗'}")
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
@@ -1244,6 +1313,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "emah":
         run_emah_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "body60":
+        run_body60_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
