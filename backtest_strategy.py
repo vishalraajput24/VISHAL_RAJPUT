@@ -385,7 +385,8 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                spike_buf=None, early_lock_5=False,
                entry_mode="close", reentry_mode="off",
                max_stretch=999, min_body=BODY_MIN,
-               ladder_kwargs=None, reentry_max_range=999):
+               ladder_kwargs=None, reentry_max_range=999,
+               cooldown_min=5, cooldown_both_sides=False):
     """Replay one trading day with MULTI-trade support + cooldown.
     entry_mode: "close" / "anti_spike" / "candle_half"
     reentry_mode:
@@ -508,11 +509,12 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
         result["spike_skipped"] = False
         trades.append(result)
 
-        # Block timeline until exit ts; same-side cooldown 5 min after exit
+        # Block timeline until exit ts; cooldown N min after exit.
+        # cooldown_both_sides=True locks BOTH CE and PE post-exit.
         blocked_until_ts = result.get("exit_ts", "")
         ex_min = _ts_to_min(blocked_until_ts)
         try:
-            cool_min = ex_min + 5
+            cool_min = ex_min + cooldown_min
             cool_hh = cool_min // 60
             cool_mm = cool_min % 60
             cool_marker = (blocked_until_ts[:11]
@@ -520,6 +522,9 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
         except Exception:
             cool_marker = blocked_until_ts
         next_ok_ts_by_side[best["side"]] = cool_marker
+        if cooldown_both_sides:
+            other_side = "PE" if best["side"] == "CE" else "CE"
+            next_ok_ts_by_side[other_side] = cool_marker
 
         # ── Re-entry watcher (Idea 2: wait_3min) ──
         # After exit, look at the next 3-min candle on the SAME leg
@@ -569,8 +574,12 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                             try:
                                 ex_min2 = _ts_to_min(blocked_until_ts)
                                 cool_marker2 = (blocked_until_ts[:11]
-                                    + f"{(ex_min2+5)//60:02d}:{(ex_min2+5)%60:02d}:59")
+                                    + f"{(ex_min2+cooldown_min)//60:02d}:"
+                                    + f"{(ex_min2+cooldown_min)%60:02d}:59")
                                 next_ok_ts_by_side[best["side"]] = cool_marker2
+                                if cooldown_both_sides:
+                                    _o = "PE" if best["side"] == "CE" else "CE"
+                                    next_ok_ts_by_side[_o] = cool_marker2
                             except Exception:
                                 pass
 
@@ -1007,6 +1016,81 @@ def run_ladder_sweep(found, atm_only):
     print(f"  Improvement: {(best['total'] - base['total']):+.1f} pts over 5 days")
     print(f"  Per trade:   {(best['total']/max(best['trades'],1)):+.2f} avg")
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
+
+
+def run_vrl3_test(found, atm_only):
+    """Vishal v3 spec — conservative tuning on top of -18 emergency:
+      ENTRY     : current candle/2 + body MUST be >= 50 (was 40)
+      SL        : current ladder (proven) + emergency -18 (already live)
+      RE-ENTRY  : DISABLED (no watcher) — wait for fresh setup
+      COOLDOWN  : 6 min, BOTH sides post-exit (was 5 min, same-side only)
+    Compares each change in isolation + full combo.
+    """
+    print("\nVRL3 BACKTEST — body50 + 6min both-side cooldown + no reentry")
+    print("(emergency_sl=-18 baked in)")
+    print("-" * 65)
+
+    prod_kw = {"emergency_sl": -18}
+
+    # (label, body_min, reentry_mode, cooldown_min, both_sides)
+    variants = [
+        ("V0 PROD live                 ", 40, "wait_3min",  5, False),
+        ("V1 body 50 only              ", 50, "wait_3min",  5, False),
+        ("V2 cooldown 6m only          ", 40, "wait_3min",  6, False),
+        ("V3 both-side cooldown only   ", 40, "wait_3min",  5, True),
+        ("V4 no-reentry only           ", 40, "off",        5, False),
+        ("V5 FULL VRL3 (all combined)  ", 50, "off",        6, True),
+        ("V6 VRL3 + reentry on         ", 50, "wait_3min",  6, True),
+    ]
+
+    print(f"{'Variant':<32} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for label, mb, rm, cd, both in variants:
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             entry_mode="candle_half",
+                             reentry_mode=rm, min_body=mb,
+                             ladder_kwargs=prod_kw,
+                             cooldown_min=cd,
+                             cooldown_both_sides=both)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        rows.append((label, n, wr, avg_w, avg_l, total))
+        print(f"{label:<32} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {total:>+7.1f}")
+
+    base = rows[0]; full = rows[5]
+    print("-" * 65)
+    print(f"PROD  : {base[5]:+.1f} pts ({base[1]} trades, {base[2]:.0f}% WR)")
+    print(f"VRL3  : {full[5]:+.1f} pts ({full[1]} trades, {full[2]:.0f}% WR)")
+    print(f"DELTA : {(full[5]-base[5]):+.1f} pts")
+
+    print("\nIsolated component impact:")
+    print(f"  body 50 only       : {(rows[1][5]-base[5]):+.1f} pts")
+    print(f"  cooldown 6m only   : {(rows[2][5]-base[5]):+.1f} pts")
+    print(f"  both-side cooldown : {(rows[3][5]-base[5]):+.1f} pts")
+    print(f"  no-reentry only    : {(rows[4][5]-base[5]):+.1f} pts")
+
+    print()
+    delta = full[5] - base[5]
+    if delta >= 30:
+        print("VERDICT : SHIP — clear improvement")
+    elif delta >= 0:
+        print("VERDICT : MARGINAL — gain not worth change risk")
+    else:
+        print("VERDICT : DO NOT SHIP — VRL3 is worse than PROD")
 
 
 def run_vrl2_test(found, atm_only):
@@ -1691,6 +1775,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl2":
         run_vrl2_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl3":
+        run_vrl3_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
