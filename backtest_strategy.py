@@ -985,6 +985,88 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def run_trail_test(found, atm_only):
+    """Compact TRAIL ladder sweep — covers all 4 trail-relevant knobs in
+    one mobile screen. Tests with new emergency_sl=-18 baked in.
+    Knobs:
+      A. LOCK_M5 offset      (peak >= 5  → SL = entry + offset)
+      B. LOCK_3 peak         (when first profit lock kicks in)
+      C. LOCK_3 offset       (how much profit locked at LOCK_3)
+      D. LOCK_DYN giveback   (peak >= 21 → SL = entry + peak - giveback)
+    """
+    print("\nTRAIL LADDER SWEEP — find best winner-squeeze")
+    print("(emergency_sl=-18 baked in — matches new prod)")
+    print("-" * 60)
+
+    base_kw = {"emergency_sl": -18}
+    base = _run_variant(found, atm_only, ladder_kwargs=base_kw)
+    print(f"BASELINE   : {base['total']:+.1f} pts ({base['trades']} trades, {base['wr']:.0f}% WR)")
+
+    def _row(label, kwargs):
+        kw = {**base_kw, **kwargs}
+        r = _run_variant(found, atm_only, ladder_kwargs=kw)
+        d = r["total"] - base["total"]
+        m = " *" if r["total"] > base["total"] else ""
+        print(f"{label:<11}  {r['trades']:>3}  {r['wr']:>5.1f}  "
+              f"{r['total']:>+7.1f}  {r['avg_w']:>+5.1f}  {d:>+6.1f}{m}")
+        return r, kw
+
+    print("\nA. LOCK_M5 offset (default -5; peak>=5 → SL=entry+offset)")
+    print(f"{'M5':>11}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgW':>5}  vs base")
+    print("-" * 50)
+    a_best = base; a_kw = {}
+    for m5 in [-7, -5, -3, 0, 2, 3]:
+        r, kw = _row(f"M5={m5:+d}", {"m5_offset": m5})
+        if r["total"] > a_best["total"]: a_best = r; a_kw = kw
+
+    print("\nB. LOCK_3 peak (default 8; lower=earlier first lock)")
+    print(f"{'pk':>11}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgW':>5}  vs base")
+    print("-" * 50)
+    b_best = base; b_kw = {}
+    for pk in [5, 6, 7, 8, 9, 10, 12]:
+        r, kw = _row(f"pk>={pk}", {"lock3_peak": pk})
+        if r["total"] > b_best["total"]: b_best = r; b_kw = kw
+
+    print("\nC. LOCK_3 offset (default +3; how much profit locked)")
+    print(f"{'off':>11}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgW':>5}  vs base")
+    print("-" * 50)
+    c_best = base; c_kw = {}
+    for off in [0, 1, 2, 3, 4, 5, 6]:
+        r, kw = _row(f"off={off:+d}", {"lock3_offset": off})
+        if r["total"] > c_best["total"]: c_best = r; c_kw = kw
+
+    print("\nD. LOCK_DYN giveback (default 5; peak>=21 → SL=entry+peak-gb)")
+    print(f"{'gb':>11}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgW':>5}  vs base")
+    print("-" * 50)
+    d_best = base; d_kw = {}
+    for gb in [3, 4, 5, 6, 7, 8, 10]:
+        r, kw = _row(f"gb={gb}", {"dyn_giveback": gb})
+        if r["total"] > d_best["total"]: d_best = r; d_kw = kw
+
+    # Combine all single-dim winners
+    combo_kw = {**a_kw, **b_kw, **c_kw, **d_kw}
+    combo = _run_variant(found, atm_only, ladder_kwargs=combo_kw)
+
+    print("\n" + "-" * 60)
+    print("SINGLE-DIM WINNERS:")
+    print(f"  A LOCK_M5  : {a_best['total']:+.1f} pts {a_kw}")
+    print(f"  B LOCK_3pk : {b_best['total']:+.1f} pts {b_kw}")
+    print(f"  C LOCK_3off: {c_best['total']:+.1f} pts {c_kw}")
+    print(f"  D DYN_gb   : {d_best['total']:+.1f} pts {d_kw}")
+    print(f"COMBINED   : {combo['total']:+.1f} pts {combo_kw}")
+
+    overall = max([base, a_best, b_best, c_best, d_best, combo],
+                  key=lambda r: r["total"])
+    delta = overall["total"] - base["total"]
+    print(f"\nDELTA vs base (-18 emer): {delta:+.1f} pts")
+    if delta >= 30:
+        print("VERDICT    : worth shipping — clear improvement")
+    elif delta >= 10:
+        print("VERDICT    : marginal — wait for more data")
+    else:
+        print("VERDICT    : current trail is already optimal — DO NOT CHANGE")
+
+
 def run_slmax_test(found, atm_only):
     """Compact SL sweep — focuses on the two SL knobs that actually
     bound losses: emergency_sl (panic exit) + initial_sl (pre-LOCK_M5
@@ -1398,6 +1480,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "slmax":
         run_slmax_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "trail":
+        run_trail_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")

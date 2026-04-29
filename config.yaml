@@ -91,7 +91,16 @@ entry:
 # (INITIAL / LOCK_M5 / LOCK_3 / LOCK_5 / LOCK_8 / LOCK_15 / LOCK_DYN).
 exit:
   ema9_band:
-    emergency_sl_pts: -10
+    # ── v16.7+ Loosened from -10 → -18 (slmax backtest, 5d Apr22-28) ──
+    # 5d sweep showed -10 was kicking out trades that dipped intra-candle
+    # then recovered. Plateau at -18 (trades that survive past -18 never
+    # come back in this dataset, so deeper floors add no benefit). Result:
+    #   -10 (old): +521.8 pts, 87.1% WR, avgL -7.9
+    #   -18 (new): +569.6 pts, 88.7% WR, avgL -4.7  (+47.8 pts/5d)
+    # The 3-min close-based trail (-10) still catches genuinely dying
+    # trades — emergency -18 is now a true catastrophic backstop.
+    # Max single-trade loss: 18 × 2 × 65 = ₹2,340 (was ₹1,300).
+    emergency_sl_pts: -18
     eod_exit_time: "15:20"
 
 # ── Strike selection ───────────────────────────────────────────
