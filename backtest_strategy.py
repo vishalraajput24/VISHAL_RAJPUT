@@ -1001,13 +1001,16 @@ def run_slmax_test(found, atm_only):
     print("\nA. EMERGENCY SL (intra-candle low touches → exit)")
     print(f"{'SL':>5}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgL':>5}  vs base")
     print("-" * 50)
-    for emer in [-5, -7, -8, -10, -12, -15]:
+    sec_a_best = base; sec_a_best_emer = -10
+    for emer in [-5, -7, -8, -10, -12, -15, -18, -20, -25, -30]:
         r = _run_variant(found, atm_only, ladder_kwargs={"emergency_sl": emer})
         delta = r["total"] - base["total"]
         m = " *" if r["total"] > base["total"] else ""
         print(f"{emer:>+5}  {r['trades']:>3}  {r['wr']:>5.1f}  "
               f"{r['total']:>+7.1f}  {r['avg_l']:>+5.1f}  "
               f"{delta:>+6.1f}{m}")
+        if r["total"] > sec_a_best["total"]:
+            sec_a_best = r; sec_a_best_emer = emer
 
     # Dimension 2 — initial SL (close-based trail before LOCK_M5)
     print("\nB. INITIAL SL (3-min close <= entry+offset → trail exit)")
@@ -1038,13 +1041,20 @@ def run_slmax_test(found, atm_only):
                 grid_best = r; grid_best_k = {"emergency_sl": emer, "initial_sl": init}
         print(f"{emer:>+10}  " + "  ".join(cells))
 
+    # Pick best of all sweeps (section A wide range OR joint grid)
+    overall_best = sec_a_best; overall_k = {"emergency_sl": sec_a_best_emer}
+    if grid_best["total"] > overall_best["total"]:
+        overall_best = grid_best; overall_k = grid_best_k
+
     print("\n" + "-" * 60)
     print(f"BASELINE  : {base['total']:+.1f} pts ({base['trades']} trades, {base['wr']:.0f}% WR)")
-    print(f"BEST GRID : {grid_best['total']:+.1f} pts {grid_best_k}")
-    print(f"DELTA     : {(grid_best['total']-base['total']):+.1f} pts")
-    if grid_best['total'] > base['total'] + 30:
+    print(f"SEC-A best: {sec_a_best['total']:+.1f} pts (emergency_sl={sec_a_best_emer})")
+    print(f"GRID best : {grid_best['total']:+.1f} pts {grid_best_k}")
+    print(f"OVERALL   : {overall_best['total']:+.1f} pts {overall_k}")
+    print(f"DELTA     : {(overall_best['total']-base['total']):+.1f} pts")
+    if overall_best['total'] > base['total'] + 30:
         print("VERDICT   : worth shipping — clear improvement")
-    elif grid_best['total'] > base['total']:
+    elif overall_best['total'] > base['total']:
         print("VERDICT   : marginal — not worth code change")
     else:
         print("VERDICT   : current SL is already optimal — DO NOT CHANGE")
