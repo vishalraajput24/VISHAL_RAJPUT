@@ -1018,6 +1018,94 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def run_vrl4_test(found, atm_only):
+    """Vishal v4 spec — looser early ladder + both-side cooldown + no reentry.
+      ENTRY     : current candle/2, body >= 40 (unchanged)
+      SL LADDER : peak 10 → -5  (let it breathe, m5 disabled)
+                  peak 15 → +5
+                  peak 20 → +15
+                  peak 25+ → peak - 5 (LOCK_DYN chandelier)
+      COOLDOWN  : 5 min BOTH sides
+      RE-ENTRY  : DISABLED — fresh scan only
+    """
+    print("\nVRL4 BACKTEST — looser early ladder + both-side cd + no reentry")
+    print("(emergency_sl=-18 baked in)")
+    print("-" * 65)
+
+    vrl4_ladder = {
+        "emergency_sl":  -18,
+        "lock3_peak":    10, "lock3_offset":  -5,
+        "lock5_peak":    15, "lock5_offset":   5,
+        "lock8_peak":    20, "lock8_offset":  15,
+        "lock15_peak":   999,                       # disable LOCK_15 tier
+        "dyn_peak":      25, "dyn_giveback":   5,
+    }
+    prod_kw = {"emergency_sl": -18}
+
+    # (label, ladder_kw, reentry_mode, both_sides, early_lock_5)
+    variants = [
+        ("V0 PROD live                 ", prod_kw,    "wait_3min", False, True),
+        ("V1 new ladder only           ", vrl4_ladder,"wait_3min", False, False),
+        ("V2 both-side cooldown only   ", prod_kw,    "wait_3min", True,  True),
+        ("V3 no-reentry only           ", prod_kw,    "off",       False, True),
+        ("V4 FULL VRL4 (3 changes)     ", vrl4_ladder,"off",       True,  False),
+        ("V5 VRL4 + body 50            ", vrl4_ladder,"off",       True,  False),  # body via min_body below
+        ("V6 VRL4 + reentry ON (check) ", vrl4_ladder,"wait_3min", True,  False),
+    ]
+
+    print(f"{'Variant':<32} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Max':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for i, (label, lk, rm, both, el5) in enumerate(variants):
+        body = 50 if "body 50" in label else 40
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             early_lock_5=el5,
+                             entry_mode="candle_half",
+                             reentry_mode=rm, min_body=body,
+                             ladder_kwargs=lk,
+                             cooldown_min=5,
+                             cooldown_both_sides=both)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        max_w = max((x["pnl"] for x in real), default=0)
+        rows.append((label, n, wr, avg_w, avg_l, max_w, total))
+        print(f"{label:<32} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {max_w:>+5.1f} {total:>+7.1f}")
+
+    base = rows[0]; full = rows[4]
+    print("-" * 65)
+    print(f"PROD  : {base[6]:+.1f} pts ({base[1]} trades, {base[2]:.0f}% WR)")
+    print(f"VRL4  : {full[6]:+.1f} pts ({full[1]} trades, {full[2]:.0f}% WR)")
+    print(f"DELTA : {(full[6]-base[6]):+.1f} pts")
+
+    print("\nIsolated component impact:")
+    print(f"  new ladder only      : {(rows[1][6]-base[6]):+.1f} pts")
+    print(f"  both-side cooldown   : {(rows[2][6]-base[6]):+.1f} pts")
+    print(f"  no-reentry only      : {(rows[3][6]-base[6]):+.1f} pts")
+    print(f"  VRL4 + reentry on    : {(rows[6][6]-base[6]):+.1f} pts (sanity)")
+
+    print()
+    delta = full[6] - base[6]
+    if delta >= 30:
+        print("VERDICT : SHIP — clear improvement")
+    elif delta >= 0:
+        print("VERDICT : MARGINAL — gain not worth change risk")
+    else:
+        print("VERDICT : DO NOT SHIP — VRL4 worse than PROD")
+
+
 def run_vrl3_test(found, atm_only):
     """Vishal v3 spec — conservative tuning on top of -18 emergency:
       ENTRY     : current candle/2 + body MUST be >= 50 (was 40)
@@ -1778,6 +1866,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl3":
         run_vrl3_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl4":
+        run_vrl4_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
