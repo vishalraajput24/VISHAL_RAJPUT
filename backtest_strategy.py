@@ -290,10 +290,29 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
 
         # Compute current SL based on peak (early_lock_5 toggle)
         _lk = ladder_kwargs or {}
-        # emergency_sl is consumed in this function, not by compute_trail_sl
-        _lk_clean = {k: v for k, v in _lk.items() if k != "emergency_sl"}
-        sl, tier = compute_trail_sl(entry_price, peak,
-                                    early_lock_5=early_lock_5, **_lk_clean)
+        # ── Custom trail mode: structure-based (EMA9_low close break)
+        # When trail_mode == "ema_band" and peak >= ema_arm_peak, we
+        # skip the peak-driven ladder entirely. SL becomes the prior
+        # 3-min EMA9_low. Exit fires only when the close breaks below.
+        _trail_mode = _lk.get("trail_mode", "ladder")
+        _ema_arm_peak = _lk.get("ema_arm_peak", 10)
+        if _trail_mode == "ema_band" and peak >= _ema_arm_peak:
+            # Hold until 3-min close drops below the band
+            _band = c.get("ema9_low", 0)
+            if _band > 0 and c_close < _band:
+                return _result(entry_price, c_close, peak, "EMA_BAND_BREAK",
+                               j - entry_idx, raw_close,
+                               target if anti_spike else 0, spike_used,
+                               exit_idx=j, exit_ts=c["ts"])
+            # Still in trade — skip ladder check this candle
+            sl, tier = 0, "EMA_TRAIL"
+        else:
+            # emergency_sl is consumed in this function, not by compute_trail_sl
+            _lk_clean = {k: v for k, v in _lk.items()
+                         if k not in ("emergency_sl", "trail_mode",
+                                      "ema_arm_peak")}
+            sl, tier = compute_trail_sl(entry_price, peak,
+                                        early_lock_5=early_lock_5, **_lk_clean)
 
         # 1. Emergency SL — if candle's low touched/crossed entry-10
         _emer = (ladder_kwargs or {}).get("emergency_sl", EMERGENCY_SL_PTS)
@@ -985,6 +1004,90 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def run_maxmove_test(found, atm_only):
+    """MAX-MOVE CAPTURE — designed to ride big runners instead of
+    locking small profits. Sacrifices WR for bigger avgWin.
+    User's framing: 'few trades capture max move'.
+    """
+    print("\nMAX-MOVE CAPTURE SWEEP — let runners ride")
+    print("(emergency_sl=-18 baked in)")
+    print("-" * 65)
+
+    # Effectively-disabled lock thresholds (peak never reaches 999)
+    OFF = 999
+
+    variants = [
+        ("V0 PROD baseline       ",
+         {"emergency_sl": -18}),
+        ("V1 WIDE_DYN giveback15 ",
+         {"emergency_sl": -18, "dyn_giveback": 15}),
+        ("V2 LATE_LOCK pk15      ",
+         {"emergency_sl": -18, "lock3_peak": 15, "lock5_peak": 20,
+          "lock8_peak": 25, "dyn_giveback": 8}),
+        ("V3 DYN_ONLY pk10 gb10  ",
+         {"emergency_sl": -18, "lock3_peak": OFF, "lock5_peak": OFF,
+          "lock8_peak": OFF, "lock15_peak": OFF, "dyn_peak": 10,
+          "dyn_giveback": 10}),
+        ("V4 DYN_ONLY pk10 gb15  ",
+         {"emergency_sl": -18, "lock3_peak": OFF, "lock5_peak": OFF,
+          "lock8_peak": OFF, "lock15_peak": OFF, "dyn_peak": 10,
+          "dyn_giveback": 15}),
+        ("V5 EMA_BAND arm@pk10   ",
+         {"emergency_sl": -18, "trail_mode": "ema_band",
+          "ema_arm_peak": 10}),
+        ("V6 EMA_BAND arm@pk5    ",
+         {"emergency_sl": -18, "trail_mode": "ema_band",
+          "ema_arm_peak": 5}),
+        ("V7 EMA_BAND arm@pk15   ",
+         {"emergency_sl": -18, "trail_mode": "ema_band",
+          "ema_arm_peak": 15}),
+    ]
+
+    print(f"{'Variant':<25} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Max':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for label, kw in variants:
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             entry_mode="candle_half",
+                             reentry_mode="wait_3min",
+                             min_body=40, ladder_kwargs=kw)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        max_w = max((x["pnl"] for x in real), default=0)
+        rows.append((label, n, wr, avg_w, avg_l, max_w, total, kw))
+        print(f"{label:<25} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {max_w:>+5.1f} {total:>+7.1f}")
+
+    base_total = rows[0][6]
+    print("-" * 65)
+    print(f"BASELINE (V0): {base_total:+.1f} pts")
+
+    best = max(rows, key=lambda r: r[6])
+    print(f"BEST: {best[0].strip()}")
+    print(f"  total={best[6]:+.1f}  vs PROD={best[6]-base_total:+.1f}")
+    print(f"  trades={best[1]}  WR={best[2]:.0f}%  avgW={best[3]:+.1f}  max={best[5]:+.1f}")
+
+    # Spotlight: which variant captured the BIGGEST single move?
+    print("\nBIGGEST WIN per variant (the +50/+100 dream):")
+    for label, n, wr, aw, al, mx, tot, kw in rows:
+        print(f"  {label} max={mx:+.1f}")
+
+    print("\nNote: high avgW + lower N = capturing fewer/bigger moves.")
+    print("Compare V0 vs winner — do you actually like the trade-off?")
+
+
 def run_trail_test(found, atm_only):
     """Compact TRAIL ladder sweep — covers all 4 trail-relevant knobs in
     one mobile screen. Tests with new emergency_sl=-18 baked in.
@@ -1483,6 +1586,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "trail":
         run_trail_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "maxmove":
+        run_maxmove_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
