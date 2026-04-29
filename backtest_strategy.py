@@ -385,7 +385,7 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                spike_buf=None, early_lock_5=False,
                entry_mode="close", reentry_mode="off",
                max_stretch=999, min_body=BODY_MIN,
-               ladder_kwargs=None):
+               ladder_kwargs=None, reentry_max_range=999):
     """Replay one trading day with MULTI-trade support + cooldown.
     entry_mode: "close" / "anti_spike" / "candle_half"
     reentry_mode:
@@ -533,6 +533,11 @@ def replay_day(d, atm_only=True, anti_spike=False, xleg_gate=False,
                 re_prev   = best["rows_3m"][re_idx - 1]
                 fired_re, _why, _body, _slope, _stretch = evaluate_gates(
                     re_candle, re_prev, max_stretch=max_stretch, min_body=min_body)
+                # NEW: skip re-entry if confirmation candle range is too
+                # wide (climactic / exhausted move). Default 999 = off.
+                _re_range = re_candle["high"] - re_candle["low"]
+                if fired_re and _re_range >= reentry_max_range:
+                    fired_re = False
                 if fired_re:
                     # Cross-leg snapshot at re-entry time
                     other_side = "PE" if best["side"] == "CE" else "CE"
@@ -1002,6 +1007,100 @@ def run_ladder_sweep(found, atm_only):
     print(f"  Improvement: {(best['total'] - base['total']):+.1f} pts over 5 days")
     print(f"  Per trade:   {(best['total']/max(best['trades'],1)):+.2f} avg")
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
+
+
+def run_vrl2_test(found, atm_only):
+    """v16.7+ FULL strategy candidate (Vishal's spec):
+      ENTRY: GREEN + close>EMA9_low + body>=50 + buy at signal close
+      SL:    emergency -18; ladder pk10→+2, 15→+3, 20→+8, 25→+20, 30+→pk-5
+      RE-ENTRY: full 3-gate next candle, SKIP if range>=20 (climactic).
+
+    Compares to current PROD (-18 emergency, candle/2, body 40, current
+    ladder, no range filter). Goes/no-go on +30 ship gate.
+    """
+    print("\nv16.7++ FULL-STRATEGY BACKTEST")
+    print("Spec: close-immediate entry, body>=50, new ladder, range<20 reentry")
+    print("-" * 65)
+
+    # Vishal's exact ladder via compute_trail_sl tunables
+    vrl2_ladder = {
+        "emergency_sl": -18,
+        "lock3_peak":   10,  "lock3_offset":  2,
+        "lock5_peak":   15,  "lock5_offset":  3,
+        "lock8_peak":   20,  "lock8_offset":  8,
+        "lock15_peak":  25,  "lock15_offset": 20,
+        "dyn_peak":     30,  "dyn_giveback":  5,
+    }
+
+    # Reference: current production at this moment
+    prod_kw = {"emergency_sl": -18}
+
+    variants = [
+        ("V0 PROD (current live)        ",
+         "candle_half", 40, prod_kw, 999, False),
+        ("V1 NEW entry only             ",
+         "close",       50, prod_kw, 999, False),
+        ("V2 NEW ladder only            ",
+         "candle_half", 40, vrl2_ladder, 999, False),
+        ("V3 NEW reentry filter only    ",
+         "candle_half", 40, prod_kw, 20, False),
+        ("V4 FULL VRL2 (entry+ladder+re)",
+         "close",       50, vrl2_ladder, 20, False),
+        ("V5 FULL VRL2 + early_lock_5   ",
+         "close",       50, vrl2_ladder, 20, True),
+    ]
+
+    print(f"{'Variant':<32} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Max':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for label, em, mb, lk, rmr, el5 in variants:
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             early_lock_5=el5,
+                             entry_mode=em, reentry_mode="wait_3min",
+                             min_body=mb, ladder_kwargs=lk,
+                             reentry_max_range=rmr)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        max_w = max((x["pnl"] for x in real), default=0)
+        rows.append((label, n, wr, avg_w, avg_l, max_w, total))
+        print(f"{label:<32} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {max_w:>+5.1f} {total:>+7.1f}")
+
+    base = rows[0]   # PROD
+    full = rows[4]   # V4 full VRL2
+
+    print("-" * 65)
+    print(f"PROD (V0)  : {base[6]:+.1f} pts ({base[1]} trades, {base[2]:.0f}% WR)")
+    print(f"VRL2 (V4)  : {full[6]:+.1f} pts ({full[1]} trades, {full[2]:.0f}% WR)")
+    print(f"DELTA      : {(full[6]-base[6]):+.1f} pts")
+
+    # Component contribution attribution
+    print("\nComponent contribution (each change in isolation):")
+    print(f"  entry only  : {(rows[1][6]-base[6]):+.1f} pts")
+    print(f"  ladder only : {(rows[2][6]-base[6]):+.1f} pts")
+    print(f"  reentry only: {(rows[3][6]-base[6]):+.1f} pts")
+
+    print()
+    delta = full[6] - base[6]
+    if delta >= 30:
+        print("VERDICT    : SHIP — clear improvement vs PROD")
+    elif delta >= 0:
+        print("VERDICT    : MARGINAL — gain not worth the change risk")
+    else:
+        print("VERDICT    : DO NOT SHIP — VRL2 is worse than PROD")
+        print("           : Investigate which component hurt most.")
 
 
 def run_maxmove_test(found, atm_only):
@@ -1589,6 +1688,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "maxmove":
         run_maxmove_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl2":
+        run_vrl2_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
