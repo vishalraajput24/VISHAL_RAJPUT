@@ -845,9 +845,10 @@ def _alert_bot_started():
         "<b>EXITS</b>  (first match wins)\n"
         "1. Emergency -10pts\n"
         "2. EOD 15:20\n"
-        "3. Vishal Trail (peak ladder)\n"
+        "3. Vishal Trail (peak ladder, time-segmented)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER</b> (peak-driven ratchet)\n"
+        "<b>MORNING SL LADDER</b>  09:35 — 11:00\n"
+        "(emergency = -18, current PROD ladder)\n"
         "peak <5    SL = entry-10        (INITIAL)\n"
         "peak >=5   SL = entry-5         (LOCK_M5)\n"
         "peak >=8   SL = entry+3         (LOCK_3)\n"
@@ -856,9 +857,19 @@ def _alert_bot_started():
         "peak >=20  SL = entry+15        (LOCK_15)\n"
         "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
-        "Confirmation candle must pass 3-gate, then candle/2 fill\n"
-        "→ re-enter same side. Else fresh setup only.\n"
+        "<b>AFTERNOON SL LADDER</b>  11:00 — 15:30\n"
+        "(emergency = -10, tighter spec)\n"
+        "peak <5    SL = entry-10        (INITIAL)\n"
+        "peak >=5   SL = entry-5         (LOCK_M5)\n"
+        "peak >=8   SL = entry+3         (LOCK_3)\n"
+        "peak >=12  SL = entry+5         (LOCK_5)\n"
+        "peak >=15  SL = entry+10        (LOCK_8)\n"
+        "peak >=20  SL = entry+20        (LOCK_20 floor)\n"
+        "peak >=25  SL = entry+(peak-5)  (LOCK_DYN)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>RE-ENTRY</b>  DISABLED — fresh 3-gate scan only\n"
+        "(was: wait_3min watcher. v16.7+VRL4 spec)\n"
+        "<b>COOLDOWN</b>  5 min BOTH sides post-exit\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1152,16 +1163,24 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
-    # Read the emergency SL from the same config key the engine uses
-    # (exit.ema9_band.emergency_sl_pts = -10) so the alert and the actual
-    # trigger stay in sync if the operator changes the config.
-    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
+    # v16.7+VRL4 — emergency SL is time-segmented:
+    #   Morning   (<11:00): from config (default -18)
+    #   Afternoon (>=11:00): hardcoded -10 (per engine logic)
+    # Pick the right value for the alert based on entry time so the
+    # reported hard SL matches what the engine will actually enforce.
+    _now = datetime.now()
+    _is_afternoon = (_now.hour * 60 + _now.minute) >= (11 * 60)
+    _sl_pts = 10 if _is_afternoon else abs(
+        CFG.exit_ema9_band("emergency_sl_pts", -10))
     _initial_sl = round(actual_price - _sl_pts, 1)
+    _session_tag = "afternoon" if _is_afternoon else "morning"
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
-        + "{:.1f}".format(_initial_sl) + ")\n"
+        + "{:.1f}".format(_initial_sl) + ")  ["
+        + _session_tag + "]\n"
         "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
+        "Cooldown 5m BOTH sides · Re-entry OFF\n"
     )
 
     # v16.7 cleanup: removed dead context block (bands_state /
@@ -3347,18 +3366,20 @@ def _cmd_pulse(args):
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
             + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: " + str(_xb.get("emergency_sl_pts", "?")) + "pts\n"
+            + "SL: morning -" + str(abs(int(_xb.get("emergency_sl_pts", -18))))
+            + " / afternoon -10 (VRL4)\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
             + str(_eb.get("cutoff_after", "?")) + "  "
             + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
-            "Cooldown: " + str(_cd) + "min\n"
+            "Cooldown: " + str(_cd) + "min BOTH sides · Re-entry OFF\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
+            "<b>SL LADDER (v16.7+VRL4 time-segmented)</b>\n"
+            "<u>Morning  09:35-11:00</u>  emergency -18\n"
             "INITIAL    (peak <5)    entry-10\n"
             "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
             "🛡️ LOCK_3   (peak >=8)   entry+3\n"
@@ -3366,6 +3387,15 @@ def _cmd_pulse(args):
             "🔒🔒 LOCK_8 (peak >=15)  entry+8\n"
             "🔒🔒 LOCK_15(peak >=20)  entry+15\n"
             "🔒🔒🔒 LOCK_DYN(>=21)   entry+(peak-5)\n"
+            "<u>Afternoon  11:00-15:30</u>  emergency -10\n"
+            "INITIAL    (peak <5)    entry-10\n"
+            "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
+            "🛡️ LOCK_3   (peak >=8)   entry+3\n"
+            "🔒 LOCK_5   (peak >=12)  entry+5\n"
+            "🔒🔒 LOCK_8 (peak >=15)  entry+10\n"
+            "🔒🔒 LOCK_20(peak >=20)  entry+20 floor\n"
+            "🔒🔒🔒 LOCK_DYN(>=25)   entry+(peak-5)\n"
+            "Cooldown: 5min BOTH sides · Re-entry: OFF\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>3-GATE ENTRY</b>\n"
             "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
