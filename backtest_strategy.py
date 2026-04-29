@@ -966,6 +966,241 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def _compute_1m_ema9_low(candles_1m, period=9):
+    """Compute 9-period EMA on 1-min candle LOWs.
+    Returns {ts: ema_low_value}. Seeds with SMA of first `period` lows
+    so the EMA is stable from the start (vs first-low seeding).
+    """
+    out = {}
+    if not candles_1m or len(candles_1m) < period:
+        return out
+    multiplier = 2.0 / (period + 1)
+    # Seed = SMA of first `period` lows
+    seed = sum(float(c["low"]) for c in candles_1m[:period]) / period
+    ema = seed
+    for i, c in enumerate(candles_1m):
+        if i < period - 1:
+            out[c["ts"]] = 0  # not enough data yet
+        elif i == period - 1:
+            out[c["ts"]] = round(ema, 2)
+        else:
+            low = float(c["low"])
+            ema = (low - ema) * multiplier + ema
+            out[c["ts"]] = round(ema, 2)
+    return out
+
+
+def _evaluate_emah_entry(candle, prev_candle, min_body=40):
+    """3-gate entry on 3-min EMA9_HIGH break (instead of EMA9_low).
+       1. GREEN candle (close > open)
+       2. Close > EMA9_HIGH (strict — top band breakout)
+       3. Body % >= min_body
+    Returns (fired, reason, body_pct)."""
+    o, h, l, c = candle["open"], candle["high"], candle["low"], candle["close"]
+    eh = candle.get("ema9_high", 0)
+    if eh <= 0 or h <= 0:
+        return False, "no_data", 0
+    try:
+        t = candle["ts"][-8:-3]
+        hh, mm = int(t[:2]), int(t[3:])
+    except Exception:
+        return False, "ts_parse", 0
+    mins = hh * 60 + mm
+    if mins < WARMUP_HHMM[0]*60 + WARMUP_HHMM[1]:
+        return False, f"before_{WARMUP_HHMM[0]:02d}:{WARMUP_HHMM[1]:02d}", 0
+    if mins >= CUTOFF_HHMM[0]*60 + CUTOFF_HHMM[1]:
+        return False, f"after_cutoff", 0
+    rng = h - l
+    body_pct = round((abs(c - o) / rng * 100) if rng > 0 else 0, 1)
+    if c <= o: return False, "red_candle", body_pct
+    if c <= eh: return False, "below_ema9h", body_pct
+    if body_pct < min_body: return False, f"weak_body_{int(body_pct)}", body_pct
+    return True, "", body_pct
+
+
+def _simulate_emah_trade(entry_idx_3m, leg_3m, leg_1m, ema9l_1m_lookup,
+                         emergency_sl=-10, eod_hhmm=(15, 20)):
+    """Walk forward from a 3-min entry signal through 1-min candles.
+    Exit triggers (priority order):
+      1. EMERGENCY_SL  (intra-1m low touches entry-10)
+      2. EMA9L_1M      (1-min close < 1-min EMA9_low)  ← user's rule
+      3. EOD_EXIT      (15:20)
+    Returns dict with entry, exit, pnl, peak, reason, exit_ts, candles_held.
+    """
+    entry_candle = leg_3m[entry_idx_3m]
+    entry_price = entry_candle["close"]   # fill at signal close (no anti-spike here)
+    entry_ts = entry_candle["ts"]
+    # Find first 1-min candle strictly AFTER entry candle's close time.
+    # 3-min ts is bucket-start → close = ts + 3min. So we want 1-min candles
+    # whose ts > entry close-time.
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        ent_dt = _dt.strptime(entry_ts, "%Y-%m-%d %H:%M:%S")
+        ent_close_ts = (ent_dt + _td(minutes=3)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        ent_close_ts = entry_ts
+
+    peak = 0.0
+    candles_held = 0
+    for c1m in leg_1m:
+        if c1m["ts"] <= ent_close_ts:
+            continue
+        candles_held += 1
+        # Update peak from intra-candle high
+        cp_h = c1m["high"] - entry_price
+        if cp_h > peak: peak = cp_h
+        # Emergency SL — intra-candle low touches -10
+        cp_l = c1m["low"] - entry_price
+        if cp_l <= emergency_sl:
+            return {
+                "entry": round(entry_price, 2),
+                "exit": round(entry_price + emergency_sl, 2),
+                "pnl": round(emergency_sl, 2),
+                "peak": round(peak, 2),
+                "reason": "EMERGENCY_SL",
+                "exit_ts": c1m["ts"],
+                "candles_held": candles_held,
+            }
+        # 1-min EMA9_low SL — close < ema9_low_1m
+        ema9l = ema9l_1m_lookup.get(c1m["ts"], 0)
+        if ema9l > 0 and c1m["close"] < ema9l:
+            return {
+                "entry": round(entry_price, 2),
+                "exit": round(c1m["close"], 2),
+                "pnl": round(c1m["close"] - entry_price, 2),
+                "peak": round(peak, 2),
+                "reason": "EMA9L_1M_BREAK",
+                "exit_ts": c1m["ts"],
+                "candles_held": candles_held,
+            }
+        # EOD cutoff
+        try:
+            t = c1m["ts"][-8:-3]
+            hh, mm = int(t[:2]), int(t[3:])
+            if hh*60 + mm >= eod_hhmm[0]*60 + eod_hhmm[1]:
+                return {
+                    "entry": round(entry_price, 2),
+                    "exit": round(c1m["close"], 2),
+                    "pnl": round(c1m["close"] - entry_price, 2),
+                    "peak": round(peak, 2),
+                    "reason": "EOD_EXIT",
+                    "exit_ts": c1m["ts"],
+                    "candles_held": candles_held,
+                }
+        except Exception:
+            pass
+    # End of data — close at last candle close
+    if leg_1m:
+        last_c = leg_1m[-1]
+        return {
+            "entry": round(entry_price, 2),
+            "exit": round(last_c["close"], 2),
+            "pnl": round(last_c["close"] - entry_price, 2),
+            "peak": round(peak, 2),
+            "reason": "EOD_EXIT",
+            "exit_ts": last_c["ts"],
+            "candles_held": candles_held,
+        }
+    return None
+
+
+def run_emah_test(found, atm_only):
+    """User's strategy: 3-min EMA9_HIGH break entry + 1-min EMA9_low SL.
+    No anti-spike, no candle/2 (raw-close fill), single trade per side
+    per day to keep clean signal.
+    """
+    print("\n" + "=" * 100)
+    print("EMA9_HIGH BREAK STRATEGY — 3-min entry, 1-min EMA9_low SL")
+    print("=" * 100)
+
+    variants = [
+        ("V1 EMA9H entry + 1m EMA9L SL  (body>=40)",   "ema9h_break", 40, "ema9l_1m"),
+        ("V2 EMA9H entry + 1m EMA9L SL  (body>=50)",   "ema9h_break", 50, "ema9l_1m"),
+        ("V3 EMA9H entry + 1m EMA9L SL  (body>=60)",   "ema9h_break", 60, "ema9l_1m"),
+        ("V4 EMA9L entry + 1m EMA9L SL  (current entry, new exit)", "ema9l_break", 40, "ema9l_1m"),
+        ("V5 EMA9H entry + STATIC -10 SL only",        "ema9h_break", 40, "static"),
+    ]
+
+    rows = []
+    for label, entry_mode, min_body, sl_mode in variants:
+        all_trades = []
+        for d in found:
+            legs_3m = load_3m_day(d)
+            legs_1m = load_1m_day(d)
+            if not legs_3m or not legs_1m:
+                continue
+            # Find ATM strikes only
+            strikes_used = set()
+            for (sk, side), rows_d in legs_3m.items():
+                if not rows_d: continue
+                if abs(rows_d[0].get("atm_distance", 999)) <= 50:
+                    strikes_used.add(sk)
+            for sk in strikes_used:
+                for side in ("CE", "PE"):
+                    rows_3m = legs_3m.get((sk, side), [])
+                    rows_1m = legs_1m.get((sk, side), [])
+                    if len(rows_3m) < 4 or len(rows_1m) < 10:
+                        continue
+                    ema9l_1m = _compute_1m_ema9_low(rows_1m, period=9)
+                    # Walk through 3-min candles for entry signals
+                    in_trade_until = ""  # cooldown
+                    for i in range(2, len(rows_3m)):
+                        c = rows_3m[i]; prev = rows_3m[i-1]
+                        # Skip if still in trade
+                        if c["ts"] <= in_trade_until:
+                            continue
+                        # Entry gate
+                        if entry_mode == "ema9h_break":
+                            fired, why, body = _evaluate_emah_entry(c, prev, min_body=min_body)
+                        else:  # ema9l_break (current)
+                            ok, why, body, _, _ = evaluate_gates(c, prev,
+                                max_stretch=999, min_body=min_body)
+                            fired = ok
+                        if not fired:
+                            continue
+                        # Simulate trade
+                        if sl_mode == "ema9l_1m":
+                            res = _simulate_emah_trade(i, rows_3m, rows_1m, ema9l_1m)
+                        else:  # static SL only
+                            res = _simulate_emah_trade(i, rows_3m, rows_1m, {})
+                        if res:
+                            res["date"] = d.isoformat()
+                            res["side"] = side
+                            res["strike"] = sk
+                            res["body"] = body
+                            all_trades.append(res)
+                            in_trade_until = res.get("exit_ts", c["ts"])
+        # Aggregate
+        trades = all_trades
+        wins = [t for t in trades if t["pnl"] > 0]
+        losses = [t for t in trades if t["pnl"] <= 0]
+        total = sum(t["pnl"] for t in trades)
+        avg_w = sum(t["pnl"] for t in wins) / max(len(wins), 1)
+        avg_l = sum(t["pnl"] for t in losses) / max(len(losses), 1)
+        wr = len(wins) / max(len(trades), 1) * 100
+        # Exit reason counts
+        ex_emah = sum(1 for t in trades if t["reason"] == "EMA9L_1M_BREAK")
+        ex_emer = sum(1 for t in trades if t["reason"] == "EMERGENCY_SL")
+        ex_eod = sum(1 for t in trades if t["reason"] == "EOD_EXIT")
+        rows.append({"label": label, "n": len(trades), "wr": wr, "total": total,
+                     "avg_w": avg_w, "avg_l": avg_l,
+                     "ex_emah": ex_emah, "ex_emer": ex_emer, "ex_eod": ex_eod})
+
+    print(f"\n{'Variant':<55} {'N':>4} {'WR%':>5} {'Total':>8} {'AvgW':>5} {'AvgL':>5} "
+          f"{'1M':>4} {'EMR':>4} {'EOD':>4}")
+    print("-" * 105)
+    for r in rows:
+        print(f"{r['label']:<55} {r['n']:>4} {r['wr']:>5.1f} "
+              f"{r['total']:>+8.1f} {r['avg_w']:>+5.1f} {r['avg_l']:>+5.1f} "
+              f"{r['ex_emah']:>4} {r['ex_emer']:>4} {r['ex_eod']:>4}")
+    print()
+    print("Columns: 1M=1-min EMA9L SL exits, EMR=Emergency SL exits, EOD=time/end exits")
+    best = max(rows, key=lambda r: r["total"])
+    print(f"\nBEST: {best['label']}")
+    print(f"  → {best['n']} trades, {best['wr']:.1f}% WR, {best['total']:+.1f} pts")
+    print(f"  vs current production (+535/5d backtest)")
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     atm_only = True
@@ -1006,6 +1241,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "ladder":
         run_ladder_sweep(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "emah":
+        run_emah_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
