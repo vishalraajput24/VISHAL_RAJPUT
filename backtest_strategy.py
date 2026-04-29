@@ -56,7 +56,8 @@ def compute_trail_sl(entry_price, peak_pnl, early_lock_5=False,
                      lock5_peak=12, lock5_offset=5,
                      lock8_peak=15, lock8_offset=8,
                      lock15_peak=20, lock15_offset=15,
-                     dyn_peak=21, dyn_giveback=5):
+                     dyn_peak=21, dyn_giveback=5,
+                     initial_sl=-10):
     """v16.7 SL ladder. All tier thresholds + offsets are tunable for
     parameter sweeps. Defaults match current production.
 
@@ -77,7 +78,7 @@ def compute_trail_sl(entry_price, peak_pnl, early_lock_5=False,
         return round(entry_price + lock3_offset, 2), "LOCK_3"
     if early_lock_5 and peak_pnl >= 5:
         return round(entry_price + m5_offset, 2), "LOCK_M5"
-    return round(entry_price - 10, 2), "INITIAL"
+    return round(entry_price + initial_sl, 2), "INITIAL"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -289,12 +290,15 @@ def simulate_trade(entry_idx, leg_3m, leg_1m, anti_spike,
 
         # Compute current SL based on peak (early_lock_5 toggle)
         _lk = ladder_kwargs or {}
+        # emergency_sl is consumed in this function, not by compute_trail_sl
+        _lk_clean = {k: v for k, v in _lk.items() if k != "emergency_sl"}
         sl, tier = compute_trail_sl(entry_price, peak,
-                                    early_lock_5=early_lock_5, **_lk)
+                                    early_lock_5=early_lock_5, **_lk_clean)
 
         # 1. Emergency SL — if candle's low touched/crossed entry-10
-        if candle_min_pnl <= EMERGENCY_SL_PTS:
-            return _result(entry_price, entry_price + EMERGENCY_SL_PTS, peak,
+        _emer = (ladder_kwargs or {}).get("emergency_sl", EMERGENCY_SL_PTS)
+        if candle_min_pnl <= _emer:
+            return _result(entry_price, entry_price + _emer, peak,
                            "EMERGENCY_SL", j - entry_idx, raw_close,
                            target if anti_spike else 0, spike_used,
                            exit_idx=j, exit_ts=c["ts"])
@@ -981,6 +985,71 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def run_slmax_test(found, atm_only):
+    """Compact SL sweep — focuses on the two SL knobs that actually
+    bound losses: emergency_sl (panic exit) + initial_sl (pre-LOCK_M5
+    trail). All other ladder tiers stay at production defaults.
+    Mobile-friendly one-screen output.
+    """
+    print("\nSL FLOOR SWEEP — emergency + initial SL only")
+    print("(reentry=ON, candle/2 entry, body40, xleg=OFF)")
+    print("-" * 60)
+
+    base = _run_variant(found, atm_only, ladder_kwargs={})
+
+    # Dimension 1 — emergency SL (panic floor on intra-candle low)
+    print("\nA. EMERGENCY SL (intra-candle low touches → exit)")
+    print(f"{'SL':>5}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgL':>5}  vs base")
+    print("-" * 50)
+    for emer in [-5, -7, -8, -10, -12, -15]:
+        r = _run_variant(found, atm_only, ladder_kwargs={"emergency_sl": emer})
+        delta = r["total"] - base["total"]
+        m = " *" if r["total"] > base["total"] else ""
+        print(f"{emer:>+5}  {r['trades']:>3}  {r['wr']:>5.1f}  "
+              f"{r['total']:>+7.1f}  {r['avg_l']:>+5.1f}  "
+              f"{delta:>+6.1f}{m}")
+
+    # Dimension 2 — initial SL (close-based trail before LOCK_M5)
+    print("\nB. INITIAL SL (3-min close <= entry+offset → trail exit)")
+    print(f"{'SL':>5}  {'N':>3}  {'WR%':>5}  {'Total':>7}  {'AvgL':>5}  vs base")
+    print("-" * 50)
+    for init in [-5, -7, -8, -10, -12, -15]:
+        r = _run_variant(found, atm_only, ladder_kwargs={"initial_sl": init})
+        delta = r["total"] - base["total"]
+        m = " *" if r["total"] > base["total"] else ""
+        print(f"{init:>+5}  {r['trades']:>3}  {r['wr']:>5.1f}  "
+              f"{r['total']:>+7.1f}  {r['avg_l']:>+5.1f}  "
+              f"{delta:>+6.1f}{m}")
+
+    # Dimension 3 — joint sweep (small 3x3 grid)
+    print("\nC. JOINT (emergency × initial)")
+    _hdr = "emer/init"
+    print(f"{_hdr:>10}  -5     -7     -10")
+    print("-" * 50)
+    grid_best = base; grid_best_k = {}
+    for emer in [-5, -7, -10]:
+        cells = []
+        for init in [-5, -7, -10]:
+            r = _run_variant(found, atm_only,
+                             ladder_kwargs={"emergency_sl": emer,
+                                            "initial_sl": init})
+            cells.append(f"{r['total']:>+6.1f}")
+            if r["total"] > grid_best["total"]:
+                grid_best = r; grid_best_k = {"emergency_sl": emer, "initial_sl": init}
+        print(f"{emer:>+10}  " + "  ".join(cells))
+
+    print("\n" + "-" * 60)
+    print(f"BASELINE  : {base['total']:+.1f} pts ({base['trades']} trades, {base['wr']:.0f}% WR)")
+    print(f"BEST GRID : {grid_best['total']:+.1f} pts {grid_best_k}")
+    print(f"DELTA     : {(grid_best['total']-base['total']):+.1f} pts")
+    if grid_best['total'] > base['total'] + 30:
+        print("VERDICT   : worth shipping — clear improvement")
+    elif grid_best['total'] > base['total']:
+        print("VERDICT   : marginal — not worth code change")
+    else:
+        print("VERDICT   : current SL is already optimal — DO NOT CHANGE")
+
+
 def _compute_1m_ema9_low(candles_1m, period=9):
     """Compute 9-period EMA on 1-min candle LOWs.
     Returns {ts: ema_low_value}. Seeds with SMA of first `period` lows
@@ -1316,6 +1385,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "body60":
         run_body60_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "slmax":
+        run_slmax_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
