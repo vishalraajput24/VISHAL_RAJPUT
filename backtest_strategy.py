@@ -1042,6 +1042,89 @@ def run_ladder_sweep(found, atm_only):
     print(f"\nNote: 5-day sample. Could be overfit. Need 10+ days for confidence.\n")
 
 
+def run_vrl6_test(found, atm_only):
+    """VRL6 = V2 winner (time-seg ladder) + cooldown 5m both-sides
+    + reentry OFF. Final ship-confirmation test before deploying.
+    """
+    print("\nVRL6 SHIP-CONFIRMATION — V2 ladder + both-side cd + no reentry")
+    print("-" * 65)
+
+    morning_kw = {
+        "emergency_sl": -18, "m5_offset": -5,
+        "lock3_peak": 8,  "lock3_offset":  3,
+        "lock5_peak": 12, "lock5_offset":  5,
+        "lock8_peak": 15, "lock8_offset":  8,
+        "lock15_peak": 20, "lock15_offset": 15,
+        "dyn_peak":   21, "dyn_giveback":  5,
+    }
+    afternoon_kw = {
+        "emergency_sl": -10, "m5_offset": -5,
+        "lock3_peak": 8,  "lock3_offset":  3,
+        "lock5_peak": 12, "lock5_offset":  5,
+        "lock8_peak": 15, "lock8_offset":  10,
+        "lock15_peak": 20, "lock15_offset": 20,
+        "dyn_peak":   25, "dyn_giveback":  5,
+    }
+    timesplit_kw = {
+        "morning_kw": morning_kw, "afternoon_kw": afternoon_kw,
+        "split_hhmm": (11, 0),
+    }
+    prod_kw = {"emergency_sl": -18}
+
+    # (label, ladder_kw, reentry_mode, both_sides)
+    variants = [
+        ("V0 PROD live                 ", prod_kw,      "wait_3min", False),
+        ("V1 V2 winner (ladder only)   ", timesplit_kw, "wait_3min", False),
+        ("V2 V2 + no-reentry (same-cd) ", timesplit_kw, "off",       False),
+        ("V3 V2 + both-side cooldown   ", timesplit_kw, "wait_3min", True),
+        ("V4 SHIP SPEC (V2+both+noRE)  ", timesplit_kw, "off",       True),
+    ]
+
+    print(f"{'Variant':<32} {'N':>3} {'WR%':>5} {'AvgW':>5} "
+          f"{'AvgL':>5} {'Total':>7}")
+    print("-" * 65)
+
+    rows = []
+    for label, lk, rm, both in variants:
+        all_t = []
+        for d in found:
+            day = replay_day(d, atm_only=atm_only,
+                             anti_spike=False, xleg_gate=False,
+                             early_lock_5=True,
+                             entry_mode="candle_half",
+                             reentry_mode=rm, min_body=40,
+                             ladder_kwargs=lk,
+                             cooldown_min=5,
+                             cooldown_both_sides=both)
+            if day: all_t.extend(day)
+        real = [x for x in all_t if not x.get("spike_skipped")]
+        wins = [x for x in real if x["pnl"] > 0]
+        n = len(real)
+        wr = (len(wins) / n * 100) if n else 0
+        total = sum(x["pnl"] for x in real)
+        avg_w = (sum(x["pnl"] for x in wins) / len(wins)) if wins else 0
+        losses = [x for x in real if x["pnl"] <= 0]
+        avg_l = (sum(x["pnl"] for x in losses) / len(losses)) if losses else 0
+        rows.append((label, n, wr, avg_w, avg_l, total))
+        print(f"{label:<32} {n:>3} {wr:>5.1f} {avg_w:>+5.1f} "
+              f"{avg_l:>+5.1f} {total:>+7.1f}")
+
+    base = rows[0]; ship = rows[4]
+    print("-" * 65)
+    print(f"PROD       : {base[5]:+.1f} pts ({base[1]} trades)")
+    print(f"SHIP SPEC  : {ship[5]:+.1f} pts ({ship[1]} trades)")
+    print(f"DELTA      : {(ship[5]-base[5]):+.1f} pts")
+
+    delta = ship[5] - base[5]
+    if delta >= 30:
+        print("VERDICT    : SHIP — improvement confirmed")
+    elif delta >= 0:
+        print("VERDICT    : MARGINAL — gain too small for risk")
+    else:
+        print("VERDICT    : DO NOT SHIP — combo erases ladder gain")
+        print("           : Recommend keeping reentry ON (V1 or V3 variant).")
+
+
 def run_vrl5_test(found, atm_only):
     """Vishal v5 spec — TIME-SEGMENTED ladder + new entry math:
       ENTRY     : (open + high) / 2 midpoint, body >= 50
@@ -1996,6 +2079,9 @@ def main():
         return
     if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl5":
         run_vrl5_test(found, atm_only)
+        return
+    if len(sys.argv) > 3 and sys.argv[3].lower() == "vrl6":
+        run_vrl6_test(found, atm_only)
         return
 
     print(f"\nReplaying {len(found)} days across 4 strategy variants...\n")
