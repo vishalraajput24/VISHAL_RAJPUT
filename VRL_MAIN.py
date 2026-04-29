@@ -836,7 +836,7 @@ def _alert_bot_started():
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v16.7\n"
-        "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
+        "Entry   : 09:35 - 15:10 IST  |  5-min BOTH-side cooldown (VRL4)\n"
         "Gates   : 1) GREEN candle\n"
         "          2) close > EMA9_low\n"
         "          3) body >= 40%\n"
@@ -1342,16 +1342,15 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 # Trail state — clear so next trade starts at INITIAL
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (v16.7-final): wait for next FULL
-                # 3-min candle to close. If that candle independently
-                # passes 3-gate, re-enter on same side using candle/2
-                # fill. Else drop. Replaces previous "GREEN break of
-                # original entry close" rule.
-                "_reentry_armed":      True,
-                "_reentry_exit_ts":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "_reentry_direction":  str(old_dir or ""),
-                "_reentry_token":      int(old_token or 0),
-                "_reentry_strike":     int(old_strike or 0),
+                # Re-entry watcher (v16.7+VRL4): DISABLED per user spec.
+                # Backtest 5d showed no-reentry alone = -75 pts but user
+                # wants both-side cooldown + no-reentry. Keep state shape
+                # for backwards-compat but never arm.
+                "_reentry_armed":      False,
+                "_reentry_exit_ts":    "",
+                "_reentry_direction":  "",
+                "_reentry_token":      0,
+                "_reentry_strike":     0,
                 # Entry context (v15.0 band + body)
                 "entry_mode": "",
                 "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,

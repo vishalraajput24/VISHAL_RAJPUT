@@ -63,7 +63,9 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
             last_dir = state.get("last_exit_direction", "")
             cd_min = CFG.entry_ema9_band("cooldown_minutes", 5)
-            if direction and last_dir and direction == last_dir and elapsed < cd_min:
+            # v16.7+VRL4 — both-side cooldown. After ANY exit, lock both
+            # CE and PE for cd_min. Previously was same-direction only.
+            if last_dir and elapsed < cd_min:
                 return False, "Cooldown: " + str(round(cd_min - elapsed, 1)) + "min"
         except:
             pass
@@ -254,22 +256,57 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
-                     direction: str = "") -> tuple:
-    """Vishal Clean SL ladder (v16.7) — peak-driven ratchet, never moves down.
+                     direction: str = "", now=None) -> tuple:
+    """v16.7+VRL4 — time-segmented peak-driven SL ladder.
 
-    Tiers (ascending peak):
-      peak <  5:  INITIAL    SL = entry - 10            (Emergency zone)
-      peak >= 5:  LOCK_M5    SL = entry -  5  (optional, gated by config)
-      peak >= 8:  LOCK_3     SL = entry +  3
-      peak >=12:  LOCK_5     SL = entry +  5
-      peak >=15:  LOCK_8     SL = entry +  8
-      peak >=20:  LOCK_15    SL = entry + 15            (wick-capture sweet spot)
-      peak >=21:  LOCK_DYN   SL = entry + (peak - 5)    (1pt added per peak pt)
+    Morning (09:35 - 11:00): current PROD ladder (LOCK_M5/3/5/8/15/DYN)
+    Afternoon (11:00 - 15:30):
+      peak >= 5  → LOCK_M5  SL = entry -  5
+      peak >= 8  → LOCK_3   SL = entry +  3
+      peak >=12  → LOCK_5   SL = entry +  5
+      peak >=15  → LOCK_8   SL = entry + 10  (was +8)
+      peak >=20  → LOCK_20  SL = entry + 20  (floor; was +15)
+      peak >=25  → LOCK_DYN SL = entry + (peak - 5)  chandelier above floor
 
-    LOCK_M5 caps the max loss at -5 once the trade shows any traction.
-    Backtest sweep (5d): adding LOCK_M5 = +5.4 pts at buf=2, INIT trades
-    drop 18 → 8 (some marginal losers exit at -5 instead of -10).
+    Backtest (5d Apr 22-28): time-seg ladder ALONE = +61 pts/5d vs PROD.
+    Combined with both-side cooldown + reentry off (per Vishal spec) =
+    -83 pts/5d. Shipped per explicit user direction with awareness of
+    that trade-off.
     """
+    # Pick afternoon profile by current local time.
+    if now is None:
+        from datetime import datetime as _dt
+        now = _dt.now()
+    _afternoon = (now.hour * 60 + now.minute) >= (11 * 60)
+
+    if _afternoon:
+        # Vishal afternoon ladder
+        if peak_pnl >= 25:
+            sl = entry_price + (peak_pnl - 5)
+            tier = "LOCK_DYN"
+        elif peak_pnl >= 20:
+            sl = entry_price + 20
+            tier = "LOCK_20"
+        elif peak_pnl >= 15:
+            sl = entry_price + 10
+            tier = "LOCK_8"
+        elif peak_pnl >= 12:
+            sl = entry_price + 5
+            tier = "LOCK_5"
+        elif peak_pnl >= 8:
+            sl = entry_price + 3
+            tier = "LOCK_3"
+        else:
+            _early_5 = bool(CFG.entry_ema9_band("early_lock_5_enabled", True))
+            if _early_5 and peak_pnl >= 5:
+                sl = entry_price - 5
+                tier = "LOCK_M5"
+            else:
+                sl = entry_price - 10
+                tier = "INITIAL"
+        return round(sl, 2), tier
+
+    # Morning ladder = current PROD
     if peak_pnl >= 21:
         sl = entry_price + (peak_pnl - 5)
         tier = "LOCK_DYN"
@@ -286,7 +323,6 @@ def compute_trail_sl(entry_price: float, peak_pnl: float,
         sl = entry_price + 3
         tier = "LOCK_3"
     else:
-        # LOCK_M5 — early loss cap when trade shows traction (peak >= 5)
         _early_5 = bool(CFG.entry_ema9_band("early_lock_5_enabled", True))
         if _early_5 and peak_pnl >= 5:
             sl = entry_price - 5
@@ -302,7 +338,13 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     pnl = round(option_ltp - entry, 2)
     peak = max(state.get("peak_pnl", 0), pnl)
     state["peak_pnl"] = peak
-    if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -10):
+    # v16.7+VRL4 — time-segmented emergency SL.
+    # Morning (< 11:00) uses the wider config-defined floor (-18).
+    # Afternoon switches to -10 (tighter — afternoon is calmer).
+    _is_afternoon = (now.hour * 60 + now.minute) >= (11 * 60)
+    _emer_morning = CFG.exit_ema9_band("emergency_sl_pts", -10)
+    _emer = -10 if _is_afternoon else _emer_morning
+    if pnl <= _emer:
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:
         # Robust HH:MM parse — tolerates single-digit hours or minutes.
@@ -320,7 +362,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     # the trail SL is the only thing that closes the trade. No
     # slope-based or time-based soft exit. Either price closes ≤
     # the trail SL (we exit at the SL) or we hold.
-    trail_sl, trail_tier = compute_trail_sl(entry, peak)
+    trail_sl, trail_tier = compute_trail_sl(entry, peak, now=now)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
