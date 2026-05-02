@@ -102,7 +102,7 @@ DEFAULT_STATE = {
     "other_token"        : 0,
     # v16.7-final re-entry watcher (wait next full 3-min candle)
     "_reentry_armed"     : False,
-    "_reentry_exit_ts"   : "",
+    "_reentry_exit_ts"   : 0.0,   # ── CHANGED: now epoch float, not string
     # v16.7-final candle/2 cooldown (3 min after every attempt)
     "_next_candle2_after": 0.0,
     "_reentry_direction" : "",
@@ -160,7 +160,7 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
     v16.7 final: ATM CE+PE for trading + ATM±50 CE+PE for pre-warm.
     Pre-warmed neighbors mean zero indicator-warmup gap when spot
-    drifts past hysteresis buffer and relock fires.
+    drifts past hysteresis buffer and relock fire.
     Multi-candidate scan (when enabled) uses the same neighbor tokens.
     """
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
@@ -178,7 +178,6 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
 
         # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
         # Keys: CE_UP / CE_DN / PE_UP / PE_DN
-        # When relock fires, the new ATM was already WS-warm + lab-data warm.
         for _suffix, _delta in (("UP", +50), ("DN", -50)):
             _ce_n_strike = _locked_ce_strike + _delta
             _pe_n_strike = _locked_pe_strike + _delta
@@ -216,11 +215,10 @@ def _reset_strike_lock():
     this, a full trading day of ~20 relocks leaves 60+ dead tokens
     pinned against the Kite quota.
 
-    EXCEPTION: tokens currently in the post-exit observation queue
-    are skipped — those need to stay subscribed for 10 min after exit
-    so VRL_LAB can capture post-exit candles + dashboard LTP stays warm.
-    The strategy-loop housekeeping unsubscribes them when their TTL
-    expires."""
+    EXCEPTION: tokens currently in the post-exit observation queue,
+    the active trade's own token, and the active trade's other_token
+    are skipped — those need to stay subscribed so exit monitoring
+    and cross‑leg checks keep working."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     try:
         # Collect tokens currently being held for post-exit observation
@@ -228,8 +226,14 @@ def _reset_strike_lock():
             _post_exit_tokens = {tok for tok, _ in _post_exit_observation}
         _old = [v.get("token") for v in (_locked_tokens or {}).values()
                 if isinstance(v, dict) and v.get("token")]
-        # Don't unsubscribe anything still in the post-exit window
-        _to_drop = [t for t in _old if int(t) not in _post_exit_tokens]
+        # ── PATCH: also keep tokens of the currently open trade alive ──
+        # Without this, a mid‑trade strike relock would unsubscribe the
+        # opposite leg and break cross‑leg divergence monitoring.
+        with _state_lock:
+            _trade_tok = int(state.get("token", 0) or 0)
+            _other_tok = int(state.get("other_token", 0) or 0)
+        _keep = _post_exit_tokens | {_trade_tok, _other_tok} - {0}
+        _to_drop = [t for t in _old if int(t) not in _keep]
         if _to_drop:
             D.unsubscribe_tokens(_to_drop)
     except Exception as _ue:
@@ -445,8 +449,6 @@ def _remove_pid():
 #  TRADE LOG
 # ═══════════════════════════════════════════════════════════════
 
-# v15.2.5 live columns only (matches _TRADE_FIELDS in VRL_DB.py).
-# Dead v13 fields previously tracked here — removed via schema migrations.
 TRADE_FIELDNAMES = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
@@ -508,7 +510,6 @@ def _compute_exit_band_position(exit_price: float,
     except Exception:
         return ""
 
-
 def _log_trade(st: dict, exit_price: float, exit_reason: str,
                candles_held: int = 0, saved_entry: float = None,
                lot_id: str = "ALL", qty: int = 0):
@@ -519,7 +520,6 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     _lot_qty = qty if qty > 0 else D.get_lot_size()
     pnl_rs  = round(pnl_pts * _lot_qty, 2)
 
-    # v15.2.5 live columns only. Dead v13 fields purged.
     row = {
         "date"          : date.today().isoformat(),
         "entry_time"    : st.get("entry_time", ""),
@@ -545,10 +545,6 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "exit_slippage" : 0,
         "lot_id"        : lot_id,
         "qty_exited"    : _lot_qty,
-        # v15.2.5 fix: persist v15.2 entry/exit context so the trades table
-        # stops writing zeros / empty strings. All values are captured in
-        # state at entry (see VRL_MAIN strategy loop) + refreshed via
-        # manage_exit(); the exit-time band is whatever was last seen.
         "entry_ema9_high":     round(float(st.get("entry_ema9_high", 0) or 0), 2),
         "entry_ema9_low":      round(float(st.get("entry_ema9_low",  0) or 0), 2),
         "exit_ema9_high":      round(float(st.get("current_ema9_high", 0) or 0), 2),
@@ -559,13 +555,13 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
                                     st.get("current_ema9_high", 0),
                                     st.get("current_ema9_low", 0)),
         "entry_body_pct":      round(float(st.get("entry_body_pct", 0) or 0), 1),
-        # v16.7 Cross-leg divergence (LOG ONLY — see /xleg for accuracy)
+        # v16.7 Cross-leg divergence
         "xleg_signal":         st.get("_xleg_signal", "NA") or "NA",
         "xleg_other_close":    round(float(st.get("_xleg_other_close", 0) or 0), 2),
         "xleg_other_ema9l":    round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
         "xleg_other_dying":    bool(st.get("_xleg_other_dying", False)),
         "xleg_other_margin":   round(float(st.get("_xleg_other_margin", 0) or 0), 2),
-        # v16.7 Anti-spike pullback (close, target, fill, wait used)
+        # v16.7 Anti-spike pullback
         "spike_close":         round(float(st.get("_spike_close", 0) or 0), 2),
         "spike_target":        round(float(st.get("_spike_target", 0) or 0), 2),
         "spike_fill":          round(float(st.get("_spike_fill", 0) or 0), 2),
@@ -583,7 +579,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
             pass
 
     # Calculate charges
-    _num_exit_orders = 1  # per-lot logging = 1 exit order each
+    _num_exit_orders = 1
     _qty = _lot_qty
     try:
         _ch = CHARGES.calculate_charges(entry, exit_price, _qty, _num_exit_orders)
@@ -602,10 +598,6 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
 
     # One-shot header migration: if the existing CSV header is missing
     # any TRADE_FIELDNAMES column, rewrite the file with the new header
-    # so DictReader can map the new cells (xleg_*, etc.) correctly when
-    # /xleg reads them back. Without this, new rows have extra cells
-    # the old header can't name → DictReader buckets them into the
-    # None key and accuracy stats look like 100% NA.
     if not is_new:
         try:
             with open(D.TRADE_LOG_PATH, "r", newline="") as _f_chk:
@@ -615,16 +607,13 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
             if _missing:
                 logger.info("[MAIN] Trade-log header upgrade: adding "
                             + ", ".join(_missing))
-                # Read existing rows with old header
                 with open(D.TRADE_LOG_PATH, "r", newline="") as _f_rd:
                     _old_rows = list(csv.DictReader(_f_rd))
-                # Rewrite with new header — old rows get blanks for new cols
                 with open(D.TRADE_LOG_PATH, "w", newline="") as _f_wr:
                     _w = csv.DictWriter(_f_wr, fieldnames=TRADE_FIELDNAMES,
                                         extrasaction="ignore")
                     _w.writeheader()
                     for _orow in _old_rows:
-                        # Fill missing keys with empty so writer doesn't error
                         for _c in _missing:
                             _orow.setdefault(_c, "")
                         _w.writerow(_orow)
@@ -693,7 +682,6 @@ def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
         return direction + " " + str(strike)
     if not symbol:
         return ""
-    # Extract CE/PE from end of symbol
     if symbol.endswith("CE"):
         return "CE"
     elif symbol.endswith("PE"):
@@ -836,7 +824,7 @@ def _alert_bot_started():
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v16.7\n"
-        "Entry   : 09:35 - 15:10 IST  |  5-min BOTH-side cooldown (VRL4)\n"
+        "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
         "Gates   : 1) GREEN candle\n"
         "          2) close > EMA9_low\n"
         "          3) body >= 40%\n"
@@ -845,10 +833,9 @@ def _alert_bot_started():
         "<b>EXITS</b>  (first match wins)\n"
         "1. Emergency -10pts\n"
         "2. EOD 15:20\n"
-        "3. Vishal Trail (peak ladder, time-segmented)\n"
+        "3. Vishal Trail (peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>MORNING SL LADDER</b>  09:35 — 11:00\n"
-        "(emergency = -18, current PROD ladder)\n"
+        "<b>SL LADDER</b> (peak-driven ratchet)\n"
         "peak <5    SL = entry-10        (INITIAL)\n"
         "peak >=5   SL = entry-5         (LOCK_M5)\n"
         "peak >=8   SL = entry+3         (LOCK_3)\n"
@@ -857,19 +844,9 @@ def _alert_bot_started():
         "peak >=20  SL = entry+15        (LOCK_15)\n"
         "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>AFTERNOON SL LADDER</b>  11:00 — 15:30\n"
-        "(emergency = -10, tighter spec)\n"
-        "peak <5    SL = entry-10        (INITIAL)\n"
-        "peak >=5   SL = entry-5         (LOCK_M5)\n"
-        "peak >=8   SL = entry+3         (LOCK_3)\n"
-        "peak >=12  SL = entry+5         (LOCK_5)\n"
-        "peak >=15  SL = entry+10        (LOCK_8)\n"
-        "peak >=20  SL = entry+20        (LOCK_20 floor)\n"
-        "peak >=25  SL = entry+(peak-5)  (LOCK_DYN)\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RE-ENTRY</b>  DISABLED — fresh 3-gate scan only\n"
-        "(was: wait_3min watcher. v16.7+VRL4 spec)\n"
-        "<b>COOLDOWN</b>  5 min BOTH sides post-exit\n"
+        "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
+        "Confirmation candle must pass 3-gate, then candle/2 fill\n"
+        "→ re-enter same side. Else fresh setup only.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1030,17 +1007,10 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     actual_price = fill["fill_price"]
     actual_qty   = fill["fill_qty"]
     _entry_slippage = fill.get("slippage", 0)
-    # Read the same config key that the engine's emergency-SL check uses
-    # (exit.ema9_band.emergency_sl_pts = -10) so the log line and the real
-    # trigger stay in sync. Previously this fell back to a stale default of
-    # 12, printing "SL=entry-12" while the engine exited at entry-10.
     hard_sl = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
     # Extract the OTHER side token for manage_exit divergence check.
-    # _locked_tokens is the module-global populated by _lock_strikes();
-    # the previous _ce_info_v15/_pe_info_v15 names were locals of the
-    # strategy loop and never reachable from this callee.
     _other_token_entry = 0
     try:
         _ce_locked = (_locked_tokens or {}).get("CE") or {}
@@ -1067,17 +1037,11 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["lot1_active"]        = True
         state["lot2_active"]        = True
         state["lots_split"]         = False
-        # of ATM drift. Resolve both sides so the opposite-side candles
-        # are also persisted for hedge research.
         try:
             _trade_strike = state["strike"]
             _trade_dir    = option_type
             _tce = int((_ce_locked or {}).get("token", 0) or 0)
             _tpe = int((_pe_locked or {}).get("token", 0) or 0)
-            # If the locked ATM tokens don't match the traded strike
-            # (OTM candidate won), resolve fresh tokens for the exact
-            # traded strike so hedge research has both legs of the
-            # actual position.
             if not _tce or not _tpe:
                 _both = D.get_option_tokens(kite, int(_trade_strike), expiry) or {}
                 if not _tce:
@@ -1093,10 +1057,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["peak_pnl"]           = 0.0
         state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
-        # Fresh trade starts without
-        # the normal per-candle append path populates it cleanly. Reset
-        # the one-shot backfill sentinel so the NEXT restart-with-trade
-        # (if this position is still open) gets its own seed.
         state["_last_milestone"]    = 0
         # v15.0 entry context — band values at entry
         state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
@@ -1110,9 +1070,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         state["_xleg_other_ema9l"]  = round(float(entry_result.get("xleg_other_ema9l", 0) or 0), 2)
         state["_xleg_other_dying"]  = bool(entry_result.get("xleg_other_dying", False))
         state["_xleg_other_margin"] = round(float(entry_result.get("xleg_other_margin", 0) or 0), 2)
-        # Anti-spike pullback (signal candle close, pull-back target,
-        # actual fill, seconds waited). Stamped in trade log so we can
-        # measure "saved pts" per trade after a week.
+        # Anti-spike pullback
         state["_spike_close"]       = round(float(entry_result.get("spike_close", 0) or 0), 2)
         state["_spike_target"]      = round(float(entry_result.get("spike_target", 0) or 0), 2)
         state["_spike_fill"]        = round(float(entry_result.get("spike_fill", 0) or 0), 2)
@@ -1163,31 +1121,15 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
-    # v16.7+VRL4 — emergency SL is time-segmented:
-    #   Morning   (<11:00): from config (default -18)
-    #   Afternoon (>=11:00): hardcoded -10 (per engine logic)
-    # Pick the right value for the alert based on entry time so the
-    # reported hard SL matches what the engine will actually enforce.
-    _now = datetime.now()
-    _is_afternoon = (_now.hour * 60 + _now.minute) >= (11 * 60)
-    _sl_pts = 10 if _is_afternoon else abs(
-        CFG.exit_ema9_band("emergency_sl_pts", -10))
+    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     _initial_sl = round(actual_price - _sl_pts, 1)
-    _session_tag = "afternoon" if _is_afternoon else "morning"
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
-        + "{:.1f}".format(_initial_sl) + ")  ["
-        + _session_tag + "]\n"
+        + "{:.1f}".format(_initial_sl) + ")\n"
         "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
-        "Cooldown 5m BOTH sides · Re-entry OFF\n"
     )
 
-    # v16.7 cleanup: removed dead context block (bands_state /
-    # straddle_info / context_tag / backbone_status — engine no longer
-    # computes any of these in v16.7 Vishal Clean). Removed _ctx_block
-    # computation that was never sent. Removed empty _backbone_block
-    # placeholder. Entry alert now shows only what's actually populated.
     _slip_block = ""
     if _entry_slippage and abs(float(_entry_slippage)) > 0.05:
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
@@ -1211,7 +1153,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         + " SL=" + str(phase1_sl)
     )
 
-    # First live trade ever — one-time alert
     if not D.PAPER_MODE:
         _first_flag = os.path.expanduser("~/state/.first_live_done")
         try:
@@ -1279,7 +1220,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _entry_conf = (_entry_mode_e + " | entry close &gt; EMA9h "
                        + str(_entry_eh) + " | body " + str(_entry_body) + "%")
 
-    # Determine qty — for ALL exit use full entry qty
     if lot_id == "ALL":
         exit_qty = state.get("qty", D.get_lot_size() * 2)
     else:
@@ -1322,16 +1262,12 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["lot2_exit_pnl"] = round(pnl, 2)
             state["lot2_exit_reason"] = reason
 
-    # Check if trade is fully closed
     trade_done = not state.get("lot1_active") and not state.get("lot2_active")
-    # Previous bug: used pnl * (qty/lot_size) which doubled the value for 2-lot exits.
-    pnl_lots = pnl  # points per trade — one value per closed trade, matches trade log
+    pnl_lots = pnl
 
-    # Log EVERY lot exit (not just trade_done)
     _log_trade(state, actual_exit, reason, candles, saved_entry=entry,
                lot_id=lot_id, qty=exit_qty)
 
-    # Telegram alert
     if trade_done:
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl_lots, 2)
@@ -1351,6 +1287,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 D.clear_active_trade()
             except Exception:
                 pass
+            # ── PATCH: store exit timestamp as epoch seconds ──
+            _exit_epoch = time.time()
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
                 "direction": "", "strike": 0,
@@ -1358,18 +1296,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "_static_floor_sl": 0.0, "current_floor": 0.0,
                 "peak_pnl": 0.0,
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
-                # Trail state — clear so next trade starts at INITIAL
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (v16.7+VRL4): DISABLED per user spec.
-                # Backtest 5d showed no-reentry alone = -75 pts but user
-                # wants both-side cooldown + no-reentry. Keep state shape
-                # for backwards-compat but never arm.
-                "_reentry_armed":      False,
-                "_reentry_exit_ts":    "",
-                "_reentry_direction":  "",
-                "_reentry_token":      0,
-                "_reentry_strike":     0,
+                # Re-entry watcher (v16.7-final): wait for next FULL
+                # 3-min candle to close. If that candle independently
+                # passes 3-gate, re-enter on same side using candle/2
+                # fill. Else drop.
+                "_reentry_armed":      True,
+                "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
+                "_reentry_direction":  str(old_dir or ""),
+                "_reentry_token":      int(old_token or 0),
+                "_reentry_strike":     int(old_strike or 0),
                 # Entry context (v15.0 band + body)
                 "entry_mode": "",
                 "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
@@ -1386,16 +1323,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "lot2_exit_reason": "",
             })
         if old_token:
-            # Keep token subscribed for 10 min so lab records post-exit
-            # price action. Unsubscribed in the strategy loop's housekeeping.
             import time as _time_post
             _expire_at = _time_post.time() + (POST_EXIT_OBSERVATION_MINUTES * 60)
             with _post_exit_lock:
                 _post_exit_observation.append((int(old_token), _expire_at))
-            # Also register with VRL_DATA so VRL_LAB can persist post-exit
-            # candles to CSV/DB for the same window. Without this, WS stays
-            # subscribed (good for tick cache + dashboard LTP) but lab
-            # writes still cut off at exit.
             try:
                 if old_strike:
                     D.register_post_exit_observation(
@@ -1419,7 +1350,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _day_rs     = int(_day_pnl * D.get_lot_size())
         import VRL_CONFIG as _CFG_exit
         _cd_cfg     = _CFG_exit.get().get("cooldown", {})
-        # Calculate charges for Telegram
         _num_eo = 2 if state.get("lots_split") else 1
         try:
             _ch = CHARGES.calculate_charges(entry, actual_exit,
@@ -1428,7 +1358,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _ch = {"gross_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
                    "total_charges": 0, "net_pnl": pnl * (exit_qty / D.get_lot_size()) * D.get_lot_size(),
                    "charges_pts": 0}
-        # v16.0 Batch 7 exit alert — reason-specific context line
         _dir_emoji = "🟢" if direction == "CE" else "🔴"
         _sym_exit  = _short_sym(symbol, direction, _exit_strike)
         _sign_pnl  = "+" if pnl >= 0 else ""
@@ -1438,10 +1367,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         _tier = _tier_snapshot
         if reason == "VISHAL_TRAIL":
             _reason_line = "Trail " + _tier + " triggered\n"
-            # Show the triggering candle close vs SL so the user can
-            # verify the exit was based on a real candle close below SL
-            # — kills the "price was still above SL" confusion when
-            # market bounces back after the candle closed.
             _trig_close = exit_info.get("trigger_close")
             _trig_time = exit_info.get("trigger_time", "")
             _trig_sl = exit_info.get("trigger_sl")
@@ -1449,8 +1374,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
                                 + "close Rs" + "{:.1f}".format(_trig_close)
                                 + " (≤ SL Rs" + "{:.1f}".format(_trig_sl) + ")\n")
-        # Capture percentage — show — when peak is too small (mathematical
-        # noise: 0.2 peak with -10 pnl gives misleading -5000% etc).
         _capture_line = ""
         try:
             _peak_f = float(peak) if peak else 0
@@ -1482,7 +1405,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             "DAY " + "{:+.1f}".format(_day_pnl) + " pts"
         )
     else:
-        # Partial exit — update daily PNL for the exited lot
         with _state_lock:
             state["daily_pnl"] = round(state.get("daily_pnl", 0) + pnl, 2)
         remaining = "LOT2" if state.get("lot2_active") else "LOT1"
@@ -1501,13 +1423,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         )
 
     _save_state()
-    # Refresh margin after trade (skip in paper mode)
     if not D.PAPER_MODE:
         try:
             D.refresh_margin(kite)
         except Exception:
             pass
-    # Force dashboard refresh after exit so it shows "NOT IN TRADE" immediately
     if trade_done:
         try:
             _da = _last_dash_args
@@ -1527,7 +1447,6 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 + " price=" + str(actual_exit) + " pnl=" + str(pnl)
                 + "pts reason=" + reason)
 
-    # ── Live validation: 10 exit checks (only on full close) ──
     if trade_done:
         try:
             from VRL_DB import validate_exit
@@ -1569,11 +1488,6 @@ def _is_new_1min_candle(now: datetime) -> bool:
 # ═══════════════════════════════════════════════════════════════
 #  DASHBOARD SNAPSHOT — written every cycle for VRL_WEB.py
 #  VRL_WEB.py reads this file. Zero calculation in web server.
-# ═══════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════
-#  Shadow CSV logger — REMOVED in v16.0 Batch 7.
-#  Historical shadow CSVs remain on disk in ~/lab_data/shadow_exits/.
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -1633,16 +1547,8 @@ def _update_dashboard_ltp():
         pass
 
 
-# ═══════════════════════════════════════════════════════════════
-#  WARMUP HELPER (v14.0: data-driven, pre-warmed from previous day)
-#  Queries actual 3-min spot history. Kite API returns multi-day
-#  candles so at 9:16 we already have yesterday's full session.
-#  If len(3m spot df) >= 14, we're warm → entries unblocked at 9:31.
-# ═══════════════════════════════════════════════════════════════
-
 def _warmup_info(now, dte):
-    """Returns (is_warm, candles_done, candles_needed, eta_hhmm).
-    v14.0: reads actual historical candle count, not wall-clock time."""
+    """Returns (is_warm, candles_done, candles_needed, eta_hhmm)."""
     needed = 14
     done = 0
     try:
@@ -1652,7 +1558,6 @@ def _warmup_info(now, dte):
     except Exception:
         pass
     is_warm = done >= needed
-    # ETA: if not warm, estimate when natural 3-min accumulation will finish
     if is_warm:
         eta = "ready"
     else:
@@ -1673,7 +1578,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         with _state_lock:
             st = dict(state)
 
-        # ── Market context ──
         spot_3m = D.get_spot_indicators("3minute")
 
         hourly_rsi = 0
@@ -1693,7 +1597,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         straddle_open = getattr(D, "_straddle_open", 0)
         straddle_captured = getattr(D, "_straddle_captured", False)
 
-        # ── Build CE/PE signal blocks (v15.2: Bands + Straddle Δ + VWAP) ──
         def _build_signal(opt_type, result):
             if not result:
                 return {
@@ -1712,8 +1615,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _green = result.get("candle_green", False)
             _pos = result.get("band_position", "")
             _reject = result.get("reject_reason", "")
-
-            # Verdict
             _width = float(result.get("band_width", 0))
             if _fired:
                 verdict = "READY TO FIRE"
@@ -1731,7 +1632,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = "below band"
 
             return {
-                # v15.x primary fields
                 "close": round(_close, 2),
                 "ema9_high": round(_eh, 2),
                 "ema9_low": round(_el, 2),
@@ -1746,21 +1646,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "entry_mode": _mode,
                 "ltp": round(result.get("entry_price", 0), 2),
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
-                # v16.7 display-only — slope of EMA9_low (dashboard insight, never gates)
                 "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
-                # Cross-leg signal (computed in scan path, surfaces here for dashboard)
                 "xleg_signal":        result.get("xleg_signal", ""),
                 "xleg_other_margin":  round(float(result.get("xleg_other_margin", 0) or 0), 2),
             }
 
-        # Warmup metadata is still consumed by the dashboard header
-        # (market-context block). During warmup the per-side blocks now
-        # fall through to _build_signal's "NO DATA" fallback.
         _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
         ce_signal = _build_signal("CE", all_results.get("CE"))
         pe_signal = _build_signal("PE", all_results.get("PE"))
 
-        # ── Fix LTP=0 when gate blocks early ──
         try:
             _tokens = D.get_option_tokens(None, atm_strike, expiry)
             for _sig, _side in [(ce_signal, "CE"), (pe_signal, "PE")]:
@@ -1778,14 +1672,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             pass
 
-        # ── Position block with independent lot tracking ──
         position = {}
         if st.get("in_trade"):
             opt_ltp = D.get_ltp(st.get("token", 0))
             entry = st.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            # v16.0: stop = ratchet SL if armed, else EMA9-low band
             _ratchet_sl = float(st.get("active_ratchet_sl", 0) or 0)
             if _ratchet_sl > 0:
                 _stop_price = round(_ratchet_sl, 2)
@@ -1813,23 +1705,19 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "candles": st.get("candles_held", 0),
                 "strike": st.get("strike", 0),
                 "entry_mode": st.get("entry_mode", ""),
-                # v16.0 band context (display only)
                 "current_ema9_high": round(st.get("current_ema9_high", 0), 2),
                 "current_ema9_low":  round(st.get("current_ema9_low", 0), 2),
                 "stop": _stop_price,
                 "stop_dist": round(opt_ltp - _stop_price, 2)
                               if opt_ltp > 0 and _stop_price > 0 else 0,
-                # v16.7 trail state (key names preserved for dashboard back-compat)
                 "active_ratchet_tier": st.get("active_ratchet_tier", ""),
                 "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
                 "trail_tier":          st.get("active_ratchet_tier", ""),
                 "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
-                # v16.7 Cross-leg signal at entry (display in position card)
                 "xleg_signal":       st.get("_xleg_signal", "NA"),
                 "xleg_other_close":  round(float(st.get("_xleg_other_close", 0) or 0), 2),
                 "xleg_other_ema9l":  round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
                 "xleg_other_margin": round(float(st.get("_xleg_other_margin", 0) or 0), 2),
-                # v16.7 Anti-spike fill info (display in position card)
                 "spike_close":       round(float(st.get("_spike_close", 0) or 0), 2),
                 "spike_target":      round(float(st.get("_spike_target", 0) or 0), 2),
                 "spike_fill":        round(float(st.get("_spike_fill", 0) or 0), 2),
@@ -1837,7 +1725,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "spike_saved_pts":   round(float(st.get("_spike_close", 0) or 0)
                                             - float(st.get("_spike_fill", 0) or 0), 2)
                                        if st.get("_spike_fill") else 0,
-                # Legacy compat
                 "lots_split": False,
                 "current_floor": round(st.get("current_ema9_low", 0), 2),
                 "lot1": lot1,
@@ -1846,7 +1733,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         else:
             position = {"in_trade": False}
 
-        # ── Today summary from trade log (single source of truth) ──
         _today_trades = _read_today_trades()
         _today_pnl_pts = 0.0
         _today_pnl_rs = 0.0
@@ -1873,7 +1759,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "paused": st.get("paused", False),
         }
 
-        # ── Today charges from trade log ──
         try:
             _t_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
             _t_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
@@ -1886,7 +1771,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             today_block["gross_pnl_rs"] = 0
             today_block["net_pnl_rs"] = 0
 
-        # ── Rolling stats ──
         rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
         try:
             import VRL_DB as _DB_dash
@@ -1898,7 +1782,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             rolling_block["last10_wr"] = round(_w10 / len(_l10) * 100) if _l10 else 0
             rolling_block["last20_wr"] = round(_w20 / len(_l20) * 100) if _l20 else 0
             rolling_block["last10_pts"] = round(_pts10, 1)
-            # Streak
             _streak = 0
             for _t in _l10:
                 if float(_t.get("pnl_pts", 0)) > 0:
@@ -1915,13 +1798,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             pass
 
-        # ── Straddle ──
         straddle_block = {
             "open": round(straddle_open, 1) if straddle_captured else 0,
             "captured": straddle_captured,
         }
 
-        # ── v15.2 period (OPENING / MIDDAY / CLOSING) ──
         _mod = now.hour * 60 + now.minute
         if 585 <= _mod < 630:
             _period = "OPENING"
@@ -1930,11 +1811,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         else:
             _period = "CLOSING"
 
-        # Snapshot post-exit observation count under the lock.
         with _post_exit_lock:
             _post_exit_count = len(_post_exit_observation)
 
-        # ── Full snapshot ──
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
@@ -1977,14 +1856,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "used": D.get_account_info().get("used_margin", 0),
             },
             "rolling": rolling_block,
-            # Post-exit observation — surfaces on dashboard so the operator
-            # can see the bot is holding an exited strike alive 10 min for
-            # lab data capture (no longer just a Telegram /status field).
             "post_exit_count": _post_exit_count,
         }
 
-
-        # Atomic write
         tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
         with open(tmp, "w") as f:
             json.dump(dashboard, f, indent=2, default=str)
@@ -1998,17 +1872,13 @@ def _strategy_loop(kite):
     global _running
     today_str = date.today().isoformat()
     logger.info("[MAIN] Strategy loop started")
-    # Ensure state dir exists
     os.makedirs(os.path.expanduser("~/state"), exist_ok=True)
-    # One-time trade log cleanup
     _cleanup_trade_log()
-    # Compute bias
     try:
         D.compute_daily_bias(kite)
         logger.info("[MAIN] Daily bias: " + str(D.get_daily_bias()))
     except Exception as _be:
         logger.debug("[MAIN] Bias: " + str(_be))
-    # Compute hourly RSI
     try:
         D.check_hourly_rsi(kite)
         logger.info("[MAIN] Hourly RSI: " + str(D.get_hourly_rsi()))
@@ -2017,7 +1887,6 @@ def _strategy_loop(kite):
     with _state_lock:
         state["_last_1min_candle"] = ""
 
-    # Gap open detection — force strike relock if spot gapped 200+ pts
     try:
         _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         _prev_close = state.get("prev_close", 0)
@@ -2033,7 +1902,6 @@ def _strategy_loop(kite):
 
     expiry = D.get_nearest_expiry(kite)
 
-    # Capture straddle if after 9:30 (must be AFTER expiry is resolved)
     try:
         _now = datetime.now()
         if expiry and _now.hour >= 9 and _now.minute >= 30:
@@ -2054,9 +1922,6 @@ def _strategy_loop(kite):
             now   = datetime.now()
             today = date.today()
 
-            # Post-exit observation cleanup: unsubscribe tokens whose 10-min
-            # observation window has expired. Runs every iteration regardless
-            # of trade state so tokens don't linger past their TTL.
             try:
                 import time as _t_obs
                 _now_epoch = _t_obs.time()
@@ -2070,24 +1935,17 @@ def _strategy_loop(kite):
                             _kept.append((tok, expire_at))
                     _post_exit_observation[:] = _kept
                 if _expired:
-                    # Don't unsubscribe tokens that are now part of an active
-                    # trade or part of the locked CE/PE pairs.
                     with _state_lock:
                         _active_token = state.get("token") or 0
                     _safe_to_drop = [t for t in _expired if t != _active_token]
-                    # Also exclude any token currently in the locked strike pair
                     try:
                         _lock_set = set()
-                        # Module-level _locked_tokens is a dict like
-                        # {"CE": {...}, "PE": {...}, "CE_UP": {...}, ...}
-                        # whose values carry "token". Collect them all.
                         if _locked_tokens:
                             for _v in _locked_tokens.values():
                                 if isinstance(_v, dict):
                                     _tk = _v.get("token")
                                     if _tk:
                                         _lock_set.add(int(_tk))
-                        # Also legacy state.* keys if any
                         with _state_lock:
                             for k in ("_locked_ce_token", "_locked_pe_token",
                                       "_locked_ce_token_2", "_locked_pe_token_2"):
@@ -2131,7 +1989,6 @@ def _strategy_loop(kite):
             session = D.get_session_block(now.hour, now.minute)
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
-            # v13.1: Auto-heal stale WebSocket (re-auth + reconnect)
             D.check_and_reconnect()
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
@@ -2145,7 +2002,6 @@ def _strategy_loop(kite):
             except Exception:
                 pass
 
-            # v12.15: Warning system
             try:
                 _wmsg, _wupd = D.run_warnings(
                     kite, state, expiry, dte, spot_ltp, now)
@@ -2157,7 +2013,6 @@ def _strategy_loop(kite):
             except Exception as _we:
                 logger.warning("[MAIN] Warnings: " + str(_we))
 
-            # v13.8 Change 3: Straddle decay aggressive mode
             _strad_open = getattr(D, "_straddle_open", 0)
             _strad_capt = getattr(D, "_straddle_captured", False)
             if (_strad_capt and _strad_open > 0
@@ -2181,8 +2036,6 @@ def _strategy_loop(kite):
 
             with _state_lock:
                 _eod_done = state.get("_eod_reported")
-            # v13.3: Save prev_close continuously from 15:25 onward — avoids
-            # missing the 30-second EOD window if the loop is slow.
             if now.hour == 15 and now.minute >= 25:
                 try:
                     _saved_via = ""
@@ -2199,8 +2052,6 @@ def _strategy_loop(kite):
                                          + str(_re25))
                     if _safe_spot > 0:
                         with _state_lock:
-                            # Only log once per source transition to avoid
-                            # spamming the 5-minute-long save window.
                             prev_src = state.get("_prev_close_src", "")
                             if prev_src != _saved_via:
                                 logger.info("[MAIN] prev_close source: " + _saved_via
@@ -2216,7 +2067,6 @@ def _strategy_loop(kite):
                     and now.second < 30):
                 with _state_lock:
                     state["_eod_reported"] = True
-                    # Save prev_close for gap detection next day
                     _eod_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
                     if _eod_spot <= 0 and kite is not None:
                         try:
@@ -2236,8 +2086,8 @@ def _strategy_loop(kite):
                                 "Both WebSocket and REST ltp() returned 0 at 15:35.\n"
                                 "Tomorrow's gap-relock guard will be disabled.\n"
                                 "Manual fix option: set state.prev_close via restart"
-                                " + /status, or force relock after 9:15 open.",
-                                priority="critical",   # bypass flood
+                                + " + /status, or force relock after 9:15 open.",
+                                priority="critical",
                             )
                         except Exception:
                             pass
@@ -2246,13 +2096,6 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
-            # ── daily lab cleanup at 15:45+ IST ──
-            # Previously cleanup ran only at bot startup. A process that
-            # stays up for a week accumulates 7 days of option_3min /
-            # signal_scans growth with no trim. Run once per trading day
-            # after market close (15:45+) so it can't compete with live
-            # trading I/O. Gated by state._last_cleanup_date so we don't
-            # repeat on every loop after 15:45.
             try:
                 if now.hour == 15 and now.minute >= 45:
                     _today_iso = date.today().isoformat()
@@ -2296,9 +2139,6 @@ def _strategy_loop(kite):
                                   saved_entry_price=_entry_px)
                 time.sleep(1)
                 continue
-            # the in_trade block. Old code only set _eod_exited inside
-            # the in_trade force-exit path, so days with no trade at
-            # close left the flag at None / False in state.json.
             if (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
                 if not state.get("_eod_exited"):
                     with _state_lock:
@@ -2322,28 +2162,16 @@ def _strategy_loop(kite):
                         if cur_1m != state.get("_last_candle_held_min", ""):
                             state["_last_candle_held_min"] = cur_1m
                             state["candles_held"] = state.get("candles_held", 0) + 1
-                            # Reset candle_low on new 1-min candle boundary
                             state["_candle_low"] = option_ltp
-                            # v16.7-final: FAST→CONFIRMED upgrade block REMOVED
-                            # since FAST 1-min peek path is gone. Pure 3-min only.
 
                     _mex_other_tok = state.get("other_token", 0)
-                    # Snapshot the previous tier AND SL BEFORE manage_exit
-                    # mutates state so the upgrade-alert below can show
-                    # both "old tier → new tier" and "old SL → new SL".
                     _prev_tier = state.get("active_ratchet_tier", "None") or "None"
                     _prev_sl   = float(state.get("active_ratchet_sl", 0) or 0)
                     exit_list = manage_exit(state, option_ltp, profile, other_token=_mex_other_tok)
 
-                    # v16.2: trail tier upgrade alert
                     try:
                         _new_tier  = state.get("active_ratchet_tier", "None")
-                        # Alert only on transitions to an ARMED tier (skip INITIAL).
                         _armed = _new_tier not in ("None", "", "INITIAL")
-                        # Suppress the upgrade alert if an exit is firing on
-                        # the same tick — the exit alert already carries the
-                        # real tier via _tier_snapshot, so sending both is
-                        # redundant and confusing.
                         _exit_imminent = bool(exit_list)
                         if (state.get("in_trade") and _new_tier != _prev_tier
                                 and _new_tier and _armed and not _exit_imminent):
@@ -2357,7 +2185,6 @@ def _strategy_loop(kite):
                             _r_sym = _short_sym(state.get("symbol", ""),
                                                  state.get("direction", ""),
                                                  state.get("strike", 0))
-                            # Lock icon escalates with tier strength
                             _icon = "🔒"
                             if _new_tier == "LOCK_M5":
                                 _icon = "⚠️"
@@ -2371,9 +2198,6 @@ def _strategy_loop(kite):
                                 _icon = "🔒🔒"
                             elif _new_tier == "LOCK_DYN":
                                 _icon = "🔒🔒🔒"
-                            # Old→New SL line — shows the ratchet jump
-                            # clearly so the operator can see "SL moved
-                            # from Rs X (tier A) up to Rs Y (tier B)".
                             _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
                                            if _prev_sl > 0 else "entry-10")
                             _tg_send(
@@ -2390,17 +2214,11 @@ def _strategy_loop(kite):
                     except Exception as _re:
                         logger.debug("[MAIN] trail tier alert error: " + str(_re))
 
-                    # v15.0: Peak milestone alerts + exchange SL-M band update
                     if state.get("in_trade"):
                         _peak = state.get("peak_pnl", 0)
                         _last_ms = state.get("_last_milestone", 0)
                         _cur_el = round(float(state.get("current_ema9_low", 0)), 1)
                         _entry_px = state.get("entry_price", 0)
-                        # Fire milestone alert once per threshold crossed.
-                        # Thresholds align with Vishal Clean v16.7 tier
-                        # boundaries (8/12/15/20/21) plus a few mid steps
-                        # so the operator sees peak progress + SL status
-                        # at every major point.
                         for _m in [5, 8, 10, 12, 15, 20, 25, 30, 40, 50]:
                             if _peak >= _m and _last_ms < _m:
                                 with _state_lock:
@@ -2412,7 +2230,6 @@ def _strategy_loop(kite):
                                     _r_sl = round(_entry_px - 10, 1)
                                 _lock = round(_r_sl - _entry_px, 1)
                                 _room = round(option_ltp - _r_sl, 1)
-                                # Icon by tier strength
                                 _ms_icon = "📈"
                                 if _r_tier == "LOCK_M5":
                                     _ms_icon = "⚠️"
@@ -2435,8 +2252,6 @@ def _strategy_loop(kite):
                                     "Room  " + "{:.1f}".format(_room) + " pts"
                                 )
                                 break
-                    # Live mode: force exit at 15:25 (before broker auto square-off at 15:30)
-                    # Paper mode: exit at 15:28 as before
                     _eod_cutoff = 25 if not D.PAPER_MODE else 28
                     if now.hour == 15 and now.minute >= _eod_cutoff:
                         if not D.PAPER_MODE and now.minute < 28:
@@ -2453,7 +2268,6 @@ def _strategy_loop(kite):
                                           "reason": "MARKET_CLOSE", "price": option_ltp}]
                             state["_eod_exited"] = True
 
-                    # Dashboard signal scan — only on new 1-min candle
                     _scan_min = now.strftime("%H:%M")
                     if _scan_min != state.get("_last_dash_scan_min", "") and now.second >= 31:
                         state["_last_dash_scan_min"] = _scan_min
@@ -2482,7 +2296,6 @@ def _strategy_loop(kite):
                         except Exception:
                             pass
 
-                    # Capture entry_price BEFORE any exit resets it
                     _saved_entry = state.get("entry_price", 0)
                     for _exit in exit_list:
                         _execute_exit_v13(kite, _exit, saved_entry_price=_saved_entry)
@@ -2502,14 +2315,11 @@ def _strategy_loop(kite):
                             )
                         _save_state()
 
-                # Quick LTP update every ~5 seconds (in-trade)
                 if now.second % 5 < 2:
                     _update_dashboard_ltp()
 
                 time.sleep(0.5)
                 continue
-
-            # ── NO RE‑ENTRY WATCHING — removed ──────────────────
 
             if (not state.get("paused")
                     and D.is_trading_window(now)
@@ -2520,11 +2330,6 @@ def _strategy_loop(kite):
                 step       = D.get_active_strike_step(dte)
                 atm_strike = D.resolve_atm_strike(spot_ltp, step)
 
-                # ── STRIKE LOCKING — stable scanning ──────────────
-                # Lock strikes until spot moves 150+ pts or trade exits
-                # v13.3: True ATM-50 — relock whenever the nearest 50 changes.
-                # The old 150pt threshold was fine for 100pt strikes but skips
-                # 2-3 strikes when the step is 50.
                 _relock = False
                 _is_initial_lock = False
                 _spot_move = 0.0
@@ -2534,12 +2339,6 @@ def _strategy_loop(kite):
                     _relock = True
                     _is_initial_lock = True
                 else:
-                    # Hysteresis: relock only when spot has decisively crossed
-                    # the strike midpoint by >= lock_shift_pts buffer. With
-                    # buffer=10, spot must be 25+10 = 35+ pts from current
-                    # locked center before relock fires. Slow drift stays put,
-                    # indicators stay warm. Pre-warmed neighbors mean the new
-                    # strike is already WS+lab ready when relock does fire.
                     _target_atm = int(round(spot_ltp / 50) * 50)
                     _lock_buffer = int(CFG.entry_ema9_band("lock_shift_pts", 10))
                     _dist_from_lock = abs(spot_ltp - _locked_ce_strike)
@@ -2559,21 +2358,10 @@ def _strategy_loop(kite):
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
-                    # Telegram alert on relock (not initial lock)
-                    if False:  # v13.3: relock alerts silenced — dashboard shows current strike
-                        _tg_send(
-                            "\U0001f512 <b>RELOCK</b>: CE "
-                            + str(_old_ce) + " → " + str(_locked_ce_strike)
-                            + " | PE " + str(_old_pe) + " → " + str(_locked_pe_strike)
-                            + "\n(spot moved " + ("+" if _spot_move > 0 else "")
-                            + str(_spot_move) + "pts)"
-                        )
 
-                # Use locked strikes — no recalculation per cycle
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
                 dir_tokens = dict(_locked_tokens)
 
-                # If locked tokens empty, force relock — never use unlocked ATM
                 if not dir_tokens:
                     logger.warning("[MAIN] Locked tokens empty — forcing relock")
                     _lock_strikes(spot_ltp, dte, kite, expiry)
@@ -2584,17 +2372,12 @@ def _strategy_loop(kite):
                         time.sleep(2)
                         continue
 
-                # v13.1: Same entry logic for ALL DTEs (including DTE=0)
-                # ── v13.5 SCAN — dual-TF momentum + divergence ─────
                 all_results = {}
                 best_result = None
                 best_type = None
                 best_opt_info = None
 
-                # v13.3: Scan once per minute
-                # v13.3: 3-min scan boundary (entry timeframe is 3-min)
                 _now_scan = datetime.now()
-                # v13.5: 1-min scan boundary (check_entry handles both 1m + 3m)
                 _scan_key = _now_scan.strftime("%Y%m%d%H%M")
                 _should_scan = _scan_key != state.get("_last_scan_key", "")
                 if not _should_scan:
@@ -2607,32 +2390,22 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # ── v16.7-final RE-ENTRY WATCHER (wait-3min + 3-gate) ──
-                # After an exit, wait for the NEXT FULL 3-min candle to close.
-                # If that candle independently passes all 3 entry gates
-                # (GREEN, close > EMA9_low, body >= 40), re-enter on the
-                # SAME side using candle/2 fill on the new candle.
-                # Else: drop, fresh setup only.
-                # Replaces previous "GREEN break of original entry close"
-                # rule which fired too eagerly on chop spikes.
+                # ── RE-ENTRY WATCHER (epoch‑based comparison) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
                 if _re_armed and not state.get("in_trade"):
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
-                    _re_exit_ts = state.get("_reentry_exit_ts", "")
-                    if _re_dir and _re_token and _re_exit_ts:
+                    _re_exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0)
+                    if _re_dir and _re_token and _re_exit_epoch > 0:
                         try:
                             _re_3m = D.get_option_3min(_re_token, lookback=10)
                             if _re_3m is not None and len(_re_3m) >= 4:
                                 _re_last = _re_3m.iloc[-2]
-                                # Candle close time = bucket start + 3 min.
-                                # Only fire if THIS candle closed strictly AFTER
-                                # the exit (i.e. it's a fresh candle post-exit).
+                                # candle close time = bucket start + 3 min
                                 _re_close_dt = _re_last.name + timedelta(minutes=3)
-                                _re_close_ts = _re_close_dt.strftime("%Y-%m-%d %H:%M:%S")
-                                if _re_close_ts > _re_exit_ts:
-                                    # Found the confirmation candle — run 3-gate
+                                _re_close_epoch = _re_close_dt.timestamp()
+                                if _re_close_epoch > _re_exit_epoch:
                                     _re_result = check_entry(
                                         token=_re_token, option_type=_re_dir,
                                         spot_ltp=spot_ltp, dte=dte,
@@ -2649,20 +2422,17 @@ def _strategy_loop(kite):
                                             "Waiting for fresh setup."
                                         )
                                         logger.info("[REENTRY] confirmation candle "
-                                            + _re_close_ts + " failed: " + str(_why))
-                                        # Disarm watcher
+                                            + _re_close_dt.strftime("%H:%M:%S") + " failed: " + str(_why))
                                         with _state_lock:
                                             state["_reentry_armed"] = False
-                                            state["_reentry_exit_ts"] = ""
+                                            state["_reentry_exit_ts"] = 0.0
                                             state["_reentry_direction"] = ""
                                             state["_reentry_token"] = 0
                                             state["_reentry_strike"] = 0
                                     else:
-                                        # 3-gate passed → arm candle/2 entry
                                         _re_result["entry_mode"] = "REENTRY"
                                         _re_result["_strike"] = _re_strike
                                         _re_result["_strike_label"] = "REENTRY"
-                                        # Resolve symbol
                                         _re_oi = {"token": _re_token, "symbol": ""}
                                         try:
                                             for _k, _v in (_locked_tokens or {}).items():
@@ -2677,7 +2447,6 @@ def _strategy_loop(kite):
                                         except Exception:
                                             pass
                                         _re_result["_symbol"] = _re_oi.get("symbol", "")
-                                        # Cross-leg snapshot (logged regardless of gate)
                                         try:
                                             from VRL_ENGINE import evaluate_cross_leg as _xleg_re
                                             _other_dt_re = "PE" if _re_dir == "CE" else "CE"
@@ -2689,7 +2458,6 @@ def _strategy_loop(kite):
                                                 _re_result.update(_xl_re_info)
                                         except Exception as _xre:
                                             logger.debug("[XLEG][REENTRY] " + str(_xre))
-                                        # X-LEG hard gate (respects config flag — currently OFF)
                                         _xl_gate_re = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
                                         _xl_sig_re = _re_result.get("xleg_signal", "NA")
                                         if _xl_gate_re and _xl_sig_re == "FAIL":
@@ -2699,12 +2467,11 @@ def _strategy_loop(kite):
                                             )
                                             with _state_lock:
                                                 state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = ""
+                                                state["_reentry_exit_ts"] = 0.0
                                                 state["_reentry_direction"] = ""
                                                 state["_reentry_token"] = 0
                                                 state["_reentry_strike"] = 0
                                             continue
-                                        # Pre-entry checks (bypass cooldown — re-entry is the green flag)
                                         _saved_lex = state.get("last_exit_direction", "")
                                         with _state_lock:
                                             state["last_exit_direction"] = ""
@@ -2719,18 +2486,17 @@ def _strategy_loop(kite):
                                             with _state_lock:
                                                 state["last_exit_direction"] = _saved_lex
                                                 state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = ""
+                                                state["_reentry_exit_ts"] = 0.0
                                             logger.info("[REENTRY] pre-entry blocked: " + str(why))
                                             continue
                                         _tg_send(
                                             "🔄 <b>RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
-                                            "Confirmation candle " + _re_close_ts[-8:-3]
+                                            "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
                                             + str(int(_re_result.get("body_pct", 0))) + "%\n"
                                             "Proceeding to candle/2 entry"
                                         )
-                                        # Candle/2 fill on the CONFIRMATION candle
                                         _re_high = float(_re_result.get("high", 0) or 0)
                                         _re_low  = float(_re_result.get("low",  0) or 0)
                                         _re_close = float(_re_result.get("close", 0) or 0)
@@ -2739,7 +2505,6 @@ def _strategy_loop(kite):
                                         _re_skip = False
                                         if _re_high > 0 and _re_low > 0 and _spike_wait_re > 0:
                                             _re_mid = (_re_high + _re_low) / 2.0
-                                            # Same clamp as regular entry — never below EMA9_low
                                             if _re_ema9l > 0 and _re_mid < _re_ema9l:
                                                 _spk_target_re = round(_re_ema9l, 2)
                                             else:
@@ -2786,12 +2551,11 @@ def _strategy_loop(kite):
                                             with _state_lock:
                                                 state["last_exit_direction"] = _saved_lex
                                                 state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = ""
+                                                state["_reentry_exit_ts"] = 0.0
                                             continue
-                                        # Disarm watcher BEFORE execute so a fresh exit doesn\'t reset
                                         with _state_lock:
                                             state["_reentry_armed"] = False
-                                            state["_reentry_exit_ts"] = ""
+                                            state["_reentry_exit_ts"] = 0.0
                                             state["_reentry_direction"] = ""
                                             state["_reentry_token"] = 0
                                             state["_reentry_strike"] = 0
@@ -2807,10 +2571,6 @@ def _strategy_loop(kite):
                             logger.error("[REENTRY] check error: " + str(_ree)
                                          + "\n" + _tb_re.format_exc())
 
-                # v16.3.2: dual-strike evaluation (ATM + OTM per side)
-                # CE candidates: ATM CE + ATM+50 CE (OTM)
-                # PE candidates: ATM PE + ATM-50 PE (OTM)
-                # Score = body_pct × (close - ema9_low). Best wins.
                 _ce_info_v15 = _locked_tokens.get("CE") if _locked_tokens else None
                 _pe_info_v15 = _locked_tokens.get("PE") if _locked_tokens else None
                 _ce_tok_v15 = _ce_info_v15.get("token", 0) if _ce_info_v15 else 0
@@ -2821,10 +2581,6 @@ def _strategy_loop(kite):
                     _other_tok = _pe_tok_v15 if opt_type == "CE" else _ce_tok_v15
                     _atm_info = dir_tokens.get(opt_type)
                     _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
-                    # v16.7 final: ATM-only by default. Multi-candidate scan
-                    # uses pre-warmed UP+DN neighbors (subscribed in
-                    # _lock_strikes for hysteresis handoff). Enable via
-                    # entry.ema9_band.multi_candidate_enabled.
                     _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
                     _iter = [("ATM", _atm_info, _atm_strike_v)]
                     if _multi:
@@ -2837,9 +2593,6 @@ def _strategy_loop(kite):
                     for _label, _oi, _strike_val in _iter:
                         if not _oi or not _strike_val:
                             continue
-                        # Sanity: if the resolved symbol doesn't contain the
-                        # expected strike, skip — prevents a stale token
-                        # cache from crossing strikes.
                         _sym_chk = str(_oi.get("symbol", ""))
                         if _sym_chk and str(_strike_val) not in _sym_chk:
                             logger.warning("[MAIN] Strike/symbol mismatch skipped: "
@@ -2856,11 +2609,6 @@ def _strategy_loop(kite):
                             other_token=_other_tok,
                             state=state,
                         )
-                        # v16.7-final: 1-min FAST peek REMOVED.
-                        # Pure 3-min entries only. The FAST path was firing
-                        # signals on 1-min candles whose 3-min EMA9 reference
-                        # could be stale, leading to entries below EMA9_low
-                        # post-fill. Strict 3-min keeps the breakout integrity.
                         result["_strike"] = _strike_val
                         result["_strike_label"] = _label
                         result["_symbol"] = _oi.get("symbol", "")
@@ -2876,7 +2624,6 @@ def _strategy_loop(kite):
                             "score": _score, "strike": _strike_val,
                         })
 
-                # Pick best candidate by score
                 if _candidates:
                     _candidates.sort(key=lambda c: c["score"], reverse=True)
                     _winner = _candidates[0]
@@ -2912,7 +2659,6 @@ def _strategy_loop(kite):
                         logger.info("[MAIN] Entry blocked (" + opt_type
                                     + " " + _win_label + "): " + reason)
 
-                # Populate all_results for dashboard (keep CE/PE keys for compat)
                 for _k, _v in list(all_results.items()):
                     if _k.startswith("CE_ATM"):
                         all_results["CE"] = _v
@@ -2924,7 +2670,6 @@ def _strategy_loop(kite):
                 except Exception:
                     vix_ltp = 0.0
 
-                # Save scan state
                 ce_res = all_results.get("CE", {})
                 pe_res = all_results.get("PE", {})
                 with _state_lock:
@@ -2940,11 +2685,6 @@ def _strategy_loop(kite):
                         "pe": pe_res,
                     }
 
-                # ── v15.2 Part 4: silent 1-min shadow strategy ────────
-                # Runs after live scan on every 1-min boundary. Independent
-                # state, independent cooldown, never touches live state,
-                # never places orders, never alerts during the day.
-                # Write dashboard + cache args for post-exit refresh
                 global _last_dash_args
                 _last_dash_args = {
                     "spot_ltp": spot_ltp, "atm_strike": atm_strike,
@@ -2960,11 +2700,6 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
-                    # ── 3-min cooldown after any candle/2 attempt ──
-                    # Prevents re-evaluating the SAME 3-min candle on
-                    # subsequent 1-min scan boundaries. After every
-                    # candle/2 attempt (skip OR fill), set cooldown to
-                    # now+3min. Next attempt allowed only after that.
                     _cd_until = float(state.get("_next_candle2_after", 0) or 0)
                     if _cd_until > time.time():
                         _wait_left = round(_cd_until - time.time(), 0)
@@ -2974,13 +2709,6 @@ def _strategy_loop(kite):
                         best_opt_info = None
 
                 if best_result and best_opt_info:
-                    # ── Candle/2 limit-pullback entry (v16.7-final) ──
-                    # Target = midpoint of the signal candle's range (high+low)/2.
-                    # This adapts to candle size: wide spike candle = bigger
-                    # required pullback. Wait spike_wait_secs (default 60s) for
-                    # LTP to touch the target. If hit → fill at LTP (or target,
-                    # whichever lower). If timeout → skip, wait for fresh setup.
-                    # Replaces previous fixed-2pt "anti-spike" logic.
                     _spike_wait = int(CFG.entry_ema9_band("spike_wait_secs", 60))
                     _entry_close_x = float(best_result.get("close", 0) or 0)
                     _entry_high_x  = float(best_result.get("high", 0) or 0)
@@ -2988,10 +2716,6 @@ def _strategy_loop(kite):
                     _entry_ema9l_x = float(best_result.get("ema9_low", 0) or 0)
                     if _spike_wait > 0 and _entry_high_x > 0 and _entry_low_x > 0:
                         _midpoint = (_entry_high_x + _entry_low_x) / 2.0
-                        # CRITICAL: never fill below the EMA9_low breakout band.
-                        # If the candle is so wide that midpoint < EMA9_low,
-                        # clamp target to EMA9_low so we preserve the
-                        # 'close > EMA9_low' breakout integrity at fill time.
                         if _entry_ema9l_x > 0 and _midpoint < _entry_ema9l_x:
                             _spk_target = round(_entry_ema9l_x, 2)
                             logger.info(
@@ -3000,15 +2724,10 @@ def _strategy_loop(kite):
                                 + "{:.2f}".format(_midpoint) + " was below band)")
                         else:
                             _spk_target = round(_midpoint, 2)
-                        # Set 3-min cooldown NOW — covers all 3 outcomes
-                        # below (immediate fill / wait+fill / wait+skip).
-                        # Prevents re-evaluating the same 3-min candle on
-                        # subsequent 1-min scan boundaries.
                         state["_next_candle2_after"] = time.time() + 180
                         _spk_tok = best_opt_info.get("token", 0)
                         _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
                         if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
-                            # Already at or below midpoint — fill immediately
                             _spk_fill = _spk_cur_ltp
                             _spk_used = 0
                             logger.info(
@@ -3059,8 +2778,6 @@ def _strategy_loop(kite):
                                     "[ANTI-SPIKE] " + best_type + " filled Rs"
                                     + str(_spk_fill) + " after " + str(_spk_used) + "s")
                         if best_result is not None:
-                            # Update entry_price + close fields so _execute_entry
-                            # uses the pulled-back price, not the spike close.
                             best_result["close"] = _spk_fill
                             best_result["entry_price"] = _spk_fill
                             best_result["spike_close"] = _entry_close_x
@@ -3069,12 +2786,6 @@ def _strategy_loop(kite):
                             best_result["spike_wait_used"] = _spk_used
 
                 if best_result and best_opt_info:
-                    # ── Cross-leg divergence signal ──
-                    # Read OTHER side's last 3-min candle. PASS=other dying
-                    # (real trend), FAIL=other holding (chop).
-                    # Backtest verdict: with anti-spike on, V3 (gate also
-                    # blocks FAIL) > V1 (no gate) by 56pts/5d. Gate ON by
-                    # default — flip xleg_gate_enabled in config to revert.
                     _xl_signal = "NA"
                     try:
                         from VRL_ENGINE import evaluate_cross_leg as _xleg
@@ -3096,7 +2807,6 @@ def _strategy_loop(kite):
                     except Exception as _xe:
                         logger.debug("[XLEG] " + str(_xe))
 
-                    # ── Hard gate: skip FAIL signals (when enabled) ──
                     _xl_gate = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
                     if _xl_gate and _xl_signal == "FAIL":
                         _xl_other_dt = "PE" if best_type == "CE" else "CE"
@@ -3119,7 +2829,6 @@ def _strategy_loop(kite):
                     if state.get("in_trade"):
                         D.mark_trade_taken(best_type)
 
-            # Quick LTP update between candle scans
             if now.second % 10 < 2:
                 _update_dashboard_ltp()
 
@@ -3136,7 +2845,6 @@ def _strategy_loop(kite):
 # === TELEGRAM COMMANDS (merged from VRL_COMMANDS) ===
 # ═══════════════════════════════════════════════════════════════
 
-# Dynamic public IP — resolved once at module load
 _WEB_IP = ""
 try:
     import subprocess as _sp
@@ -3233,20 +2941,15 @@ def _why_blocked(st: dict) -> str:
 
 
 def _cmd_pulse(args):
-    """🩺 Doctor's pulse check — single-shot diagnostic dump.
-    Reports everything needed to spot a bug at a glance: bot/data/
-    market/today/position/engine/config/errors. Designed so the
-    output can be forwarded for remote diagnosis."""
+    """🩺 Doctor's pulse check — single-shot diagnostic dump."""
     try:
         import VRL_CONFIG as _CFG
         now = datetime.now()
-        # Uptime
         _up_secs = int(time.time() - _BOT_START_TS)
         _up_h = _up_secs // 3600
         _up_m = (_up_secs % 3600) // 60
         _up_str = (str(_up_h) + "h " if _up_h else "") + str(_up_m) + "m"
 
-        # Data layer health
         _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         _spot_live = D.is_tick_live(D.NIFTY_SPOT_TOKEN)
         with D._tick_lock:
@@ -3257,7 +2960,6 @@ def _cmd_pulse(args):
         _user = _acct.get("name", "?")
         _lot = D.get_lot_size()
 
-        # Today block
         try:
             _trades_today = _read_today_trades() if "_read_today_trades" in globals() else []
         except Exception:
@@ -3267,7 +2969,6 @@ def _cmd_pulse(args):
         _td_loss = len(_trades_today) - _td_wins
         _last_t = _trades_today[-1] if _trades_today else None
 
-        # Position snapshot
         _in_trade = state.get("in_trade", False)
         _pos_str = "—"
         if _in_trade:
@@ -3290,17 +2991,14 @@ def _cmd_pulse(args):
                 + ("+" if _room >= 0 else "") + str(_room) + ")"
             )
 
-        # Engine state
         _ce_lck = _locked_ce_strike or "?"
         _pe_lck = _locked_pe_strike or "?"
         _last_scan = state.get("_last_scan_minute", "?")
 
-        # Config snapshot
         _eb = _CFG.get().get("entry", {}).get("ema9_band", {}) or {}
         _xb = _CFG.get().get("exit", {}).get("ema9_band", {}) or {}
         _cd = _CFG.entry_ema9_band("cooldown_minutes", 5) if hasattr(_CFG, "entry_ema9_band") else 5
 
-        # Recent errors (last 5 lines)
         _err_lines = []
         try:
             _err_path = os.path.join(D.ERROR_LOG_DIR, date.today().strftime("%Y-%m-%d") + ".log")
@@ -3310,14 +3008,11 @@ def _cmd_pulse(args):
         except Exception:
             pass
 
-        # Status indicators — distinguish ✅ healthy / ❌ broken / 💤 idle
         def _ok(b): return "✅" if b else "❌"
-        # Market: ✅ open · 💤 closed (not an error after-hours)
         if _market:
             _market_icon = "✅"; _market_str = "OPEN"
         else:
             _market_icon = "💤"; _market_str = "CLOSED (idle until 09:15 IST)"
-        # Tick: only flag ❌ when market is OPEN and tick is stale
         if _spot > 0 and _spot_live:
             _tick_icon = "✅"; _tick_str = str(round(_spot, 2)) + "  (" + str(_tick_age) + "s ago)"
         elif not _market:
@@ -3366,20 +3061,18 @@ def _cmd_pulse(args):
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
             + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: morning -" + str(abs(int(_xb.get("emergency_sl_pts", -18))))
-            + " / afternoon -10 (VRL4)\n"
+            + "SL: " + str(_xb.get("emergency_sl_pts", "?")) + "pts\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
             + str(_eb.get("cutoff_after", "?")) + "  "
             + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
-            "Cooldown: " + str(_cd) + "min BOTH sides · Re-entry OFF\n"
+            "Cooldown: " + str(_cd) + "min\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER (v16.7+VRL4 time-segmented)</b>\n"
-            "<u>Morning  09:35-11:00</u>  emergency -18\n"
+            "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
             "INITIAL    (peak <5)    entry-10\n"
             "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
             "🛡️ LOCK_3   (peak >=8)   entry+3\n"
@@ -3387,15 +3080,6 @@ def _cmd_pulse(args):
             "🔒🔒 LOCK_8 (peak >=15)  entry+8\n"
             "🔒🔒 LOCK_15(peak >=20)  entry+15\n"
             "🔒🔒🔒 LOCK_DYN(>=21)   entry+(peak-5)\n"
-            "<u>Afternoon  11:00-15:30</u>  emergency -10\n"
-            "INITIAL    (peak <5)    entry-10\n"
-            "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
-            "🛡️ LOCK_3   (peak >=8)   entry+3\n"
-            "🔒 LOCK_5   (peak >=12)  entry+5\n"
-            "🔒🔒 LOCK_8 (peak >=15)  entry+10\n"
-            "🔒🔒 LOCK_20(peak >=20)  entry+20 floor\n"
-            "🔒🔒🔒 LOCK_DYN(>=25)   entry+(peak-5)\n"
-            "Cooldown: 5min BOTH sides · Re-entry: OFF\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>3-GATE ENTRY</b>\n"
             "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
@@ -3448,8 +3132,6 @@ def _cmd_status(args):
     global _kite
     with _state_lock:
         st = dict(state)
-    # Post-exit observation count — surfaces when bot is holding tokens
-    # subscribed past their trade exit for lab data capture.
     with _post_exit_lock:
         _post_n = len(_post_exit_observation)
     _post_exit_line = ""
@@ -3563,7 +3245,6 @@ def _cmd_account(args):
 
 
 def _cmd_download(args):
-    """Full day zip. /download → today; /download YYYY-MM-DD → specific day."""
     target = None
     if isinstance(args, list):
         args = " ".join(args)
@@ -3627,7 +3308,6 @@ def _cmd_livecheck(args):
 
 
 def _cmd_trades(args):
-    """Today's trade list with details."""
     trades = _read_today_trades()
     if not trades:
         _tg_send("📒 No trades today.")
@@ -3660,13 +3340,6 @@ def _cmd_trades(args):
 
 
 def _cmd_xleg(args):
-    """Cross-leg divergence accuracy report (1-week eval window).
-    Reads vrl_trade_log.csv and computes win rate by signal class:
-      PASS = other leg was dying at entry  (real trend prediction)
-      FAIL = other leg was holding at entry (chop prediction)
-    If PASS-win-rate is meaningfully higher than FAIL-win-rate,
-    promote to a hard gate. Threshold target: PASS > 55%.
-    """
     try:
         import csv as _csv
         from datetime import date as _date, timedelta as _td
@@ -3674,7 +3347,6 @@ def _cmd_xleg(args):
         if not os.path.isfile(path):
             _tg_send("📊 X-LEG: no trade log yet")
             return
-        # Last 7 days
         cutoff = (_date.today() - _td(days=7)).isoformat()
         rows = []
         with open(path, "r") as f:
@@ -3702,7 +3374,6 @@ def _cmd_xleg(args):
         fw, fl, fwr, favg = _wins_losses(fail_rows)
         total = len(rows)
 
-        # Verdict — only fire if both groups have >=5 samples
         _verdict = "—  insufficient data (need >=5 each)"
         if len(pass_rows) >= 5 and len(fail_rows) >= 5:
             if pwr >= 55 and pwr - fwr >= 10:
@@ -3760,9 +3431,6 @@ _DISPATCH = {
 # ═══════════════════════════════════════════════════════════════
 
 def _verify_timeout(kind: str, default: int) -> int:
-    """Pull verify_order_fill timeouts from config.yaml
-    trade.verify_timeout_{entry,exit}. Fall back to the historical
-    hardcoded value if config lacks the key."""
     try:
         v = (CFG.get().get("trade") or {}).get("verify_timeout_" + kind)
         if v is not None:
@@ -3773,7 +3441,6 @@ def _verify_timeout(kind: str, default: int) -> int:
 
 
 def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
-    """Poll order history until filled or timeout. Returns (fill_price, fill_qty)."""
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
         try:
@@ -3799,7 +3466,6 @@ def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
 def place_entry(kite, symbol: str, token: int,
                 option_type: str, qty: int,
                 entry_price_ref: float) -> dict:
-    """Paper mode: simulated fill. Live mode: LIMIT entry at LTP + buffer."""
     if D.PAPER_MODE:
         logger.info("[TRADE] PAPER ENTRY: " + symbol
                     + " qty=" + str(qty)
@@ -3891,7 +3557,6 @@ def place_entry(kite, symbol: str, token: int,
 def place_exit(kite, symbol: str, token: int,
                option_type: str, qty: int,
                exit_price_ref: float, reason: str) -> dict:
-    """Paper mode: simulated fill. Live mode: MARKET exit with retry."""
     if D.PAPER_MODE:
         logger.info("[TRADE] PAPER EXIT: " + symbol
                     + " qty=" + str(qty)
@@ -3984,7 +3649,6 @@ def _tg_handle_message(message: dict):
             _tg_send("Unknown command: " + raw_cmd + "\nType /help")
 
 def _tg_handle_callback(callback: dict):
-    # Auth check — same as _tg_handle_message
     msg = callback.get("message", {})
     if str(msg.get("chat", {}).get("id", "")) != str(D.TELEGRAM_CHAT_ID):
         return
@@ -4044,7 +3708,6 @@ def _shutdown(signum, frame):
     logger.info("[MAIN] Shutdown signal received")
     _running = False
     _stop_telegram_listener()
-    # Warn if shutting down with open trade
     if state.get("in_trade"):
         _sym   = state.get("symbol", "?")
         _entry = round(state.get("entry_price", 0), 2)
@@ -4060,11 +3723,8 @@ def _shutdown(signum, frame):
                 + " peak=" + str(_pk),
                 priority="critical",
             )
-            # Give the daemon thread a moment to deliver before sys.exit
             time.sleep(1.5)
         except Exception as _tge:
-            # Shutdown path: network may already be down. Swallow —
-            # the log line above is the fallback signal.
             logger.debug("[MAIN] Shutdown telegram send failed: " + str(_tge))
     _save_state()
     _remove_pid()
@@ -4084,7 +3744,6 @@ def main():
     _write_pid()
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
-    # get_kite() already auto-refreshes but we want loud logging + Telegram alert
     try:
         import json as _j
         from datetime import date as _dt_date
@@ -4109,23 +3768,15 @@ def main():
     _kite = kite
     D.init(kite)
 
-    # ── Token health ping (prediction #5 prevention) ────────────
-    # One Telegram at startup confirming token is alive, Kite API
-    # responds, and spot LTP resolves. If any layer fails, the
-    # operator knows BEFORE 09:15 that the session is compromised.
-    # This covers the 08:00→09:10 gap where AUTH succeeded but
-    # Zerodha maintenance killed the token afterward.
     try:
         _health_ok = True
         _health_lines = []
-        # 1. Profile check (proves token is valid)
         try:
             _prof = kite.profile()
             _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
         except Exception as _he:
             _health_lines.append("Token: ❌ " + str(_he)[:60])
             _health_ok = False
-        # 2. Spot quote (proves API data flow)
         try:
             _sq = kite.ltp(["NSE:NIFTY 50"])
             _sp = float(list(_sq.values())[0]["last_price"])
@@ -4133,11 +3784,6 @@ def main():
         except Exception as _he:
             _health_lines.append("Spot: ❌ " + str(_he)[:60])
             _health_ok = False
-        # 3. WebSocket (proves tick feed)
-        # Wait up to ~15s for the first tick before declaring no feed —
-        # the WS subscription lands before this check but the first tick
-        # can arrive 5-10s later. Outside market hours we don't expect
-        # ticks at all, so report that explicitly instead of warning.
         import time as _time_h
         _ws_ltp = 0.0
         _market_open_now = D.is_market_open()
@@ -4153,8 +3799,6 @@ def main():
                 _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
                 _health_ok = False
         else:
-            # Market closed — WS won't push ticks. Surface the last-known
-            # tick age if we have one, otherwise say idle.
             with D._tick_lock:
                 _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
             if _entry:
@@ -4176,13 +3820,11 @@ def main():
     except Exception as _the:
         logger.warning("[MAIN] Token health check error: " + str(_the))
 
-    # v13.10: Register WS auto-heal Telegram callback
     try:
         D.set_autoheal_callback(_tg_send)
     except Exception:
         pass
 
-    # Fetch account info at startup
     try:
         D.fetch_account_info(kite)
     except Exception:
@@ -4217,13 +3859,10 @@ def main():
         _save_state()
         logger.info("[MAIN] Phantom trade state cleared ✓")
 
-    # Run daily lab data cleanup
     try:
         D.cleanup_old_lab_data()
     except Exception as e:
         logger.warning("[MAIN] Lab cleanup failed: " + str(e))
-    # present, one WARNING per missing dir. Helps the operator see at a
-    # glance what `/download` will actually find on disk.
     try:
         D.audit_log_paths()
     except Exception as _ae:
@@ -4313,10 +3952,6 @@ def main():
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
     time.sleep(2)
 
-    # v14.0: Pre-warm 3-min indicators from previous trading day.
-    # Kite historical_data returns multi-day candles, so at 9:15 we
-    # already have yesterday's session (or Friday if Monday, auto-
-    # skipping weekends/holidays). Entries unblock at 9:31 immediately.
     try:
         _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
         if _pw is not None and not _pw.empty:
