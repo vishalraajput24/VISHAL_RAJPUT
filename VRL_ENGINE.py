@@ -52,9 +52,9 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
     if last_exit:
         try:
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
-            last_dir = state.get("last_exit_direction", "")
             cd_min = CFG.entry_ema9_band("cooldown_minutes", 5)
-            if direction and last_dir and direction == last_dir and elapsed < cd_min:
+            # Both-sides cooldown: block CE and PE for cd_min after any exit.
+            if elapsed < cd_min:
                 return False, "Cooldown: " + str(round(cd_min - elapsed, 1)) + "min"
         except:
             pass
