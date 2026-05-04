@@ -1098,7 +1098,10 @@ def db_stats() -> dict:
 # Zero impact on trading speed (runs after orders, not in critical path).
 
 # v15.2 — single live entry mode
-VALID_ENTRY_MODES = ("EMA9_BREAKOUT", "REENTRY")
+# v16.7-final — CLOSE_FILL is the new fresh-entry tag (instant fill at
+# 3-min candle close). EMA9_BREAKOUT/REENTRY kept for back-compat with
+# trades logged before the candle-close fill change.
+VALID_ENTRY_MODES = ("CLOSE_FILL", "EMA9_BREAKOUT", "REENTRY")
 
 # Old strings that may still appear in historical trades; do NOT raise
 # errors on them, but they're not allowed as fresh entries either.

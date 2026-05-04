@@ -1127,13 +1127,21 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
-    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
+    # Time-segmented emergency SL + first lock tier (matches VRL_ENGINE).
+    _now_dt = datetime.now()
+    _is_morning_alert = (_now_dt.hour * 60 + _now_dt.minute) < (11 * 60)
+    if _is_morning_alert:
+        _sl_pts = 18
+        _trail_line = "Trail arms at peak +12 (LOCK_3 = entry+2)  [morning]\n"
+    else:
+        _sl_pts = 10
+        _trail_line = "Trail arms at peak +5  (LOCK_M5 = entry-5) [afternoon]\n"
     _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
+        + _trail_line
     )
 
     _slip_block = ""
