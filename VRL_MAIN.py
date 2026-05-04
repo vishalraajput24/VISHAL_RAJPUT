@@ -2503,25 +2503,20 @@ def _strategy_loop(kite):
                                                 state["_reentry_exit_ts"] = 0.0
                                             logger.info("[REENTRY] pre-entry blocked: " + str(why))
                                             continue
+                                        _re_close = float(_re_result.get("close", 0) or 0)
                                         _tg_send(
                                             "🔄 <b>RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
                                             "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
                                             + str(int(_re_result.get("body_pct", 0))) + "%\n"
-                                            "Proceeding to candle/2 entry"
+                                            "Filling at candle close Rs" + "{:.2f}".format(_re_close)
                                         )
                                         # V5 CLOSE FILL — re-entry at candle close, no wait
                                         _re_result["entry_price"] = _re_close
                                         _re_result["entry_mode"]  = "CLOSE_FILL"
                                         logger.info("[CLOSE_FILL] RE-ENTRY " + _re_dir
                                                     + " at candle close Rs" + str(_re_close))
-                                        if _re_skip:
-                                            with _state_lock:
-                                                state["last_exit_direction"] = _saved_lex
-                                                state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = 0.0
-                                            continue
                                         with _state_lock:
                                             state["_reentry_armed"] = False
                                             state["_reentry_exit_ts"] = 0.0
