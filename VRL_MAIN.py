@@ -846,7 +846,7 @@ def _alert_bot_started():
         "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
-        "Confirmation candle must pass 4-gate, then candle/2 fill\n"
+        "Confirmation candle must pass 4-gate, fill at close price\n"
         "→ re-enter same side. Else fresh setup only.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
@@ -2498,56 +2498,11 @@ def _strategy_loop(kite):
                                             + str(int(_re_result.get("body_pct", 0))) + "%\n"
                                             "Proceeding to candle/2 entry"
                                         )
-                                        _re_high = float(_re_result.get("high", 0) or 0)
-                                        _re_low  = float(_re_result.get("low",  0) or 0)
-                                        _re_close = float(_re_result.get("close", 0) or 0)
-                                        _re_ema9l = float(_re_result.get("ema9_low", 0) or 0)
-                                        _spike_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
-                                        _re_skip = False
-                                        if _re_high > 0 and _re_low > 0 and _spike_wait_re > 0:
-                                            _re_mid = (_re_high + _re_low) / 2.0
-                                            if _re_ema9l > 0 and _re_mid < _re_ema9l:
-                                                _spk_target_re = round(_re_ema9l, 2)
-                                            else:
-                                                _spk_target_re = round(_re_mid, 2)
-                                            _spk_cur_re = D.get_ltp(_re_token) or 0
-                                            if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
-                                                _spk_fill_re = _spk_cur_re
-                                                _spk_used_re = 0
-                                            else:
-                                                _tg_send(
-                                                    "⏳ <b>CANDLE/2 (RE-ENTRY)</b>\n"
-                                                    + _re_dir + " " + str(_re_strike) + "\n"
-                                                    "Target Rs" + "{:.1f}".format(_spk_target_re)
-                                                    + " · LTP Rs" + "{:.1f}".format(_spk_cur_re) + "\n"
-                                                    "Waiting " + str(_spike_wait_re) + "s for pullback"
-                                                )
-                                                _spk_fill_re, _spk_used_re = _wait_for_pullback(
-                                                    _re_token, _spk_target_re, _spike_wait_re)
-                                            if _spk_fill_re is None:
-                                                _tg_send(
-                                                    "⏭ <b>RE-ENTRY SKIPPED</b>\n"
-                                                    + _re_dir + " " + str(_re_strike)
-                                                    + " · target Rs" + "{:.1f}".format(_spk_target_re)
-                                                    + " · no pullback in " + str(_spike_wait_re) + "s"
-                                                )
-                                                _re_skip = True
-                                            else:
-                                                _re_result["close"] = _spk_fill_re
-                                                _re_result["entry_price"] = _spk_fill_re
-                                                _re_result["spike_close"] = _re_close
-                                                _re_result["spike_target"] = _spk_target_re
-                                                _re_result["spike_fill"] = _spk_fill_re
-                                                _re_result["spike_wait_used"] = _spk_used_re
-                                                _saved_re = round(_re_close - _spk_fill_re, 2)
-                                                _tg_send(
-                                                    "✅ <b>RE-ENTRY FILLED</b>\n"
-                                                    + _re_dir + " " + str(_re_strike)
-                                                    + " Rs" + "{:.2f}".format(_spk_fill_re)
-                                                    + " (target Rs" + "{:.1f}".format(_spk_target_re) + ")\n"
-                                                    "Saved " + ("+" if _saved_re >= 0 else "")
-                                                    + "{:.1f}".format(_saved_re) + " pts vs candle close"
-                                                )
+                                        # V5 CLOSE FILL — re-entry at candle close, no wait
+                                        _re_result["entry_price"] = _re_close
+                                        _re_result["entry_mode"]  = "CLOSE_FILL"
+                                        logger.info("[CLOSE_FILL] RE-ENTRY " + _re_dir
+                                                    + " at candle close Rs" + str(_re_close))
                                         if _re_skip:
                                             with _state_lock:
                                                 state["last_exit_direction"] = _saved_lex
@@ -2701,107 +2656,13 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
-                    _cd_until = float(state.get("_next_candle2_after", 0) or 0)
-                    if _cd_until > time.time():
-                        _wait_left = round(_cd_until - time.time(), 0)
-                        logger.info("[CANDLE/2] cooldown active — silent skip ("
-                                    + str(int(_wait_left)) + "s left)")
-                        best_result = None
-                        best_opt_info = None
-
-                if best_result and best_opt_info:
-                    _spike_wait = int(CFG.entry_ema9_band("spike_wait_secs", 60))
+                    # V5 CLOSE FILL — enter at candle close (body high of green candle).
+                    # No pullback wait, no midpoint, no Option-B. Instant fill at close.
                     _entry_close_x = float(best_result.get("close", 0) or 0)
-                    _entry_high_x  = float(best_result.get("high", 0) or 0)
-                    _entry_low_x   = float(best_result.get("low", 0) or 0)
-                    _entry_ema9l_x = float(best_result.get("ema9_low", 0) or 0)
-                    if _spike_wait > 0 and _entry_high_x > 0 and _entry_low_x > 0:
-                        _midpoint = (_entry_high_x + _entry_low_x) / 2.0
-                        if _entry_ema9l_x > 0 and _midpoint < _entry_ema9l_x:
-                            _spk_target = round(_entry_ema9l_x, 2)
-                            logger.info(
-                                "[CANDLE/2] target clamped to EMA9_low Rs"
-                                + str(_spk_target) + " (midpoint Rs"
-                                + "{:.2f}".format(_midpoint) + " was below band)")
-                        else:
-                            _spk_target = round(_midpoint, 2)
-                        state["_next_candle2_after"] = time.time() + 180
-                        _spk_tok = best_opt_info.get("token", 0)
-                        _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
-                        if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
-                            _spk_fill = _spk_cur_ltp
-                            _spk_used = 0
-                            logger.info(
-                                "[CANDLE/2] " + best_type + " immediate fill Rs"
-                                + str(_spk_fill) + " (target Rs" + str(_spk_target)
-                                + ", saved " + "{:.2f}".format(_entry_close_x - _spk_fill)
-                                + " pts vs close)")
-                        else:
-                            _tg_send(
-                                "⏳ <b>CANDLE/2 WAIT</b>\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                + best_type + " " + str(best_result.get("_strike", 0)) + "\n"
-                                "Candle  H " + "{:.1f}".format(_entry_high_x)
-                                + " · L " + "{:.1f}".format(_entry_low_x)
-                                + " · C " + "{:.1f}".format(_entry_close_x) + "\n"
-                                "Target  Rs" + "{:.1f}".format(_spk_target)
-                                + "  ((H+L)/2)\n"
-                                "LTP     Rs" + "{:.1f}".format(_spk_cur_ltp) + "\n"
-                                "Wait    " + str(_spike_wait) + "s for pullback"
-                            )
-                            _spk_fill, _spk_used = _wait_for_pullback(
-                                _spk_tok, _spk_target, _spike_wait)
-                            if _spk_fill is None:
-                                # ==================== OPTION B ====================
-                                current_ltp = D.get_ltp(_spk_tok) or 0
-                                if current_ltp > 0 and _entry_ema9l_x < current_ltp <= _entry_close_x:
-                                    _spk_fill = current_ltp
-                                    _spk_used = _spike_wait
-                                    best_result["entry_mode"] = "OPTION_B"
-                                    _tg_send(
-                                        "\U0001f7e1 <b>OPTION\u2011B FILL</b>\n"
-                                        + best_type + " " + str(best_result.get("_strike", 0))
-                                        + " Rs" + "{:.2f}".format(_spk_fill)
-                                        + "  (LTP after " + str(_spike_wait) + "s)\n"
-                                        "Midpoint not reached, but LTP \u2264 close"
-                                    )
-                                    logger.info(
-                                        "[OPTION-B] " + best_type + " filled at LTP Rs"
-                                        + str(_spk_fill))
-                                else:
-                                    _tg_send(
-                                        "\u23ed <b>SKIPPED — no pullback to midpoint</b>\n"
-                                        + best_type + " " + str(best_result.get("_strike", 0))
-                                        + "  target Rs" + "{:.1f}".format(_spk_target) + "\n"
-                                        "No retest in " + str(_spike_wait)
-                                        + "s. Waiting for fresh setup."
-                                    )
-                                    logger.info(
-                                        "[CANDLE/2] " + best_type + " SKIP — no pullback in "
-                                        + str(_spike_wait) + "s")
-                                    best_result = None
-                                    best_opt_info = None
-                            else:
-                                _saved_pts = round(_entry_close_x - _spk_fill, 2)
-                                _tg_send(
-                                    "✅ <b>FILLED at midpoint</b>\n"
-                                    + best_type + " " + str(best_result.get("_strike", 0))
-                                    + " Rs" + "{:.2f}".format(_spk_fill)
-                                    + "  (target Rs" + "{:.1f}".format(_spk_target) + ")\n"
-                                    "Saved   " + ("+" if _saved_pts >= 0 else "")
-                                    + "{:.1f}".format(_saved_pts) + " pts vs candle close\n"
-                                    "Wait    " + "{:.1f}".format(_spk_used) + "s"
-                                )
-                                logger.info(
-                                    "[ANTI-SPIKE] " + best_type + " filled Rs"
-                                    + str(_spk_fill) + " after " + str(_spk_used) + "s")
-                        if best_result is not None:
-                            best_result["close"] = _spk_fill
-                            best_result["entry_price"] = _spk_fill
-                            best_result["spike_close"] = _entry_close_x
-                            best_result["spike_target"] = _spk_target
-                            best_result["spike_fill"] = _spk_fill
-                            best_result["spike_wait_used"] = _spk_used
+                    best_result["entry_price"] = _entry_close_x
+                    best_result["entry_mode"]  = "CLOSE_FILL"
+                    logger.info("[CLOSE_FILL] " + best_type + " entry at candle close Rs"
+                                + str(_entry_close_x))
 
                 if best_result and best_opt_info:
                     _xl_signal = "NA"
@@ -3110,7 +2971,7 @@ def _cmd_pulse(args):
             "<b>EXIT CHAIN</b>\n"
             "1. Emergency " + str(abs(_xb.get("emergency_sl_pts", -18))) + "pts"
             " | 2. EOD 15:20 | 3. Vishal Trail\n"
-            "Re-entry: wait 1 full 3-min candle, must pass 4-gate, then candle/2 fill\n"
+            "Re-entry: wait 1 full 3-min candle, must pass 4-gate, fill at close\n"
         )
         _tg_send(msg)
     except Exception as e:
