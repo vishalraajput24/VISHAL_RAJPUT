@@ -6,7 +6,7 @@
 #    3. Body % >= 40
 #    4. Open > EMA9_low   ← body fully above band
 #  Exit chain (first match wins):
-#    1. EMERGENCY_SL    (PNL <= -10)
+#    1. EMERGENCY_SL    (PNL <= -18, from config)
 #    2. EOD_EXIT        (15:20)
 #    3. VISHAL_TRAIL    (peak-driven SL ladder)
 #  SL ladder: INITIAL → LOCK_M5 → LOCK_3 → LOCK_5 → LOCK_8 → LOCK_15 → LOCK_DYN
@@ -250,7 +250,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     pnl = round(option_ltp - entry, 2)
     peak = max(state.get("peak_pnl", 0), pnl)
     state["peak_pnl"] = peak
-    if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -10):
+    if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -18):
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:
         _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20")
