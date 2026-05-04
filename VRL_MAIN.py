@@ -1,8 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V5)
-#  Entry: 4 gates (GREEN, close>EMA9_low, body≥40%, body fully above band)
-#  Fill: Candle/2 midpoint pullback → Option‑B last chance at close
-#  Exit: Emergency SL / EOD 15:20 / Vishal Trail (INITIAL→LOCK_DYN)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
+#  Master orchestration.
+#  Entry: 3 gates — GREEN candle + close > EMA9_low + body ≥ 40%
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
+#        (INITIAL/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
+#  Re-entry: wait 1 full 3-min candle after exit, must pass 3-gate, then candle/2 fill.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -17,6 +19,7 @@ import time
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 
+# ── Bootstrap dirs first ────────────────────────────────────────
 import VRL_DATA as D
 D.ensure_dirs()
 
@@ -27,6 +30,7 @@ from VRL_ENGINE import (
     compute_entry_sl,
     get_option_ema_spread,
 )
+# VRL_TRADE handles both paper and live mode
 import VRL_CONFIG as CFG
 try:
     from kiteconnect.exceptions import (
@@ -40,21 +44,33 @@ except ImportError:
 from VRL_LAB    import start_lab
 import VRL_ENGINE as CHARGES
 
+# ── Loggers ─────────────────────────────────────────────────────
 logger     = setup_logger("vrl_live", D.LIVE_LOG_FILE)
 lab_logger = setup_logger("vrl_lab",  D.LAB_LOG_FILE)
+# Wall-clock at module import — used by /pulse to report bot uptime.
 _BOT_START_TS = time.time()
 
+# ── Telegram base ───────────────────────────────────────────────
 _TG_BASE = "https://api.telegram.org/bot"
 
+# Global kite instance for REST fallback
 _kite = None
+
+# ═══════════════════════════════════════════════════════════════
+#  STATE (re‑entry fields removed)
+# ═══════════════════════════════════════════════════════════════
 
 _state_lock = threading.Lock()
 
+# Post-exit observation queue: tokens kept subscribed for 10 min after
+# exit so VRL_LAB can record post-exit price action for analysis.
+# Format: [(token, unsubscribe_at_timestamp_epoch), ...]
 _post_exit_observation = []
 _post_exit_lock = threading.Lock()
 POST_EXIT_OBSERVATION_MINUTES = 10
 
 DEFAULT_STATE = {
+    # ── Position ───────────────────────────────────────────
     "in_trade"           : False,
     "symbol"             : "",
     "token"              : None,
@@ -65,10 +81,12 @@ DEFAULT_STATE = {
     "entry_time"         : "",
     "qty"                : D.get_lot_size(),
     "lot_count"          : 2,
+    # ── Exit state ────────────────────────────────────────
     "peak_pnl"           : 0.0,
     "candles_held"       : 0,
     "force_exit"         : False,
     "_exit_failed"       : False,
+    # ── v15.0 entry context (captured at entry, displayed at exit) ──
     "entry_mode"         : "",
     "entry_ema9_high"    : 0.0,
     "entry_ema9_low"     : 0.0,
@@ -78,54 +96,73 @@ DEFAULT_STATE = {
     "current_ema9_low"   : 0.0,
     "last_band_check_ts" : "",
     "_last_cleanup_date" : "",
+    # v16.0 ratchet state
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
+    # v16.7-final re-entry watcher (wait next full 3-min candle)
     "_reentry_armed"     : False,
-    "_reentry_exit_ts"   : 0.0,   # epoch float
+    "_reentry_exit_ts"   : 0.0,   # ── CHANGED: now epoch float, not string
+    # v16.7-final candle/2 cooldown (3 min after every attempt)
     "_next_candle2_after": 0.0,
     "_reentry_direction" : "",
     "_reentry_token"     : 0,
     "_reentry_strike"    : 0,
+    # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
     "last_exit_peak"     : 0.0,
     "last_exit_reason"   : "",
+    # ── Daily counters ─────────────────────────────────────
     "daily_pnl"          : 0.0,
+    # ── Bot control ────────────────────────────────────────
     "paused"             : False,
+    # ── Daily reset flags ──────────────────────────────────
     "_eod_reported"      : False,
     "_eod_exited"        : False,
     "_bias_done"         : False,
     "_straddle_done"     : False,
     "_hourly_rsi_ts"     : 0,
     "_straddle_alerted"  : False,
+    # ── Loop bookkeeping ───────────────────────────────────
     "_last_1min_candle"  : "",
     "_last_dash_scan_min": "",
     "_last_warmup_log"   : "",
     "_last_scan"         : {},
     "prev_close"         : 0.0,
+    # ── Exchange order tracking (live mode — legacy compat) ──
     "_sl_order_id"       : "",
     "_sl_trigger_at_exchange": 0,
-    "lot1_active"        : True,
-    "lot2_active"        : True,
-    "lots_split"         : False,
-    "current_floor"      : 0.0,
-    "_candle_low"        : 0.0,
-    "_last_milestone"    : 0,
-    "_static_floor_sl"   : 0.0,
+    "lot1_active"        : True,  # legacy (always True in v15.0)
+    "lot2_active"        : True,  # legacy (always True in v15.0)
+    "lots_split"         : False, # legacy (always False in v15.0)
+    "current_floor"      : 0.0,   # legacy (used for dashboard trail display)
+    "_candle_low"        : 0.0,   # legacy
+    "_last_milestone"    : 0,     # legacy
+    "_static_floor_sl"   : 0.0,   # legacy
 }
 
 state   = deepcopy(DEFAULT_STATE)
 _running = True
 
+# ═══════════════════════════════════════════════════════════════
+#  STRIKE LOCKING — stable scanning, no flickering
+# ═══════════════════════════════════════════════════════════════
+
 _locked_ce_strike = None
 _locked_pe_strike = None
 _locked_at_spot   = None
 _locked_tokens    = {}
-_LOCK_SHIFT_THRESHOLD = 150
-_last_dash_args = {}
+_LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
+_last_dash_args = {}  # cached dashboard args for post-exit refresh
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
+    """Lock ATM strikes and subscribe tokens.
+    v16.7 final: ATM CE+PE for trading + ATM±50 CE+PE for pre-warm.
+    Pre-warmed neighbors mean zero indicator-warmup gap when spot
+    drifts past hysteresis buffer and relock fire.
+    Multi-candidate scan (when enabled) uses the same neighbor tokens.
+    """
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     _locked_ce_strike = D.resolve_strike_for_direction(spot, "CE", dte)
     _locked_pe_strike = D.resolve_strike_for_direction(spot, "PE", dte)
@@ -133,11 +170,14 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     _locked_tokens = {}
 
     if kite and expiry:
+        # Active legs (ATM)
         for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
 
+        # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
+        # Keys: CE_UP / CE_DN / PE_UP / PE_DN
         for _suffix, _delta in (("UP", +50), ("DN", -50)):
             _ce_n_strike = _locked_ce_strike + _delta
             _pe_n_strike = _locked_pe_strike + _delta
@@ -169,12 +209,26 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
             logger.debug("[PRELOAD] strike lock error: " + str(_r11e))
 
 def _reset_strike_lock():
+    """Reset lock after trade exit or session start.
+    Unsubscribes every currently-locked token first so the WebSocket
+    doesn't leak stale CE/PE/OTM subscriptions across relocks. Without
+    this, a full trading day of ~20 relocks leaves 60+ dead tokens
+    pinned against the Kite quota.
+
+    EXCEPTION: tokens currently in the post-exit observation queue,
+    the active trade's own token, and the active trade's other_token
+    are skipped — those need to stay subscribed so exit monitoring
+    and cross‑leg checks keep working."""
     global _locked_ce_strike, _locked_pe_strike, _locked_at_spot, _locked_tokens
     try:
+        # Collect tokens currently being held for post-exit observation
         with _post_exit_lock:
             _post_exit_tokens = {tok for tok, _ in _post_exit_observation}
         _old = [v.get("token") for v in (_locked_tokens or {}).values()
                 if isinstance(v, dict) and v.get("token")]
+        # ── PATCH: also keep tokens of the currently open trade alive ──
+        # Without this, a mid‑trade strike relock would unsubscribe the
+        # opposite leg and break cross‑leg divergence monitoring.
         with _state_lock:
             _trade_tok = int(state.get("token", 0) or 0)
             _other_tok = int(state.get("other_token", 0) or 0)
@@ -188,6 +242,10 @@ def _reset_strike_lock():
     _locked_pe_strike = None
     _locked_at_spot = None
     _locked_tokens = {}
+
+# ═══════════════════════════════════════════════════════════════
+#  STATE PERSISTENCE
+# ═══════════════════════════════════════════════════════════════
 
 def _save_state():
     try:
@@ -219,6 +277,10 @@ def _load_state():
                 "Symbol : " + str(state.get("symbol")) + "\n"
                 "Resuming exit monitoring."
             )
+            # Refresh band context immediately so the dashboard doesn't
+            # show zeroed current_ema9_high/low until the next manage_exit
+            # tick. Best-effort — if the fetch fails we keep the persisted
+            # values and the next 3-min candle will overwrite them.
             try:
                 _rt_tok = state.get("token")
                 if _rt_tok:
@@ -236,7 +298,157 @@ def _load_state():
     except Exception as e:
         logger.error("[MAIN] State load error: " + str(e))
 
-# =================== TRADE LOG ===================
+
+def _reconcile_positions(kite):
+    """
+    Startup position reconciliation — compare saved state with broker.
+    If bot crashed mid-trade and position is gone at broker, reset state.
+    If broker has position but state says no trade, alert for manual resolution.
+    v13.1: Verified — runs on live startup, alerts on mismatch, never auto-closes.
+    """
+    if kite is None or D.PAPER_MODE:
+        return
+    try:
+        positions = kite.positions()
+        net = positions.get("net", [])
+        # Find NFO positions with non-zero quantity
+        nfo_positions = [p for p in net
+                         if p.get("exchange") == "NFO"
+                         and p.get("quantity", 0) != 0
+                         and "NIFTY" in p.get("tradingsymbol", "")]
+
+        saved_in_trade = state.get("in_trade", False)
+        saved_symbol = state.get("symbol", "")
+
+        if saved_in_trade and not nfo_positions:
+            logger.warning("[RECONCILE] State says in_trade but NO broker position for "
+                           + saved_symbol + " — resetting state")
+            _tg_send(
+                "⚠️ <b>POSITION MISMATCH</b>\n"
+                "State : in_trade (" + saved_symbol + ")\n"
+                "Broker: NO position found\n"
+                "Action: State reset. Position was likely squared off manually."
+            )
+            with _state_lock:
+                state["in_trade"] = False
+                state["symbol"] = ""
+                state["token"] = None
+
+        elif not saved_in_trade and nfo_positions:
+            symbols = [p["tradingsymbol"] for p in nfo_positions]
+            logger.warning("[RECONCILE] State says NOT in_trade but broker has positions: "
+                           + str(symbols))
+            _tg_send(
+                "⚠️ <b>POSITION MISMATCH</b>\n"
+                "State : NOT in trade\n"
+                "Broker: " + ", ".join(symbols) + "\n"
+                "Action: Manual resolution needed. Bot will NOT auto-exit."
+            )
+
+        elif saved_in_trade and nfo_positions:
+            broker_syms = [p["tradingsymbol"] for p in nfo_positions]
+            if saved_symbol not in broker_syms:
+                logger.warning("[RECONCILE] Symbol mismatch: state=" + saved_symbol
+                               + " broker=" + str(broker_syms))
+                _tg_send(
+                    "⚠️ <b>SYMBOL MISMATCH</b>\n"
+                    "State : " + saved_symbol + "\n"
+                    "Broker: " + ", ".join(broker_syms) + "\n"
+                    "Manual resolution needed."
+                )
+            else:
+                logger.info("[RECONCILE] Position confirmed: " + saved_symbol)
+        else:
+            logger.info("[RECONCILE] Clean — no positions, no saved trade")
+
+    except Exception as e:
+        logger.error("[RECONCILE] Position check failed: " + str(e)
+                     + " — continuing with saved state")
+
+
+def _reset_daily(today_str: str):
+    with _state_lock:
+        state["daily_pnl"]             = 0.0
+        state["_eod_reported"]         = False
+        state["_eod_exited"]           = False
+        state["aggressive_mode"]       = False
+        state["paused"]                = False
+        state["_bias_done"]            = False
+        state["_straddle_done"]        = False
+        state["_hourly_rsi_ts"]        = 0
+        state["_straddle_alerted"]     = False
+        # Clear persisted scan dedup key so a crash-restart landing at
+        # 09:30:45 (after the loop already scanned 09:30) doesn't treat
+        # the current minute as already-scanned and silently skip the
+        # first entry of the session.
+        state["_last_scan_key"]        = ""
+    D.clear_token_cache()
+    D.reset_daily_warnings()
+    _reset_strike_lock()
+    logger.info("[MAIN] _eod_exited reset for new day")
+    # DB maintenance
+    try:
+        import VRL_DB as _DB
+        _DB.cleanup_old_db_data()
+        from datetime import date as _d
+        if _d.today().weekday() == 6:  # Sunday
+            _DB.vacuum_db()
+    except Exception:
+        pass
+    logger.info("[MAIN] Daily reset")
+    _save_state()
+    # Fetch 5 days of 3-min + 1-min candles for ATM±100 so GARCH is warm.
+    try:
+        from datetime import date as _dr10
+        if state.get("_preload_done_today") != _dr10.today().isoformat():
+            _spot_close = float(state.get("prev_close", 0) or 0)
+            if _spot_close <= 0:
+                _spot_close = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            if _spot_close > 0:
+                _atm_prov = D.resolve_atm_strike(_spot_close)
+                _expiry_prov = D.get_nearest_expiry(_kite)
+                if _atm_prov and _expiry_prov:
+                    _r10_strikes = [_atm_prov + _off
+                                    for _off in (-100, -50, 0, 50, 100)]
+                    _r10_total = 0
+                    for _r10_sk in _r10_strikes:
+                        _r10_res = D.ensure_option_history(
+                            _kite, _r10_sk, _expiry_prov,
+                            min_candles=30, timeframes=("3minute", "minute"))
+                        if _r10_res.get("fetched"):
+                            _r10_total += (_r10_res.get("ce_candles", 0)
+                                           + _r10_res.get("pe_candles", 0))
+                    logger.info("[PRELOAD] Market-open 5-strike window ATM="
+                                + str(_atm_prov) + " total_candles="
+                                + str(_r10_total))
+                    with _state_lock:
+                        state["_preload_done_today"] = _dr10.today().isoformat()
+                    _save_state()
+    except Exception as _r10e:
+        logger.warning("[PRELOAD] market-open error: " + str(_r10e))
+
+# ═══════════════════════════════════════════════════════════════
+#  PID FILE
+# ═══════════════════════════════════════════════════════════════
+
+def _write_pid():
+    try:
+        with open(D.PID_FILE_PATH, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+def _remove_pid():
+    try:
+        if os.path.isfile(D.PID_FILE_PATH):
+            os.remove(D.PID_FILE_PATH)
+    except Exception:
+        pass
+
+# ═══════════════════════════════════════════════════════════════
+#  TRADE LOG
+# ═══════════════════════════════════════════════════════════════
+
 TRADE_FIELDNAMES = [
     "date", "entry_time", "exit_time", "symbol", "direction", "strike",
     "entry_price", "exit_price", "pnl_pts", "pnl_rs",
@@ -252,7 +464,7 @@ TRADE_FIELDNAMES = [
     "exit_ema9_high", "exit_ema9_low",
     "entry_band_position", "exit_band_position",
     "entry_body_pct",
-    # v16.7 Cross-leg divergence (LOG ONLY)
+    # v16.7 Cross-leg divergence (LOG ONLY — 1-week eval)
     "xleg_signal", "xleg_other_close", "xleg_other_ema9l",
     "xleg_other_dying", "xleg_other_margin",
     # v16.7 Anti-spike pullback entry tracking
@@ -260,6 +472,7 @@ TRADE_FIELDNAMES = [
 ]
 
 def _cleanup_trade_log():
+    """One-time cleanup: remove corrupted rows where date doesn't match YYYY-MM-DD."""
     path = D.TRADE_LOG_PATH
     if not os.path.isfile(path):
         return
@@ -271,6 +484,7 @@ def _cleanup_trade_log():
             if not reader.fieldnames:
                 return
             good_rows = [r for r in reader if date_re.match(r.get("date", ""))]
+        # Rewrite with correct header + good rows only
         with open(path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
             writer.writeheader()
@@ -281,6 +495,7 @@ def _cleanup_trade_log():
 
 def _compute_exit_band_position(exit_price: float,
                                 current_ema9_high, current_ema9_low) -> str:
+    """v15.2.5: where was price vs the band when we exited? ABOVE / IN / BELOW."""
     try:
         px = float(exit_price or 0)
         eh = float(current_ema9_high or 0)
@@ -340,18 +555,20 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
                                     st.get("current_ema9_high", 0),
                                     st.get("current_ema9_low", 0)),
         "entry_body_pct":      round(float(st.get("entry_body_pct", 0) or 0), 1),
+        # v16.7 Cross-leg divergence
         "xleg_signal":         st.get("_xleg_signal", "NA") or "NA",
         "xleg_other_close":    round(float(st.get("_xleg_other_close", 0) or 0), 2),
         "xleg_other_ema9l":    round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
         "xleg_other_dying":    bool(st.get("_xleg_other_dying", False)),
         "xleg_other_margin":   round(float(st.get("_xleg_other_margin", 0) or 0), 2),
+        # v16.7 Anti-spike pullback
         "spike_close":         round(float(st.get("_spike_close", 0) or 0), 2),
         "spike_target":        round(float(st.get("_spike_target", 0) or 0), 2),
         "spike_fill":          round(float(st.get("_spike_fill", 0) or 0), 2),
         "spike_wait_used":     round(float(st.get("_spike_wait_used", 0) or 0), 1),
     }
 
-    # Fix strike
+    # Fix strike: use locked strike from state, fallback to ATM calculation
     if not row["strike"] or row["strike"] == 0:
         try:
             _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
@@ -361,6 +578,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         except Exception:
             pass
 
+    # Calculate charges
     _num_exit_orders = 1
     _qty = _lot_qty
     try:
@@ -373,12 +591,13 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         row["total_charges"] = _ch["total_charges"]
         row["gross_pnl_rs"] = _ch["gross_pnl"]
         row["net_pnl_rs"] = _ch["net_pnl"]
-        row["pnl_rs"] = _ch["gross_pnl"]
+        row["pnl_rs"] = _ch["gross_pnl"]  # override to match charges calc qty
         row["num_exit_orders"] = _num_exit_orders
     except Exception:
         pass
 
-    # One-shot header migration
+    # One-shot header migration: if the existing CSV header is missing
+    # any TRADE_FIELDNAMES column, rewrite the file with the new header
     if not is_new:
         try:
             with open(D.TRADE_LOG_PATH, "r", newline="") as _f_chk:
@@ -434,7 +653,11 @@ def _read_today_trades() -> list:
         logger.error("[MAIN] Read trades error: " + str(e))
     return trades
 
-# =================== TELEGRAM ===================
+# ═══════════════════════════════════════════════════════════════
+#  TELEGRAM — SEND HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+# Dynamic public IP — resolved once at module load
 _WEB_IP = ""
 try:
     import subprocess as _sp
@@ -454,6 +677,7 @@ def _rs(pts: float) -> str:
     return sign + "₹" + str(int(rupees))
 
 def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
+    """CE 22600 from direction+strike. Fallback to symbol suffix."""
     if direction and strike:
         return direction + " " + str(strike)
     if not symbol:
@@ -467,9 +691,11 @@ def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
 from collections import deque as _deque
 _tg_timestamps = _deque(maxlen=20)
 _TG_FLOOD_LIMIT = 5
-_TG_FLOOD_WINDOW = 10
+_TG_FLOOD_WINDOW = 10  # seconds
 
 def _tg_safe(s) -> str:
+    """Escape <, >, & in dynamic content for Telegram HTML mode.
+    Apply only to user/API-supplied strings, NOT to template literals."""
     if s is None:
         return ""
     try:
@@ -479,8 +705,17 @@ def _tg_safe(s) -> str:
     except Exception:
         return ""
 
+
 def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
              priority: str = "normal") -> bool:
+    """Non-blocking Telegram send with flood control.
+
+    Runs the POST in a daemon thread so the strategy loop never waits.
+    `priority="critical"` bypasses flood control so exit-failure / DB-
+    corruption / shutdown-with-open-trade alerts always deliver even
+    during a 5-in-10s burst. Critical sends still append to the
+    sliding window so bookkeeping stays accurate.
+    """
     def _worker():
         if not D.TELEGRAM_TOKEN or not (chat_id or D.TELEGRAM_CHAT_ID):
             return
@@ -496,6 +731,8 @@ def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
 
         cid = chat_id or D.TELEGRAM_CHAT_ID
         url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
+        # Sanitize unknown HTML tags in HTML mode; Telegram only allows
+        # <b>, <i>, <u>, <s>, <code>, <pre>, <a href>.
         _safe_text = text
         if parse_mode == "HTML":
             try:
@@ -567,6 +804,10 @@ def _tg_answer_callback(callback_query_id: str, text: str = ""):
     except Exception:
         pass
 
+# ═══════════════════════════════════════════════════════════════
+#  TELEGRAM — TRADE ALERTS
+# ═══════════════════════════════════════════════════════════════
+
 def _alert_bot_started():
     _web_url = "http://" + _WEB_IP + ":8080" if _WEB_IP and _WEB_IP != "unknown" else "http://localhost:8080"
     _acct = D.get_account_info()
@@ -582,22 +823,19 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7 V5\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7\n"
         "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
         "Gates   : 1) GREEN candle\n"
         "          2) close > EMA9_low\n"
         "          3) body >= 40%\n"
-        "          4) body fully above band (open > EMA9_low)\n"
         "Size    : 2 lots fixed\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>FILL</b>   Candle/2 midpoint pullback → Option‑B last chance\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
         "1. Emergency -10pts\n"
         "2. EOD 15:20\n"
         "3. Vishal Trail (peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER</b>\n"
+        "<b>SL LADDER</b> (peak-driven ratchet)\n"
         "peak <5    SL = entry-10        (INITIAL)\n"
         "peak >=5   SL = entry-5         (LOCK_M5)\n"
         "peak >=8   SL = entry+3         (LOCK_3)\n"
@@ -605,6 +843,10 @@ def _alert_bot_started():
         "peak >=15  SL = entry+8         (LOCK_8)\n"
         "peak >=20  SL = entry+15        (LOCK_15)\n"
         "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
+        "Confirmation candle must pass 3-gate, then candle/2 fill\n"
+        "→ re-enter same side. Else fresh setup only.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -622,6 +864,10 @@ def _alert_bot_started():
         )
 
 def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
+    """v15.2.5 richer CRITICAL alert — names the blocked trade,
+    tells the operator exactly which Telegram command clears the lock
+    once Kite shows the position is flat. All further exit attempts
+    are suppressed until /reset_exit is received."""
     _reason_line = ("Reason : " + str(reason) + "\n") if reason else ""
     _tg_send(
         "🚨 <b>CRITICAL: EXIT FAILED</b>\n"
@@ -634,13 +880,16 @@ def _alert_exit_critical(symbol: str, qty: int, reason: str = ""):
         "   to re-enable automatic exits.\n"
         "Until then, all exit attempts are blocked to prevent duplicate\n"
         "orders or incorrect state.",
-        priority="critical",
+        priority="critical",   # bypass flood control
     )
 
 def _alert_error(message: str):
     _tg_send("⚠️ <b>ERROR</b>  " + _now_str() + "\n" + message)
 
-# =================== EOD REPORT ===================
+# ═══════════════════════════════════════════════════════════════
+#  EOD REPORT
+# ═══════════════════════════════════════════════════════════════
+
 def _generate_eod_report():
     trades = _read_today_trades()
     today  = date.today().strftime("%d %b %Y")
@@ -695,8 +944,18 @@ def _generate_eod_report():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
-# =================== ENTRY / EXIT ===================
+# ═══════════════════════════════════════════════════════════════
+#  ENTRY + EXIT EXECUTION
+# ═══════════════════════════════════════════════════════════════
+
 def _wait_for_pullback(token: int, target_price: float, timeout_secs: int) -> tuple:
+    """Anti-spike limit-pullback: poll LTP up to timeout_secs.
+    Fill at current LTP the moment it touches target (close-buffer).
+    Returns (fill_price, elapsed_secs) on fill, (None, elapsed_secs)
+    on timeout. Aborts early if bot paused or market closes.
+
+    Hard requirement: caller must not be in_trade (entry-path only).
+    """
     if timeout_secs <= 0 or target_price <= 0 or token <= 0:
         return None, 0
     deadline = time.time() + timeout_secs
@@ -715,6 +974,7 @@ def _wait_for_pullback(token: int, target_price: float, timeout_secs: int) -> tu
         time.sleep(1)
     return None, float(timeout_secs)
 
+
 def _execute_entry(kite, option_info: dict, option_type: str,
                    entry_result: dict, profile: dict,
                    expiry, dte: int, session: str = "MORNING"):
@@ -722,6 +982,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     symbol      = option_info["symbol"]
     entry_price = entry_result["entry_price"]
 
+    import VRL_CONFIG as CFG
     lot_count = CFG.get().get("lots", {}).get("count", 2)
     total_qty = D.get_lot_size() * lot_count
 
@@ -749,6 +1010,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     hard_sl = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
+    # Extract the OTHER side token for manage_exit divergence check.
     _other_token_entry = 0
     try:
         _ce_locked = (_locked_tokens or {}).get("CE") or {}
@@ -789,22 +1051,26 @@ def _execute_entry(kite, option_info: dict, option_type: str,
             D.set_active_trade(_trade_strike, _trade_dir, _tce, _tpe)
         except Exception as _ate:
             logger.debug("[MAIN] set_active_trade: " + str(_ate))
+        # Exit state
         state["_static_floor_sl"]   = 0
         state["current_floor"]      = phase1_sl
         state["peak_pnl"]           = 0.0
         state["candles_held"]       = 0
         state["_candle_low"]        = actual_price
         state["_last_milestone"]    = 0
+        # v15.0 entry context — band values at entry
         state["entry_mode"]         = entry_result.get("entry_mode", "EMA9_BREAKOUT")
         state["entry_ema9_high"]    = round(float(entry_result.get("ema9_high", 0)), 2)
         state["entry_ema9_low"]     = round(float(entry_result.get("ema9_low", 0)), 2)
         state["entry_band_position"] = entry_result.get("band_position", "ABOVE")
         state["entry_body_pct"]     = round(float(entry_result.get("body_pct", 0)), 1)
+        # Cross-leg divergence (LOG ONLY for 1-week eval; never blocks)
         state["_xleg_signal"]       = entry_result.get("xleg_signal", "NA")
         state["_xleg_other_close"]  = round(float(entry_result.get("xleg_other_close", 0) or 0), 2)
         state["_xleg_other_ema9l"]  = round(float(entry_result.get("xleg_other_ema9l", 0) or 0), 2)
         state["_xleg_other_dying"]  = bool(entry_result.get("xleg_other_dying", False))
         state["_xleg_other_margin"] = round(float(entry_result.get("xleg_other_margin", 0) or 0), 2)
+        # Anti-spike pullback
         state["_spike_close"]       = round(float(entry_result.get("spike_close", 0) or 0), 2)
         state["_spike_target"]      = round(float(entry_result.get("spike_target", 0) or 0), 2)
         state["_spike_fill"]        = round(float(entry_result.get("spike_fill", 0) or 0), 2)
@@ -816,7 +1082,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     _save_state()
 
-    # ── Entry alert ──
+    # ── v16.3.2 Entry alert ──
     _close = round(float(entry_result.get("close", actual_price)), 1)
     _ema9l = round(float(entry_result.get("ema9_low", 0)), 1)
     _body  = int(round(float(entry_result.get("body_pct", 0)), 0))
@@ -832,6 +1098,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _bw = float(entry_result.get("band_width", 0))
     _entry_mode_tag = entry_result.get("entry_mode", "EMA9_BREAKOUT")
 
+    # Cross-leg divergence — display only, /xleg shows weekly accuracy
     _xls = entry_result.get("xleg_signal", "NA")
     _xl_other = "PE" if option_type == "CE" else "CE"
     _xl_margin = float(entry_result.get("xleg_other_margin", 0) or 0)
@@ -903,6 +1170,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
                     )
         except Exception:
             pass
+    # ── Live validation: 10 entry checks (silent on PASS, alerts on FAIL) ──
     try:
         from VRL_DB import validate_entry
         with _state_lock:
@@ -921,6 +1189,9 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
 
 def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
+    """v13.0: Execute a single exit (partial or full).
+    saved_entry_price: pre-captured entry price to avoid stale state after partial exit resets.
+    """
     if state.get("_exit_failed"):
         logger.warning("[MAIN] Exit suppressed — previous CRITICAL failure unresolved")
         return
@@ -937,7 +1208,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         peak      = state.get("peak_pnl", 0)
         candles   = state.get("candles_held", 0)
         _exit_strike = state.get("strike", 0)
+        # Snapshot the active trail tier BEFORE state.update() wipes it below,
+        # so the exit alert reports the real tier (LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN)
+        # instead of always falling back to INITIAL.
         _tier_snapshot = state.get("active_ratchet_tier", "") or "INITIAL"
+        # v15.0: entry confirmation = band position at entry
         _entry_eh = round(float(state.get("entry_ema9_high", 0)), 1)
         _entry_el = round(float(state.get("entry_ema9_low", 0)), 1)
         _entry_body = int(round(float(state.get("entry_body_pct", 0)), 0))
@@ -956,13 +1231,14 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
     if not fill["ok"] and fill.get("error") == "EXIT_FAILED_MANUAL_REQUIRED":
         with _state_lock:
             state["_exit_failed"] = True
-        _save_state()
+        _save_state()   # v15.2.5 persist the block across crashes
         _alert_exit_critical(symbol, exit_qty, reason=reason)
         return
 
     actual_exit = fill["fill_price"] if fill["ok"] else exit_price
     pnl = round(actual_exit - entry, 2)
 
+    # Update lot state + track per-lot exit data
     with _state_lock:
         if lot_id == "ALL":
             state["lot1_active"] = False
@@ -1001,12 +1277,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_reason"] = reason
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
+            # Capture strike + direction BEFORE state.update() wipes them
+            # so we can register the exited strike with VRL_DATA for
+            # post-exit lab data capture.
             old_strike = state.get("strike", 0)
             old_dir    = state.get("direction", "")
+            old_entry_close = float(state.get("entry_price", 0) or 0)
             try:
                 D.clear_active_trade()
             except Exception:
                 pass
+            # ── PATCH: store exit timestamp as epoch seconds ──
             _exit_epoch = time.time()
             state.update({
                 "in_trade": False, "symbol": "", "token": None,
@@ -1017,17 +1298,23 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
+                # Re-entry watcher (v16.7-final): wait for next FULL
+                # 3-min candle to close. If that candle independently
+                # passes 3-gate, re-enter on same side using candle/2
+                # fill. Else drop.
                 "_reentry_armed":      True,
-                "_reentry_exit_ts":    _exit_epoch,
+                "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
                 "_reentry_direction":  str(old_dir or ""),
                 "_reentry_token":      int(old_token or 0),
                 "_reentry_strike":     int(old_strike or 0),
+                # Entry context (v15.0 band + body)
                 "entry_mode": "",
                 "entry_ema9_high": 0.0, "entry_ema9_low": 0.0,
                 "entry_band_position": "", "entry_body_pct": 0.0,
                 "current_ema9_high": 0.0, "current_ema9_low": 0.0,
                 "last_band_check_ts": "",
                 "other_token": 0,
+                # Exchange SL-M tracking (live mode)
                 "_sl_order_id": "", "_sl_trigger_at_exchange": 0,
                 "lot1_active": True, "lot2_active": True, "lots_split": False,
                 "lot1_exit_price": 0.0, "lot1_exit_pnl": 0.0,
@@ -1180,7 +1467,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             logger.warning("[VALIDATE] Exit validation error: " + str(_ve))
 
 
-# =================== CANDLE BOUNDARY ===================
+# ═══════════════════════════════════════════════════════════════
+#  CANDLE BOUNDARY
+# ═══════════════════════════════════════════════════════════════
+
 def _is_new_1min_candle(now: datetime) -> bool:
     key = now.strftime("%Y%m%d%H%M")
     with _state_lock:
@@ -1190,8 +1480,19 @@ def _is_new_1min_candle(now: datetime) -> bool:
     return False
 
 
-# =================== DASHBOARD SNAPSHOT ===================
+# ═══════════════════════════════════════════════════════════════
+#  STRATEGY LOOP
+# ═══════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DASHBOARD SNAPSHOT — written every cycle for VRL_WEB.py
+#  VRL_WEB.py reads this file. Zero calculation in web server.
+# ═══════════════════════════════════════════════════════════════
+
+
 def _update_dashboard_ltp():
+    """Quick update — just LTP values in dashboard JSON. No API calls."""
     try:
         dash_path = os.path.join(D.STATE_DIR, 'vrl_dashboard.json')
         if not os.path.isfile(dash_path):
@@ -1199,6 +1500,7 @@ def _update_dashboard_ltp():
         with open(dash_path) as f:
             dash = json.load(f)
 
+        # Update spot + VIX
         spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         if spot > 0:
             dash.setdefault("market", {})["spot"] = round(spot, 2)
@@ -1206,6 +1508,7 @@ def _update_dashboard_ltp():
         if vix > 0:
             dash.setdefault("market", {})["vix"] = round(vix, 1)
 
+        # Update option LTPs
         for side in ("CE", "PE"):
             sig = dash.get(side.lower(), {})
             oi = _locked_tokens.get(side) if _locked_tokens else None
@@ -1214,6 +1517,7 @@ def _update_dashboard_ltp():
                 if ltp > 0:
                     sig["ltp"] = round(ltp, 2)
 
+        # Update position if in trade
         with _state_lock:
             _tk = state.get("token")
             _ep = state.get("entry_price", 0)
@@ -1224,6 +1528,7 @@ def _update_dashboard_ltp():
                 pos = dash.get("position", {})
                 pos["ltp"] = round(opt_ltp, 2)
                 pos["pnl"] = round(opt_ltp - _ep, 1)
+                # Update lot PNLs
                 running = round(opt_ltp - _ep, 1)
                 l1 = pos.get("lot1", {})
                 l2 = pos.get("lot2", {})
@@ -1243,6 +1548,7 @@ def _update_dashboard_ltp():
 
 
 def _warmup_info(now, dte):
+    """Returns (is_warm, candles_done, candles_needed, eta_hhmm)."""
     needed = 14
     done = 0
     try:
@@ -1265,6 +1571,7 @@ def _warmup_info(now, dte):
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
+    """Write everything the dashboard needs to a single JSON file."""
     if dir_strikes is None:
         dir_strikes = {}
     try:
@@ -1614,39 +1921,6 @@ def _strategy_loop(kite):
         try:
             now   = datetime.now()
             today = date.today()
-
-            # ---- Option B logic: after pullback fail, try last chance at close ----
-            if not state.get("in_trade") and state.get("_option_b_armed"):
-                with _state_lock:
-                    _b_token = state.get("_option_b_token", 0)
-                    _b_target = float(state.get("_option_b_target", 0))
-                    _b_close = float(state.get("_option_b_close", 0))
-                    _b_ema9l = float(state.get("_option_b_ema9l", 0))
-                    state["_option_b_armed"] = False
-                    state["_option_b_token"] = 0
-                    state["_option_b_target"] = 0.0
-                    state["_option_b_close"] = 0.0
-                    state["_option_b_ema9l"] = 0.0
-                if _b_token and _b_target > 0 and _b_close > 0 and _b_ema9l > 0:
-                    current_ltp = D.get_ltp(_b_token)
-                    if current_ltp > 0 and _b_ema9l < current_ltp <= _b_close:
-                        # Fill at current LTP (Option B)
-                        _entry_result = state.get("_option_b_result", {})
-                        _entry_result["entry_price"] = current_ltp
-                        _entry_result["entry_mode"] = "OPTION_B"
-                        _entry_result["spike_close"] = _b_close
-                        _entry_result["spike_target"] = _b_target
-                        _entry_result["spike_fill"] = current_ltp
-                        _entry_result["spike_wait_used"] = 60  # approximate
-                        _entry_result["close"] = current_ltp
-                        _opt_info = state.get("_option_b_opt_info", {})
-                        _opt_type = state.get("_option_b_opt_type", "")
-                        if _opt_info and _opt_type:
-                            _execute_entry(kite, _opt_info, _opt_type,
-                                           _entry_result, profile, expiry, dte, session)
-                            if state.get("in_trade"):
-                                D.mark_trade_taken(_opt_type)
-            # -------------------------------------------------------------------
 
             try:
                 import time as _t_obs
@@ -2047,7 +2321,6 @@ def _strategy_loop(kite):
                 time.sleep(0.5)
                 continue
 
-            # ============== NO TRADE: scanning for entry ==============
             if (not state.get("paused")
                     and D.is_trading_window(now)
                     and _is_new_1min_candle(now)
@@ -2117,7 +2390,7 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # ============ RE-ENTRY ============
+                # ── RE-ENTRY WATCHER (epoch‑based comparison) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
                 if _re_armed and not state.get("in_trade"):
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
@@ -2129,6 +2402,7 @@ def _strategy_loop(kite):
                             _re_3m = D.get_option_3min(_re_token, lookback=10)
                             if _re_3m is not None and len(_re_3m) >= 4:
                                 _re_last = _re_3m.iloc[-2]
+                                # candle close time = bucket start + 3 min
                                 _re_close_dt = _re_last.name + timedelta(minutes=3)
                                 _re_close_epoch = _re_close_dt.timestamp()
                                 if _re_close_epoch > _re_exit_epoch:
@@ -2223,7 +2497,6 @@ def _strategy_loop(kite):
                                             + str(int(_re_result.get("body_pct", 0))) + "%\n"
                                             "Proceeding to candle/2 entry"
                                         )
-                                        # ---- Option B for re-entry as well ----
                                         _re_high = float(_re_result.get("high", 0) or 0)
                                         _re_low  = float(_re_result.get("low",  0) or 0)
                                         _re_close = float(_re_result.get("close", 0) or 0)
@@ -2251,21 +2524,13 @@ def _strategy_loop(kite):
                                                 _spk_fill_re, _spk_used_re = _wait_for_pullback(
                                                     _re_token, _spk_target_re, _spike_wait_re)
                                             if _spk_fill_re is None:
-                                                # Option B for re-entry
-                                                _re_ltp_after = D.get_ltp(_re_token) or 0
-                                                if _re_ema9l < _re_ltp_after <= _re_close:
-                                                    _spk_fill_re = _re_ltp_after
-                                                    _spk_used_re = _spike_wait_re
-                                                    _re_result["entry_mode"] = "REENTRY_OPTION_B"
-                                                    logger.info("[REENTRY-OPTIONB] filled at " + str(_re_ltp_after))
-                                                else:
-                                                    _tg_send(
-                                                        "⏭ <b>RE-ENTRY SKIPPED</b>\n"
-                                                        + _re_dir + " " + str(_re_strike)
-                                                        + " · target Rs" + "{:.1f}".format(_spk_target_re)
-                                                        + " · no pullback in " + str(_spike_wait_re) + "s"
-                                                    )
-                                                    _re_skip = True
+                                                _tg_send(
+                                                    "⏭ <b>RE-ENTRY SKIPPED</b>\n"
+                                                    + _re_dir + " " + str(_re_strike)
+                                                    + " · target Rs" + "{:.1f}".format(_spk_target_re)
+                                                    + " · no pullback in " + str(_spike_wait_re) + "s"
+                                                )
+                                                _re_skip = True
                                             else:
                                                 _re_result["close"] = _spk_fill_re
                                                 _re_result["entry_price"] = _spk_fill_re
@@ -2306,7 +2571,6 @@ def _strategy_loop(kite):
                             logger.error("[REENTRY] check error: " + str(_ree)
                                          + "\n" + _tb_re.format_exc())
 
-                # ============ NEW ENTRY SCAN ============
                 _ce_info_v15 = _locked_tokens.get("CE") if _locked_tokens else None
                 _pe_info_v15 = _locked_tokens.get("PE") if _locked_tokens else None
                 _ce_tok_v15 = _ce_info_v15.get("token", 0) if _ce_info_v15 else 0
@@ -2490,22 +2754,22 @@ def _strategy_loop(kite):
                                 # ==================== OPTION B ====================
                                 current_ltp = D.get_ltp(_spk_tok) or 0
                                 if current_ltp > 0 and _entry_ema9l_x < current_ltp <= _entry_close_x:
-                                    # Fill at LTP
                                     _spk_fill = current_ltp
                                     _spk_used = _spike_wait
                                     best_result["entry_mode"] = "OPTION_B"
                                     _tg_send(
-                                        "🟡 <b>OPTION‑B FILL</b>\n"
+                                        "\U0001f7e1 <b>OPTION\u2011B FILL</b>\n"
                                         + best_type + " " + str(best_result.get("_strike", 0))
                                         + " Rs" + "{:.2f}".format(_spk_fill)
                                         + "  (LTP after " + str(_spike_wait) + "s)\n"
-                                        "Midpoint not reached, but LTP ≤ close"
+                                        "Midpoint not reached, but LTP \u2264 close"
                                     )
-                                    logger.info("[OPTION-B] " + best_type + " filled at LTP Rs"
-                                                + str(_spk_fill))
+                                    logger.info(
+                                        "[OPTION-B] " + best_type + " filled at LTP Rs"
+                                        + str(_spk_fill))
                                 else:
                                     _tg_send(
-                                        "⏭ <b>SKIPPED — no pullback to midpoint</b>\n"
+                                        "\u23ed <b>SKIPPED — no pullback to midpoint</b>\n"
                                         + best_type + " " + str(best_result.get("_strike", 0))
                                         + "  target Rs" + "{:.1f}".format(_spk_target) + "\n"
                                         "No retest in " + str(_spike_wait)
@@ -2594,541 +2858,10 @@ def _strategy_loop(kite):
         time.sleep(1)
 
 
-# =================== TRADE EXECUTION ===================
-def _verify_timeout(kind: str, default: int) -> int:
-    try:
-        v = (CFG.get().get("trade") or {}).get("verify_timeout_" + kind)
-        if v is not None:
-            return int(v)
-    except Exception:
-        pass
-    return default
+# ═══════════════════════════════════════════════════════════════
+# === TELEGRAM COMMANDS (merged from VRL_COMMANDS) ===
+# ═══════════════════════════════════════════════════════════════
 
-def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
-    deadline = time.time() + timeout_secs
-    while time.time() < deadline:
-        try:
-            history = kite.order_history(order_id)
-            if not history:
-                time.sleep(0.5)
-                continue
-            last = history[-1]
-            status = last.get("status", "")
-            if status == "COMPLETE":
-                return float(last.get("average_price", 0)), int(last.get("filled_quantity", 0))
-            elif status in ("REJECTED", "CANCELLED"):
-                logger.error("[TRADE] Order " + order_id + " " + status
-                             + " msg=" + str(last.get("status_message", "")))
-                return 0.0, 0
-        except Exception as e:
-            logger.warning("[TRADE] verify_fill error: " + str(e))
-        time.sleep(0.5)
-    logger.error("[TRADE] Fill verification timeout: " + order_id)
-    return 0.0, 0
-
-def place_entry(kite, symbol: str, token: int,
-                option_type: str, qty: int,
-                entry_price_ref: float) -> dict:
-    if D.PAPER_MODE:
-        logger.info("[TRADE] PAPER ENTRY: " + symbol
-                    + " qty=" + str(qty)
-                    + " ref=" + str(round(entry_price_ref, 2)))
-        return {
-            "ok": True, "fill_price": round(entry_price_ref, 2),
-            "fill_qty": qty,
-            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
-            "error": "", "slippage": 0,
-        }
-
-    _first_live_flag = os.path.expanduser("~/state/.first_live_done")
-    if not os.path.isfile(_first_live_flag):
-        logger.info("[TRADE] 🚀 FIRST LIVE ORDER EVER")
-
-    buffer = max(2.0, round(entry_price_ref * 0.01, 1))
-    limit_price = round(entry_price_ref + buffer, 1)
-
-    logger.info("[TRADE] LIMIT ENTRY: ref=" + str(round(entry_price_ref, 2))
-                + " buffer=" + str(buffer) + " limit=" + str(limit_price))
-
-    try:
-        order_id = kite.place_order(
-            variety          = kite.VARIETY_REGULAR,
-            exchange         = D.EXCHANGE_NFO,
-            tradingsymbol    = symbol,
-            transaction_type = kite.TRANSACTION_TYPE_BUY,
-            quantity         = qty,
-            order_type       = kite.ORDER_TYPE_LIMIT,
-            price            = limit_price,
-            product          = kite.PRODUCT_MIS,
-        )
-        logger.info("[TRADE] LIMIT ENTRY placed: " + str(order_id)
-                    + " limit=" + str(limit_price))
-
-        fill_price, fill_qty = verify_order_fill(
-            kite, order_id, timeout_secs=_verify_timeout("entry", 8))
-
-        if fill_qty == 0:
-            try:
-                kite.cancel_order(kite.VARIETY_REGULAR, order_id)
-                logger.info("[TRADE] Entry cancelled — price moved away")
-            except Exception:
-                pass
-            return {
-                "ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": str(order_id),
-                "error": "LIMIT_NOT_FILLED", "slippage": 0,
-            }
-
-        slippage = round(fill_price - entry_price_ref, 2)
-        logger.info("[TRADE] ENTRY FILLED: price=" + str(fill_price)
-                    + " slippage=" + str(slippage) + "pts")
-
-        if not os.path.isfile(_first_live_flag):
-            try:
-                with open(_first_live_flag, "w") as _f:
-                    _f.write(datetime.now().isoformat())
-            except Exception:
-                pass
-
-        if fill_qty < qty:
-            logger.warning("[TRADE] Partial fill accepted: "
-                           + str(fill_qty) + "/" + str(qty))
-
-        return {
-            "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
-            "order_id": str(order_id), "error": "", "slippage": slippage,
-        }
-
-    except TokenException as e:
-        logger.error("[TRADE] Entry auth error: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "AUTH_EXPIRED: " + str(e), "slippage": 0}
-    except OrderException as e:
-        logger.error("[TRADE] Entry order rejected: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "ORDER_REJECTED: " + str(e), "slippage": 0}
-    except NetworkException as e:
-        logger.error("[TRADE] Entry network error: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "NETWORK: " + str(e), "slippage": 0}
-    except Exception as e:
-        logger.error("[TRADE] Entry unexpected: " + type(e).__name__ + " " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": str(e), "slippage": 0}
-
-def place_exit(kite, symbol: str, token: int,
-               option_type: str, qty: int,
-               exit_price_ref: float, reason: str) -> dict:
-    if D.PAPER_MODE:
-        logger.info("[TRADE] PAPER EXIT: " + symbol
-                    + " qty=" + str(qty)
-                    + " ref=" + str(round(exit_price_ref, 2))
-                    + " reason=" + reason)
-        return {
-            "ok": True, "fill_price": round(exit_price_ref, 2),
-            "fill_qty": qty,
-            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
-            "error": "", "slippage": 0,
-        }
-
-    for attempt in range(2):
-        try:
-            order_id = kite.place_order(
-                variety          = kite.VARIETY_REGULAR,
-                exchange         = D.EXCHANGE_NFO,
-                tradingsymbol    = symbol,
-                transaction_type = kite.TRANSACTION_TYPE_SELL,
-                quantity         = qty,
-                order_type       = kite.ORDER_TYPE_MARKET,
-                product          = kite.PRODUCT_MIS,
-                market_protection = -1,
-            )
-            logger.info("[TRADE] MARKET EXIT placed attempt=" + str(attempt + 1)
-                        + " order=" + str(order_id))
-
-            fill_price, fill_qty = verify_order_fill(kite, order_id)
-
-            if fill_qty > 0:
-                slippage = round(exit_price_ref - fill_price, 2)
-                return {
-                    "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
-                    "order_id": str(order_id), "error": "", "slippage": slippage,
-                }
-
-            logger.warning("[TRADE] Exit attempt " + str(attempt + 1) + " not filled")
-            time.sleep(1)
-
-        except TokenException as e:
-            logger.error("[TRADE] Exit auth error attempt=" + str(attempt + 1) + ": " + str(e))
-            time.sleep(1)
-        except (OrderException, NetworkException) as e:
-            logger.error("[TRADE] Exit order/network error attempt=" + str(attempt + 1) + ": " + str(e))
-            time.sleep(1)
-        except Exception as e:
-            logger.error("[TRADE] Exit unexpected error attempt=" + str(attempt + 1)
-                         + ": " + type(e).__name__ + " " + str(e))
-            time.sleep(1)
-
-    logger.critical("CRITICAL: Exit failed for " + symbol
-                    + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
-    return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-            "order_id": "", "error": "EXIT_FAILED_MANUAL_REQUIRED", "slippage": 0}
-
-
-# =================== TELEGRAM LISTENER ===================
-_tg_offset         = 0
-_tg_last_update_id = 0
-_tg_running        = False
-
-def _tg_get_updates(offset: int) -> list:
-    url = _TG_BASE + D.TELEGRAM_TOKEN + "/getUpdates"
-    try:
-        resp = requests.get(url, params={"offset": offset, "timeout": 20}, timeout=30)
-        if resp.ok:
-            return resp.json().get("result", [])
-    except Exception as e:
-        logger.warning("[CTRL] getUpdates error: " + type(e).__name__)
-    return []
-
-def _tg_authorized(message: dict) -> bool:
-    return str(message.get("chat", {}).get("id", "")) == str(D.TELEGRAM_CHAT_ID)
-
-def _tg_handle_message(message: dict):
-    if not _tg_authorized(message):
-        return
-    text = message.get("text", "").strip()
-    if not text.startswith("/"):
-        return
-    parts   = text.split()
-    raw_cmd = parts[0].split("@")[0].lower()
-    args    = parts[1:] if len(parts) > 1 else []
-    handler = _DISPATCH.get(raw_cmd)
-    if handler:
-        handler(args)
-    else:
-        _WATCHDOG = ("/deploy","/serverstatus","/serverlog","/gitlog")
-        if raw_cmd not in _WATCHDOG:
-            _tg_send("Unknown command: " + raw_cmd + "\nType /help")
-
-def _tg_handle_callback(callback: dict):
-    msg = callback.get("message", {})
-    if str(msg.get("chat", {}).get("id", "")) != str(D.TELEGRAM_CHAT_ID):
-        return
-    query_id = callback.get("id", "")
-    _tg_answer_callback(query_id, "Unknown action")
-
-def _tg_poll_loop():
-    global _tg_offset, _tg_last_update_id
-    logger.info("[CTRL] Telegram listener started " + D.VERSION)
-    while _tg_running:
-        updates = _tg_get_updates(_tg_offset)
-        for upd in updates:
-            uid          = upd["update_id"]
-            _tg_offset   = uid + 1
-            if uid <= _tg_last_update_id:
-                continue
-            _tg_last_update_id = uid
-            try:
-                if "message" in upd:
-                    _tg_handle_message(upd["message"])
-                elif "callback_query" in upd:
-                    _tg_handle_callback(upd["callback_query"])
-            except Exception as e:
-                logger.error("[CTRL] Update error: " + str(e))
-        time.sleep(1)
-
-def _start_telegram_listener():
-    global _tg_running, _tg_offset
-    _tg_running = True
-
-    try:
-        url  = _TG_BASE + D.TELEGRAM_TOKEN + "/getUpdates"
-        resp = requests.get(url, params={"offset": -1, "timeout": 1}, timeout=5)
-        if resp.ok:
-            updates = resp.json().get("result", [])
-            if updates:
-                _tg_offset = updates[-1]["update_id"] + 1
-                logger.info("[CTRL] Discarded " + str(len(updates))
-                            + " pending updates on startup")
-    except Exception as e:
-        logger.warning("[CTRL] Startup getUpdates skip: " + type(e).__name__)
-
-    thread = threading.Thread(target=_tg_poll_loop, name="TGListener", daemon=True)
-    thread.start()
-    logger.info("[CTRL] Listener thread launched")
-
-def _stop_telegram_listener():
-    global _tg_running
-    _tg_running = False
-
-
-# =================== SHUTDOWN ===================
-def _shutdown(signum, frame):
-    global _running
-    logger.info("[MAIN] Shutdown signal received")
-    _running = False
-    _stop_telegram_listener()
-    if state.get("in_trade"):
-        _sym   = state.get("symbol", "?")
-        _entry = round(state.get("entry_price", 0), 2)
-        _pk    = round(state.get("peak_pnl", 0), 1)
-        logger.warning("[MAIN] Shutdown with open trade — state preserved for resume"
-                       " (symbol=" + _sym
-                       + " entry=" + str(_entry)
-                       + " peak=" + str(_pk) + ")")
-        try:
-            _tg_send(
-                "⚠️ VRL SHUTDOWN with open position: " + _sym
-                + " entry=" + str(_entry)
-                + " peak=" + str(_pk),
-                priority="critical",
-            )
-            time.sleep(1.5)
-        except Exception as _tge:
-            logger.debug("[MAIN] Shutdown telegram send failed: " + str(_tge))
-    _save_state()
-    _remove_pid()
-    logger.info("[MAIN] Clean shutdown")
-    sys.exit(0)
-
-
-# =================== MAIN ===================
-def main():
-    global _kite
-    logger.info("[MAIN] ═══ VISHAL RAJPUT TRADE " + D.VERSION + " STARTING ═══")
-    logger.info("[MAIN] Mode: " + ("PAPER" if D.PAPER_MODE else "LIVE"))
-    logger.info("[MAIN] Scalps: DISABLED (data-backed decision)")
-
-    _write_pid()
-    signal.signal(signal.SIGINT,  _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-    try:
-        import json as _j
-        from datetime import date as _dt_date
-        _tok_path = D.TOKEN_FILE_PATH
-        _tok_data = {}
-        if os.path.isfile(_tok_path):
-            with open(_tok_path) as _tf:
-                _tok_data = _j.load(_tf)
-        _tok_date = _tok_data.get("date", "")
-        _today = _dt_date.today().isoformat()
-        if _tok_date != _today:
-            logger.warning("[MAIN] Token is from " + str(_tok_date or "MISSING")
-                           + ", not today (" + _today + ") — forcing fresh auth")
-            _tg_send("\u26a0\ufe0f Stale token detected on startup, auto-refreshing\n"
-                     "Old: " + str(_tok_date or "MISSING") + " → New: " + _today)
-        else:
-            logger.info("[MAIN] Token freshness check: OK (" + _today + ")")
-    except Exception as _te:
-        logger.warning("[MAIN] Token freshness check error: " + str(_te))
-
-    kite = get_kite()
-    _kite = kite
-    D.init(kite)
-
-    try:
-        _health_ok = True
-        _health_lines = []
-        try:
-            _prof = kite.profile()
-            _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
-        except Exception as _he:
-            _health_lines.append("Token: ❌ " + str(_he)[:60])
-            _health_ok = False
-        try:
-            _sq = kite.ltp(["NSE:NIFTY 50"])
-            _sp = float(list(_sq.values())[0]["last_price"])
-            _health_lines.append("Spot: ✅ " + str(round(_sp, 1)))
-        except Exception as _he:
-            _health_lines.append("Spot: ❌ " + str(_he)[:60])
-            _health_ok = False
-        import time as _time_h
-        _ws_ltp = 0.0
-        _market_open_now = D.is_market_open()
-        if _market_open_now:
-            for _ in range(15):
-                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if _ws_ltp > 0:
-                    break
-                _time_h.sleep(1)
-            if _ws_ltp > 0:
-                _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
-            else:
-                _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
-                _health_ok = False
-        else:
-            with D._tick_lock:
-                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
-            if _entry:
-                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
-                _health_lines.append(
-                    "WS: 💤 market closed (last tick "
-                    + str(_age_min) + "m ago at "
-                    + str(round(_entry["ltp"], 1)) + ")"
-                )
-            else:
-                _health_lines.append("WS: 💤 market closed (no ticks yet)")
-        _icon = "✅" if _health_ok else "⚠️"
-        _tg_send(
-            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
-            + "\n".join(_health_lines) + "\n"
-            "Time: " + datetime.now().strftime("%H:%M:%S IST")
-        )
-        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines)))
-    except Exception as _the:
-        logger.warning("[MAIN] Token health check error: " + str(_the))
-
-    try:
-        D.set_autoheal_callback(_tg_send)
-    except Exception:
-        pass
-
-    try:
-        D.fetch_account_info(kite)
-    except Exception:
-        pass
-
-    live_lot_size = D.get_lot_size(kite)
-    D.LOT_SIZE    = live_lot_size
-    logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
-
-    _load_state()
-    _reconcile_positions(kite)
-    if state.get("in_trade") and not D.is_market_open():
-        logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
-        _tg_send("⚠️ Phantom trade detected on startup — state cleared\n"
-                 "Symbol: " + state.get("symbol", "?") + "\n"
-                 "Entry: " + str(state.get("entry_price", 0)) + "\n"
-                 "Peak: " + str(state.get("peak_pnl", 0)))
-        with _state_lock:
-            state["in_trade"] = False
-            state["symbol"] = ""
-            state["token"] = None
-            state["direction"] = ""
-            state["entry_price"] = 0.0
-            state["entry_time"] = ""
-            state["peak_pnl"] = 0.0
-            state["candles_held"] = 0
-            state["lot1_active"] = True
-            state["lot2_active"] = True
-            state["lots_split"] = False
-            state["_static_floor_sl"] = 0
-            state["current_floor"] = 0.0
-        _save_state()
-        logger.info("[MAIN] Phantom trade state cleared ✓")
-
-    try:
-        D.cleanup_old_lab_data()
-    except Exception as e:
-        logger.warning("[MAIN] Lab cleanup failed: " + str(e))
-    try:
-        D.audit_log_paths()
-    except Exception as _ae:
-        logger.debug("[MAIN] audit_log_paths error: " + str(_ae))
-
-    try:
-        import csv as _csv
-        today_iso = date.today().isoformat()
-        trades_today = []
-
-        for log_path in [D.TRADE_LOG_PATH,
-                         os.path.join(D.LAB_DIR, "vrl_trade_log.csv")]:
-            if not os.path.isfile(log_path):
-                continue
-            try:
-                with open(log_path) as f:
-                    raw_rows = list(_csv.DictReader(f))
-
-                found = []
-                for r in raw_rows:
-                    if r.get("date", "").strip() == today_iso:
-                        found.append(r)
-                    elif r.get("trade_id", "").strip() == today_iso:
-                        found.append({
-                            **r,
-                            "date"   : r.get("trade_id", ""),
-                            "pnl_pts": r.get("pnl_points", r.get("pnl_pts", "0")),
-                        })
-                if found:
-                    trades_today = found
-                    break
-            except Exception:
-                continue
-
-        if trades_today:
-            def _get_pnl(row):
-                for k in ["pnl_pts", "pnl_points", "pnl_rs", "pnl"]:
-                    if k in row:
-                        try: return float(row[k])
-                        except (TypeError, ValueError): pass
-                return 0.0
-
-            wins   = [t for t in trades_today if _get_pnl(t) > 0]
-            losses = [t for t in trades_today if _get_pnl(t) < 0]
-            pnl    = sum(_get_pnl(t) for t in trades_today)
-
-            with _state_lock:
-                state["daily_pnl"]          = round(pnl, 2)
-
-            logger.info("[MAIN] Restored: " + str(len(trades_today))
-                        + " trades | " + str(len(losses)) + " losses | pnl="
-                        + str(round(pnl,1)) + "pts")
-        else:
-            logger.info("[MAIN] No trades found for today — starting fresh")
-    except Exception as e:
-        logger.warning("[MAIN] Trade log restore failed: " + str(e))
-    try:
-        import csv as _sync_csv
-        import VRL_DB as _sync_db
-        _sync_db.init_db()
-        _today_iso = date.today().isoformat()
-        _csv_path = D.TRADE_LOG_PATH
-        _csv_trades = []
-        if os.path.isfile(_csv_path):
-            with open(_csv_path) as _sf:
-                for _row in _sync_csv.DictReader(_sf):
-                    _d = _row.get("date", "").strip()
-                    if _d == _today_iso:
-                        _csv_trades.append(_row)
-        _db_trades = _sync_db.get_trades(_today_iso)
-        _db_times = {t.get("entry_time", "").strip() for t in _db_trades}
-        _inserted = 0
-        for _ct in _csv_trades:
-            _et = _ct.get("entry_time", "").strip()
-            if _et and _et not in _db_times:
-                _sync_db.insert_trade(_ct)
-                _inserted += 1
-        if _inserted > 0:
-            logger.info("[SYNC] CSV→DB backfill: " + str(_inserted) + " rows inserted")
-        else:
-            logger.info("[SYNC] CSV/DB in sync for " + _today_iso
-                        + " (CSV=" + str(len(_csv_trades)) + " DB=" + str(len(_db_trades)) + ")")
-    except Exception as _se:
-        logger.warning("[SYNC] CSV→DB backfill failed: " + str(_se))
-
-    D.start_websocket()
-    D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
-    time.sleep(2)
-
-    try:
-        _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
-        if _pw is not None and not _pw.empty:
-            logger.info("[MAIN] Pre-warm: " + str(len(_pw))
-                        + " 3-min spot candles loaded from history")
-        else:
-            logger.warning("[MAIN] Pre-warm: no historical 3-min data returned")
-    except Exception as _pwe:
-        logger.warning("[MAIN] Pre-warm failed: " + str(_pwe))
-
-    start_lab(kite)
-    _start_telegram_listener()
-    _alert_bot_started()
-
-    logger.info("[MAIN] All systems ready. Strategy loop starting.")
-    _strategy_loop(kite)
-
-
-# =================== COMMANDS ===================
 _WEB_IP = ""
 try:
     import subprocess as _sp
@@ -3138,6 +2871,10 @@ except Exception:
 
 
 def _send_today_download(target_date: str = None):
+    """Full day zip — all logs + data + state for a date.
+    /download             → today
+    /download YYYY-MM-DD  → specific day
+    """
     if target_date is None:
         target_date = date.today().strftime("%Y-%m-%d")
 
@@ -3221,6 +2958,7 @@ def _why_blocked(st: dict) -> str:
 
 
 def _cmd_pulse(args):
+    """🩺 Doctor's pulse check — single-shot diagnostic dump."""
     try:
         import VRL_CONFIG as _CFG
         now = datetime.now()
@@ -3351,7 +3089,7 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER (Vishal Clean v16.7 V5)</b>\n"
+            "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
             "INITIAL    (peak <5)    entry-10\n"
             "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
             "🛡️ LOCK_3   (peak >=8)   entry+3\n"
@@ -3360,17 +3098,16 @@ def _cmd_pulse(args):
             "🔒🔒 LOCK_15(peak >=20)  entry+15\n"
             "🔒🔒🔒 LOCK_DYN(>=21)   entry+(peak-5)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>4-GATE ENTRY (V5)</b>\n"
+            "<b>3-GATE ENTRY</b>\n"
             "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
             + str(_eb.get("cutoff_after", "15:10")) + "\n"
             "2. GREEN candle (close > open)\n"
             "3. Close > EMA9_low\n"
             "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
-            "5. Body fully above band (open > EMA9_low)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
             "1. Emergency -10 | 2. EOD 15:20 | 3. Vishal Trail\n"
-            "Fill: Candle/2 midpoint → Option‑B last chance\n"
+            "Re-entry: wait 1 full 3-min candle, must pass 3-gate, then candle/2 fill\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -3400,8 +3137,8 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 V5 — 4-gate entry (body fully above band),\n"
-        "candle/2 midpoint fill → Option‑B last chance.\n"
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — 3-gate entry, "
+        "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
@@ -3706,20 +3443,548 @@ _DISPATCH = {
 }
 
 
-def _remove_pid():
+# ═══════════════════════════════════════════════════════════════
+# === TRADE EXECUTION (merged from VRL_TRADE) ===
+# ═══════════════════════════════════════════════════════════════
+
+def _verify_timeout(kind: str, default: int) -> int:
     try:
-        if os.path.isfile(D.PID_FILE_PATH):
-            os.remove(D.PID_FILE_PATH)
+        v = (CFG.get().get("trade") or {}).get("verify_timeout_" + kind)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    return default
+
+
+def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        try:
+            history = kite.order_history(order_id)
+            if not history:
+                time.sleep(0.5)
+                continue
+            last = history[-1]
+            status = last.get("status", "")
+            if status == "COMPLETE":
+                return float(last.get("average_price", 0)), int(last.get("filled_quantity", 0))
+            elif status in ("REJECTED", "CANCELLED"):
+                logger.error("[TRADE] Order " + order_id + " " + status
+                             + " msg=" + str(last.get("status_message", "")))
+                return 0.0, 0
+        except Exception as e:
+            logger.warning("[TRADE] verify_fill error: " + str(e))
+        time.sleep(0.5)
+    logger.error("[TRADE] Fill verification timeout: " + order_id)
+    return 0.0, 0
+
+
+def place_entry(kite, symbol: str, token: int,
+                option_type: str, qty: int,
+                entry_price_ref: float) -> dict:
+    if D.PAPER_MODE:
+        logger.info("[TRADE] PAPER ENTRY: " + symbol
+                    + " qty=" + str(qty)
+                    + " ref=" + str(round(entry_price_ref, 2)))
+        return {
+            "ok": True, "fill_price": round(entry_price_ref, 2),
+            "fill_qty": qty,
+            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
+            "error": "", "slippage": 0,
+        }
+
+    _first_live_flag = os.path.expanduser("~/state/.first_live_done")
+    if not os.path.isfile(_first_live_flag):
+        logger.info("[TRADE] 🚀 FIRST LIVE ORDER EVER")
+
+    buffer = max(2.0, round(entry_price_ref * 0.01, 1))
+    limit_price = round(entry_price_ref + buffer, 1)
+
+    logger.info("[TRADE] LIMIT ENTRY: ref=" + str(round(entry_price_ref, 2))
+                + " buffer=" + str(buffer) + " limit=" + str(limit_price))
+
+    try:
+        order_id = kite.place_order(
+            variety          = kite.VARIETY_REGULAR,
+            exchange         = D.EXCHANGE_NFO,
+            tradingsymbol    = symbol,
+            transaction_type = kite.TRANSACTION_TYPE_BUY,
+            quantity         = qty,
+            order_type       = kite.ORDER_TYPE_LIMIT,
+            price            = limit_price,
+            product          = kite.PRODUCT_MIS,
+        )
+        logger.info("[TRADE] LIMIT ENTRY placed: " + str(order_id)
+                    + " limit=" + str(limit_price))
+
+        fill_price, fill_qty = verify_order_fill(
+            kite, order_id, timeout_secs=_verify_timeout("entry", 8))
+
+        if fill_qty == 0:
+            try:
+                kite.cancel_order(kite.VARIETY_REGULAR, order_id)
+                logger.info("[TRADE] Entry cancelled — price moved away")
+            except Exception:
+                pass
+            return {
+                "ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": str(order_id),
+                "error": "LIMIT_NOT_FILLED", "slippage": 0,
+            }
+
+        slippage = round(fill_price - entry_price_ref, 2)
+        logger.info("[TRADE] ENTRY FILLED: price=" + str(fill_price)
+                    + " slippage=" + str(slippage) + "pts")
+
+        if not os.path.isfile(_first_live_flag):
+            try:
+                with open(_first_live_flag, "w") as _f:
+                    _f.write(datetime.now().isoformat())
+            except Exception:
+                pass
+
+        if fill_qty < qty:
+            logger.warning("[TRADE] Partial fill accepted: "
+                           + str(fill_qty) + "/" + str(qty))
+
+        return {
+            "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+            "order_id": str(order_id), "error": "", "slippage": slippage,
+        }
+
+    except TokenException as e:
+        logger.error("[TRADE] Entry auth error: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "AUTH_EXPIRED: " + str(e), "slippage": 0}
+    except OrderException as e:
+        logger.error("[TRADE] Entry order rejected: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "ORDER_REJECTED: " + str(e), "slippage": 0}
+    except NetworkException as e:
+        logger.error("[TRADE] Entry network error: " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": "NETWORK: " + str(e), "slippage": 0}
+    except Exception as e:
+        logger.error("[TRADE] Entry unexpected: " + type(e).__name__ + " " + str(e))
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": "", "error": str(e), "slippage": 0}
+
+
+def place_exit(kite, symbol: str, token: int,
+               option_type: str, qty: int,
+               exit_price_ref: float, reason: str) -> dict:
+    if D.PAPER_MODE:
+        logger.info("[TRADE] PAPER EXIT: " + symbol
+                    + " qty=" + str(qty)
+                    + " ref=" + str(round(exit_price_ref, 2))
+                    + " reason=" + reason)
+        return {
+            "ok": True, "fill_price": round(exit_price_ref, 2),
+            "fill_qty": qty,
+            "order_id": "PAPER_" + datetime.now().strftime("%H%M%S%f")[:12],
+            "error": "", "slippage": 0,
+        }
+
+    for attempt in range(2):
+        try:
+            order_id = kite.place_order(
+                variety          = kite.VARIETY_REGULAR,
+                exchange         = D.EXCHANGE_NFO,
+                tradingsymbol    = symbol,
+                transaction_type = kite.TRANSACTION_TYPE_SELL,
+                quantity         = qty,
+                order_type       = kite.ORDER_TYPE_MARKET,
+                product          = kite.PRODUCT_MIS,
+                market_protection = -1,
+            )
+            logger.info("[TRADE] MARKET EXIT placed attempt=" + str(attempt + 1)
+                        + " order=" + str(order_id))
+
+            fill_price, fill_qty = verify_order_fill(kite, order_id)
+
+            if fill_qty > 0:
+                slippage = round(exit_price_ref - fill_price, 2)
+                return {
+                    "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+                    "order_id": str(order_id), "error": "", "slippage": slippage,
+                }
+
+            logger.warning("[TRADE] Exit attempt " + str(attempt + 1) + " not filled")
+            time.sleep(1)
+
+        except TokenException as e:
+            logger.error("[TRADE] Exit auth error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
+        except (OrderException, NetworkException) as e:
+            logger.error("[TRADE] Exit order/network error attempt=" + str(attempt + 1) + ": " + str(e))
+            time.sleep(1)
+        except Exception as e:
+            logger.error("[TRADE] Exit unexpected error attempt=" + str(attempt + 1)
+                         + ": " + type(e).__name__ + " " + str(e))
+            time.sleep(1)
+
+    logger.critical("CRITICAL: Exit failed for " + symbol
+                    + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
+    return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+            "order_id": "", "error": "EXIT_FAILED_MANUAL_REQUIRED", "slippage": 0}
+
+
+# ── Telegram listener state ───────────────────────────────────
+_tg_offset         = 0
+_tg_last_update_id = 0
+_tg_running        = False
+
+def _tg_get_updates(offset: int) -> list:
+    url = _TG_BASE + D.TELEGRAM_TOKEN + "/getUpdates"
+    try:
+        resp = requests.get(url, params={"offset": offset, "timeout": 20}, timeout=30)
+        if resp.ok:
+            return resp.json().get("result", [])
+    except Exception as e:
+        logger.warning("[CTRL] getUpdates error: " + type(e).__name__)
+    return []
+
+def _tg_authorized(message: dict) -> bool:
+    return str(message.get("chat", {}).get("id", "")) == str(D.TELEGRAM_CHAT_ID)
+
+def _tg_handle_message(message: dict):
+    if not _tg_authorized(message):
+        return
+    text = message.get("text", "").strip()
+    if not text.startswith("/"):
+        return
+    parts   = text.split()
+    raw_cmd = parts[0].split("@")[0].lower()
+    args    = parts[1:] if len(parts) > 1 else []
+    handler = _DISPATCH.get(raw_cmd)
+    if handler:
+        handler(args)
+    else:
+        _WATCHDOG = ("/deploy","/serverstatus","/serverlog","/gitlog")
+        if raw_cmd not in _WATCHDOG:
+            _tg_send("Unknown command: " + raw_cmd + "\nType /help")
+
+def _tg_handle_callback(callback: dict):
+    msg = callback.get("message", {})
+    if str(msg.get("chat", {}).get("id", "")) != str(D.TELEGRAM_CHAT_ID):
+        return
+    query_id = callback.get("id", "")
+    _tg_answer_callback(query_id, "Unknown action")
+
+def _tg_poll_loop():
+    global _tg_offset, _tg_last_update_id
+    logger.info("[CTRL] Telegram listener started " + D.VERSION)
+    while _tg_running:
+        updates = _tg_get_updates(_tg_offset)
+        for upd in updates:
+            uid          = upd["update_id"]
+            _tg_offset   = uid + 1
+            if uid <= _tg_last_update_id:
+                continue
+            _tg_last_update_id = uid
+            try:
+                if "message" in upd:
+                    _tg_handle_message(upd["message"])
+                elif "callback_query" in upd:
+                    _tg_handle_callback(upd["callback_query"])
+            except Exception as e:
+                logger.error("[CTRL] Update error: " + str(e))
+        time.sleep(1)
+
+def _start_telegram_listener():
+    global _tg_running, _tg_offset
+    _tg_running = True
+
+    try:
+        url  = _TG_BASE + D.TELEGRAM_TOKEN + "/getUpdates"
+        resp = requests.get(url, params={"offset": -1, "timeout": 1}, timeout=5)
+        if resp.ok:
+            updates = resp.json().get("result", [])
+            if updates:
+                _tg_offset = updates[-1]["update_id"] + 1
+                logger.info("[CTRL] Discarded " + str(len(updates))
+                            + " pending updates on startup")
+    except Exception as e:
+        logger.warning("[CTRL] Startup getUpdates skip: " + type(e).__name__)
+
+    thread = threading.Thread(target=_tg_poll_loop, name="TGListener", daemon=True)
+    thread.start()
+    logger.info("[CTRL] Listener thread launched")
+
+def _stop_telegram_listener():
+    global _tg_running
+    _tg_running = False
+
+# ═══════════════════════════════════════════════════════════════
+#  SHUTDOWN
+# ═══════════════════════════════════════════════════════════════
+
+def _shutdown(signum, frame):
+    global _running
+    logger.info("[MAIN] Shutdown signal received")
+    _running = False
+    _stop_telegram_listener()
+    if state.get("in_trade"):
+        _sym   = state.get("symbol", "?")
+        _entry = round(state.get("entry_price", 0), 2)
+        _pk    = round(state.get("peak_pnl", 0), 1)
+        logger.warning("[MAIN] Shutdown with open trade — state preserved for resume"
+                       " (symbol=" + _sym
+                       + " entry=" + str(_entry)
+                       + " peak=" + str(_pk) + ")")
+        try:
+            _tg_send(
+                "⚠️ VRL SHUTDOWN with open position: " + _sym
+                + " entry=" + str(_entry)
+                + " peak=" + str(_pk),
+                priority="critical",
+            )
+            time.sleep(1.5)
+        except Exception as _tge:
+            logger.debug("[MAIN] Shutdown telegram send failed: " + str(_tge))
+    _save_state()
+    _remove_pid()
+    logger.info("[MAIN] Clean shutdown")
+    sys.exit(0)
+
+# ═══════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
+
+def main():
+    global _kite
+    logger.info("[MAIN] ═══ VISHAL RAJPUT TRADE " + D.VERSION + " STARTING ═══")
+    logger.info("[MAIN] Mode: " + ("PAPER" if D.PAPER_MODE else "LIVE"))
+    logger.info("[MAIN] Scalps: DISABLED (data-backed decision)")
+
+    _write_pid()
+    signal.signal(signal.SIGINT,  _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+    try:
+        import json as _j
+        from datetime import date as _dt_date
+        _tok_path = D.TOKEN_FILE_PATH
+        _tok_data = {}
+        if os.path.isfile(_tok_path):
+            with open(_tok_path) as _tf:
+                _tok_data = _j.load(_tf)
+        _tok_date = _tok_data.get("date", "")
+        _today = _dt_date.today().isoformat()
+        if _tok_date != _today:
+            logger.warning("[MAIN] Token is from " + str(_tok_date or "MISSING")
+                           + ", not today (" + _today + ") — forcing fresh auth")
+            _tg_send("\u26a0\ufe0f Stale token detected on startup, auto-refreshing\n"
+                     "Old: " + str(_tok_date or "MISSING") + " → New: " + _today)
+        else:
+            logger.info("[MAIN] Token freshness check: OK (" + _today + ")")
+    except Exception as _te:
+        logger.warning("[MAIN] Token freshness check error: " + str(_te))
+
+    kite = get_kite()
+    _kite = kite
+    D.init(kite)
+
+    try:
+        _health_ok = True
+        _health_lines = []
+        try:
+            _prof = kite.profile()
+            _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
+        except Exception as _he:
+            _health_lines.append("Token: ❌ " + str(_he)[:60])
+            _health_ok = False
+        try:
+            _sq = kite.ltp(["NSE:NIFTY 50"])
+            _sp = float(list(_sq.values())[0]["last_price"])
+            _health_lines.append("Spot: ✅ " + str(round(_sp, 1)))
+        except Exception as _he:
+            _health_lines.append("Spot: ❌ " + str(_he)[:60])
+            _health_ok = False
+        import time as _time_h
+        _ws_ltp = 0.0
+        _market_open_now = D.is_market_open()
+        if _market_open_now:
+            for _ in range(15):
+                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if _ws_ltp > 0:
+                    break
+                _time_h.sleep(1)
+            if _ws_ltp > 0:
+                _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+            else:
+                _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
+                _health_ok = False
+        else:
+            with D._tick_lock:
+                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+            if _entry:
+                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
+                _health_lines.append(
+                    "WS: 💤 market closed (last tick "
+                    + str(_age_min) + "m ago at "
+                    + str(round(_entry["ltp"], 1)) + ")"
+                )
+            else:
+                _health_lines.append("WS: 💤 market closed (no ticks yet)")
+        _icon = "✅" if _health_ok else "⚠️"
+        _tg_send(
+            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
+            + "\n".join(_health_lines) + "\n"
+            "Time: " + datetime.now().strftime("%H:%M:%S IST")
+        )
+        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines)))
+    except Exception as _the:
+        logger.warning("[MAIN] Token health check error: " + str(_the))
+
+    try:
+        D.set_autoheal_callback(_tg_send)
     except Exception:
         pass
 
-def _write_pid():
     try:
-        with open(D.PID_FILE_PATH, "w") as f:
-            f.write(str(os.getpid()))
+        D.fetch_account_info(kite)
     except Exception:
         pass
 
+    live_lot_size = D.get_lot_size(kite)
+    D.LOT_SIZE    = live_lot_size
+    logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
+
+    _load_state()
+    _reconcile_positions(kite)
+    if state.get("in_trade") and not D.is_market_open():
+        logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
+        _tg_send("⚠️ Phantom trade detected on startup — state cleared\n"
+                 "Symbol: " + state.get("symbol", "?") + "\n"
+                 "Entry: " + str(state.get("entry_price", 0)) + "\n"
+                 "Peak: " + str(state.get("peak_pnl", 0)))
+        with _state_lock:
+            state["in_trade"] = False
+            state["symbol"] = ""
+            state["token"] = None
+            state["direction"] = ""
+            state["entry_price"] = 0.0
+            state["entry_time"] = ""
+            state["peak_pnl"] = 0.0
+            state["candles_held"] = 0
+            state["lot1_active"] = True
+            state["lot2_active"] = True
+            state["lots_split"] = False
+            state["_static_floor_sl"] = 0
+            state["current_floor"] = 0.0
+        _save_state()
+        logger.info("[MAIN] Phantom trade state cleared ✓")
+
+    try:
+        D.cleanup_old_lab_data()
+    except Exception as e:
+        logger.warning("[MAIN] Lab cleanup failed: " + str(e))
+    try:
+        D.audit_log_paths()
+    except Exception as _ae:
+        logger.debug("[MAIN] audit_log_paths error: " + str(_ae))
+
+    try:
+        import csv as _csv
+        today_iso = date.today().isoformat()
+        trades_today = []
+
+        for log_path in [D.TRADE_LOG_PATH,
+                         os.path.join(D.LAB_DIR, "vrl_trade_log.csv")]:
+            if not os.path.isfile(log_path):
+                continue
+            try:
+                with open(log_path) as f:
+                    raw_rows = list(_csv.DictReader(f))
+
+                found = []
+                for r in raw_rows:
+                    if r.get("date", "").strip() == today_iso:
+                        found.append(r)
+                    elif r.get("trade_id", "").strip() == today_iso:
+                        found.append({
+                            **r,
+                            "date"   : r.get("trade_id", ""),
+                            "pnl_pts": r.get("pnl_points", r.get("pnl_pts", "0")),
+                        })
+                if found:
+                    trades_today = found
+                    break
+            except Exception:
+                continue
+
+        if trades_today:
+            def _get_pnl(row):
+                for k in ["pnl_pts", "pnl_points", "pnl_rs", "pnl"]:
+                    if k in row:
+                        try: return float(row[k])
+                        except (TypeError, ValueError): pass
+                return 0.0
+
+            wins   = [t for t in trades_today if _get_pnl(t) > 0]
+            losses = [t for t in trades_today if _get_pnl(t) < 0]
+            pnl    = sum(_get_pnl(t) for t in trades_today)
+
+            with _state_lock:
+                state["daily_pnl"]          = round(pnl, 2)
+
+            logger.info("[MAIN] Restored: " + str(len(trades_today))
+                        + " trades | " + str(len(losses)) + " losses | pnl="
+                        + str(round(pnl,1)) + "pts")
+        else:
+            logger.info("[MAIN] No trades found for today — starting fresh")
+    except Exception as e:
+        logger.warning("[MAIN] Trade log restore failed: " + str(e))
+    try:
+        import csv as _sync_csv
+        import VRL_DB as _sync_db
+        _sync_db.init_db()
+        _today_iso = date.today().isoformat()
+        _csv_path = D.TRADE_LOG_PATH
+        _csv_trades = []
+        if os.path.isfile(_csv_path):
+            with open(_csv_path) as _sf:
+                for _row in _sync_csv.DictReader(_sf):
+                    _d = _row.get("date", "").strip()
+                    if _d == _today_iso:
+                        _csv_trades.append(_row)
+        _db_trades = _sync_db.get_trades(_today_iso)
+        _db_times = {t.get("entry_time", "").strip() for t in _db_trades}
+        _inserted = 0
+        for _ct in _csv_trades:
+            _et = _ct.get("entry_time", "").strip()
+            if _et and _et not in _db_times:
+                _sync_db.insert_trade(_ct)
+                _inserted += 1
+        if _inserted > 0:
+            logger.info("[SYNC] CSV→DB backfill: " + str(_inserted) + " rows inserted")
+        else:
+            logger.info("[SYNC] CSV/DB in sync for " + _today_iso
+                        + " (CSV=" + str(len(_csv_trades)) + " DB=" + str(len(_db_trades)) + ")")
+    except Exception as _se:
+        logger.warning("[SYNC] CSV→DB backfill failed: " + str(_se))
+
+    D.start_websocket()
+    D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
+    time.sleep(2)
+
+    try:
+        _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
+        if _pw is not None and not _pw.empty:
+            logger.info("[MAIN] Pre-warm: " + str(len(_pw))
+                        + " 3-min spot candles loaded from history")
+        else:
+            logger.warning("[MAIN] Pre-warm: no historical 3-min data returned")
+    except Exception as _pwe:
+        logger.warning("[MAIN] Pre-warm failed: " + str(_pwe))
+
+    start_lab(kite)
+    _start_telegram_listener()
+    _alert_bot_started()
+
+    logger.info("[MAIN] All systems ready. Strategy loop starting.")
+    _strategy_loop(kite)
 
 if __name__ == "__main__":
     main()
