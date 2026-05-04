@@ -1312,10 +1312,10 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (v16.7-final): wait for next FULL
+                # Re-entry watcher (v16.7-final V5): wait for next FULL
                 # 3-min candle to close. If that candle independently
-                # passes 3-gate, re-enter on same side using candle/2
-                # fill. Else drop.
+                # passes 4-gate, re-enter on same side at candle close.
+                # Else drop.
                 "_reentry_armed":      True,
                 "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
                 "_reentry_direction":  str(old_dir or ""),
@@ -2431,7 +2431,7 @@ def _strategy_loop(kite):
                                         _tg_send(
                                             "🚫 <b>RE-ENTRY DROPPED</b>\n"
                                             + _re_dir + " " + str(_re_strike)
-                                            + " — confirmation candle FAILED 3-gate\n"
+                                            + " — confirmation candle FAILED 4-gate\n"
                                             "Reason: " + str(_why) + "\n"
                                             "Waiting for fresh setup."
                                         )
@@ -3020,7 +3020,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — 3-gate entry, "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V5) — 4-gate entry, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
