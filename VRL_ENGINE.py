@@ -6,10 +6,13 @@
 #    3. Body % >= 40
 #    4. Open > EMA9_low   ← body fully above band
 #  Exit chain (first match wins):
-#    1. EMERGENCY_SL    (PNL <= -18, from config)
+#    1. EMERGENCY_SL    (time-segmented: -18 before 11:00, -10 from 11:00)
 #    2. EOD_EXIT        (15:20)
-#    3. VISHAL_TRAIL    (peak-driven SL ladder)
-#  SL ladder: INITIAL → LOCK_M5 → LOCK_3 → LOCK_5 → LOCK_8 → LOCK_15 → LOCK_DYN
+#    3. VISHAL_TRAIL    (time-segmented peak-driven SL ladder)
+#  Morning (09:35-11:00): no LOCK_M5, wider stops, emergency -18
+#    INITIAL(-10) → LOCK_3(+2@12) → LOCK_5(+5@15) → LOCK_15(+15@20) → LOCK_DYN(@25)
+#  Afternoon (11:00+): tighter ladder, emergency -10
+#    INITIAL(-10) → LOCK_M5(-5@5) → LOCK_3(+2@8) → LOCK_8(+8@15) → LOCK_15(+15@20) → LOCK_DYN(@25)
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -218,30 +221,38 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
-                     direction: str = "") -> tuple:
-    if peak_pnl >= 21:
-        sl = entry_price + (peak_pnl - 5)
-        tier = "LOCK_DYN"
-    elif peak_pnl >= 20:
-        sl = entry_price + 15
-        tier = "LOCK_15"
-    elif peak_pnl >= 15:
-        sl = entry_price + 8
-        tier = "LOCK_8"
-    elif peak_pnl >= 12:
-        sl = entry_price + 5
-        tier = "LOCK_5"
-    elif peak_pnl >= 8:
-        sl = entry_price + 3
-        tier = "LOCK_3"
-    else:
-        _early_5 = bool(CFG.entry_ema9_band("early_lock_5_enabled", True))
-        if _early_5 and peak_pnl >= 5:
-            sl = entry_price - 5
-            tier = "LOCK_M5"
+                     direction: str = "", now=None) -> tuple:
+    if now is None:
+        now = datetime.now()
+    _mins = now.hour * 60 + now.minute
+    _is_morning = _mins < (11 * 60)   # before 11:00 AM
+
+    if _is_morning:
+        # Morning session (09:35-11:00): emergency -18, no LOCK_M5
+        if peak_pnl >= 25:
+            sl = entry_price + (peak_pnl - 5); tier = "LOCK_DYN"
+        elif peak_pnl >= 20:
+            sl = entry_price + 15;             tier = "LOCK_15"
+        elif peak_pnl >= 15:
+            sl = entry_price + 5;              tier = "LOCK_5"
+        elif peak_pnl >= 12:
+            sl = entry_price + 2;              tier = "LOCK_3"
         else:
-            sl = entry_price - 10
-            tier = "INITIAL"
+            sl = entry_price - 10;             tier = "INITIAL"
+    else:
+        # Afternoon session (11:00+): emergency -10, tighter ladder
+        if peak_pnl >= 25:
+            sl = entry_price + (peak_pnl - 5); tier = "LOCK_DYN"
+        elif peak_pnl >= 20:
+            sl = entry_price + 15;             tier = "LOCK_15"
+        elif peak_pnl >= 15:
+            sl = entry_price + 8;              tier = "LOCK_8"
+        elif peak_pnl >= 8:
+            sl = entry_price + 2;              tier = "LOCK_3"
+        elif peak_pnl >= 5:
+            sl = entry_price - 5;              tier = "LOCK_M5"
+        else:
+            sl = entry_price - 10;             tier = "INITIAL"
     return round(sl, 2), tier
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, market_open: bool) -> list:
@@ -250,7 +261,10 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     pnl = round(option_ltp - entry, 2)
     peak = max(state.get("peak_pnl", 0), pnl)
     state["peak_pnl"] = peak
-    if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -18):
+    # ── Time-segmented emergency SL: -18 before 11:00, -10 from 11:00 ──
+    _esl_morning = (now.hour * 60 + now.minute) < (11 * 60)
+    _emergency_sl = -18 if _esl_morning else -10
+    if pnl <= _emergency_sl:
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:
         _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20")
@@ -262,7 +276,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    trail_sl, trail_tier = compute_trail_sl(entry, peak)
+    trail_sl, trail_tier = compute_trail_sl(entry, peak, now=now)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
