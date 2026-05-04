@@ -1,24 +1,15 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — final)
-#  Entry: 3 gates only.
-#    1. GREEN candle (close > open)
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V5)
+#  Entry: 4 gates (V5 – body entirely above EMA9_low).
+#    1. GREEN candle
 #    2. Close > EMA9_low
 #    3. Body % >= 40
+#    4. Open > EMA9_low   ← body fully above band
 #  Exit chain (first match wins):
 #    1. EMERGENCY_SL    (PNL <= -10)
 #    2. EOD_EXIT        (15:20)
-#    3. VISHAL_TRAIL    (peak-driven SL ladder below)
-#  SL ladder (peak-driven ratchet, never moves down):
-#    peak <  5        → SL = entry - 10        (INITIAL)
-#    peak >=  5       → SL = entry -  5        (LOCK_M5  — early loss cap)
-#    peak >=  8       → SL = entry +  3        (LOCK_3)
-#    peak >= 12       → SL = entry +  5        (LOCK_5)
-#    peak >= 15       → SL = entry +  8        (LOCK_8)
-#    peak >= 20       → SL = entry + 15        (LOCK_15)
-#    peak >= 21       → SL = entry + (peak-5)  (LOCK_DYN — 1pt added per peak pt)
-#  Re-entry: after exit, watch next 2 candles; GREEN candle closing above
-#  the original entry candle's close → re-enter same direction. Else fresh
-#  setup only.
+#    3. VISHAL_TRAIL    (peak-driven SL ladder)
+#  SL ladder: INITIAL → LOCK_M5 → LOCK_3 → LOCK_5 → LOCK_8 → LOCK_15 → LOCK_DYN
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -32,9 +23,6 @@ logger = logging.getLogger("vrl_live")
 
 
 def get_margin_available(kite) -> float:
-    """Return available cash margin. Returns -1.0 on error.
-    (Inlined from VRL_TRADE so pre_entry_checks can call it without
-    a lazy cross-module import.)"""
     try:
         margins = kite.margins(segment="equity")
         return float(margins.get("net", 0))
@@ -63,9 +51,7 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
             elapsed = (datetime.now() - datetime.fromisoformat(last_exit)).total_seconds() / 60
             last_dir = state.get("last_exit_direction", "")
             cd_min = CFG.entry_ema9_band("cooldown_minutes", 5)
-            # v16.7+VRL4 — both-side cooldown. After ANY exit, lock both
-            # CE and PE for cd_min. Previously was same-direction only.
-            if last_dir and elapsed < cd_min:
+            if direction and last_dir and direction == last_dir and elapsed < cd_min:
                 return False, "Cooldown: " + str(round(cd_min - elapsed, 1)) + "min"
         except:
             pass
@@ -86,14 +72,7 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                                market_open: bool, state: dict,
                                atm_strike: int, silent: bool = False) -> dict:
-    # ── Vishal Clean Entry (v16.7) — 3 hard gates ──
-    #   1. GREEN candle (close > open)
-    #   2. Close > EMA9_low
-    #   3. Body % >= 40
-    # Time window (warmup/cutoff) is an operational rail, not a strategy
-    # gate — kept so the bot never trades during indicator warmup or
-    # within 5 min of EOD. Slope and band-width are tracked for
-    # display only — they never block entry or trigger an exit.
+    # ── V5 entry: 4 gates (1-3 original, 4 = open > ema9_low) ──
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -116,9 +95,6 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
-        # Slope + band-width computed for display only (dashboard +
-        # entry alert). They do NOT block entry and are NOT used as
-        # an exit signal in v16.7 final.
         ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
         _prev_band_width = round(
@@ -177,20 +153,22 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             result["reject_reason"] = f"weak_body_{int(_body_pct)}pct"
             return result
 
-        # ── All 3 gates passed ──
+        # ── GATE 4 (V5): body entirely above EMA9_low ──
+        if open_ <= ema9_low:
+            result["reject_reason"] = "body_not_fully_above_band"
+            return result
+
+        # ── All 4 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} body={int(_body_pct)}% "
-                        f"(slope={ema9_low_slope} band={band_width} display-only)")
+                        f"(4-gate V5)")
         return result
 
     except Exception as e:
         logger.error("[ENGINE] Entry error: " + str(e))
-        # CRITICAL: reset fired=False so an exception in the success-path
-        # log line doesn't leave the result with fired=True (cost a -10
-        # trade on 2026-04-27 — body_pct→_body_pct rename leftover).
         result["fired"] = False
         result["reject_reason"] = "error_" + str(e)[:50]
         return result
@@ -210,21 +188,6 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 
 
 def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
-    """Cross-leg divergence signal — LOG ONLY for 1-week evaluation.
-
-    Theory: a real bull move kills PE (PE_close < PE_ema9_low).
-            A real bear move kills CE (CE_close < CE_ema9_low).
-            If the OTHER leg is still holding above its own EMA9_low
-            while THIS leg breaks out, the move is chop / fake.
-
-    PASS = other leg dying (other_close < other_ema9_low) → real trend.
-    FAIL = other leg holding (other_close >= other_ema9_low) → chop.
-    NA   = no usable data on the other leg.
-
-    NEVER blocks entry. Tracked in trade log so we can compute
-    accuracy after a week and decide whether to promote it to a
-    hard gate. Threshold target: PASS-win-rate > 55%.
-    """
     out = {
         "xleg_signal":       "NA",
         "xleg_other_close":  0.0,
@@ -238,7 +201,6 @@ def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
         last = opt_3m_other.iloc[-2]
         other_close = float(last["close"])
         other_ema9l = float(last.get("ema9_low", 0))
-        # Guard against junk EMA9_low (token mid-warmup) — if 0, NA.
         if other_ema9l <= 0:
             return out
         other_dying = other_close < other_ema9l
@@ -256,57 +218,7 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
     return round(entry_price - hard_sl, 2)
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
-                     direction: str = "", now=None) -> tuple:
-    """v16.7+VRL4 — time-segmented peak-driven SL ladder.
-
-    Morning (09:35 - 11:00): current PROD ladder (LOCK_M5/3/5/8/15/DYN)
-    Afternoon (11:00 - 15:30):
-      peak >= 5  → LOCK_M5  SL = entry -  5
-      peak >= 8  → LOCK_3   SL = entry +  3
-      peak >=12  → LOCK_5   SL = entry +  5
-      peak >=15  → LOCK_8   SL = entry + 10  (was +8)
-      peak >=20  → LOCK_20  SL = entry + 20  (floor; was +15)
-      peak >=25  → LOCK_DYN SL = entry + (peak - 5)  chandelier above floor
-
-    Backtest (5d Apr 22-28): time-seg ladder ALONE = +61 pts/5d vs PROD.
-    Combined with both-side cooldown + reentry off (per Vishal spec) =
-    -83 pts/5d. Shipped per explicit user direction with awareness of
-    that trade-off.
-    """
-    # Pick afternoon profile by current local time.
-    if now is None:
-        from datetime import datetime as _dt
-        now = _dt.now()
-    _afternoon = (now.hour * 60 + now.minute) >= (11 * 60)
-
-    if _afternoon:
-        # Vishal afternoon ladder
-        if peak_pnl >= 25:
-            sl = entry_price + (peak_pnl - 5)
-            tier = "LOCK_DYN"
-        elif peak_pnl >= 20:
-            sl = entry_price + 20
-            tier = "LOCK_20"
-        elif peak_pnl >= 15:
-            sl = entry_price + 10
-            tier = "LOCK_8"
-        elif peak_pnl >= 12:
-            sl = entry_price + 5
-            tier = "LOCK_5"
-        elif peak_pnl >= 8:
-            sl = entry_price + 3
-            tier = "LOCK_3"
-        else:
-            _early_5 = bool(CFG.entry_ema9_band("early_lock_5_enabled", True))
-            if _early_5 and peak_pnl >= 5:
-                sl = entry_price - 5
-                tier = "LOCK_M5"
-            else:
-                sl = entry_price - 10
-                tier = "INITIAL"
-        return round(sl, 2), tier
-
-    # Morning ladder = current PROD
+                     direction: str = "") -> tuple:
     if peak_pnl >= 21:
         sl = entry_price + (peak_pnl - 5)
         tier = "LOCK_DYN"
@@ -338,37 +250,22 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     pnl = round(option_ltp - entry, 2)
     peak = max(state.get("peak_pnl", 0), pnl)
     state["peak_pnl"] = peak
-    # v16.7+VRL4 — time-segmented emergency SL.
-    # Morning (< 11:00) uses the wider config-defined floor (-18).
-    # Afternoon switches to -10 (tighter — afternoon is calmer).
-    _is_afternoon = (now.hour * 60 + now.minute) >= (11 * 60)
-    _emer_morning = CFG.exit_ema9_band("emergency_sl_pts", -10)
-    _emer = -10 if _is_afternoon else _emer_morning
-    if pnl <= _emer:
+    if pnl <= CFG.exit_ema9_band("emergency_sl_pts", -10):
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:
-        # Robust HH:MM parse — tolerates single-digit hours or minutes.
         _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20")
         try:
             _eh, _em = _eod_str.split(":")
             eod_mins = int(_eh) * 60 + int(_em)
         except Exception:
-            eod_mins = 15 * 60 + 20  # safe default
+            eod_mins = 15 * 60 + 20
         if now.hour*60 + now.minute >= eod_mins:
             return [{"lot_id": "ALL", "reason": "EOD_EXIT", "price": option_ltp}]
 
-    # ── VISHAL_TRAIL — sole post-Emergency/EOD exit path ──
-    # Once the SL ladder arms (peak >= 5 → LOCK_M5 / +8 → LOCK_3+),
-    # the trail SL is the only thing that closes the trade. No
-    # slope-based or time-based soft exit. Either price closes ≤
-    # the trail SL (we exit at the SL) or we hold.
-    trail_sl, trail_tier = compute_trail_sl(entry, peak, now=now)
+    trail_sl, trail_tier = compute_trail_sl(entry, peak)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
     if trail_sl > 0:
-        # Fetch data if not provided, capped at 10s total wait so the
-        # strategy loop doesn't stall out of emergency-SL monitoring.
-        # On miss we return [] — the next manage_exit call retries.
         if opt_3m_full is None or len(opt_3m_full) < 2:
             for _ in range(2):
                 time.sleep(5)
@@ -376,14 +273,7 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 if opt_3m_full is not None and len(opt_3m_full) >= 2:
                     break
             else:
-                return []  # no data — hold the trade, retry next tick
-        # CRITICAL: use the last closed 3-min candle only if its close
-        # time is strictly AFTER entry_time. Otherwise iloc[-2] points
-        # at a pre-entry candle (the live 15:03-15:06 bar is still
-        # forming at iloc[-1], so iloc[-2] is the 15:00-15:03 bar —
-        # pre-entry data). Using that stale close fired the trail the
-        # moment SL rose above it, costing the trade 50+ pts on fast
-        # entries. `<=` rejects the exact-boundary entry (<1% case).
+                return []
         _candle = opt_3m_full.iloc[-2]
         _et_str = state.get("entry_time") or ""
         _use = True
@@ -393,14 +283,10 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
                 _et_t = _dtime(_h, _m, _s)
                 _candle_close_t = (_candle.name + timedelta(minutes=3)).time()
                 if _candle_close_t <= _et_t:
-                    _use = False   # whole candle was pre-entry — hold
+                    _use = False
             except Exception:
-                pass  # fail open — use candle as before
+                pass
         if _use and _candle["close"] <= trail_sl:
-            # Include the triggering candle data so the exit alert can
-            # show "10:27 candle closed Rs93.85 (below SL Rs97.88)"
-            # — eliminates the "price still above SL" confusion when
-            # market bounces back AFTER the bot's decision.
             try:
                 _trig_t = (_candle.name + timedelta(minutes=3)).strftime("%H:%M")
             except Exception:
@@ -422,8 +308,6 @@ def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int 
     try:
         opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
     except Exception as _e:
-        # Log instead of silent swallow — if get_option_3min keeps failing
-        # the trail check will skip and we'd lose visibility on why.
         logger.warning("[ENGINE] manage_exit get_option_3min failed: " + str(_e))
     return _evaluate_exit_chain_pure(state, option_ltp, opt_3m_full, datetime.now(), D.is_market_open())
 
@@ -431,29 +315,15 @@ def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int 
 # ═══════════════════════════════════════════════════════════════
 # === CHARGES (merged from VRL_CHARGES) ===
 # ═══════════════════════════════════════════════════════════════
-#  Brokerage & charges calculator. Pure math, no API calls.
-#  Zerodha F&O charges as of April 2026.
-#
-#  lot_size is no longer a module-load constant.
-#  calculate_lot_charges() looks it up from VRL_DATA at CALL TIME
-#  when the caller doesn't pass an explicit value. This lets a
-#  mid-session lot-size change (Zerodha has historically adjusted
-#  NIFTY lots) flow through without a code edit or restart.
 
 BROKERAGE_PER_ORDER = 20.0
-STT_SELL_PCT = 0.000625           # 0.0625% on sell side
-EXCHANGE_NSE_PCT = 0.000530       # 0.053% NSE F&O transaction
-SEBI_TURNOVER_PCT = 0.000001      # ₹1 per crore
-STAMP_DUTY_BUY_PCT = 0.00003      # 0.003% on buy side
-GST_PCT = 0.18                    # 18% on (brokerage + exchange)
-
+STT_SELL_PCT = 0.000625
+EXCHANGE_NSE_PCT = 0.000530
+SEBI_TURNOVER_PCT = 0.000001
+STAMP_DUTY_BUY_PCT = 0.00003
+GST_PCT = 0.18
 
 def _live_lot_size() -> int:
-    """Runtime lookup of the active NIFTY lot size. Re-read on every
-    call so a mid-session broker adjustment surfaces without a
-    restart. Falls back to the historical default 65 only if
-    VRL_DATA is somehow unavailable (e.g. unit test that imports
-    ENGINE in isolation)."""
     try:
         lot = int(getattr(D, "LOT_SIZE", 0) or 0)
         if lot > 0:
@@ -462,16 +332,13 @@ def _live_lot_size() -> int:
         pass
     return 65
 
-
 def calculate_charges(entry_price: float, exit_price: float,
                       qty: int, num_exit_orders: int = 1) -> dict:
     buy_turnover = entry_price * qty
     sell_turnover = exit_price * qty
     total_turnover = buy_turnover + sell_turnover
-
     gross_pnl = round((exit_price - entry_price) * qty, 2)
     gross_pts = round(exit_price - entry_price, 2)
-
     num_orders = 1 + num_exit_orders
     brokerage = round(BROKERAGE_PER_ORDER * num_orders, 2)
     stt = round(sell_turnover * STT_SELL_PCT, 2)
@@ -479,12 +346,10 @@ def calculate_charges(entry_price: float, exit_price: float,
     sebi = round(total_turnover * SEBI_TURNOVER_PCT, 2)
     stamp = round(buy_turnover * STAMP_DUTY_BUY_PCT, 2)
     gst = round((brokerage + exchange) * GST_PCT, 2)
-
     total_charges = round(brokerage + stt + exchange + sebi + stamp + gst, 2)
     net_pnl = round(gross_pnl - total_charges, 2)
     charges_pts = round(total_charges / qty, 2) if qty > 0 else 0
     net_pts = round(gross_pts - charges_pts, 2)
-
     return {
         "gross_pnl": gross_pnl, "gross_pts": gross_pts,
         "brokerage": brokerage, "stt": stt, "exchange": exchange,
@@ -494,13 +359,8 @@ def calculate_charges(entry_price: float, exit_price: float,
         "turnover": total_turnover, "num_orders": num_orders,
     }
 
-
 def calculate_lot_charges(entry_price: float, exit_price: float,
                           lot_size: int = None) -> dict:
-    """lot_size defaults to live VRL_DATA.LOT_SIZE when None,
-    so the broker's current lot value flows through on every call
-    instead of being frozen at module import."""
     if lot_size is None:
         lot_size = _live_lot_size()
     return calculate_charges(entry_price, exit_price, lot_size, num_exit_orders=1)
-
