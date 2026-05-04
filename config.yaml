@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 #  VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — Central Configuration
-#  3-gate entry  +  4-rule exit chain  +  peak-driven SL ladder
+#  4-gate entry (V5)  +  3-rule exit chain  +  peak-driven SL ladder
 # ═══════════════════════════════════════════════════════════════
 
 version: "v16.7"
@@ -29,8 +29,9 @@ lots:
   count: 2
   size: 65
 
-# ── v16.7 Entry configuration (Vishal Clean — 3 gates) ─────────
-# 3 hard gates: GREEN candle, close > EMA9_low, body >= body_pct_min.
+# ── v16.7 Entry configuration (Vishal Clean V5 — 4 gates) ────────
+# 4 hard gates: GREEN candle, close > EMA9_low, body >= body_pct_min,
+# open > EMA9_low (entire body above band).
 # Time window (warmup/cutoff) is an operational rail, not a strategy
 # gate. Slope and band-width are tracked for dashboard display only —
 # they never gate entry or trigger exits in v16.7 final.
