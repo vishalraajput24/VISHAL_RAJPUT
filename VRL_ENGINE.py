@@ -1,10 +1,13 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V5)
-#  Entry: 4 gates (V5 – body entirely above EMA9_low).
-#    1. GREEN candle
-#    2. Close > EMA9_low
-#    3. Body % >= 40
-#    4. Open > EMA9_low   ← body fully above band
+#  Entry: 5 gates (V5 + spot bias confirmation).
+#    1. GREEN candle (option)
+#    2. Close > EMA9_low (option)
+#    3. Body % >= 40 (option)
+#    4. Open > EMA9_low (option, body fully above band)
+#    5. Spot bias confirms direction
+#         CE: spot_close > spot_ema9_low
+#         PE: spot_close < spot_ema9_low
 #  Exit chain (first match wins):
 #    1. EMERGENCY_SL    (time-segmented: -18 before 11:00, -10 from 11:00)
 #    2. EOD_EXIT        (15:20)
@@ -74,14 +77,16 @@ def pre_entry_checks(kite, token: int, state: dict, option_ltp: float, profile: 
 
 def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                                market_open: bool, state: dict,
-                               atm_strike: int, silent: bool = False) -> dict:
-    # ── V5 entry: 4 gates (1-3 original, 4 = open > ema9_low) ──
+                               atm_strike: int, silent: bool = False,
+                               spot_3m=None) -> dict:
+    # ── V5 entry: 5 gates (1-4 option, 5 = spot bias confirmation) ──
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "reject_reason": "", "band_position": "",
         "ema9_low_slope": 0.0,
         "band_width_slope": 0.0, "margin_above": 0,
+        "spot_close": 0.0, "spot_ema9_low": 0.0, "spot_bias": "",
     }
     try:
         body_min = CFG.entry_ema9_band("body_pct_min", 40)
@@ -161,13 +166,47 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             result["reject_reason"] = "body_not_fully_above_band"
             return result
 
-        # ── All 4 gates passed ──
+        # ── GATE 5 (V5): spot bias confirms direction ──
+        # CE: spot must be above its own ema9_low (uptrend on underlying).
+        # PE: spot must be below its own ema9_low (downtrend on underlying).
+        # Uses last CLOSED 3-min spot candle to mirror option-side gating.
+        try:
+            if spot_3m is None or spot_3m.empty or len(spot_3m) < 2:
+                result["reject_reason"] = "spot_data_unavailable"
+                return result
+            _spot_last = spot_3m.iloc[-2]
+            _spot_close = float(_spot_last["close"])
+            _spot_ema9l = float(_spot_last.get("ema9_low", 0))
+            result["spot_close"]     = round(_spot_close, 2)
+            result["spot_ema9_low"]  = round(_spot_ema9l, 2)
+            if _spot_ema9l <= 0:
+                result["reject_reason"] = "spot_ema9_low_invalid"
+                return result
+            if option_type == "CE":
+                if _spot_close <= _spot_ema9l:
+                    result["spot_bias"] = "BEARISH"
+                    result["reject_reason"] = "spot_against_CE"
+                    return result
+                result["spot_bias"] = "BULLISH"
+            else:  # PE
+                if _spot_close >= _spot_ema9l:
+                    result["spot_bias"] = "BULLISH"
+                    result["reject_reason"] = "spot_against_PE"
+                    return result
+                result["spot_bias"] = "BEARISH"
+        except Exception as _se:
+            result["reject_reason"] = "spot_gate_error_" + str(_se)[:40]
+            return result
+
+        # ── All 5 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} body={int(_body_pct)}% "
-                        f"(4-gate V5)")
+                        f"spot={round(result['spot_close'],1)} "
+                        f"vs spot_ema9l={round(result['spot_ema9_low'],1)} "
+                        f"(5-gate V5)")
         return result
 
     except Exception as e:
@@ -181,13 +220,20 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
                 state: dict = None) -> dict:
     if state is None: state = {}
     opt_3m = D.get_option_3min(token, lookback=15)
+    # Spot 3-min with EMA9 bands for Gate 5 bias confirmation.
+    spot_3m = None
+    try:
+        spot_3m = D.add_indicators(
+            D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30))
+    except Exception as _se:
+        logger.warning("[ENGINE] spot 3-min fetch failed: " + str(_se))
     market_open = D.is_market_open()
     now = datetime.now()
     atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
     return _evaluate_entry_gates_pure(
         opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp, now=now,
         market_open=market_open, state=state, atm_strike=atm_strike,
-        silent=silent)
+        silent=silent, spot_3m=spot_3m)
 
 
 def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
