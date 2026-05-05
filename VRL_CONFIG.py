@@ -80,7 +80,7 @@ def _validate(cfg: dict):
             raise ConfigError("lots." + k + " is required")
         if not isinstance(lots[k], int) or lots[k] <= 0:
             raise ConfigError("lots." + k + " must be a positive integer")
-    # v16.7 validation: 4-gate entry (V5) + Vishal Clean filters required so
+    # v16.7 validation: 3-gate entry (V6) + Vishal Clean filters required so
     # tuning changes land instead of silently falling back to defaults.
     # band_width_min / ema9_slope_lookback are optional display-only now
     # but kept in config for the dashboard's reject-reason translator.

@@ -1,12 +1,16 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V5)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6)
 #  Master orchestration.
-#  Entry: 5 gates — GREEN + close>EMA9_low + body≥40% + open>EMA9_low
-#                   + SPOT BIAS (CE: spot>spot_ema9_low | PE: spot<spot_ema9_low)
-#  Exit: 3-rule chain — Emergency SL (time-segmented), EOD 15:20, Vishal Trail
-#        (INITIAL/LOCK_M5/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
-#  Re-entry: wait 1 full 3-min candle after exit, must pass 5-gate,
-#            fill at candle close. 5-min cooldown blocks BOTH sides.
+#  Entry: 3 simple gates
+#    1. GREEN candle (option close > open)
+#    2. FRESH BREAK above EMA9_low
+#         (close > ema9_low AND ≥2 of last 3 prior closes ≤ ema9_low)
+#    3. Spot bias  (CE: spot > spot_ema9_low | PE: spot < spot_ema9_low)
+#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
+#        Simple 4-tier: INITIAL(-10) → LOCK_BE(@8) → LOCK_5(@15) → LOCK_DYN(@20)
+#  Cooldown: 5 min, BOTH sides after any exit.
+#  Re-entry: standard scan resumes after cooldown — fresh-break filter
+#            naturally blocks chase-the-move re-entries.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -825,38 +829,30 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7 V5\n"
-        "Entry   : 09:35 - 15:10 IST  |  5-min BOTH-sides cooldown\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7 V6 (simple)\n"
+        "Entry   : 09:35 - 15:00 IST  |  5-min BOTH-sides cooldown\n"
         "Gates   : 1) GREEN candle\n"
-        "          2) close > EMA9_low  (option)\n"
-        "          3) body >= 40%\n"
-        "          4) open > EMA9_low   (body fully above band)\n"
-        "          5) spot bias  (CE: spot > spot_ema9_low\n"
+        "          2) FRESH BREAK above EMA9_low\n"
+        "             (≥ 2 of last 3 priors were ≤ ema9_low)\n"
+        "          3) Spot bias  (CE: spot > spot_ema9_low\n"
         "                          PE: spot < spot_ema9_low)\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
-        "1. Emergency  18pts (before 11:00)  /  10pts (11:00+)\n"
+        "1. Emergency  -10 pts (single floor)\n"
         "2. EOD 15:20\n"
-        "3. Vishal Trail (time-segmented peak ladder)\n"
+        "3. Vishal Trail (4-tier peak ladder)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER — MORNING</b> (09:35-11:00)\n"
-        "peak <12   SL = entry-10        (INITIAL)\n"
-        "peak >=12  SL = entry+2         (LOCK_3)\n"
-        "peak >=15  SL = entry+5         (LOCK_5)\n"
-        "peak >=20  SL = entry+15        (LOCK_15)\n"
-        "peak >=25  SL = entry+(peak-5)  (LOCK_DYN)\n"
-        "<b>SL LADDER — AFTERNOON</b> (11:00+)\n"
-        "peak <5    SL = entry-10        (INITIAL)\n"
-        "peak >=5   SL = entry-5         (LOCK_M5)\n"
-        "peak >=8   SL = entry+2         (LOCK_3)\n"
-        "peak >=15  SL = entry+8         (LOCK_8)\n"
-        "peak >=20  SL = entry+15        (LOCK_15)\n"
-        "peak >=25  SL = entry+(peak-5)  (LOCK_DYN)\n"
+        "<b>SL LADDER (V6 simple)</b>\n"
+        "peak <  8  SL = entry - 10      (INITIAL)\n"
+        "peak >= 8  SL = entry            (LOCK_BE)\n"
+        "peak >= 15 SL = entry + 5        (LOCK_5)\n"
+        "peak >= 20 SL = peak - 5         (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
-        "After exit: 5-min both-sides lock. First 5-gate fire\n"
+        "After exit: 5-min both-sides lock. First 3-gate fire\n"
         "(CE or PE) at any 3-min close after 5min triggers entry.\n"
+        "Filter 2 (fresh break) naturally blocks chase re-entries.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1131,21 +1127,14 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
-    # Time-segmented emergency SL + first lock tier (matches VRL_ENGINE).
-    _now_dt = datetime.now()
-    _is_morning_alert = (_now_dt.hour * 60 + _now_dt.minute) < (11 * 60)
-    if _is_morning_alert:
-        _sl_pts = 18
-        _trail_line = "Trail arms at peak +12 (LOCK_3 = entry+2)  [morning]\n"
-    else:
-        _sl_pts = 10
-        _trail_line = "Trail arms at peak +5  (LOCK_M5 = entry-5) [afternoon]\n"
+    # V6 single emergency floor + simple trail ladder.
+    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        + _trail_line
+        "Trail: peak >=8 → entry (BE) | >=15 → +5 | >=20 → peak-5\n"
     )
 
     _slip_block = ""
@@ -1316,10 +1305,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (v16.7-final V5): wait for next FULL
+                # Re-entry watcher (v16.7-final V6): wait for next FULL
                 # 3-min candle to close. If that candle independently
-                # passes 5-gate (incl. spot bias), re-enter on same side
-                # at candle close. Else drop.
+                # passes 3-gate (incl. fresh-break + spot bias), re-enter
+                # on same side at candle close. Else drop.
+                # Filter 2 (fresh break) naturally blocks chase re-entries.
                 "_reentry_armed":      True,
                 "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
                 "_reentry_direction":  str(old_dir or ""),
@@ -2435,7 +2425,7 @@ def _strategy_loop(kite):
                                         _tg_send(
                                             "🚫 <b>RE-ENTRY DROPPED</b>\n"
                                             + _re_dir + " " + str(_re_strike)
-                                            + " — confirmation candle FAILED 5-gate\n"
+                                            + " — confirmation candle FAILED 3-gate (V6)\n"
                                             "Reason: " + str(_why) + "\n"
                                             "Waiting for fresh setup."
                                         )
@@ -2952,7 +2942,7 @@ def _cmd_pulse(args):
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
             + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts (display)\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: -18 (<11:00) / -10 (11:00+)\n"
+            + "SL: -10 (single floor)\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
             + str(_eb.get("cutoff_after", "?")) + "  "
             + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
@@ -2963,35 +2953,25 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER — MORNING</b> (09:35-11:00, Em -18)\n"
-            "INITIAL   (peak <12)   entry-10\n"
-            "🛡️ LOCK_3 (peak >=12)  entry+2\n"
-            "🔒 LOCK_5 (peak >=15)  entry+5\n"
-            "🔒🔒 LOCK_15(peak >=20) entry+15\n"
-            "🔒🔒🔒 LOCK_DYN(>=25)   entry+(peak-5)\n"
-            "<b>SL LADDER — AFTERNOON</b> (11:00+, Em -10)\n"
-            "INITIAL   (peak <5)    entry-10\n"
-            "⚠️ LOCK_M5 (peak >=5)  entry-5\n"
-            "🛡️ LOCK_3 (peak >=8)   entry+2\n"
-            "🔒🔒 LOCK_8(peak >=15)  entry+8\n"
-            "🔒🔒 LOCK_15(peak >=20) entry+15\n"
-            "🔒🔒🔒 LOCK_DYN(>=25)   entry+(peak-5)\n"
+            "<b>SL LADDER (V6 simple, Em -10)</b>\n"
+            "INITIAL    (peak <8)    entry-10\n"
+            "🛡️ LOCK_BE (peak >=8)   entry (breakeven)\n"
+            "🔒 LOCK_5  (peak >=15)  entry+5\n"
+            "🔒🔒🔒 LOCK_DYN(>=20)   peak-5 (chandelier)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>5-GATE ENTRY (V5)</b>\n"
+            "<b>3-GATE ENTRY (V6 simple)</b>\n"
             "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
-            + str(_eb.get("cutoff_after", "15:10")) + "\n"
-            "2. GREEN candle (close > open)\n"
-            "3. Close > EMA9_low (option)\n"
-            "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
-            "5. Open > EMA9_low  (body fully above band)\n"
-            "6. Spot bias  CE: spot > spot_ema9_low\n"
+            + str(_eb.get("cutoff_after", "15:00")) + "\n"
+            "2. GREEN candle (option close > open)\n"
+            "3. FRESH BREAK above EMA9_low\n"
+            "   (close > ema9_low AND ≥ 2 of last 3 priors ≤ ema9_low)\n"
+            "4. Spot bias  CE: spot > spot_ema9_low\n"
             "              PE: spot < spot_ema9_low\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
-            "1. Emergency 18pts (<11:00) / 10pts (11:00+)"
-            " | 2. EOD 15:20 | 3. Vishal Trail\n"
+            "1. Emergency -10 pts | 2. EOD 15:20 | 3. Vishal Trail\n"
             "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
-            "first 5-gate fire (CE or PE) at 3-min close after cooldown enters.\n"
+            "first 3-gate fire (CE or PE) at 3-min close after cooldown enters.\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -3021,7 +3001,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V5) — 5-gate entry, "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6) — 3-gate entry, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
