@@ -1,0 +1,1127 @@
+2026-05-05 00:00:00 | INFO     | [DATA] Token cache cleared
+2026-05-05 00:00:00 | INFO     | [MAIN] _eod_exited reset for new day
+2026-05-05 00:00:00 | INFO     | [MAIN] Daily reset
+2026-05-05 00:00:02 | INFO     | [PRELOAD] Market-open 5-strike window ATM=24100 total_candles=0
+2026-05-05 00:04:39 | WARNING  | [DATA] historical_data attempt 1 token=256265: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+2026-05-05 01:30:33 | DEBUG    | [DATA] VIX quote fallback failed: Request failed (kt-quotes).
+2026-05-05 04:30:00 | WARNING  | [DATA] Auth token rejected — pausing retries until re-auth via VRL_CONFIG.
+2026-05-05 07:00:07 | INFO     | [MAIN] Shutdown signal received
+2026-05-05 07:00:07 | INFO     | [MAIN] Clean shutdown
+2026-05-05 07:00:10 | INFO     | [MAIN] ═══ VISHAL RAJPUT TRADE v16.7 STARTING ═══
+2026-05-05 07:00:10 | INFO     | [MAIN] Mode: PAPER
+2026-05-05 07:00:10 | INFO     | [MAIN] Scalps: DISABLED (data-backed decision)
+2026-05-05 07:00:10 | WARNING  | [MAIN] Token is from 2026-05-04, not today (2026-05-05) — forcing fresh auth
+2026-05-05 07:00:10 | WARNING  | [AUTH] Stale token from 2026-05-04 — ignoring
+2026-05-05 07:00:10 | INFO     | [AUTH] Step 1: Password login
+2026-05-05 07:00:10 | INFO     | [AUTH] Step 1 OK
+2026-05-05 07:00:10 | INFO     | [AUTH] Step 2: TOTP
+2026-05-05 07:00:10 | INFO     | [AUTH] Step 2 OK
+2026-05-05 07:00:12 | INFO     | [AUTH] Step 3: Fetching request_token
+2026-05-05 07:00:12 | INFO     | [AUTH] Step 3a: finish_url=https://kite.zerodha.com/connect/finish?api_key=w7v9me3rckr5
+2026-05-05 07:00:12 | INFO     | [AUTH] Step 3 OK — QcDgWyt3...
+2026-05-05 07:00:12 | INFO     | [AUTH] Step 4: Generating session
+2026-05-05 07:00:12 | INFO     | [AUTH] Done ✓
+2026-05-05 07:00:12 | INFO     | [AUTH] Auto-login successful ✓
+2026-05-05 07:00:12 | INFO     | [MAIN] Token health: Token: ✅ Vishal Raghunath Rajput | Spot: ✅ 24119.3 | WS: 💤 market closed (no ticks yet)
+2026-05-05 07:00:12 | INFO     | [DATA] Account: Vishal Raghunath Rajput bal=5260.9
+2026-05-05 07:00:14 | INFO     | [DATA] Lot size from broker: 65 (cached for 2026-05-05)
+2026-05-05 07:00:14 | INFO     | [MAIN] Lot size from broker: 65
+2026-05-05 07:00:14 | INFO     | [MAIN] State loaded from disk
+2026-05-05 07:00:14 | INFO     | [LOGPATH] live: /home/vishalraajput24/logs/live (11 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] lab: /home/vishalraajput24/logs/lab (31 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] auth: /home/vishalraajput24/logs/auth (2 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] web: /home/vishalraajput24/logs/web (1 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] health: /home/vishalraajput24/logs/health (0 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] zones: /home/vishalraajput24/logs/zones (0 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] ml: /home/vishalraajput24/logs/ml (0 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] errors: /home/vishalraajput24/logs/errors (25 files)
+2026-05-05 07:00:14 | INFO     | [LOGPATH] flow: /home/vishalraajput24/logs/flow (0 files)
+2026-05-05 07:00:14 | INFO     | [MAIN] No trades found for today — starting fresh
+2026-05-05 07:00:14 | INFO     | [DB] Startup integrity check: ok
+2026-05-05 07:00:14 | INFO     | [DB] Schema v16 — legacy ALTER TABLE blocks skipped
+2026-05-05 07:00:14 | INFO     | [DB] Database initialized: /home/vishalraajput24/lab_data/vrl_data.db
+2026-05-05 07:00:14 | INFO     | [DB] Schema v16 — migration already done, skipped
+2026-05-05 07:00:14 | INFO     | [SYNC] CSV/DB in sync for 2026-05-05 (CSV=0 DB=0)
+2026-05-05 07:00:14 | INFO     | [WS] Ticker started
+2026-05-05 07:00:14 | INFO     | [WS] Subscribed: {256265, 264969}
+2026-05-05 07:00:14 | INFO     | [WS] Connected
+2026-05-05 07:00:16 | INFO     | [MAIN] Pre-warm: 125 3-min spot candles loaded from history
+2026-05-05 07:00:18 | INFO     | [CTRL] Telegram listener started v16.7
+2026-05-05 07:00:18 | INFO     | [CTRL] Listener thread launched
+2026-05-05 07:00:18 | INFO     | [MAIN] All systems ready. Strategy loop starting.
+2026-05-05 07:00:18 | INFO     | [MAIN] Strategy loop started
+2026-05-05 07:00:18 | INFO     | [MAIN] Trade log cleaned: 364 valid rows kept
+2026-05-05 07:00:18 | INFO     | [BIAS] SIDEWAYS EMA21=23962.31 ADX=15.2
+2026-05-05 07:00:18 | INFO     | [MAIN] Daily bias: SIDEWAYS
+2026-05-05 07:00:18 | INFO     | [HOURLY] RSI=52.2
+2026-05-05 07:00:18 | INFO     | [MAIN] Hourly RSI: 52.2
+2026-05-05 07:00:18 | INFO     | [MAIN] Expiry on startup: 2026-05-05
+2026-05-05 07:06:12 | ERROR    | [WS] Error: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-05-05 07:06:12 | WARNING  | [WS] Closed: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-05-05 07:06:12 | INFO     | [WS] Reconnecting in 1s (attempt 1)
+2026-05-05 07:06:13 | INFO     | [WS] Ticker started
+2026-05-05 07:06:13 | INFO     | [WS] Connected
+2026-05-05 07:06:16 | INFO     | [WS] Connected
+2026-05-05 09:15:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 09:15:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=23991.2
+2026-05-05 09:18:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24000 target=24050 spot=24042.3 (dist=42.3 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 09:18:35 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 09:18:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24042.3
+2026-05-05 09:20:00 | INFO     | [BIAS] SIDEWAYS EMA21=23971.49 ADX=14.4
+2026-05-05 09:25:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24050 target=24000 spot=24014.6 (dist=35.4 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 09:25:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 09:25:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=24014.6
+2026-05-05 09:30:00 | INFO     | [STRADDLE] CE=58.9 PE=68.8 Sum=127.65
+2026-05-05 09:33:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24000 target=24050 spot=24039.5 (dist=39.5 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 09:33:35 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 09:33:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24039.5
+2026-05-05 09:40:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24050 target=24000 spot=24007.1 (dist=42.9 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 09:40:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 09:40:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=24007.1
+2026-05-05 09:42:35 | INFO     | [ENGINE] PE FIRED close=58.2 ema9l=44.0 body=76% (4-gate V5)
+2026-05-05 09:42:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=24000 score=1091.98 (of 1 fired)
+2026-05-05 09:42:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs58.25
+2026-05-05 09:42:35 | INFO     | [XLEG] PE entry — other CE close=67.5 ema9l=85.7 margin=-18.20 → PASS
+2026-05-05 09:42:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650524000PE qty=130 ref=58.25
+2026-05-05 09:42:35 | INFO     | [DATA] Active trade set: strike=24000 dir=PE
+2026-05-05 09:42:35 | INFO     | [MAIN] ENTRY PE NIFTY2650524000PE price=58.25 ema_gap=0 rsi=0 SL=40.25
+2026-05-05 09:42:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 09:49:29 | INFO     | [TRADE] PAPER EXIT: NIFTY2650524000PE qty=130 ref=39.9 reason=EMERGENCY_SL
+2026-05-05 09:49:29 | INFO     | [POST_EXIT] Token 18983426 (PE 24000) held 10 min for post-exit observation
+2026-05-05 09:49:29 | INFO     | [WS] Unsubscribed: {18983938, 18981634, 18983682, 18981378, 18978562}
+2026-05-05 09:49:29 | INFO     | [MAIN] EXIT ALL NIFTY2650524000PE price=39.9 pnl=-18.35pts reason=EMERGENCY_SL
+2026-05-05 09:49:29 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 09:49:35 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 09:49:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24041.1
+2026-05-05 09:51:35 | INFO     | [REENTRY] confirmation candle 09:51:00 failed: red_candle
+2026-05-05 10:00:00 | INFO     | [HOURLY] RSI=46.5
+2026-05-05 10:03:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24050 target=24000 spot=24005.2 (dist=44.8 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 10:03:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 10:03:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=24005.2
+2026-05-05 10:26:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24000 target=23950 spot=23964.0 (dist=36.0 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 10:26:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 10:26:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23964.0
+2026-05-05 10:26:35 | INFO     | [PRELOAD] CE 23950 3minute: fetched 250 candles (had 23)
+2026-05-05 10:26:36 | INFO     | [PRELOAD] PE 23950 3minute: fetched 250 candles (had 21)
+2026-05-05 10:26:36 | INFO     | [PRELOAD] Strike lock 23950 CE=273 PE=271
+2026-05-05 10:27:35 | INFO     | [ENGINE] PE FIRED close=48.1 ema9l=31.0 body=63% (4-gate V5)
+2026-05-05 10:27:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=1087.36 (of 1 fired)
+2026-05-05 10:27:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs48.1
+2026-05-05 10:27:35 | INFO     | [XLEG] PE entry — other CE close=59.85 ema9l=70.77 margin=-10.92 → PASS
+2026-05-05 10:27:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950PE qty=130 ref=48.1
+2026-05-05 10:27:35 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-05 10:27:35 | INFO     | [MAIN] ENTRY PE NIFTY2650523950PE price=48.1 ema_gap=0 rsi=0 SL=30.1
+2026-05-05 10:27:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 10:36:00 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950PE qty=130 ref=50.1 reason=VISHAL_TRAIL
+2026-05-05 10:36:00 | INFO     | [POST_EXIT] Token 18981378 (PE 23950) held 10 min for post-exit observation
+2026-05-05 10:36:00 | INFO     | [WS] Unsubscribed: {18978562, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 10:36:00 | INFO     | [MAIN] EXIT ALL NIFTY2650523950PE price=50.1 pnl=2.0pts reason=VISHAL_TRAIL
+2026-05-05 10:36:00 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 10:36:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 10:36:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23925.2
+2026-05-05 10:36:36 | INFO     | [ENGINE] PE FIRED close=62.0 ema9l=38.1 body=88% (4-gate V5)
+2026-05-05 10:36:36 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=2109.99 (of 1 fired)
+2026-05-05 10:36:36 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 4.4min
+2026-05-05 10:37:35 | INFO     | [ENGINE] PE FIRED close=62.0 ema9l=38.1 body=88% (4-gate V5)
+2026-05-05 10:37:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=2109.99 (of 1 fired)
+2026-05-05 10:37:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 3.4min
+2026-05-05 10:38:35 | INFO     | [ENGINE] PE FIRED close=62.0 ema9l=38.1 body=88% (4-gate V5)
+2026-05-05 10:38:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=2109.99 (of 1 fired)
+2026-05-05 10:38:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 2.4min
+2026-05-05 10:39:35 | INFO     | [REENTRY] confirmation candle 10:39:00 failed: red_candle
+2026-05-05 10:42:35 | INFO     | [ENGINE] PE FIRED close=57.5 ema9l=43.0 body=45% (4-gate V5)
+2026-05-05 10:42:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=659.11 (of 1 fired)
+2026-05-05 10:42:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs57.55
+2026-05-05 10:42:35 | INFO     | [XLEG] PE entry — other CE close=45.3 ema9l=53.58 margin=-8.28 → PASS
+2026-05-05 10:42:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950PE qty=130 ref=57.55
+2026-05-05 10:42:35 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-05 10:42:35 | INFO     | [MAIN] ENTRY PE NIFTY2650523950PE price=57.55 ema_gap=0 rsi=0 SL=39.55
+2026-05-05 10:42:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 10:51:32 | WARNING  | [CTRL] Force exit
+2026-05-05 10:51:33 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950PE qty=130 ref=51.4 reason=FORCE_EXIT
+2026-05-05 10:51:33 | INFO     | [POST_EXIT] Token 18981378 (PE 23950) held 10 min for post-exit observation
+2026-05-05 10:51:33 | INFO     | [WS] Unsubscribed: {18978562, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 10:51:33 | INFO     | [MAIN] EXIT ALL NIFTY2650523950PE price=51.4 pnl=-6.15pts reason=FORCE_EXIT
+2026-05-05 10:51:33 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 10:51:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 10:51:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23945.4
+2026-05-05 10:51:39 | INFO     | [CTRL] Restart requested
+2026-05-05 10:51:43 | INFO     | [MAIN] ═══ VISHAL RAJPUT TRADE v16.7 STARTING ═══
+2026-05-05 10:51:43 | INFO     | [MAIN] Mode: PAPER
+2026-05-05 10:51:43 | INFO     | [MAIN] Scalps: DISABLED (data-backed decision)
+2026-05-05 10:51:43 | INFO     | [MAIN] Token freshness check: OK (2026-05-05)
+2026-05-05 10:51:43 | INFO     | [AUTH] Trying saved token
+2026-05-05 10:51:43 | INFO     | [AUTH] Token valid ✓
+2026-05-05 10:51:58 | INFO     | [MAIN] Token health: Token: ✅ Vishal Raghunath Rajput | Spot: ✅ 23942.8 | WS: ⚠️ no tick after 15s (feed may be down)
+2026-05-05 10:51:58 | INFO     | [DATA] Account: Vishal Raghunath Rajput bal=5751.65
+2026-05-05 10:52:00 | INFO     | [DATA] Lot size from broker: 65 (cached for 2026-05-05)
+2026-05-05 10:52:00 | INFO     | [MAIN] Lot size from broker: 65
+2026-05-05 10:52:00 | INFO     | [MAIN] State loaded from disk
+2026-05-05 10:52:00 | INFO     | [LOGPATH] live: /home/vishalraajput24/logs/live (10 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] lab: /home/vishalraajput24/logs/lab (31 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] auth: /home/vishalraajput24/logs/auth (2 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] web: /home/vishalraajput24/logs/web (1 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] health: /home/vishalraajput24/logs/health (0 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] zones: /home/vishalraajput24/logs/zones (0 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] ml: /home/vishalraajput24/logs/ml (0 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] errors: /home/vishalraajput24/logs/errors (26 files)
+2026-05-05 10:52:00 | INFO     | [LOGPATH] flow: /home/vishalraajput24/logs/flow (0 files)
+2026-05-05 10:52:00 | INFO     | [MAIN] Restored: 3 trades | 2 losses | pnl=-22.5pts
+2026-05-05 10:52:00 | INFO     | [DB] Startup integrity check: ok
+2026-05-05 10:52:00 | INFO     | [DB] Schema v16 — legacy ALTER TABLE blocks skipped
+2026-05-05 10:52:00 | INFO     | [DB] Database initialized: /home/vishalraajput24/lab_data/vrl_data.db
+2026-05-05 10:52:00 | INFO     | [DB] Schema v16 — migration already done, skipped
+2026-05-05 10:52:00 | INFO     | [SYNC] CSV/DB in sync for 2026-05-05 (CSV=3 DB=3)
+2026-05-05 10:52:00 | INFO     | [WS] Ticker started
+2026-05-05 10:52:00 | INFO     | [WS] Subscribed: {256265, 264969}
+2026-05-05 10:52:00 | INFO     | [WS] Connected
+2026-05-05 10:52:03 | INFO     | [MAIN] Pre-warm: 158 3-min spot candles loaded from history
+2026-05-05 10:52:03 | INFO     | [CTRL] Discarded 1 pending updates on startup
+2026-05-05 10:52:03 | INFO     | [CTRL] Telegram listener started v16.7
+2026-05-05 10:52:03 | INFO     | [CTRL] Listener thread launched
+2026-05-05 10:52:03 | INFO     | [MAIN] All systems ready. Strategy loop starting.
+2026-05-05 10:52:03 | INFO     | [MAIN] Strategy loop started
+2026-05-05 10:52:03 | INFO     | [MAIN] Trade log cleaned: 367 valid rows kept
+2026-05-05 10:52:03 | INFO     | [BIAS] SIDEWAYS EMA21=23960.53 ADX=14.5
+2026-05-05 10:52:03 | INFO     | [MAIN] Daily bias: SIDEWAYS
+2026-05-05 10:52:03 | INFO     | [HOURLY] RSI=40.8
+2026-05-05 10:52:03 | INFO     | [MAIN] Hourly RSI: 40.8
+2026-05-05 10:52:03 | INFO     | [STRADDLE] CE=48.2 PE=52.5 Sum=100.75
+2026-05-05 10:52:03 | INFO     | [MAIN] Straddle captured at startup
+2026-05-05 10:52:03 | INFO     | [MAIN] Expiry on startup: 2026-05-05
+2026-05-05 10:52:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 10:52:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23935.0
+2026-05-05 11:00:01 | INFO     | [HOURLY] RSI=39.9
+2026-05-05 11:15:35 | INFO     | [ENGINE] CE FIRED close=44.5 ema9l=40.6 body=44% spot=23934.2 vs spot_ema9l=23926.3 (5-gate V5)
+2026-05-05 11:15:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=170.61 (of 1 fired)
+2026-05-05 11:15:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs44.5
+2026-05-05 11:15:35 | INFO     | [XLEG] CE entry — other PE close=50.9 ema9l=48.96 margin=+1.94 → FAIL
+2026-05-05 11:15:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950CE qty=130 ref=44.5
+2026-05-05 11:15:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-05 11:15:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523950CE price=44.5 ema_gap=0 rsi=0 SL=26.5
+2026-05-05 11:15:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 11:24:00 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950CE qty=130 ref=46.5 reason=VISHAL_TRAIL
+2026-05-05 11:24:00 | INFO     | [POST_EXIT] Token 18978562 (CE 23950) held 10 min for post-exit observation
+2026-05-05 11:24:00 | INFO     | [WS] Unsubscribed: {18981378, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 11:24:00 | INFO     | [MAIN] EXIT ALL NIFTY2650523950CE price=46.5 pnl=2.0pts reason=VISHAL_TRAIL
+2026-05-05 11:24:00 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 11:24:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 11:24:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23935.5
+2026-05-05 11:27:35 | INFO     | [REENTRY] confirmation candle 11:27:00 failed: body_not_fully_above_band
+2026-05-05 11:33:35 | INFO     | [ENGINE] CE FIRED close=47.7 ema9l=39.1 body=80% spot=23935.2 vs spot_ema9l=23929.0 (5-gate V5)
+2026-05-05 11:33:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=688.28 (of 1 fired)
+2026-05-05 11:33:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs47.7
+2026-05-05 11:33:35 | INFO     | [XLEG] CE entry — other PE close=43.3 ema9l=46.94 margin=-3.64 → PASS
+2026-05-05 11:33:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950CE qty=130 ref=47.7
+2026-05-05 11:33:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-05 11:33:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523950CE price=47.7 ema_gap=0 rsi=0 SL=29.7
+2026-05-05 11:33:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 11:40:54 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950CE qty=130 ref=37.5 reason=EMERGENCY_SL
+2026-05-05 11:40:54 | INFO     | [POST_EXIT] Token 18978562 (CE 23950) held 10 min for post-exit observation
+2026-05-05 11:40:54 | INFO     | [WS] Unsubscribed: {18981378, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 11:40:54 | INFO     | [MAIN] EXIT ALL NIFTY2650523950CE price=37.5 pnl=-10.2pts reason=EMERGENCY_SL
+2026-05-05 11:40:54 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 11:40:55 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 11:40:55 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23930.0
+2026-05-05 11:42:35 | INFO     | [REENTRY] confirmation candle 11:42:00 failed: red_candle
+2026-05-05 11:45:35 | INFO     | [ENGINE] PE FIRED close=64.7 ema9l=45.1 body=46% spot=23922.2 vs spot_ema9l=23932.1 (5-gate V5)
+2026-05-05 11:45:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=904.13 (of 1 fired)
+2026-05-05 11:45:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 0.3min
+2026-05-05 11:46:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23950 target=23900 spot=23906.0 (dist=44.0 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 11:46:35 | INFO     | [WS] Subscribed: {18981378, 18978050, 18978306, 18977538, 18978562, 18977794}
+2026-05-05 11:46:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23906.0
+2026-05-05 11:48:35 | INFO     | [ENGINE] PE FIRED close=47.3 ema9l=26.4 body=76% spot=23916.0 vs spot_ema9l=23928.9 (5-gate V5)
+2026-05-05 11:48:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=1591.44 (of 1 fired)
+2026-05-05 11:48:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs47.3
+2026-05-05 11:48:35 | INFO     | [XLEG] PE entry — other CE close=43.05 ema9l=58.97 margin=-15.92 → PASS
+2026-05-05 11:48:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523900PE qty=130 ref=47.3
+2026-05-05 11:48:35 | INFO     | [DATA] Active trade set: strike=23900 dir=PE
+2026-05-05 11:48:35 | INFO     | [MAIN] ENTRY PE NIFTY2650523900PE price=47.3 ema_gap=0 rsi=0 SL=29.3
+2026-05-05 11:48:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 11:53:49 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523900PE qty=130 ref=35.1 reason=EMERGENCY_SL
+2026-05-05 11:53:49 | INFO     | [POST_EXIT] Token 18978306 (PE 23900) held 10 min for post-exit observation
+2026-05-05 11:53:49 | INFO     | [WS] Unsubscribed: {18981378, 18978050, 18978562, 18977538, 18977794}
+2026-05-05 11:53:49 | INFO     | [MAIN] EXIT ALL NIFTY2650523900PE price=35.1 pnl=-12.2pts reason=EMERGENCY_SL
+2026-05-05 11:53:49 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 11:53:50 | INFO     | [WS] Subscribed: {18981378, 18978050, 18978306, 18977538, 18978562, 18977794}
+2026-05-05 11:53:50 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23916.6
+2026-05-05 11:54:35 | INFO     | [REENTRY] confirmation candle 11:54:00 failed: red_candle
+2026-05-05 11:57:35 | INFO     | [ENGINE] PE FIRED close=44.5 ema9l=31.5 body=50% spot=23910.4 vs spot_ema9l=23911.9 (5-gate V5)
+2026-05-05 11:57:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=653.0 (of 1 fired)
+2026-05-05 11:57:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 1.2min
+2026-05-05 11:58:35 | INFO     | [ENGINE] PE FIRED close=44.5 ema9l=31.5 body=50% spot=23910.4 vs spot_ema9l=23911.9 (5-gate V5)
+2026-05-05 11:58:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=653.0 (of 1 fired)
+2026-05-05 11:58:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 0.2min
+2026-05-05 11:59:36 | INFO     | [ENGINE] PE FIRED close=44.5 ema9l=31.5 body=50% spot=23910.4 vs spot_ema9l=23911.9 (5-gate V5)
+2026-05-05 11:59:36 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=653.0 (of 1 fired)
+2026-05-05 11:59:36 | INFO     | [CLOSE_FILL] PE entry at candle close Rs44.55
+2026-05-05 11:59:36 | INFO     | [XLEG] PE entry — other CE close=40.5 ema9l=50.02 margin=-9.52 → PASS
+2026-05-05 11:59:36 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523900PE qty=130 ref=44.55
+2026-05-05 11:59:36 | INFO     | [DATA] Active trade set: strike=23900 dir=PE
+2026-05-05 11:59:36 | INFO     | [MAIN] ENTRY PE NIFTY2650523900PE price=44.55 ema_gap=0 rsi=0 SL=26.55
+2026-05-05 11:59:36 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 12:00:00 | INFO     | [HOURLY] RSI=38.1
+2026-05-05 12:05:43 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523900PE qty=130 ref=34.45 reason=EMERGENCY_SL
+2026-05-05 12:05:43 | INFO     | [POST_EXIT] Token 18978306 (PE 23900) held 10 min for post-exit observation
+2026-05-05 12:05:43 | INFO     | [WS] Unsubscribed: {18981378, 18978050, 18978562, 18977538, 18977794}
+2026-05-05 12:05:43 | INFO     | [MAIN] EXIT ALL NIFTY2650523900PE price=34.45 pnl=-10.1pts reason=EMERGENCY_SL
+2026-05-05 12:05:43 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 12:05:44 | INFO     | [WS] Subscribed: {18981378, 18978050, 18978306, 18977538, 18978562, 18977794}
+2026-05-05 12:05:44 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23914.2
+2026-05-05 12:06:35 | INFO     | [REENTRY] confirmation candle 12:06:00 failed: red_candle
+2026-05-05 12:12:35 | INFO     | [ENGINE] CE FIRED close=57.7 ema9l=47.0 body=42% spot=23918.5 vs spot_ema9l=23900.3 (5-gate V5)
+2026-05-05 12:12:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23900 score=456.89 (of 1 fired)
+2026-05-05 12:12:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs57.7
+2026-05-05 12:12:35 | INFO     | [XLEG] CE entry — other PE close=29.2 ema9l=32.56 margin=-3.36 → PASS
+2026-05-05 12:12:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523900CE qty=130 ref=57.7
+2026-05-05 12:12:35 | INFO     | [DATA] Active trade set: strike=23900 dir=CE
+2026-05-05 12:12:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523900CE price=57.7 ema_gap=0 rsi=0 SL=39.7
+2026-05-05 12:12:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 12:20:38 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523900CE qty=130 ref=79.5 reason=VISHAL_TRAIL
+2026-05-05 12:20:38 | INFO     | [POST_EXIT] Token 18978050 (CE 23900) held 10 min for post-exit observation
+2026-05-05 12:20:38 | INFO     | [WS] Unsubscribed: {18981378, 18978306, 18978562, 18977538, 18977794}
+2026-05-05 12:20:38 | INFO     | [MAIN] EXIT ALL NIFTY2650523900CE price=79.5 pnl=21.8pts reason=VISHAL_TRAIL
+2026-05-05 12:20:38 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 12:20:39 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 12:20:39 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23958.3
+2026-05-05 12:21:35 | INFO     | [ENGINE] CE FIRED close=81.2 ema9l=55.8 body=72% spot=23945.7 vs spot_ema9l=23915.3 (5-gate V5)
+2026-05-05 12:21:35 | INFO     | [REENTRY] pre-entry blocked: Cooldown: 4.1min
+2026-05-05 12:22:35 | INFO     | [ENGINE] CE FIRED close=49.6 ema9l=32.1 body=74% spot=23945.7 vs spot_ema9l=23915.3 (5-gate V5)
+2026-05-05 12:22:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1309.23 (of 1 fired)
+2026-05-05 12:22:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 3.0min
+2026-05-05 12:23:35 | INFO     | [ENGINE] CE FIRED close=49.6 ema9l=32.1 body=74% spot=23945.7 vs spot_ema9l=23915.3 (5-gate V5)
+2026-05-05 12:23:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1309.23 (of 1 fired)
+2026-05-05 12:23:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 2.0min
+2026-05-05 12:24:36 | INFO     | [ENGINE] CE FIRED close=60.2 ema9l=35.4 body=61% spot=23959.5 vs spot_ema9l=23921.0 (5-gate V5)
+2026-05-05 12:24:36 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1533.26 (of 1 fired)
+2026-05-05 12:24:36 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 1.0min
+2026-05-05 12:25:35 | INFO     | [ENGINE] CE FIRED close=60.2 ema9l=35.4 body=61% spot=23959.5 vs spot_ema9l=23921.0 (5-gate V5)
+2026-05-05 12:25:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1533.26 (of 1 fired)
+2026-05-05 12:25:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 0.1min
+2026-05-05 12:26:35 | INFO     | [ENGINE] CE FIRED close=60.2 ema9l=35.4 body=61% spot=23959.5 vs spot_ema9l=23921.0 (5-gate V5)
+2026-05-05 12:26:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1533.26 (of 1 fired)
+2026-05-05 12:26:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs60.2
+2026-05-05 12:26:35 | INFO     | [XLEG] CE entry — other PE close=30.75 ema9l=44.96 margin=-14.21 → PASS
+2026-05-05 12:26:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950CE qty=130 ref=60.2
+2026-05-05 12:26:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-05 12:26:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523950CE price=60.2 ema_gap=0 rsi=0 SL=42.2
+2026-05-05 12:26:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 12:26:36 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950CE qty=130 ref=50.05 reason=EMERGENCY_SL
+2026-05-05 12:26:36 | INFO     | [POST_EXIT] Token 18978562 (CE 23950) held 10 min for post-exit observation
+2026-05-05 12:26:36 | INFO     | [WS] Unsubscribed: {18981378, 18981634, 18978306, 18983426}
+2026-05-05 12:26:36 | INFO     | [MAIN] EXIT ALL NIFTY2650523950CE price=50.05 pnl=-10.15pts reason=EMERGENCY_SL
+2026-05-05 12:26:36 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 12:27:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 12:27:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23953.0
+2026-05-05 12:27:35 | INFO     | [REENTRY] confirmation candle 12:27:00 failed: red_candle
+2026-05-05 12:36:35 | INFO     | [ENGINE] CE FIRED close=47.9 ema9l=37.0 body=92% spot=23941.3 vs spot_ema9l=23935.8 (5-gate V5)
+2026-05-05 12:36:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=998.53 (of 1 fired)
+2026-05-05 12:36:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs47.85
+2026-05-05 12:36:35 | INFO     | [XLEG] CE entry — other PE close=34.55 ema9l=38.18 margin=-3.63 → PASS
+2026-05-05 12:36:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950CE qty=130 ref=47.85
+2026-05-05 12:36:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-05 12:36:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523950CE price=47.85 ema_gap=0 rsi=0 SL=29.85
+2026-05-05 12:36:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 12:42:00 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950CE qty=130 ref=49.85 reason=VISHAL_TRAIL
+2026-05-05 12:42:00 | INFO     | [POST_EXIT] Token 18978562 (CE 23950) held 10 min for post-exit observation
+2026-05-05 12:42:00 | INFO     | [WS] Unsubscribed: {18981378, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 12:42:00 | INFO     | [MAIN] EXIT ALL NIFTY2650523950CE price=49.85 pnl=2.0pts reason=VISHAL_TRAIL
+2026-05-05 12:42:00 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 12:42:35 | INFO     | [WS] Subscribed: {18981634, 18978562, 18981378, 18978050, 18983426, 18978306}
+2026-05-05 12:42:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23960.4
+2026-05-05 12:45:35 | INFO     | [REENTRY] confirmation candle 12:45:00 failed: red_candle
+2026-05-05 12:48:35 | INFO     | [ENGINE] CE FIRED close=56.1 ema9l=41.5 body=71% spot=23952.8 vs spot_ema9l=23945.6 (5-gate V5)
+2026-05-05 12:48:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=1053.27 (of 1 fired)
+2026-05-05 12:48:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs56.15
+2026-05-05 12:48:35 | INFO     | [XLEG] CE entry — other PE close=26.4 ema9l=31.89 margin=-5.49 → PASS
+2026-05-05 12:48:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650523950CE qty=130 ref=56.15
+2026-05-05 12:48:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-05 12:48:35 | INFO     | [MAIN] ENTRY CE NIFTY2650523950CE price=56.15 ema_gap=0 rsi=0 SL=38.15
+2026-05-05 12:48:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 12:57:00 | INFO     | [TRADE] PAPER EXIT: NIFTY2650523950CE qty=130 ref=64.15 reason=VISHAL_TRAIL
+2026-05-05 12:57:00 | INFO     | [POST_EXIT] Token 18978562 (CE 23950) held 10 min for post-exit observation
+2026-05-05 12:57:00 | INFO     | [WS] Unsubscribed: {18981378, 18981634, 18978306, 18978050, 18983426}
+2026-05-05 12:57:00 | INFO     | [MAIN] EXIT ALL NIFTY2650523950CE price=64.15 pnl=8.0pts reason=VISHAL_TRAIL
+2026-05-05 12:57:00 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 12:57:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 12:57:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=23997.1
+2026-05-05 13:00:00 | INFO     | [HOURLY] RSI=46.3
+2026-05-05 13:00:35 | INFO     | [ENGINE] CE FIRED close=82.3 ema9l=51.9 body=70% spot=23991.7 vs spot_ema9l=23961.2 (5-gate V5)
+2026-05-05 13:00:35 | INFO     | [REENTRY] pre-entry blocked: Cooldown: 1.4min
+2026-05-05 13:01:35 | INFO     | [ENGINE] CE FIRED close=48.2 ema9l=28.0 body=66% spot=23991.7 vs spot_ema9l=23961.2 (5-gate V5)
+2026-05-05 13:01:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24000 score=1333.24 (of 1 fired)
+2026-05-05 13:01:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 0.4min
+2026-05-05 13:02:35 | INFO     | [ENGINE] CE FIRED close=48.2 ema9l=28.0 body=66% spot=23991.7 vs spot_ema9l=23961.2 (5-gate V5)
+2026-05-05 13:02:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24000 score=1333.24 (of 1 fired)
+2026-05-05 13:02:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs48.2
+2026-05-05 13:02:35 | INFO     | [XLEG] CE entry — other PE close=30.45 ema9l=45.11 margin=-14.66 → PASS
+2026-05-05 13:02:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650524000CE qty=130 ref=48.2
+2026-05-05 13:02:35 | INFO     | [DATA] Active trade set: strike=24000 dir=CE
+2026-05-05 13:02:35 | INFO     | [MAIN] ENTRY CE NIFTY2650524000CE price=48.2 ema_gap=0 rsi=0 SL=30.2
+2026-05-05 13:02:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 13:06:49 | INFO     | [TRADE] PAPER EXIT: NIFTY2650524000CE qty=130 ref=56.2 reason=VISHAL_TRAIL
+2026-05-05 13:06:49 | INFO     | [POST_EXIT] Token 18981634 (CE 24000) held 10 min for post-exit observation
+2026-05-05 13:06:49 | INFO     | [WS] Unsubscribed: {18983938, 18983426, 18983682, 18981378}
+2026-05-05 13:06:49 | INFO     | [MAIN] EXIT ALL NIFTY2650524000CE price=56.2 pnl=8.0pts reason=VISHAL_TRAIL
+2026-05-05 13:06:49 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 13:06:49 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 13:06:49 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24030.3
+2026-05-05 13:07:00 | INFO     | [WS] Unsubscribed: {18978562}
+2026-05-05 13:07:00 | INFO     | [POST_EXIT] Unsubscribed after observation: [18978562]
+2026-05-05 13:09:36 | INFO     | [ENGINE] CE FIRED close=92.0 ema9l=38.0 body=90% spot=24015.0 vs spot_ema9l=23983.2 (5-gate V5)
+2026-05-05 13:09:36 | INFO     | [REENTRY] pre-entry blocked: Cooldown: 2.2min
+2026-05-05 13:10:35 | INFO     | [ENGINE] CE FIRED close=57.0 ema9l=19.3 body=89% spot=24015.0 vs spot_ema9l=23983.2 (5-gate V5)
+2026-05-05 13:10:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24050 score=3364.42 (of 1 fired)
+2026-05-05 13:10:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 1.2min
+2026-05-05 13:11:35 | INFO     | [ENGINE] CE FIRED close=57.0 ema9l=19.3 body=89% spot=24015.0 vs spot_ema9l=23983.2 (5-gate V5)
+2026-05-05 13:11:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24050 score=3364.42 (of 1 fired)
+2026-05-05 13:11:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 0.2min
+2026-05-05 14:00:00 | INFO     | [HOURLY] RSI=48.2
+2026-05-05 14:09:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24050 target=24000 spot=24009.9 (dist=40.1 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 14:09:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 14:09:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=24009.9
+2026-05-05 14:09:35 | INFO     | [ENGINE] PE FIRED close=19.4 ema9l=12.8 body=73% spot=24028.3 vs spot_ema9l=24029.7 (5-gate V5)
+2026-05-05 14:09:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=24000 score=479.54 (of 1 fired)
+2026-05-05 14:09:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs19.35
+2026-05-05 14:09:35 | INFO     | [XLEG] PE entry — other CE close=37.05 ema9l=48.58 margin=-11.53 → PASS
+2026-05-05 14:09:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650524000PE qty=130 ref=19.35
+2026-05-05 14:09:35 | INFO     | [DATA] Active trade set: strike=24000 dir=PE
+2026-05-05 14:09:35 | INFO     | [MAIN] ENTRY PE NIFTY2650524000PE price=19.35 ema_gap=0 rsi=0 SL=1.35
+2026-05-05 14:09:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 14:16:45 | INFO     | [TRADE] PAPER EXIT: NIFTY2650524000PE qty=130 ref=9.2 reason=EMERGENCY_SL
+2026-05-05 14:16:45 | INFO     | [POST_EXIT] Token 18983426 (PE 24000) held 10 min for post-exit observation
+2026-05-05 14:16:45 | INFO     | [WS] Unsubscribed: {18983938, 18981634, 18983682, 18981378, 18978562}
+2026-05-05 14:16:45 | INFO     | [MAIN] EXIT ALL NIFTY2650524000PE price=9.2 pnl=-10.15pts reason=EMERGENCY_SL
+2026-05-05 14:16:45 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 14:16:45 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 14:16:45 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24036.0
+2026-05-05 14:18:35 | INFO     | [REENTRY] confirmation candle 14:18:00 failed: red_candle
+2026-05-05 14:30:35 | INFO     | [ENGINE] CE FIRED close=30.4 ema9l=17.6 body=67% spot=24041.2 vs spot_ema9l=24023.0 (5-gate V5)
+2026-05-05 14:30:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24050 score=858.07 (of 1 fired)
+2026-05-05 14:30:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs30.35
+2026-05-05 14:30:35 | INFO     | [XLEG] CE entry — other PE close=16.1 ema9l=24.28 margin=-8.18 → PASS
+2026-05-05 14:30:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2650524050CE qty=130 ref=30.35
+2026-05-05 14:30:35 | INFO     | [DATA] Active trade set: strike=24050 dir=CE
+2026-05-05 14:30:35 | INFO     | [MAIN] ENTRY CE NIFTY2650524050CE price=30.35 ema_gap=0 rsi=0 SL=12.35
+2026-05-05 14:30:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-05 14:30:41 | INFO     | [TRADE] PAPER EXIT: NIFTY2650524050CE qty=130 ref=20.25 reason=EMERGENCY_SL
+2026-05-05 14:30:41 | INFO     | [POST_EXIT] Token 18983682 (CE 24050) held 10 min for post-exit observation
+2026-05-05 14:30:41 | INFO     | [WS] Unsubscribed: {18981634, 18983938, 18984194, 18985986, 18983426}
+2026-05-05 14:30:41 | INFO     | [MAIN] EXIT ALL NIFTY2650524050CE price=20.25 pnl=-10.1pts reason=EMERGENCY_SL
+2026-05-05 14:30:41 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-05 14:31:35 | INFO     | [WS] Subscribed: {18984194, 18983682, 18983938, 18981634, 18985986, 18983426}
+2026-05-05 14:31:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24050 (neighbors 24000/24100 pre-warmed) at spot=24045.2
+2026-05-05 14:31:35 | INFO     | [ENGINE] CE FIRED close=30.4 ema9l=17.6 body=67% spot=24041.2 vs spot_ema9l=24023.0 (5-gate V5)
+2026-05-05 14:31:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24050 score=858.07 (of 1 fired)
+2026-05-05 14:31:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 4.1min
+2026-05-05 14:32:35 | INFO     | [ENGINE] CE FIRED close=30.4 ema9l=17.6 body=67% spot=24041.2 vs spot_ema9l=24023.0 (5-gate V5)
+2026-05-05 14:32:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=24050 score=858.07 (of 1 fired)
+2026-05-05 14:32:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 3.1min
+2026-05-05 14:33:35 | INFO     | [REENTRY] confirmation candle 14:33:00 failed: red_candle
+2026-05-05 14:53:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24050 target=24000 spot=24005.1 (dist=44.9 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-05 14:53:35 | INFO     | [WS] Subscribed: {18983938, 18981634, 18983426, 18978562, 18983682, 18981378}
+2026-05-05 14:53:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=24005.1
+2026-05-05 15:00:00 | INFO     | [HOURLY] RSI=46.5
+2026-05-05 15:09:00 | WARNING  | [DATA] historical_data attempt 1 token=256265: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+2026-05-05 15:25:00 | INFO     | [MAIN] prev_close source: WS @ 15:25:00 (spot=24042.0)
+2026-05-05 15:30:00 | INFO     | [MAIN] _eod_exited=True at 15:30:00 (no trade open → flag-only)
+2026-05-05 15:35:00 | INFO     | [MAIN] prev_close saved: 24032.8
+2026-05-05 15:45:00 | INFO     | [MAIN] Running daily lab cleanup at 15:45
+2026-05-05 15:48:44 | WARNING  | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:48:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:49:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:32 | WARNING  | [CTRL] getUpdates error: ReadTimeout
+2026-05-05 15:50:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:50:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:25 | WARNING  | [CTRL] getUpdates error: ConnectionError
+2026-05-05 15:51:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:51:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:18 | WARNING  | [CTRL] getUpdates error: ConnectionError
+2026-05-05 15:52:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:52:49 | WARNING  | [CTRL] getUpdates error: ConnectionError
+2026-05-05 15:52:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:20 | WARNING  | [CTRL] getUpdates error: ConnectionError
+2026-05-05 15:53:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:53:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:54:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:55:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:56:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:57:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:58:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 15:59:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:00:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:01:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:02:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:03:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:04:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:05:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:06:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:07:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:08:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:09:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:10:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:11:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:12:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:13:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:14:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:15:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:16:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:17:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:18:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:19:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:20:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:21:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:22:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:23:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:24:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:25:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:26:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:27:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:28:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:29:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:30:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:31:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:32:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:33:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:34:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:34:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:34:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:34:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:34:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:35:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:36:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:37:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:38:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:39:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:40:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:41:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:42:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:43:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:44:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:45:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:46:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:47:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:48:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:49:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:50:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:51:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:52:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:53:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:54:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:55:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:56:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:57:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:58:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 16:59:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:00:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:01:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:02:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:03:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:04:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:05:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:06:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:07:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:08:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:09:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:10:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:11:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:12:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:13:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:14:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:15:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:16:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:17:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:18:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:19:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:20:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:21:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:22:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:23:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:24:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:25:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:26:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:27:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:28:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:29:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:30:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:31:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:32:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:33:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:34:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:35:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:36:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:37:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:38:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:39:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:40:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:41:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:42:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:43:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:44:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-05 17:44:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
