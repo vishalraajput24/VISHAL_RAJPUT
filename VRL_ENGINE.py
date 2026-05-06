@@ -143,6 +143,9 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         # ── GATE 1: GREEN candle ──
         if not _is_green:
             result["reject_reason"] = "red_candle"
+            if not silent:
+                logger.info(f"[REJECT] {option_type} gate1_red_candle "
+                            f"close={round(close,1)} open={round(open_,1)}")
             return result
 
         # ── GATE 2: FRESH BREAK above EMA9_low ──
@@ -150,6 +153,9 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         # at-or-below ema9_low in at least 2 of the last 3 prior candles.
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
+            if not silent:
+                logger.info(f"[REJECT] {option_type} gate2_close_below_band "
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)}")
             return result
         try:
             pre3 = opt_3m.iloc[-5:-2]   # candles -5,-4,-3 (3 priors before fired)
@@ -160,6 +166,10 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             result["fresh_break_count"] = below
             if below < 2:
                 result["reject_reason"] = f"not_fresh_{below}of3_below"
+                if not silent:
+                    logger.info(f"[REJECT] {option_type} gate2_not_fresh "
+                                f"only {below}/3 priors below band "
+                                f"(option already extended)")
                 return result
         except Exception as _fe:
             result["reject_reason"] = "fresh_break_error_" + str(_fe)[:40]
@@ -169,6 +179,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         try:
             if spot_3m is None or spot_3m.empty or len(spot_3m) < 2:
                 result["reject_reason"] = "spot_data_unavailable"
+                if not silent:
+                    logger.info(f"[REJECT] {option_type} gate3_spot_data_unavailable")
                 return result
             _spot_last = spot_3m.iloc[-2]
             _spot_close = float(_spot_last["close"])
@@ -182,12 +194,24 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                 if _spot_close <= _spot_ema9l:
                     result["spot_bias"] = "BEARISH"
                     result["reject_reason"] = "spot_against_CE"
+                    if not silent:
+                        logger.info(f"[REJECT] CE gate3_spot_against "
+                                    f"option_PASSED gates 1+2 (fresh break) "
+                                    f"BUT spot={round(_spot_close,1)} "
+                                    f"<= spot_ema9l={round(_spot_ema9l,1)} "
+                                    f"(spot bearish, blocking CE)")
                     return result
                 result["spot_bias"] = "BULLISH"
             else:  # PE
                 if _spot_close >= _spot_ema9l:
                     result["spot_bias"] = "BULLISH"
                     result["reject_reason"] = "spot_against_PE"
+                    if not silent:
+                        logger.info(f"[REJECT] PE gate3_spot_against "
+                                    f"option_PASSED gates 1+2 (fresh break) "
+                                    f"BUT spot={round(_spot_close,1)} "
+                                    f">= spot_ema9l={round(_spot_ema9l,1)} "
+                                    f"(spot bullish, blocking PE)")
                     return result
                 result["spot_bias"] = "BEARISH"
         except Exception as _se:
