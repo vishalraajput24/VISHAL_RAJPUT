@@ -1,10 +1,12 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.1)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.2)
 #  Master orchestration.
-#  Entry: 2 simple gates (option-side only)
+#  Entry: 3 simple gates (option-side only)
 #    1. GREEN candle (option close > open)
 #    2. FRESH BREAK above EMA9_low
 #         (close > ema9_low AND ≥2 of last 3 prior closes ≤ ema9_low)
+#    3. EMA9_low FLAT OR RISING over last 3 candles
+#         (rejects single-candle bounces in a falling option)
 #    Spot bias is computed for display only — not a gate.
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
 #        Simple 4-tier: INITIAL(-10) → LOCK_2(+2 @8) → LOCK_5(+5 @15) → LOCK_DYN(@20)
@@ -829,11 +831,13 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7 V6.1 (option-only)\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7 V6.2 (option-only)\n"
         "Entry   : 09:35 - 15:00 IST  |  5-min BOTH-sides cooldown\n"
         "Gates   : 1) GREEN candle\n"
         "          2) FRESH BREAK above EMA9_low\n"
         "             (≥ 2 of last 3 priors were ≤ ema9_low)\n"
+        "          3) EMA9_low FLAT OR RISING over last 3 candles\n"
+        "             (slope_3bar >= 0 — blocks downtrend bounces)\n"
         "Spot    : tracked for display — NOT a gate\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -849,9 +853,9 @@ def _alert_bot_started():
         "peak >= 20 SL = peak - 5         (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
-        "After exit: 5-min both-sides lock. First 2-gate fire\n"
+        "After exit: 5-min both-sides lock. First 3-gate fire\n"
         "(CE or PE) at any 3-min close after 5min triggers entry.\n"
-        "Filter 2 (fresh break) naturally blocks chase re-entries.\n"
+        "Filters 2+3 naturally block chase / countertrend re-entries.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1304,11 +1308,11 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (V6.1): wait for next FULL 3-min
+                # Re-entry watcher (V6.2): wait for next FULL 3-min
                 # candle to close. If that candle independently passes
-                # 2-gate (GREEN + fresh break), re-enter on same side
-                # at candle close. Else drop. Filter 2 (fresh break)
-                # naturally blocks chase re-entries.
+                # 3-gate (GREEN + fresh break + ema9l flat/rising),
+                # re-enter on same side at candle close. Else drop.
+                # Filters 2+3 naturally block chase / countertrend.
                 "_reentry_armed":      True,
                 "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
                 "_reentry_direction":  str(old_dir or ""),
@@ -2424,7 +2428,7 @@ def _strategy_loop(kite):
                                         _tg_send(
                                             "🚫 <b>RE-ENTRY DROPPED</b>\n"
                                             + _re_dir + " " + str(_re_strike)
-                                            + " — confirmation candle FAILED 2-gate (V6.1)\n"
+                                            + " — confirmation candle FAILED 3-gate (V6.2)\n"
                                             "Reason: " + str(_why) + "\n"
                                             "Waiting for fresh setup."
                                         )
@@ -2958,18 +2962,20 @@ def _cmd_pulse(args):
             "🔒 LOCK_5  (peak >=15)  entry+5\n"
             "🔒🔒🔒 LOCK_DYN(>=20)   peak-5 (chandelier)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>2-GATE ENTRY (V6.1 option-only)</b>\n"
+            "<b>3-GATE ENTRY (V6.2 option-only)</b>\n"
             "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
             + str(_eb.get("cutoff_after", "15:00")) + "\n"
             "1. GREEN candle (option close > open)\n"
             "2. FRESH BREAK above EMA9_low\n"
             "   (close > ema9_low AND ≥ 2 of last 3 priors ≤ ema9_low)\n"
+            "3. EMA9_low FLAT OR RISING over last 3 candles\n"
+            "   (ema9_low[fired] >= ema9_low[3 bars ago])\n"
             "(spot bias tracked for display only — not a gate)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
             "1. Emergency -10 pts | 2. EOD 15:20 | 3. Vishal Trail\n"
             "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
-            "first 2-gate fire (CE or PE) at 3-min close after cooldown enters.\n"
+            "first 3-gate fire (CE or PE) at 3-min close after cooldown enters.\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -2999,7 +3005,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.1) — 2-gate entry (option-only), "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.2) — 3-gate entry (option-only), "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

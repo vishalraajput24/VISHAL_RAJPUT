@@ -1,10 +1,13 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V6.1)
-#  Entry: 2 simple gates (option-side only).
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V6.2)
+#  Entry: 3 simple gates (option-side only).
 #    1. GREEN candle (option close > open)
 #    2. FRESH BREAK — option just crossed its EMA9_low
 #         (current close > ema9_low AND ≥ 2 of last 3 prior
 #          closes were ≤ ema9_low)
+#    3. EMA9_LOW FLAT OR RISING over last 3 candles
+#         ema9_low[fired] >= ema9_low[3 bars ago]
+#         (rejects single-candle bounces in a downtrending option)
 #  Spot bias is computed for display only — not a gate.
 #  Exit chain (first match wins):
 #    1. EMERGENCY_SL  (TICK-based, single floor: -10 pts)
@@ -77,12 +80,13 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                                market_open: bool, state: dict,
                                atm_strike: int, silent: bool = False,
                                spot_3m=None) -> dict:
-    # ── V6 entry: 3 simple gates ──
+    # ── V6.2 entry: 3 simple gates (option-side only) ──
     #   1. GREEN candle (option close > open)
     #   2. FRESH BREAK — option just crossed its EMA9_low
     #        (current close > ema9_low AND ≥ 2 of last 3 prior closes
     #         were ≤ ema9_low — i.e. option was below band recently)
-    #   3. Spot bias agrees (CE: spot > spot_ema9_low | PE: spot < spot_ema9_low)
+    #   3. EMA9_low flat or rising over last 3 candles
+    #        ema9_low[fired] >= ema9_low[3 bars ago]
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -90,14 +94,15 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         "ema9_low_slope": 0.0,
         "band_width_slope": 0.0, "margin_above": 0,
         "spot_close": 0.0, "spot_ema9_low": 0.0, "spot_bias": "",
-        "fresh_break_count": 0,
+        "fresh_break_count": 0, "ema9l_slope_3bar": 0.0,
     }
     try:
         warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:00")
 
-        # V6 needs at least 5 candles (3 priors + 1 fired + 1 in-progress).
-        if opt_3m is None or opt_3m.empty or len(opt_3m) < 5:
+        # V6.2 needs at least 6 candles (3 priors + 1 fired + 1 in-progress
+        # + 1 more for the 3-bar slope check).
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < 6:
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
@@ -173,7 +178,26 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             result["reject_reason"] = "fresh_break_error_" + str(_fe)[:40]
             return result
 
-        # ── Spot bias (DISPLAY ONLY in V6.1 — no longer a gate) ──
+        # ── GATE 3 (V6.2): EMA9_low FLAT OR RISING over last 3 candles ──
+        # Compare ema9_low at fired candle vs ema9_low 3 bars before it.
+        # Slope < 0 means option's lows are trending down — likely a
+        # bounce in a downtrend, not a real reversal. Reject.
+        try:
+            ema9l_3ago = float(opt_3m.iloc[-5]["ema9_low"])
+            slope_3bar = round(ema9_low - ema9l_3ago, 2)
+            result["ema9l_slope_3bar"] = slope_3bar
+            if slope_3bar < 0:
+                result["reject_reason"] = f"ema9l_falling_{slope_3bar}"
+                if not silent:
+                    logger.info(f"[REJECT] {option_type} gate3_ema9l_falling "
+                                f"slope_3bar={slope_3bar} "
+                                f"(now={round(ema9_low,1)} vs 3ago={round(ema9l_3ago,1)})")
+                return result
+        except Exception as _ee:
+            result["reject_reason"] = "ema9l_slope_error_" + str(_ee)[:40]
+            return result
+
+        # ── Spot bias (DISPLAY ONLY — no longer a gate) ──
         # Captured for telemetry / dashboard / future re-enabling, never
         # blocks entry. V6.1 keeps decisions on the option side only.
         try:
@@ -191,14 +215,15 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         except Exception:
             pass
 
-        # ── All 2 gates passed ──
+        # ── All 3 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} fresh={result['fresh_break_count']}/3 "
+                        f"slope_3bar={result['ema9l_slope_3bar']} "
                         f"spot_bias={result.get('spot_bias','?')} "
-                        f"(2-gate V6.1, option-only)")
+                        f"(3-gate V6.2, option-only)")
         return result
 
     except Exception as e:
