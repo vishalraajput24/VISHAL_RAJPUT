@@ -7,7 +7,7 @@
 #         (close > ema9_low AND ≥2 of last 3 prior closes ≤ ema9_low)
 #    Spot bias is computed for display only — not a gate.
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
-#        Simple 4-tier: INITIAL(-10) → LOCK_BE(@8) → LOCK_5(@15) → LOCK_DYN(@20)
+#        Simple 4-tier: INITIAL(-10) → LOCK_2(+2 @8) → LOCK_5(+5 @15) → LOCK_DYN(@20)
 #  Cooldown: 5 min, BOTH sides after any exit.
 #  Re-entry: standard scan resumes after cooldown — fresh-break filter
 #            naturally blocks chase-the-move re-entries.
@@ -844,7 +844,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>SL LADDER (V6 simple)</b>\n"
         "peak <  8  SL = entry - 10      (INITIAL)\n"
-        "peak >= 8  SL = entry            (LOCK_BE)\n"
+        "peak >= 8  SL = entry + 2        (LOCK_2 — covers charges)\n"
         "peak >= 15 SL = entry + 5        (LOCK_5)\n"
         "peak >= 20 SL = peak - 5         (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1133,7 +1133,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail: peak >=8 → entry (BE) | >=15 → +5 | >=20 → peak-5\n"
+        "Trail: peak >=8 → +2 | >=15 → +5 | >=20 → peak-5\n"
     )
 
     _slip_block = ""
@@ -2954,7 +2954,7 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>SL LADDER (V6 simple, Em -10)</b>\n"
             "INITIAL    (peak <8)    entry-10\n"
-            "🛡️ LOCK_BE (peak >=8)   entry (breakeven)\n"
+            "🛡️ LOCK_2  (peak >=8)   entry+2 (covers charges)\n"
             "🔒 LOCK_5  (peak >=15)  entry+5\n"
             "🔒🔒🔒 LOCK_DYN(>=20)   peak-5 (chandelier)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

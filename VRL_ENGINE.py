@@ -260,17 +260,17 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "", now=None) -> tuple:
-    # V6 simple 4-tier ladder (no time-segmenting):
-    #   peak <  8 → entry - 10 (INITIAL)
-    #   peak >= 8 → entry      (LOCK_BE — breakeven)
-    #   peak >= 15 → entry + 5 (LOCK_5)
-    #   peak >= 20 → peak - 5  (LOCK_DYN)
+    # V6.1 simple 4-tier ladder (no time-segmenting):
+    #   peak <  8 → entry - 10  (INITIAL)
+    #   peak >= 8 → entry + 2   (LOCK_2 — covers brokerage ~0.6 pts)
+    #   peak >= 15 → entry + 5  (LOCK_5)
+    #   peak >= 20 → peak - 5   (LOCK_DYN)
     if peak_pnl >= 20:
         sl = entry_price + (peak_pnl - 5); tier = "LOCK_DYN"
     elif peak_pnl >= 15:
         sl = entry_price + 5;              tier = "LOCK_5"
     elif peak_pnl >= 8:
-        sl = entry_price;                  tier = "LOCK_BE"
+        sl = entry_price + 2;              tier = "LOCK_2"
     else:
         sl = entry_price - 10;             tier = "INITIAL"
     return round(sl, 2), tier
