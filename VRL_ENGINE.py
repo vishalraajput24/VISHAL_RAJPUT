@@ -1,14 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V6.2)
-#  Entry: 3 simple gates (option-side only).
-#    1. GREEN candle (option close > open)
-#    2. FRESH BREAK — option just crossed its EMA9_low
-#         (current close > ema9_low AND ≥ 2 of last 3 prior
-#          closes were ≤ ema9_low)
-#    3. EMA9_LOW FLAT OR RISING over last 3 candles
-#         ema9_low[fired] >= ema9_low[3 bars ago]
-#         (rejects single-candle bounces in a downtrending option)
-#  Spot bias is computed for display only — not a gate.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V7 FINAL)
+#  Timeframe: 15-minute option candles
+#  Entry: 2 gates (option-side only).
+#    1. 15-min candle close > EMA9_low (option)
+#    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
 #  Exit chain (first match wins):
 #    1. EMERGENCY_SL  (TICK-based, single floor: -10 pts)
 #    2. EOD_EXIT      (15:20)
@@ -80,13 +75,11 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                                market_open: bool, state: dict,
                                atm_strike: int, silent: bool = False,
                                spot_3m=None) -> dict:
-    # ── V6.2 entry: 3 simple gates (option-side only) ──
-    #   1. GREEN candle (option close > open)
-    #   2. FRESH BREAK — option just crossed its EMA9_low
-    #        (current close > ema9_low AND ≥ 2 of last 3 prior closes
-    #         were ≤ ema9_low — i.e. option was below band recently)
-    #   3. EMA9_low flat or rising over last 3 candles
-    #        ema9_low[fired] >= ema9_low[3 bars ago]
+    # ── V7 entry: 2 gates (option-side only, 15-min candles) ──
+    #   1. 15-min close > EMA9_low
+    #   2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
+    # NOTE: param name `opt_3m` retained for back-compat — V7 callers
+    # pass 15-min candles in the same DataFrame format (timeframe-agnostic).
     result = {
         "fired": False, "entry_price": 0, "entry_mode": "", "ema9_high": 0, "ema9_low": 0,
         "close": 0, "open": 0, "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
@@ -94,24 +87,25 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         "ema9_low_slope": 0.0,
         "band_width_slope": 0.0, "margin_above": 0,
         "spot_close": 0.0, "spot_ema9_low": 0.0, "spot_bias": "",
-        "fresh_break_count": 0, "ema9l_slope_3bar": 0.0,
+        "rsi": 0.0, "rsi_prev": 0.0, "rsi_rising": False,
     }
     try:
         warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:00")
 
-        # V6.2 needs at least 6 candles (3 priors + 1 fired + 1 in-progress
-        # + 1 more for the 3-bar slope check).
-        if opt_3m is None or opt_3m.empty or len(opt_3m) < 6:
-            result["reject_reason"] = "insufficient_3m_data"
+        # V7 needs at least 16 candles for RSI(14) to converge + prior + live.
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < 16:
+            result["reject_reason"] = "insufficient_15m_data"
             return result
 
-        last = opt_3m.iloc[-2]
-        prev = opt_3m.iloc[-3]
+        last = opt_3m.iloc[-2]   # last CLOSED 15-min candle (fired)
+        prev = opt_3m.iloc[-3]   # candle before fired
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
         ema9_low  = float(last.get("ema9_low", 0))
+        rsi_now   = float(last.get("RSI", 0))
+        rsi_prev  = float(prev.get("RSI", 0))
         ema9_low_slope = round(ema9_low - float(prev.get("ema9_low", 0)), 2)
         band_width = round(ema9_high - ema9_low, 2)
 
@@ -121,6 +115,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                           if _candle_range > 0 else 0, 1)
         _is_green = (close > open_)
         _margin = round(close - ema9_low, 2)
+        _rsi_rising = (rsi_now > rsi_prev)
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),
@@ -129,6 +124,8 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             "band_width": band_width, "ema9_low_slope": ema9_low_slope,
             "candle_green": _is_green, "band_position": _band_pos,
             "body_pct": _body_pct, "margin_above": _margin,
+            "rsi": round(rsi_now, 1), "rsi_prev": round(rsi_prev, 1),
+            "rsi_rising": _rsi_rising,
         })
 
         # ── Operational rail: time window ──
@@ -143,63 +140,29 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 1: GREEN candle ──
-        if not _is_green:
-            result["reject_reason"] = "red_candle"
-            if not silent:
-                logger.info(f"[REJECT] {option_type} gate1_red_candle "
-                            f"close={round(close,1)} open={round(open_,1)}")
-            return result
-
-        # ── GATE 2: FRESH BREAK above EMA9_low ──
-        # Current close must be above ema9_low, AND option must have been
-        # at-or-below ema9_low in at least 2 of the last 3 prior candles.
+        # ── GATE 1: 15-min candle close > EMA9_low ──
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
             if not silent:
-                logger.info(f"[REJECT] {option_type} gate2_close_below_band "
+                logger.info(f"[REJECT] {option_type} gate1_close_below_band "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)}")
             return result
-        try:
-            pre3 = opt_3m.iloc[-5:-2]   # candles -5,-4,-3 (3 priors before fired)
-            if len(pre3) < 3:
-                result["reject_reason"] = "insufficient_history"
-                return result
-            below = int((pre3["close"] <= pre3["ema9_low"]).sum())
-            result["fresh_break_count"] = below
-            if below < 2:
-                result["reject_reason"] = f"not_fresh_{below}of3_below"
-                if not silent:
-                    logger.info(f"[REJECT] {option_type} gate2_not_fresh "
-                                f"only {below}/3 priors below band "
-                                f"(option already extended)")
-                return result
-        except Exception as _fe:
-            result["reject_reason"] = "fresh_break_error_" + str(_fe)[:40]
-            return result
 
-        # ── GATE 3 (V6.2): EMA9_low FLAT OR RISING over last 3 candles ──
-        # Compare ema9_low at fired candle vs ema9_low 3 bars before it.
-        # Slope < 0 means option's lows are trending down — likely a
-        # bounce in a downtrend, not a real reversal. Reject.
-        try:
-            ema9l_3ago = float(opt_3m.iloc[-5]["ema9_low"])
-            slope_3bar = round(ema9_low - ema9l_3ago, 2)
-            result["ema9l_slope_3bar"] = slope_3bar
-            if slope_3bar < 0:
-                result["reject_reason"] = f"ema9l_falling_{slope_3bar}"
-                if not silent:
-                    logger.info(f"[REJECT] {option_type} gate3_ema9l_falling "
-                                f"slope_3bar={slope_3bar} "
-                                f"(now={round(ema9_low,1)} vs 3ago={round(ema9l_3ago,1)})")
-                return result
-        except Exception as _ee:
-            result["reject_reason"] = "ema9l_slope_error_" + str(_ee)[:40]
+        # ── GATE 2: RSI >= 40 AND rising ──
+        if rsi_now < 40:
+            result["reject_reason"] = f"rsi_below_40_{round(rsi_now,1)}"
+            if not silent:
+                logger.info(f"[REJECT] {option_type} gate2_rsi_below_40 "
+                            f"rsi={round(rsi_now,1)}")
+            return result
+        if not _rsi_rising:
+            result["reject_reason"] = f"rsi_not_rising_{round(rsi_now,1)}_vs_{round(rsi_prev,1)}"
+            if not silent:
+                logger.info(f"[REJECT] {option_type} gate2_rsi_not_rising "
+                            f"rsi_now={round(rsi_now,1)} rsi_prev={round(rsi_prev,1)}")
             return result
 
         # ── Spot bias (DISPLAY ONLY — no longer a gate) ──
-        # Captured for telemetry / dashboard / future re-enabling, never
-        # blocks entry. V6.1 keeps decisions on the option side only.
         try:
             if spot_3m is not None and not spot_3m.empty and len(spot_3m) >= 2:
                 _spot_last = spot_3m.iloc[-2]
@@ -215,15 +178,15 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
         except Exception:
             pass
 
-        # ── All 3 gates passed ──
+        # ── All 2 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
-                        f"ema9l={round(ema9_low,1)} fresh={result['fresh_break_count']}/3 "
-                        f"slope_3bar={result['ema9l_slope_3bar']} "
+                        f"ema9l={round(ema9_low,1)} "
+                        f"rsi={round(rsi_now,1)} (prev={round(rsi_prev,1)}, rising) "
                         f"spot_bias={result.get('spot_bias','?')} "
-                        f"(3-gate V6.2, option-only)")
+                        f"(2-gate V7, 15-min)")
         return result
 
     except Exception as e:
@@ -236,19 +199,26 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
                 expiry_date=None, kite=None, other_token: int = 0, silent: bool = False,
                 state: dict = None) -> dict:
     if state is None: state = {}
-    opt_3m = D.get_option_3min(token, lookback=15)
-    # Spot 3-min with EMA9 bands for Gate 5 bias confirmation.
+    # V7: 15-minute option candles (timeframe-agnostic — keeps same DataFrame
+    # schema with EMA_9/EMA_21/RSI/ema9_high/ema9_low via add_indicators).
+    opt_15m = None
+    try:
+        opt_15m = D.add_indicators(
+            D.get_historical_data(token, "15minute", 30))
+    except Exception as _oe:
+        logger.warning("[ENGINE] option 15-min fetch failed: " + str(_oe))
+    # Spot 15-min for display-only bias on the alert.
     spot_3m = None
     try:
         spot_3m = D.add_indicators(
-            D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30))
+            D.get_historical_data(D.NIFTY_SPOT_TOKEN, "15minute", 30))
     except Exception as _se:
-        logger.warning("[ENGINE] spot 3-min fetch failed: " + str(_se))
+        logger.warning("[ENGINE] spot 15-min fetch failed: " + str(_se))
     market_open = D.is_market_open()
     now = datetime.now()
     atm_strike = D.resolve_atm_strike(spot_ltp) if spot_ltp else 0
     return _evaluate_entry_gates_pure(
-        opt_3m=opt_3m, option_type=option_type, spot_ltp=spot_ltp, now=now,
+        opt_3m=opt_15m, option_type=option_type, spot_ltp=spot_ltp, now=now,
         market_open=market_open, state=state, atm_strike=atm_strike,
         silent=silent, spot_3m=spot_3m)
 

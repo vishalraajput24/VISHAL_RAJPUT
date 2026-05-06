@@ -1,12 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.2)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL)
 #  Master orchestration.
-#  Entry: 3 simple gates (option-side only)
-#    1. GREEN candle (option close > open)
-#    2. FRESH BREAK above EMA9_low
-#         (close > ema9_low AND ≥2 of last 3 prior closes ≤ ema9_low)
-#    3. EMA9_low FLAT OR RISING over last 3 candles
-#         (rejects single-candle bounces in a falling option)
+#  Timeframe: 15-minute option candles.
+#  Entry: 2 simple gates (option-side only)
+#    1. 15-min candle close > EMA9_low
+#    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
 #    Spot bias is computed for display only — not a gate.
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
 #        Simple 4-tier: INITIAL(-10) → LOCK_2(+2 @8) → LOCK_5(+5 @15) → LOCK_DYN(@20)
@@ -831,13 +829,11 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7 V6.2 (option-only)\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7 V7 (15-min RSI)\n"
+        "Timeframe: 15-min option candles\n"
         "Entry   : 09:35 - 15:00 IST  |  5-min BOTH-sides cooldown\n"
-        "Gates   : 1) GREEN candle\n"
-        "          2) FRESH BREAK above EMA9_low\n"
-        "             (≥ 2 of last 3 priors were ≤ ema9_low)\n"
-        "          3) EMA9_low FLAT OR RISING over last 3 candles\n"
-        "             (slope_3bar >= 0 — blocks downtrend bounces)\n"
+        "Gates   : 1) 15-min close > EMA9_low\n"
+        "          2) RSI >= 40 AND rising (now > prior)\n"
         "Spot    : tracked for display — NOT a gate\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -853,9 +849,8 @@ def _alert_bot_started():
         "peak >= 20 SL = peak - 5         (LOCK_DYN)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
-        "After exit: 5-min both-sides lock. First 3-gate fire\n"
-        "(CE or PE) at any 3-min close after 5min triggers entry.\n"
-        "Filters 2+3 naturally block chase / countertrend re-entries.\n"
+        "After exit: 5-min both-sides lock. Re-entry watcher waits\n"
+        "for next 15-min candle close that passes 2-gate. Else fresh setup.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1120,14 +1115,17 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     else:
         _xl_line = "X-Leg   — no data\n"
 
+    _rsi  = float(entry_result.get("rsi", 0) or 0)
+    _rsi_prev = float(entry_result.get("rsi_prev", 0) or 0)
+    _rsi_arrow = "↑" if entry_result.get("rsi_rising") else "↓"
     _core = (
-        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
+        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + " (15-min)\n"
         "Mode    " + str(_entry_mode_tag) + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
-        "Body    " + str(_body) + "% GREEN\n"
+        "RSI     " + "{:.1f}".format(_rsi) + " " + _rsi_arrow
+        + " (prev " + "{:.1f}".format(_rsi_prev) + ")\n"
         + _xl_line +
         "Band    " + "{:.1f}".format(_bw) + " pts  (display)\n"
-        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
     # V6 single emergency floor + simple trail ladder.
@@ -2410,11 +2408,13 @@ def _strategy_loop(kite):
                     _re_exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0)
                     if _re_dir and _re_token and _re_exit_epoch > 0:
                         try:
-                            _re_3m = D.get_option_3min(_re_token, lookback=10)
-                            if _re_3m is not None and len(_re_3m) >= 4:
-                                _re_last = _re_3m.iloc[-2]
-                                # candle close time = bucket start + 3 min
-                                _re_close_dt = _re_last.name + timedelta(minutes=3)
+                            # V7: 15-min candles for re-entry confirmation
+                            _re_15m = D.add_indicators(
+                                D.get_historical_data(_re_token, "15minute", 30))
+                            if _re_15m is not None and len(_re_15m) >= 16:
+                                _re_last = _re_15m.iloc[-2]
+                                # candle close time = bucket start + 15 min
+                                _re_close_dt = _re_last.name + timedelta(minutes=15)
                                 _re_close_epoch = _re_close_dt.timestamp()
                                 if _re_close_epoch > _re_exit_epoch:
                                     _re_result = check_entry(
@@ -2428,7 +2428,7 @@ def _strategy_loop(kite):
                                         _tg_send(
                                             "🚫 <b>RE-ENTRY DROPPED</b>\n"
                                             + _re_dir + " " + str(_re_strike)
-                                            + " — confirmation candle FAILED 3-gate (V6.2)\n"
+                                            + " — 15-min confirmation candle FAILED 2-gate (V7)\n"
                                             "Reason: " + str(_why) + "\n"
                                             "Waiting for fresh setup."
                                         )
@@ -2962,20 +2962,17 @@ def _cmd_pulse(args):
             "🔒 LOCK_5  (peak >=15)  entry+5\n"
             "🔒🔒🔒 LOCK_DYN(>=20)   peak-5 (chandelier)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>3-GATE ENTRY (V6.2 option-only)</b>\n"
+            "<b>2-GATE ENTRY (V7 — 15-min RSI)</b>\n"
             "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
             + str(_eb.get("cutoff_after", "15:00")) + "\n"
-            "1. GREEN candle (option close > open)\n"
-            "2. FRESH BREAK above EMA9_low\n"
-            "   (close > ema9_low AND ≥ 2 of last 3 priors ≤ ema9_low)\n"
-            "3. EMA9_low FLAT OR RISING over last 3 candles\n"
-            "   (ema9_low[fired] >= ema9_low[3 bars ago])\n"
+            "1. 15-min candle close > EMA9_low\n"
+            "2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])\n"
             "(spot bias tracked for display only — not a gate)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
             "1. Emergency -10 pts | 2. EOD 15:20 | 3. Vishal Trail\n"
             "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
-            "first 3-gate fire (CE or PE) at 3-min close after cooldown enters.\n"
+            "first 2-gate fire (CE or PE) at 15-min close after cooldown enters.\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -3005,7 +3002,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.2) — 3-gate entry (option-only), "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7) — 15-min RSI entry, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

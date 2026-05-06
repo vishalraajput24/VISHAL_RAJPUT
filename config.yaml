@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.2) — Central Configuration
-#  3-gate entry (option-only): GREEN + FRESH-BREAK + EMA9_low flat/rising
-#  3-rule exit chain: Emergency -10 / EOD 15:20 / Vishal Trail (TICK-based)
+#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL) — Central Configuration
+#  Timeframe: 15-minute option candles
+#  2-gate entry: 15-min close > EMA9_low + RSI >= 40 AND rising
+#  3-rule exit: Emergency -10 / EOD 15:20 / Vishal Trail (TICK-based)
 #  Simple 4-tier ladder: INITIAL → LOCK_2 → LOCK_5 → LOCK_DYN
 # ═══════════════════════════════════════════════════════════════
 
