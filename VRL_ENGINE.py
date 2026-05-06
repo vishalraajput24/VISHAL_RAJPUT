@@ -7,11 +7,11 @@
 #          closes were ≤ ema9_low)
 #  Spot bias is computed for display only — not a gate.
 #  Exit chain (first match wins):
-#    1. EMERGENCY_SL  (single floor: -10 pts)
+#    1. EMERGENCY_SL  (TICK-based, single floor: -10 pts)
 #    2. EOD_EXIT      (15:20)
-#    3. VISHAL_TRAIL  (simple 4-tier peak ladder)
-#         peak <  8: SL = entry - 10  (INITIAL)
-#         peak >= 8: SL = entry        (LOCK_BE — breakeven)
+#    3. VISHAL_TRAIL  (TICK-based for locked tiers)
+#         peak <  8: SL = entry - 10  (INITIAL — emergency covers)
+#         peak >= 8: SL = entry + 2   (LOCK_2 — covers brokerage)
 #         peak >= 15: SL = entry + 5  (LOCK_5)
 #         peak >= 20: SL = peak - 5   (LOCK_DYN)
 # ═══════════════════════════════════════════════════════════════
@@ -298,38 +298,20 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     trail_sl, trail_tier = compute_trail_sl(entry, peak, now=now)
     state["active_ratchet_tier"] = trail_tier
     state["active_ratchet_sl"] = trail_sl
-    if trail_sl > 0:
-        if opt_3m_full is None or len(opt_3m_full) < 2:
-            for _ in range(2):
-                time.sleep(5)
-                opt_3m_full = D.get_option_3min(state.get("token"), lookback=10)
-                if opt_3m_full is not None and len(opt_3m_full) >= 2:
-                    break
-            else:
-                return []
-        _candle = opt_3m_full.iloc[-2]
-        _et_str = state.get("entry_time") or ""
-        _use = True
-        if _et_str:
-            try:
-                _h, _m, _s = (int(p) for p in _et_str.split(":"))
-                _et_t = _dtime(_h, _m, _s)
-                _candle_close_t = (_candle.name + timedelta(minutes=3)).time()
-                if _candle_close_t <= _et_t:
-                    _use = False
-            except Exception:
-                pass
-        if _use and _candle["close"] <= trail_sl:
-            try:
-                _trig_t = (_candle.name + timedelta(minutes=3)).strftime("%H:%M")
-            except Exception:
-                _trig_t = ""
+
+    # ── V6.1+ TICK-BASED trail for LOCKED tiers (peak ≥ 8) ──
+    # When option_ltp drops to/below the locked SL → exit immediately
+    # at the SL price. INITIAL tier (peak < 8) is covered by the
+    # emergency SL check above (entry-10 = same threshold), so no
+    # separate close-based trail check is needed for it.
+    if trail_tier != "INITIAL" and trail_sl > 0:
+        if option_ltp <= trail_sl:
             return [{
                 "lot_id": "ALL",
                 "reason": "VISHAL_TRAIL",
                 "price": trail_sl,
-                "trigger_close": round(float(_candle["close"]), 2),
-                "trigger_time": _trig_t,
+                "trigger_close": round(float(option_ltp), 2),
+                "trigger_time": now.strftime("%H:%M:%S"),
                 "trigger_sl": round(trail_sl, 2),
             }]
 
