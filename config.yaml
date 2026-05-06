@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6) — Central Configuration
-#  3-gate entry: GREEN + FRESH-BREAK + spot bias
+#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V6.1) — Central Configuration
+#  2-gate entry (option-only): GREEN + FRESH-BREAK on EMA9_low
 #  3-rule exit chain: Emergency -10 / EOD 15:20 / Vishal Trail
 #  Simple 4-tier ladder: INITIAL → LOCK_BE → LOCK_5 → LOCK_DYN
 # ═══════════════════════════════════════════════════════════════

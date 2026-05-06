@@ -1,15 +1,13 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V6)
-#  Entry: 3 simple gates.
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V6.1)
+#  Entry: 2 simple gates (option-side only).
 #    1. GREEN candle (option close > open)
 #    2. FRESH BREAK — option just crossed its EMA9_low
 #         (current close > ema9_low AND ≥ 2 of last 3 prior
 #          closes were ≤ ema9_low)
-#    3. Spot bias confirms direction
-#         CE: spot_close > spot_ema9_low
-#         PE: spot_close < spot_ema9_low
+#  Spot bias is computed for display only — not a gate.
 #  Exit chain (first match wins):
-#    1. EMERGENCY_SL  (single floor: -10 pts, no time-segmenting)
+#    1. EMERGENCY_SL  (single floor: -10 pts)
 #    2. EOD_EXIT      (15:20)
 #    3. VISHAL_TRAIL  (simple 4-tier peak ladder)
 #         peak <  8: SL = entry - 10  (INITIAL)
@@ -175,58 +173,32 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
             result["reject_reason"] = "fresh_break_error_" + str(_fe)[:40]
             return result
 
-        # ── GATE 3: Spot bias confirms direction ──
+        # ── Spot bias (DISPLAY ONLY in V6.1 — no longer a gate) ──
+        # Captured for telemetry / dashboard / future re-enabling, never
+        # blocks entry. V6.1 keeps decisions on the option side only.
         try:
-            if spot_3m is None or spot_3m.empty or len(spot_3m) < 2:
-                result["reject_reason"] = "spot_data_unavailable"
-                if not silent:
-                    logger.info(f"[REJECT] {option_type} gate3_spot_data_unavailable")
-                return result
-            _spot_last = spot_3m.iloc[-2]
-            _spot_close = float(_spot_last["close"])
-            _spot_ema9l = float(_spot_last.get("ema9_low", 0))
-            result["spot_close"]    = round(_spot_close, 2)
-            result["spot_ema9_low"] = round(_spot_ema9l, 2)
-            if _spot_ema9l <= 0:
-                result["reject_reason"] = "spot_ema9_low_invalid"
-                return result
-            if option_type == "CE":
-                if _spot_close <= _spot_ema9l:
-                    result["spot_bias"] = "BEARISH"
-                    result["reject_reason"] = "spot_against_CE"
-                    if not silent:
-                        logger.info(f"[REJECT] CE gate3_spot_against "
-                                    f"option_PASSED gates 1+2 (fresh break) "
-                                    f"BUT spot={round(_spot_close,1)} "
-                                    f"<= spot_ema9l={round(_spot_ema9l,1)} "
-                                    f"(spot bearish, blocking CE)")
-                    return result
-                result["spot_bias"] = "BULLISH"
-            else:  # PE
-                if _spot_close >= _spot_ema9l:
-                    result["spot_bias"] = "BULLISH"
-                    result["reject_reason"] = "spot_against_PE"
-                    if not silent:
-                        logger.info(f"[REJECT] PE gate3_spot_against "
-                                    f"option_PASSED gates 1+2 (fresh break) "
-                                    f"BUT spot={round(_spot_close,1)} "
-                                    f">= spot_ema9l={round(_spot_ema9l,1)} "
-                                    f"(spot bullish, blocking PE)")
-                    return result
-                result["spot_bias"] = "BEARISH"
-        except Exception as _se:
-            result["reject_reason"] = "spot_gate_error_" + str(_se)[:40]
-            return result
+            if spot_3m is not None and not spot_3m.empty and len(spot_3m) >= 2:
+                _spot_last = spot_3m.iloc[-2]
+                _spot_close = float(_spot_last["close"])
+                _spot_ema9l = float(_spot_last.get("ema9_low", 0))
+                result["spot_close"]    = round(_spot_close, 2)
+                result["spot_ema9_low"] = round(_spot_ema9l, 2)
+                if _spot_ema9l > 0:
+                    if option_type == "CE":
+                        result["spot_bias"] = "BULLISH" if _spot_close > _spot_ema9l else "BEARISH"
+                    else:
+                        result["spot_bias"] = "BEARISH" if _spot_close < _spot_ema9l else "BULLISH"
+        except Exception:
+            pass
 
-        # ── All 3 gates passed ──
+        # ── All 2 gates passed ──
         result["fired"] = True
         result["entry_mode"] = "EMA9_BREAKOUT"
         if not silent:
             logger.info(f"[ENGINE] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} fresh={result['fresh_break_count']}/3 "
-                        f"spot={round(result['spot_close'],1)} "
-                        f"vs spot_ema9l={round(result['spot_ema9_low'],1)} "
-                        f"(3-gate V6)")
+                        f"spot_bias={result.get('spot_bias','?')} "
+                        f"(2-gate V6.1, option-only)")
         return result
 
     except Exception as e:
