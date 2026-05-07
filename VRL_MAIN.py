@@ -164,12 +164,265 @@ _running = True
 # This lets us watch V8 signal quality without risking V7 stability.
 # Phase 2 (after market close): flip V8_SHADOW_MODE = False to enable
 # real V8 trades alongside V7.
-V8_SHADOW_MODE = True
+V8_SHADOW_MODE = False  # PAPER mode — V8 takes real (paper) trades alongside V7.
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
     "_signals_today": 0,             # count for /pulse
     "_last_signal_time": "",
+    # Paper position state (parallel to V7, independent).
+    "in_trade": False,
+    "symbol": "",
+    "token": 0,
+    "direction": "",
+    "strike": 0,
+    "entry_price": 0.0,
+    "entry_time": "",
+    "qty": 0,
+    "peak_pnl": 0.0,
+    "active_ratchet_tier": "",
+    "active_ratchet_sl": 0.0,
+    "candles_held": 0,
+    "_last_minute": "",
+    # Re-entry watcher (cross-leg continuation, 2-candle window)
+    "_reentry_armed": False,
+    "_reentry_attempts": 0,
+    "_reentry_last_checked_epoch": 0.0,
+    "_reentry_direction": "",
+    "_reentry_token": 0,
+    "_reentry_strike": 0,
+    "_reentry_other_token": 0,
+    # Daily cumulative
+    "_pnl_today_pts": 0.0,
+    "_trades_today": 0,
+    "_wins_today": 0,
+    "_losses_today": 0,
 }
+_v8_lock = threading.Lock()
+
+
+def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
+    """V8 reuses the same -12/12-step ladder as V7."""
+    from VRL_ENGINE import compute_trail_sl
+    return compute_trail_sl(entry_price, peak_pnl)
+
+
+def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
+                             entry_price: float, entry_result: dict,
+                             other_token: int = 0):
+    """Open a V8 paper position. Records in _v8_state, sends Telegram alert."""
+    import VRL_CONFIG as CFG
+    lot_count = CFG.get().get("lots", {}).get("count", 2)
+    qty = lot_count * D.get_lot_size()
+    now_str = datetime.now().strftime("%H:%M:%S")
+    is_reentry = (entry_result.get("entry_mode") == "REENTRY_XLEG")
+
+    with _v8_lock:
+        _v8_state["in_trade"]              = True
+        _v8_state["symbol"]                = symbol
+        _v8_state["token"]                 = token
+        _v8_state["direction"]             = direction
+        _v8_state["strike"]                = int(strike or 0)
+        _v8_state["entry_price"]           = float(entry_price)
+        _v8_state["entry_time"]            = now_str
+        _v8_state["qty"]                   = qty
+        _v8_state["peak_pnl"]              = 0.0
+        _v8_state["active_ratchet_tier"]   = "INITIAL"
+        _v8_state["active_ratchet_sl"]     = round(entry_price - 12, 2)
+        _v8_state["candles_held"]          = 0
+        _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
+        _v8_state["_other_token"]          = int(other_token or 0)
+        _v8_state["_entry_full_result"]    = entry_result
+        # Clear any pending re-entry state (fresh setup wins)
+        _v8_state["_reentry_armed"]        = False
+        _v8_state["_reentry_attempts"]     = 0
+
+    logger.info("[V8] PAPER ENTRY: " + symbol + " qty=" + str(qty)
+                + " entry=" + str(entry_price) + " mode="
+                + str(entry_result.get("entry_mode", "")))
+
+    _ce_pe = "🟢" if direction == "CE" else "🔴"
+    _mode_tag = "REENTRY (X-LEG)" if is_reentry else "FRESH"
+    _xleg_line = ""
+    if entry_result.get("xleg_other_dying"):
+        _xleg_line = (
+            "X-Leg ✓ " + ("PE" if direction=='CE' else 'CE') + " dying ("
+            + "{:.1f}".format(entry_result.get("xleg_other_close", 0))
+            + " < ema9l "
+            + "{:.1f}".format(entry_result.get("xleg_other_ema9l", 0)) + ")\n"
+        )
+    _tg_send(
+        "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
+        + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (3-min)\n"
+        "Close  " + "{:.1f}".format(entry_result.get("close", 0))
+        + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
+        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN  "
+        + "Fresh " + str(entry_result.get("fresh_break_count", 0)) + "/3\n"
+        + _xleg_line +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>STOP</b>\n"
+        "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
+        "Trail: peak ≥12→BE | ≥24→+12 | ≥30→+20 | ≥40→+36 | ≥50→+50\n"
+    )
+
+
+def _v8_execute_paper_exit(reason: str, exit_price: float):
+    """Close V8 paper position. Logs trade to CSV, arms re-entry watcher."""
+    with _v8_lock:
+        if not _v8_state.get("in_trade"):
+            return
+        entry_price = float(_v8_state.get("entry_price", 0))
+        symbol      = _v8_state.get("symbol", "")
+        direction   = _v8_state.get("direction", "")
+        strike      = int(_v8_state.get("strike", 0) or 0)
+        qty         = int(_v8_state.get("qty", 0) or 0)
+        peak        = float(_v8_state.get("peak_pnl", 0))
+        entry_time  = _v8_state.get("entry_time", "")
+        candles     = int(_v8_state.get("candles_held", 0) or 0)
+        tier        = _v8_state.get("active_ratchet_tier", "")
+        token       = int(_v8_state.get("token", 0) or 0)
+        other_tok   = int(_v8_state.get("_other_token", 0) or 0)
+
+    pnl_pts = round(exit_price - entry_price, 2)
+    pnl_rs  = round(pnl_pts * qty, 2)
+    exit_time = datetime.now().strftime("%H:%M:%S")
+
+    # Charges (reuse engine's calc)
+    try:
+        from VRL_ENGINE import calculate_charges
+        charges = calculate_charges(entry_price, exit_price, qty, num_exit_orders=1)
+        net_pnl = charges["net_pnl"]
+        total_charges = charges["total_charges"]
+    except Exception:
+        net_pnl = pnl_rs
+        total_charges = 0.0
+
+    # Log to CSV (entry_mode tagged V8 so we can split V7/V8 in analysis)
+    try:
+        import csv as _csv
+        log_path = os.path.join(os.path.expanduser("~"), "lab_data", "vrl_trade_log.csv")
+        with open(log_path, "a", newline="") as f:
+            w = _csv.writer(f)
+            w.writerow([
+                date.today().isoformat(), entry_time, exit_time,
+                symbol, direction, strike, entry_price, exit_price,
+                pnl_pts, pnl_rs, pnl_rs, net_pnl, peak, reason,
+                "", candles, "", 0, 0, "V8_" + tier,
+                "", 0, 0, "", "", "", "", "", "", qty,
+                0, 0, "ALL",
+            ])
+    except Exception as _le:
+        logger.warning("[V8] Trade log write error: " + str(_le))
+
+    # Update daily
+    with _v8_lock:
+        _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts, 2)
+        _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
+        if pnl_pts > 0:
+            _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
+        elif pnl_pts < 0:
+            _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+        # Arm re-entry watcher (2 candles, cross-leg continuation)
+        _v8_state["_reentry_armed"]              = True
+        _v8_state["_reentry_attempts"]           = 0
+        _v8_state["_reentry_last_checked_epoch"] = 0.0
+        _v8_state["_reentry_direction"]          = direction
+        _v8_state["_reentry_token"]              = token
+        _v8_state["_reentry_strike"]             = strike
+        _v8_state["_reentry_other_token"]        = other_tok
+        # Clear position
+        _v8_state["in_trade"]            = False
+        _v8_state["symbol"]              = ""
+        _v8_state["token"]               = 0
+        _v8_state["direction"]           = ""
+        _v8_state["strike"]              = 0
+        _v8_state["entry_price"]         = 0.0
+        _v8_state["peak_pnl"]            = 0.0
+        _v8_state["active_ratchet_tier"] = ""
+        _v8_state["active_ratchet_sl"]   = 0.0
+        _v8_state["candles_held"]        = 0
+
+    logger.info("[V8] PAPER EXIT: " + symbol + " qty=" + str(qty)
+                + " ref=" + str(exit_price) + " reason=" + reason
+                + " pnl=" + str(pnl_pts) + "pts")
+
+    _emoji = "🟢" if pnl_pts >= 0 else "🔴"
+    _tg_send(
+        "⚡ <b>V8 EXIT " + direction + " " + str(strike) + "</b>\n"
+        + reason + "    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Entry  Rs" + "{:.1f}".format(entry_price) + "\n"
+        "Exit   Rs" + "{:.1f}".format(exit_price) + "\n"
+        "Peak   +" + "{:.1f}".format(peak) + " pts  Trail " + str(tier) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Gross  " + ("+" if pnl_rs >= 0 else "") + "Rs" + "{:.0f}".format(pnl_rs) + "\n"
+        "Charges -Rs" + "{:.0f}".format(total_charges) + "\n"
+        "Net    " + ("+" if net_pnl >= 0 else "") + "Rs" + "{:.0f}".format(net_pnl) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "V8 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+        + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
+        + str(_v8_state.get("_wins_today", 0)) + "W "
+        + str(_v8_state.get("_losses_today", 0)) + "L)"
+    )
+
+
+def _v8_check_exit():
+    """Tick-based exit check for V8 position. Called every scan cycle."""
+    with _v8_lock:
+        if not _v8_state.get("in_trade"):
+            return
+        token       = int(_v8_state.get("token", 0) or 0)
+        entry_price = float(_v8_state.get("entry_price", 0))
+        peak        = float(_v8_state.get("peak_pnl", 0))
+
+    if not token: return
+    ltp = D.get_ltp(token)
+    if ltp <= 0: return
+    pnl = round(ltp - entry_price, 2)
+
+    # Update peak
+    if pnl > peak:
+        with _v8_lock:
+            _v8_state["peak_pnl"] = pnl
+        peak = pnl
+
+    # Compute trail SL using V7 ladder (12-step + 30/40/50)
+    trail_sl, trail_tier = _v8_compute_trail_sl(entry_price, peak)
+    with _v8_lock:
+        prev_tier = _v8_state.get("active_ratchet_tier", "")
+        _v8_state["active_ratchet_tier"] = trail_tier
+        _v8_state["active_ratchet_sl"]   = trail_sl
+
+    # Tier upgrade alert (matches V7 style)
+    if prev_tier and prev_tier != trail_tier and trail_tier != "INITIAL":
+        _tg_send(
+            "⚡ <b>V8 SL UPGRADED → " + trail_tier + "</b>\n"
+            "Peak +{:.1f}".format(peak) + " pts\n"
+            "Prev " + str(prev_tier) + "  →  New " + trail_tier
+            + "  SL Rs" + "{:.1f}".format(trail_sl)
+        )
+
+    # Emergency SL (-12) — TICK based
+    if pnl <= -12:
+        _v8_execute_paper_exit("EMERGENCY_SL", round(entry_price - 12, 2))
+        return
+
+    # Trail SL — TICK based for locked tiers (peak ≥ 12)
+    if trail_tier != "INITIAL" and ltp <= trail_sl:
+        _v8_execute_paper_exit("VISHAL_TRAIL", float(trail_sl))
+        return
+
+    # EOD exit
+    eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20") if hasattr(CFG, "exit_ema9_band") else "15:20"
+    try:
+        _eh, _em = eod_str.split(":")
+        eod_mins = int(_eh) * 60 + int(_em)
+    except Exception:
+        eod_mins = 15 * 60 + 20
+    now_mins = datetime.now().hour * 60 + datetime.now().minute
+    if now_mins >= eod_mins:
+        _v8_execute_paper_exit("EOD_EXIT", float(ltp))
 
 # ═══════════════════════════════════════════════════════════════
 #  STRIKE LOCKING — stable scanning, no flickering
@@ -2679,57 +2932,112 @@ def _strategy_loop(kite):
                         all_results["PE"] = _v
 
                 # ═══════════════════════════════════════════════════════
-                #  V8 SHADOW EVALUATION — 3-min parallel strategy
+                #  V8 — 3-min parallel strategy (LIVE paper or shadow)
                 # ═══════════════════════════════════════════════════════
-                # Runs INDEPENDENTLY of V7. Same ATM strikes (locked).
-                # In SHADOW mode (V8_SHADOW_MODE=True), only sends
-                # Telegram alerts; does not execute trades. This gives
-                # us a real signal stream to evaluate V8 quality before
-                # going live.
+                # Independent of V7. Own state, own entry, own exit.
+                # SHADOW mode = Telegram alerts only.
+                # LIVE mode  = paper trades alongside V7.
                 try:
-                    from VRL_ENGINE import check_entry_v8
+                    from VRL_ENGINE import check_entry_v8, check_v8_continuation_reentry
                     _v8_ce_info = (_locked_tokens or {}).get("CE", {})
                     _v8_pe_info = (_locked_tokens or {}).get("PE", {})
                     _v8_ce_tok = int(_v8_ce_info.get("token", 0) or 0)
                     _v8_pe_tok = int(_v8_pe_info.get("token", 0) or 0)
-                    for _v8_dir, _v8_token, _v8_other in [
-                        ("CE", _v8_ce_tok, _v8_pe_tok),
-                        ("PE", _v8_pe_tok, _v8_ce_tok),
-                    ]:
-                        if not _v8_token:
-                            continue
-                        _v8_res = check_entry_v8(
-                            token=_v8_token, option_type=_v8_dir,
-                            spot_ltp=spot_ltp, silent=False,
-                            state=_v8_state, other_token=_v8_other)
-                        if _v8_res.get("fired"):
-                            # Stamp same-candle guard so we don't spam
-                            _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
-                            _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
-                            _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
-                            _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
-                            _xleg = ""
-                            if _v8_res.get("xleg_other_dying"):
-                                _xleg = (
-                                    f"X-Leg ✓ {('PE' if _v8_dir=='CE' else 'CE')} dying "
-                                    f"({_v8_res.get('xleg_other_close',0):.1f} < ema9l "
-                                    f"{_v8_res.get('xleg_other_ema9l',0):.1f})\n"
-                                )
-                            _shadow_tag = "👻 <b>V8 SHADOW SIGNAL</b>" if V8_SHADOW_MODE else "⚡ <b>V8 SIGNAL</b>"
-                            _tg_send(
-                                _shadow_tag + "\n"
-                                + _v8_dir + " " + str(_v8_strike)
-                                + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
-                                + "Close " + "{:.1f}".format(_v8_res["close"])
-                                + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
-                                + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
-                                + "Fresh " + str(_v8_res.get("fresh_break_count", 0)) + "/3 priors below band\n"
-                                + _xleg
-                                + ("<i>SHADOW MODE — no actual trade</i>" if V8_SHADOW_MODE
-                                   else "Entering...")
-                            )
+
+                    # If V8 is in trade → manage exit only
+                    if _v8_state.get("in_trade"):
+                        _v8_check_exit()
+                    else:
+                        # First try re-entry path (cross-leg) if armed
+                        _v8_re_armed = bool(_v8_state.get("_reentry_armed", False))
+                        _v8_re_handled = False
+                        if _v8_re_armed:
+                            _re_dir = _v8_state.get("_reentry_direction", "")
+                            _re_tok = int(_v8_state.get("_reentry_token", 0) or 0)
+                            _re_oth = int(_v8_state.get("_reentry_other_token", 0) or 0)
+                            _re_strike = int(_v8_state.get("_reentry_strike", 0) or 0)
+                            _re_attempts = int(_v8_state.get("_reentry_attempts", 0) or 0)
+                            _re_last_ts = float(_v8_state.get("_reentry_last_checked_epoch", 0) or 0)
+                            try:
+                                _re_3m = D.add_indicators(D.get_historical_data(_re_tok, "3minute", 10))
+                                if _re_3m is not None and len(_re_3m) >= 2:
+                                    _re_close_dt = _re_3m.iloc[-2].name + timedelta(minutes=3)
+                                    _re_close_epoch = _re_close_dt.timestamp()
+                                    if _re_close_epoch > _re_last_ts:
+                                        _v8_state["_reentry_attempts"] = _re_attempts + 1
+                                        _v8_state["_reentry_last_checked_epoch"] = _re_close_epoch
+                                        _re_attempts += 1
+                                        _re_res = check_v8_continuation_reentry(
+                                            token=_re_tok, option_type=_re_dir,
+                                            other_token=_re_oth, state=_v8_state)
+                                        if _re_res.get("fired"):
+                                            _v8_re_handled = True
+                                            _v8_execute_paper_entry(
+                                                direction=_re_dir, strike=_re_strike,
+                                                symbol=(_v8_ce_info if _re_dir == "CE" else _v8_pe_info).get("symbol", ""),
+                                                token=_re_tok,
+                                                entry_price=_re_res.get("entry_price", 0),
+                                                entry_result=_re_res, other_token=_re_oth)
+                                            _v8_state["_reentry_armed"] = False
+                                        elif _re_attempts >= 2:
+                                            _v8_state["_reentry_armed"] = False
+                                            _tg_send(
+                                                "⚡ <b>V8 RE-ENTRY DROPPED</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + " — 2/2 attempts failed\n"
+                                                "Reason: " + str(_re_res.get("reject_reason", "?")) + "\n"
+                                                "Waiting for fresh setup."
+                                            )
+                            except Exception as _ree:
+                                logger.warning("[V8] re-entry error: " + str(_ree))
+
+                        # Path A: Fresh entry (always available)
+                        if not _v8_re_handled and not _v8_state.get("in_trade"):
+                            for _v8_dir, _v8_token, _v8_other in [
+                                ("CE", _v8_ce_tok, _v8_pe_tok),
+                                ("PE", _v8_pe_tok, _v8_ce_tok),
+                            ]:
+                                if not _v8_token:
+                                    continue
+                                _v8_res = check_entry_v8(
+                                    token=_v8_token, option_type=_v8_dir,
+                                    spot_ltp=spot_ltp, silent=False,
+                                    state=_v8_state, other_token=_v8_other)
+                                if _v8_res.get("fired"):
+                                    _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
+                                    _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
+                                    _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
+                                    _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
+                                    if V8_SHADOW_MODE:
+                                        # Stamp guard, send alert only
+                                        _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
+                                        _xleg = ""
+                                        if _v8_res.get("xleg_other_dying"):
+                                            _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir=='CE' else 'CE') + " dying ("
+                                                     + "{:.1f}".format(_v8_res.get('xleg_other_close',0))
+                                                     + " < ema9l "
+                                                     + "{:.1f}".format(_v8_res.get('xleg_other_ema9l',0)) + ")\n")
+                                        _tg_send(
+                                            "👻 <b>V8 SHADOW SIGNAL</b>\n"
+                                            + _v8_dir + " " + str(_v8_strike)
+                                            + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
+                                            + "Close " + "{:.1f}".format(_v8_res["close"])
+                                            + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
+                                            + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
+                                            + "Fresh " + str(_v8_res.get("fresh_break_count", 0)) + "/3 priors below band\n"
+                                            + _xleg + "<i>SHADOW MODE — no actual trade</i>"
+                                        )
+                                    else:
+                                        # LIVE: execute paper entry
+                                        _v8_execute_paper_entry(
+                                            direction=_v8_dir, strike=_v8_strike,
+                                            symbol=_v8_symbol, token=_v8_token,
+                                            entry_price=_v8_res["entry_price"],
+                                            entry_result=_v8_res, other_token=_v8_other)
+                                    break  # one V8 entry per cycle
                 except Exception as _v8e:
-                    logger.warning("[V8-SHADOW] eval error: " + str(_v8e))
+                    import traceback as _v8tb
+                    logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
 
                 try:
                     vix_ltp = D.get_vix()
@@ -3030,8 +3338,17 @@ def _cmd_pulse(args):
             + "🕐 V7: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
-            + "👻 V8 (shadow): " + str(_v8_state.get("_signals_today", 0))
-            + " signals (last " + str(_v8_state.get("_last_signal_time", "—")) + ")\n"
+            + ("👻 V8 (shadow): " if V8_SHADOW_MODE else "⚡ V8 (live): ")
+            + str(_v8_state.get("_trades_today", 0)) + " trades · "
+            + str(_v8_state.get("_wins_today", 0)) + "W "
+            + str(_v8_state.get("_losses_today", 0)) + "L · "
+            + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+            + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts"
+            + (" | V8 active: " + str(_v8_state.get("direction", "")) + " "
+               + str(_v8_state.get("strike", ""))
+               + " peak +" + "{:.1f}".format(_v8_state.get("peak_pnl", 0))
+               if _v8_state.get("in_trade") else "")
+            + "\n"
             + ("Last: " + str(_last_t.get("entry_time", "?")) + " "
                + str(_last_t.get("direction", "?")) + " "
                + str(_last_t.get("strike", "?")) + " "
