@@ -1,17 +1,23 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V7 FINAL)
-#  Timeframe: 15-minute option candles
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V7)
+#  Timeframe: 15-minute option candles (current single-strategy)
 #  Entry: 2 gates (option-side only).
 #    1. 15-min candle close > EMA9_low (option)
 #    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
-#  Exit chain (first match wins):
-#    1. EMERGENCY_SL  (TICK-based, single floor: -10 pts)
-#    2. EOD_EXIT      (15:20)
-#    3. VISHAL_TRAIL  (TICK-based for locked tiers)
-#         peak <  8: SL = entry - 10  (INITIAL — emergency covers)
-#         peak >= 8: SL = entry + 2   (LOCK_2 — covers brokerage)
-#         peak >= 15: SL = entry + 5  (LOCK_5)
-#         peak >= 20: SL = peak - 5   (LOCK_DYN)
+#  Exit chain (TICK-based throughout):
+#    1. EMERGENCY_SL: -12 pts (hard, immediate on tick)
+#    2. EOD_EXIT: 15:20
+#    3. VISHAL_TRAIL (peak ratchet):
+#         peak <  12: SL = entry - 12  (INITIAL)
+#         peak >= 12: SL = entry        (LOCK_BE)
+#         peak >= 24: SL = entry + 12   (LOCK_12)
+#         peak >= 30: SL = entry + 20   (LOCK_20)
+#         peak >= 36: SL = entry + 24   (LOCK_24)
+#         peak >= 40: SL = entry + 36   (LOCK_36)
+#         peak >= 48: SL = entry + 36   (12-step continues)
+#         peak >= 50: SL = entry + 50   (LOCK_50)
+#         peak >= 60+: max(12-step, 50) — keeps ratcheting
+#  Cooldown: 0 (removed — fresh entries always available).
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -255,19 +261,28 @@ def compute_entry_sl(entry_price: float, hard_sl: int = 10) -> float:
 
 def compute_trail_sl(entry_price: float, peak_pnl: float,
                      direction: str = "", now=None) -> tuple:
-    # V6.1 simple 4-tier ladder (no time-segmenting):
-    #   peak <  8 → entry - 10  (INITIAL)
-    #   peak >= 8 → entry + 2   (LOCK_2 — covers brokerage ~0.6 pts)
-    #   peak >= 15 → entry + 5  (LOCK_5)
-    #   peak >= 20 → peak - 5   (LOCK_DYN)
-    if peak_pnl >= 20:
-        sl = entry_price + (peak_pnl - 5); tier = "LOCK_DYN"
-    elif peak_pnl >= 15:
-        sl = entry_price + 5;              tier = "LOCK_5"
-    elif peak_pnl >= 8:
-        sl = entry_price + 2;              tier = "LOCK_2"
+    # V7 ladder — discrete 12-step + specific tiers at 30/40/50.
+    # All TICK-based. Hard SL at -12.
+    if peak_pnl < 12:
+        sl = entry_price - 12
+        return round(sl, 2), "INITIAL"
+    # 12-step base ladder: peak 12→0, 24→12, 36→24, 48→36, 60→48, ...
+    base_lock = (int(peak_pnl // 12) - 1) * 12
+    # User-specific overrides at 30, 40, 50
+    if peak_pnl >= 50:
+        spec_lock = 50
+    elif peak_pnl >= 40:
+        spec_lock = 36
+    elif peak_pnl >= 30:
+        spec_lock = 20
     else:
-        sl = entry_price - 10;             tier = "INITIAL"
+        spec_lock = 0
+    lock = max(base_lock, spec_lock)
+    sl = entry_price + lock
+    if lock == 0:
+        tier = "LOCK_BE"
+    else:
+        tier = f"LOCK_{lock}"
     return round(sl, 2), tier
 
 def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, market_open: bool) -> list:

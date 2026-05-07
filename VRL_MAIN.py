@@ -7,7 +7,8 @@
 #    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
 #    Spot bias is computed for display only — not a gate.
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
-#        Simple 4-tier: INITIAL(-10) → LOCK_2(+2 @8) → LOCK_5(+5 @15) → LOCK_DYN(@20)
+#        12-step ladder + 30/40/50 specifics: INITIAL(-12) → LOCK_BE(@12) →
+#        LOCK_12(@24) → LOCK_20(@30) → LOCK_24(@36) → LOCK_36(@40) → LOCK_50(@50+)
 #  Cooldown: 5 min, BOTH sides after any exit.
 #  Re-entry: standard scan resumes after cooldown — fresh-break filter
 #            naturally blocks chase-the-move re-entries.
@@ -106,10 +107,11 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
-    # v16.7-final re-entry watcher (wait next full 3-min candle)
+    # V7 re-entry watcher — 2-candle window after exit
     "_reentry_armed"     : False,
-    "_reentry_exit_ts"   : 0.0,   # ── CHANGED: now epoch float, not string
-    # v16.7-final candle/2 cooldown (3 min after every attempt)
+    "_reentry_exit_ts"   : 0.0,
+    "_reentry_attempts"  : 0,         # count of candles checked
+    "_reentry_last_checked_epoch": 0.0,
     "_next_candle2_after": 0.0,
     "_reentry_direction" : "",
     "_reentry_token"     : 0,
@@ -838,15 +840,19 @@ def _alert_bot_started():
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
-        "1. Emergency  -10 pts (single floor)\n"
+        "1. Emergency  -12 pts (TICK-based, instant)\n"
         "2. EOD 15:20\n"
-        "3. Vishal Trail (4-tier peak ladder)\n"
+        "3. Vishal Trail (TICK-based, 12-step + 30/40/50)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER (V6 simple)</b>\n"
-        "peak <  8  SL = entry - 10      (INITIAL)\n"
-        "peak >= 8  SL = entry + 2        (LOCK_2 — covers charges)\n"
-        "peak >= 15 SL = entry + 5        (LOCK_5)\n"
-        "peak >= 20 SL = peak - 5         (LOCK_DYN)\n"
+        "<b>SL LADDER (V7)</b>\n"
+        "peak < 12  SL = entry - 12      (INITIAL)\n"
+        "peak >= 12 SL = entry            (LOCK_BE)\n"
+        "peak >= 24 SL = entry + 12       (LOCK_12)\n"
+        "peak >= 30 SL = entry + 20       (LOCK_20)\n"
+        "peak >= 36 SL = entry + 24       (LOCK_24)\n"
+        "peak >= 40 SL = entry + 36       (LOCK_36)\n"
+        "peak >= 50 SL = entry + 50       (LOCK_50)\n"
+        "peak >= 60 SL = peak rounded by 12 (12-step continues)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
         "After exit: 5-min both-sides lock. Re-entry watcher waits\n"
@@ -1135,7 +1141,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail: peak >=8 → +2 | >=15 → +5 | >=20 → peak-5\n"
+        "Trail: peak ≥12→BE | ≥24→+12 | ≥30→+20 | ≥40→+36 | ≥50→+50\n"
     )
 
     _slip_block = ""
@@ -1306,13 +1312,14 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (V6.2): wait for next FULL 3-min
-                # candle to close. If that candle independently passes
-                # 3-gate (GREEN + fresh break + ema9l flat/rising),
-                # re-enter on same side at candle close. Else drop.
-                # Filters 2+3 naturally block chase / countertrend.
+                # Re-entry watcher (V7): 2-candle window after exit.
+                # Each new 15-min candle close is a re-entry attempt.
+                # If 2 consecutive attempts fail, window expires and we
+                # rely on fresh-entry path only.
                 "_reentry_armed":      True,
-                "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
+                "_reentry_exit_ts":    _exit_epoch,
+                "_reentry_attempts":   0,
+                "_reentry_last_checked_epoch": 0.0,
                 "_reentry_direction":  str(old_dir or ""),
                 "_reentry_token":      int(old_token or 0),
                 "_reentry_strike":     int(old_strike or 0),
@@ -2399,24 +2406,30 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # ── RE-ENTRY WATCHER (epoch‑based comparison) ──
+                # ── RE-ENTRY WATCHER (V7: 2-candle window) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
                 if _re_armed and not state.get("in_trade"):
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
                     _re_exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0)
+                    _re_attempts = int(state.get("_reentry_attempts", 0) or 0)
+                    _re_last_checked = float(state.get("_reentry_last_checked_epoch", 0) or 0)
                     if _re_dir and _re_token and _re_exit_epoch > 0:
                         try:
-                            # V7: 15-min candles for re-entry confirmation
                             _re_15m = D.add_indicators(
                                 D.get_historical_data(_re_token, "15minute", 30))
                             if _re_15m is not None and len(_re_15m) >= 16:
                                 _re_last = _re_15m.iloc[-2]
-                                # candle close time = bucket start + 15 min
                                 _re_close_dt = _re_last.name + timedelta(minutes=15)
                                 _re_close_epoch = _re_close_dt.timestamp()
-                                if _re_close_epoch > _re_exit_epoch:
+                                # Only check this candle once: must be after exit AND newer than last check
+                                if (_re_close_epoch > _re_exit_epoch
+                                    and _re_close_epoch > _re_last_checked):
+                                    with _state_lock:
+                                        state["_reentry_attempts"] = _re_attempts + 1
+                                        state["_reentry_last_checked_epoch"] = _re_close_epoch
+                                    _re_attempts += 1
                                     _re_result = check_entry(
                                         token=_re_token, option_type=_re_dir,
                                         spot_ltp=spot_ltp, dte=dte,
@@ -2425,21 +2438,32 @@ def _strategy_loop(kite):
                                     _passed = _re_result.get("fired", False)
                                     if not _passed:
                                         _why = _re_result.get("reject_reason", "?")
-                                        _tg_send(
-                                            "🚫 <b>RE-ENTRY DROPPED</b>\n"
-                                            + _re_dir + " " + str(_re_strike)
-                                            + " — 15-min confirmation candle FAILED 2-gate (V7)\n"
-                                            "Reason: " + str(_why) + "\n"
-                                            "Waiting for fresh setup."
-                                        )
-                                        logger.info("[REENTRY] confirmation candle "
-                                            + _re_close_dt.strftime("%H:%M:%S") + " failed: " + str(_why))
-                                        with _state_lock:
-                                            state["_reentry_armed"] = False
-                                            state["_reentry_exit_ts"] = 0.0
-                                            state["_reentry_direction"] = ""
-                                            state["_reentry_token"] = 0
-                                            state["_reentry_strike"] = 0
+                                        if _re_attempts >= 2:
+                                            # 2-candle window exhausted → disarm
+                                            _tg_send(
+                                                "🚫 <b>RE-ENTRY DROPPED</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + " — 2/2 candles failed (V7)\n"
+                                                "Last reason: " + str(_why) + "\n"
+                                                "Waiting for fresh setup."
+                                            )
+                                            logger.info("[REENTRY] window exhausted (2/2): " + str(_why))
+                                            with _state_lock:
+                                                state["_reentry_armed"] = False
+                                                state["_reentry_exit_ts"] = 0.0
+                                                state["_reentry_direction"] = ""
+                                                state["_reentry_token"] = 0
+                                                state["_reentry_strike"] = 0
+                                                state["_reentry_attempts"] = 0
+                                                state["_reentry_last_checked_epoch"] = 0.0
+                                        else:
+                                            _tg_send(
+                                                "⏳ <b>RE-ENTRY ATTEMPT 1/2 FAILED</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + " — Reason: " + str(_why) + "\n"
+                                                "Waiting next 15-min candle (1 more attempt)."
+                                            )
+                                            logger.info(f"[REENTRY] attempt {_re_attempts}/2 failed: " + str(_why))
                                     else:
                                         _re_result["entry_mode"] = "REENTRY"
                                         _re_result["_strike"] = _re_strike
@@ -2945,7 +2969,7 @@ def _cmd_pulse(args):
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
             + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts (display)\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: -10 (single floor)\n"
+            + "SL: -12 (TICK, single floor)\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
             + str(_eb.get("cutoff_after", "?")) + "  "
             + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
@@ -2958,9 +2982,12 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>SL LADDER (V6 simple, Em -10)</b>\n"
             "INITIAL    (peak <8)    entry-10\n"
-            "🛡️ LOCK_2  (peak >=8)   entry+2 (covers charges)\n"
-            "🔒 LOCK_5  (peak >=15)  entry+5\n"
-            "🔒🔒🔒 LOCK_DYN(>=20)   peak-5 (chandelier)\n"
+            "🛡️ LOCK_BE (peak >=12) entry\n"
+            "🔒 LOCK_12 (peak >=24) entry+12\n"
+            "🔒 LOCK_20 (peak >=30) entry+20\n"
+            "🔒 LOCK_24 (peak >=36) entry+24\n"
+            "🔒🔒 LOCK_36 (peak >=40) entry+36\n"
+            "🔒🔒🔒 LOCK_50 (peak >=50) entry+50 (continues 12-step above)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>2-GATE ENTRY (V7 — 15-min RSI)</b>\n"
             "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
@@ -2970,7 +2997,7 @@ def _cmd_pulse(args):
             "(spot bias tracked for display only — not a gate)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
-            "1. Emergency -10 pts | 2. EOD 15:20 | 3. Vishal Trail\n"
+            "1. Emergency -12 pts (TICK) | 2. EOD 15:20 | 3. Vishal Trail (TICK)\n"
             "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
             "first 2-gate fire (CE or PE) at 15-min close after cooldown enters.\n"
         )

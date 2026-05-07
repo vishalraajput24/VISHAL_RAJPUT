@@ -43,7 +43,7 @@ entry:
     body_pct_min: 40         # display-only in V6 (gate dropped)
     warmup_until: "09:35"
     cutoff_after: "15:00"
-    cooldown_minutes: 5
+    cooldown_minutes: 0
     # Display-only — kept so dashboard / pulse can show band info.
     band_width_min: 7
     # Per-candle slope lookback (1 bar) — display-only.
@@ -96,7 +96,7 @@ entry:
 # Max single-trade loss: 10 × 2 × 65 = ₹1,300.
 exit:
   ema9_band:
-    emergency_sl_pts: -10
+    emergency_sl_pts: -12
     eod_exit_time: "15:20"
 
 # ── Strike selection ───────────────────────────────────────────
