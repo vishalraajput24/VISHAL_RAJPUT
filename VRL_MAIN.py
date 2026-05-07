@@ -116,6 +116,10 @@ DEFAULT_STATE = {
     "_reentry_direction" : "",
     "_reentry_token"     : 0,
     "_reentry_strike"    : 0,
+    # Same-candle guard: timestamp of last fired candle (str). Engine
+    # rejects re-entry when current candle == this, stops the
+    # 2026-05-07 same-candle re-fire bug.
+    "_last_fired_candle_ts": "",
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -1034,6 +1038,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     with _state_lock:
         state["in_trade"]           = True
+        # Same-candle guard: remember which closed candle this entry came
+        # from so engine rejects re-entry on the same candle for any reason
+        # (cooldown=0, fast scan loop, immediate emergency exit, etc.).
+        _fts = entry_result.get("fired_candle_ts") if entry_result else None
+        if _fts:
+            state["_last_fired_candle_ts"] = str(_fts)
         state["symbol"]             = symbol
         state["token"]              = token
         state["direction"]          = option_type

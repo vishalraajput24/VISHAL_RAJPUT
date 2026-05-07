@@ -106,6 +106,26 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
 
         last = opt_3m.iloc[-2]   # last CLOSED 15-min candle (fired)
         prev = opt_3m.iloc[-3]   # candle before fired
+
+        # ── CRITICAL: Same-candle guard ──
+        # Prevent re-firing on the same closed 15-min candle if we already
+        # fired (or attempted to fire) on it. Without this, with cooldown=0
+        # and a multi-minute scan loop, the same closed candle can trigger
+        # 5-7 entries before the next candle closes — exactly what blew up
+        # 2026-05-07 09:49-09:58 (-287 pts on 10 same-candle re-fires).
+        try:
+            fired_ts = str(last.name)
+            result["fired_candle_ts"] = fired_ts
+            last_fired_ts = state.get("_last_fired_candle_ts", "") if state else ""
+            if last_fired_ts and last_fired_ts == fired_ts:
+                result["reject_reason"] = "same_candle_already_fired"
+                if not silent:
+                    logger.info(f"[REJECT] {option_type} same_candle_guard "
+                                f"already_fired_on={fired_ts}")
+                return result
+        except Exception as _ge:
+            logger.warning("[ENGINE] same-candle guard error: " + str(_ge))
+
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))

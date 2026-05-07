@@ -43,7 +43,11 @@ entry:
     body_pct_min: 40         # display-only in V6 (gate dropped)
     warmup_until: "09:35"
     cutoff_after: "15:00"
-    cooldown_minutes: 0
+    # 2026-05-07: cooldown 0 caused 10 same-candle re-fires (-287 pts).
+    # Engine now has same-candle guard, but keep cooldown as safety belt.
+    # 5 min covers any 3-min/15-min candle flutters; engine guard handles
+    # the precise "one entry per closed candle" rule.
+    cooldown_minutes: 5
     # Display-only — kept so dashboard / pulse can show band info.
     band_width_min: 7
     # Per-candle slope lookback (1 bar) — display-only.
