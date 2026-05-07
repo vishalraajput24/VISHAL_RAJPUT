@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#0a0a0f">
-<title>VISHAL RAJPUT TRADE v16.7 (Vishal Clean)</title>
+<title>VISHAL RAJPUT TRADE v16.7 V7 (15-min RSI)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -617,18 +617,17 @@ body{
 <div class="ref"><span class="rd2" id="rd2"></span><span id="ref-text">Auto-refresh 10s</span> · <span class="mono" style="font-size:9px" id="ts">--:--:--</span></div>
 <div class="strat-strip" id="strat-strip">
   <div class="strat-row">
-    <div class="strat-cell"><span class="strat-num">1</span><span class="strat-name">3-GATE</span><span class="strat-desc">GREEN · Close&gt;EMA9L · Body≥40</span></div>
-    <div class="strat-cell"><span class="strat-num">2</span><span class="strat-name">X-LEG</span><span class="strat-desc">other side dying = PASS</span></div>
-    <div class="strat-cell"><span class="strat-num">3</span><span class="strat-name">ANTI-SPIKE</span><span class="strat-desc">close-2, 60s pullback</span></div>
-    <div class="strat-cell"><span class="strat-num">4</span><span class="strat-name">SL LADDER</span><span class="strat-desc">INITIAL→M5→3→5→8→15→DYN</span></div>
-    <div class="strat-cell"><span class="strat-num">5</span><span class="strat-name">EXIT</span><span class="strat-desc">Emerg-10 · EOD15:20 · Trail</span></div>
+    <div class="strat-cell"><span class="strat-num">1</span><span class="strat-name">2-GATE</span><span class="strat-desc">15-min Close&gt;EMA9L · RSI≥40 rising</span></div>
+    <div class="strat-cell"><span class="strat-num">2</span><span class="strat-name">FILL</span><span class="strat-desc">candle close · TICK exits</span></div>
+    <div class="strat-cell"><span class="strat-num">3</span><span class="strat-name">SL LADDER</span><span class="strat-desc">INITIAL(-12)→BE→12→20→24→36→50</span></div>
+    <div class="strat-cell"><span class="strat-num">4</span><span class="strat-name">EXIT</span><span class="strat-desc">Emerg-12 TICK · EOD15:20 · Trail TICK</span></div>
   </div>
 </div>
 <div id="pos-area"></div>
 <div class="tc show" id="p-sig"></div>
 <div class="tc" id="p-trd"></div>
 <div class="tc" id="p-fil"></div>
-<div class="ft">VISHAL RAJPUT TRADE · Powered by data, driven by discipline</div>
+<div class="ft">VISHAL RAJPUT TRADE · V7 · 15-min RSI · -12 SL · 12-step ladder</div>
 </div>
 <script>
 function stab(n){
@@ -784,49 +783,41 @@ if(pos.in_trade){
         '<span class="sub">Hold <b>'+cn+'</b> candles \u00B7 since '+esc(et)+'</span>'+
       '</div>';
 
-  // v16.7 — Filter context (X-LEG signal + Anti-Spike fill at entry)
-  var _xls=String(pos.xleg_signal||'NA').toUpperCase();
-  var _xlm=parseFloat(pos.xleg_other_margin||0);
-  var _xlOther=pos.direction==='CE'?'PE':'CE';
-  var _xlBadge='', _xlText='';
-  if(_xls==='PASS'){
-    _xlBadge='\u2713 PASS'; _xlText=_xlOther+' dying ('+(_xlm>=0?'+':'')+_xlm.toFixed(1)+' below own EMA9L)';
-  }else if(_xls==='FAIL'){
-    _xlBadge='\u2717 FAIL'; _xlText=_xlOther+' holding ('+(_xlm>=0?'+':'')+_xlm.toFixed(1)+' above own EMA9L)';
+  // V7 — RSI snapshot + band-break context for active trade
+  // V7: show RSI snapshot for the active trade's option (15-min)
+  var _rsi=parseFloat(pos.entry_rsi||pos.rsi||0);
+  var _rsi_prev=parseFloat(pos.entry_rsi_prev||pos.rsi_prev||0);
+  var _rsi_rising=(pos.rsi_rising===true);
+  var _rsiBadge='', _rsiText='';
+  if(_rsi>0){
+    _rsiBadge=(_rsi>=40?'\u2713 ':'\u2717 ')+_rsi.toFixed(1);
+    _rsiText='RSI '+_rsi_prev.toFixed(1)+' \u2192 '+_rsi.toFixed(1)+(_rsi_rising?' (rising)':' (flat/falling)');
   }else{
-    _xlBadge='\u2014 NA';   _xlText='no data';
+    _rsiBadge='\u2014';
+    _rsiText='no RSI snapshot';
   }
-  var _spkClose=parseFloat(pos.spike_close||0);
-  var _spkTarget=parseFloat(pos.spike_target||0);
-  var _spkFill=parseFloat(pos.spike_fill||0);
-  var _spkSaved=parseFloat(pos.spike_saved_pts||0);
-  var _spkText='';
-  if(_spkFill>0&&_spkClose>0){
-    _spkText='Filled \u20B9'+_spkFill.toFixed(2)+' (target \u20B9'+_spkTarget.toFixed(2)+', saved '+(_spkSaved>=0?'+':'')+_spkSaved.toFixed(1)+'pts)';
-  }else if(_spkClose>0){
-    _spkText='Immediate fill (no wait)';
-  }else{
-    _spkText='\u2014';
-  }
+  var _emEntry=parseFloat(pos.entry_ema9_low||0);
+  var _emText=_emEntry>0?('entry > EMA9_low ('+_emEntry.toFixed(1)+')'):'\u2014';
 
   pa+='<div class="pos2-filters">'+
-        '<div class="pos2-filter-row"><span class="lab">X-Leg</span>'+
-          '<span class="val '+(_xls==='PASS'?'ok':(_xls==='FAIL'?'no':'muted'))+'">'+_xlBadge+'</span>'+
-          '<span class="ctx">'+esc(_xlText)+'</span></div>'+
-        '<div class="pos2-filter-row"><span class="lab">Anti-Spike</span>'+
-          '<span class="val '+(_spkSaved>0?'ok':'muted')+'">'+(_spkSaved>0?('\u2713 +'+_spkSaved.toFixed(1)+'pts'):'\u2014')+'</span>'+
-          '<span class="ctx">'+esc(_spkText)+'</span></div>'+
+        '<div class="pos2-filter-row"><span class="lab">RSI@entry</span>'+
+          '<span class="val '+(_rsi>=40&&_rsi_rising?'ok':(_rsi>0?'no':'muted'))+'">'+_rsiBadge+'</span>'+
+          '<span class="ctx">'+esc(_rsiText)+'</span></div>'+
+        '<div class="pos2-filter-row"><span class="lab">Band Break</span>'+
+          '<span class="val '+(_emEntry>0?'ok':'muted')+'">'+(_emEntry>0?'\u2713':'\u2014')+'</span>'+
+          '<span class="ctx">'+esc(_emText)+'</span></div>'+
       '</div>';
 
   // Vishal Clean v16.7 — peak-driven SL ladder
   var tiers=[
-    {k:'INITIAL',  icon:'',                                       range:'<5',    sl:'entry-10',       min:0,  max:5},
-    {k:'LOCK_M5',  icon:'⚠️',                            range:'>=5',   sl:'entry-5',        min:5,  max:8},
-    {k:'LOCK_3',   icon:'\uD83D\uDEE1\uFE0F',                    range:'>=8',   sl:'entry+3',        min:8,  max:12},
-    {k:'LOCK_5',   icon:'\uD83D\uDD12',                          range:'>=12',  sl:'entry+5',        min:12, max:15},
-    {k:'LOCK_8',   icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=15',  sl:'entry+8',        min:15, max:20},  
-    {k:'LOCK_15',  icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=20',  sl:'entry+15',       min:20, max:21},  
-    {k:'LOCK_DYN', icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'>=21',  sl:'entry+(peak-5)', min:21, max:9999},
+    {k:'INITIAL',  icon:'',                                       range:'<12',   sl:'entry-12',       min:0,  max:12},
+    {k:'LOCK_BE',  icon:'\uD83D\uDEE1\uFE0F',                    range:'>=12',  sl:'entry',          min:12, max:24},
+    {k:'LOCK_12',  icon:'\uD83D\uDD12',                          range:'>=24',  sl:'entry+12',       min:24, max:30},
+    {k:'LOCK_20',  icon:'\uD83D\uDD12',                          range:'>=30',  sl:'entry+20',       min:30, max:36},
+    {k:'LOCK_24',  icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=36',  sl:'entry+24',       min:36, max:40},
+    {k:'LOCK_36',  icon:'\uD83D\uDD12\uD83D\uDD12',              range:'>=40',  sl:'entry+36',       min:40, max:50},
+    {k:'LOCK_50',  icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'>=50',  sl:'entry+50',       min:50, max:60},
+    {k:'LOCK_DYN', icon:'\uD83D\uDD12\uD83D\uDD12\uD83D\uDD12', range:'>=60',  sl:'12-step continues', min:60, max:9999},
   ];
   var curTier=String(pos.active_ratchet_tier||pos.trail_tier||'').toUpperCase();
   // Fallback: derive from peak if engine hasn't populated yet
@@ -912,16 +903,16 @@ sh+='<div class="sig-grid">';
   var bw=parseFloat(s.band_width||(eh-el));
   var gap=cl-el;
   var sl=parseFloat(s.ema9_low_slope||0);
-  var bd=parseFloat(s.body_pct||0);
-  var pos=String(s.band_position||'').toUpperCase();
-  var rj=s.reject_reason||'';
+    var rj=s.reject_reason||'';
+  var rsi=parseFloat(s.rsi||0);
+  var rsi_prev=parseFloat(s.rsi_prev||0);
+  var rsi_rising=(s.rsi_rising===true);
 
-  // Vishal Clean v16.7 — 3-gate entry evaluation
+  // V7 — 2 gates
   var g_time=!rj||(rj.indexOf('before_')!==0&&rj.indexOf('after_')!==0);
-  var g_green=_green;
   var g_break=cl>el;
-  var g_body=bd>=40;
-  var g_slopeFlat=sl>=0&&sl<=3;  // FLAT_2X exit zone (display)
+  var g_rsi_min=rsi>=40;
+  var g_rsi_rise=rsi_rising;
 
   // Verdict
   var vd_html='';
@@ -929,68 +920,40 @@ sh+='<div class="sig-grid">';
     vd_html='<div class="sig-vd fire">READY TO FIRE \uD83D\uDD25</div>';
   }else if(rj){
     vd_html='<div class="sig-vd reject">'+esc(friendly(rj))+'</div>';
-  }else if(cd&&cd.remaining>0&&cd.direction===t){
-    vd_html='<div class="sig-vd cool">COOLDOWN '+Math.ceil(cd.remaining)+'m</div>';
-  }else if(g_time&&g_green&&g_break&&g_body){
+  }else if(g_time && g_break && g_rsi_min && g_rsi_rise){
     vd_html='<div class="sig-vd ready">READY</div>';
   }else{
-    vd_html='<div class="sig-vd wait">WAITING</div>';
+    vd_html='<div class="sig-vd wait">WAITING (15m close)</div>';
   }
 
   sh+='<div class="sig-card '+(fired?'fired':'')+'">';
   sh+='<div class="sig-hdr"><span class="sig-strk">'+t+' '+esc(sk)+'</span><span class="sig-ltp">\u20B9'+ltp.toFixed(1)+'</span></div>';
 
-  // EMA9 band block
+  // 15-min EMA9 band
   sh+='<div class="sig-blk">';
-  sh+='<div class="sig-blk-t">EMA9 Band ('+bw.toFixed(1)+'pts)</div>';
+  sh+='<div class="sig-blk-t">15-min EMA9 Band ('+bw.toFixed(1)+'pts)</div>';
   sh+='<div class="sig-row high"><span class="lab"><span class="ico">\u25B2</span>High</span><span class="val">\u20B9'+eh.toFixed(1)+'</span></div>';
   var gapCls=gap>=0?'up':'dn';
   sh+='<div class="sig-row cls"><span class="lab"><span class="ico">\u25CF</span>Close</span><span class="val">\u20B9'+cl.toFixed(1)+'<span class="sig-gap '+gapCls+'">('+(gap>=0?'+':'')+gap.toFixed(1)+')</span></span></div>';
   sh+='<div class="sig-row low"><span class="lab"><span class="ico">\u25BC</span>Low</span><span class="val">\u20B9'+el.toFixed(1)+'</span></div>';
   sh+='</div>';
 
-  // Vishal Clean — 3 entry gates
+  // V7 — 2 entry gates
   sh+='<div class="sig-blk">';
-  sh+='<div class="sig-blk-t">3-GATE ENTRY</div>';
-  // Gate 1: Time
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\u23F0</span>Time</span><span class="val '+(g_time?'ok':'no')+'">'+(g_time?'\u2713':'\u2717')+'</span></div>';
-  // Gate 2: GREEN candle
-  var grLab=_green?'\u2713 GREEN':'\u2717 RED';
-  var grCls=_green?'ok':'no';
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDFE2</span>Green</span><span class="val '+grCls+'">'+grLab+'</span></div>';
-  // Gate 3: Close > EMA9_low
+  sh+='<div class="sig-blk-t">2-GATE ENTRY (V7 \u2014 15-min RSI)</div>';
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\u23F0</span>Time window</span><span class="val '+(g_time?'ok':'no')+'">'+(g_time?'\u2713':'\u2717')+'</span></div>';
   var brCls=g_break?'ok':'no';
-  var brLab=g_break?('\u2713 +'+(cl-el).toFixed(1)):'\u2717 below';
+  var brLab=g_break?('\u2713 close > ema9l (+'+(cl-el).toFixed(1)+')'):'\u2717 close <= ema9l';
   sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83C\uDFAF</span>Close&gt;EMA9L</span><span class="val '+brCls+'">'+brLab+'</span></div>';
-  // Gate 4: Body >= 40
-  var bdLab,bdCls;
-  if(bd<=0){bdLab='\u2014 n/a';bdCls='muted'}
-  else if(g_body){bdLab='\u2713 '+bd.toFixed(0)+'%';bdCls='ok'}
-  else{bdLab='\u2717 '+bd.toFixed(0)+'% (<40)';bdCls='no'}
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>Body</span><span class="val '+bdCls+'">'+bdLab+'</span></div>';
-  // Slope (display-only insight — never gates entries or exits in v16.7-final)
-  var slLab,slCls;
-  if(sl>3){slLab='\u2713 rising +'+sl.toFixed(1);slCls='ok'}
-  else if(sl>=0){slLab='\u2192 flat +'+sl.toFixed(1);slCls='muted'}
-  else{slLab='\u2193 falling '+sl.toFixed(1);slCls='muted'}
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>Slope</span><span class="val '+slCls+'">'+slLab+'</span></div>';
-
-  // X-LEG signal (HARD gate — blocks FAIL entries)
-  var _xls_s=String(s.xleg_signal||'').toUpperCase();
-  var _xlm_s=parseFloat(s.xleg_other_margin||0);
-  var _xlOther_s=t==='CE'?'PE':'CE';
-  var xlLab,xlCls;
-  if(_xls_s==='PASS'){
-    xlLab='\u2713 '+_xlOther_s+' dying ('+(_xlm_s>=0?'+':'')+_xlm_s.toFixed(1)+')';
-    xlCls='ok';
-  }else if(_xls_s==='FAIL'){
-    xlLab='\u2717 '+_xlOther_s+' holding (+'+_xlm_s.toFixed(1)+') BLOCK';
-    xlCls='no';
-  }else{
-    xlLab='\u2014 computed at entry';
-    xlCls='muted';
-  }
-  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDD17</span>X-Leg</span><span class="val '+xlCls+'">'+xlLab+'</span></div>';
+  var rsiMinCls=g_rsi_min?'ok':'no';
+  var rsiMinLab=rsi>0?(g_rsi_min?('\u2713 RSI '+rsi.toFixed(1)+' \u2265 40'):('\u2717 RSI '+rsi.toFixed(1)+' < 40')):'\u2014 n/a';
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCCA</span>RSI \u2265 40</span><span class="val '+rsiMinCls+'">'+rsiMinLab+'</span></div>';
+  var riseCls=g_rsi_rise?'ok':'no';
+  var riseLab;
+  if(rsi<=0){riseLab='\u2014 n/a';riseCls='muted'}
+  else if(g_rsi_rise){riseLab='\u2713 rising '+rsi_prev.toFixed(1)+' \u2192 '+rsi.toFixed(1)}
+  else{riseLab='\u2717 not rising '+rsi_prev.toFixed(1)+' \u2192 '+rsi.toFixed(1)}
+  sh+='<div class="sig-g4-row"><span class="lab"><span class="ico">\uD83D\uDCC8</span>RSI rising</span><span class="val '+riseCls+'">'+riseLab+'</span></div>';
   sh+='</div>';
 
   sh+=vd_html;
@@ -1039,14 +1002,10 @@ if(trades&&trades.length){
     var xt=t.exit_time||'';
     var pk=parseFloat(t.peak_pnl||0);
     var ch=t.candles_held||0;
-    // v16.7 — surface x-leg signal + anti-spike fill in trade meta
-    var _trXl=String(t.xleg_signal||'').toUpperCase();
-    var _trXlBadge=_trXl==='PASS'?' \u00B7 X-Leg \u2713':(_trXl==='FAIL'?' \u00B7 X-Leg \u2717':'');
-    var _trSpkClose=parseFloat(t.spike_close||0);
-    var _trSpkFill=parseFloat(t.spike_fill||0);
-    var _trSpkSaved=(_trSpkClose>0&&_trSpkFill>0)?(_trSpkClose-_trSpkFill):0;
-    var _trSpkBadge=_trSpkSaved>0.05?(' \u00B7 Spk +'+_trSpkSaved.toFixed(1)):'';
-    var meta=esc(et)+' \u2192 '+esc(xt)+' \u00B7 '+ch+'c \u00B7 Peak +'+pk.toFixed(1)+_trXlBadge+_trSpkBadge;
+    // V7 — surface RSI@entry in trade meta
+    var _trRsi=parseFloat(t.entry_rsi||0);
+    var _trRsiBadge=_trRsi>0?(' \u00B7 RSI '+_trRsi.toFixed(1)):'';
+    var meta=esc(et)+' \u2192 '+esc(xt)+' \u00B7 '+ch+'c \u00B7 Peak +'+pk.toFixed(1)+_trRsiBadge;
 
     var reason=String(t.exit_reason||'').toUpperCase();
     var reasonCls='';
@@ -1071,7 +1030,7 @@ if(trades&&trades.length){
   th+='<div class="tr-empty">'+
         '<div class="emj">\u270B</div>'+
         '<div class="ttl">No trades today yet</div>'+
-        '<div class="sub">Watching for 3-gate entry signals\u2026</div>'+
+        '<div class="sub">Watching for 2-gate (V7) entry signals\u2026</div>'+
       '</div>';
 }
 document.getElementById('p-trd').innerHTML=th;
