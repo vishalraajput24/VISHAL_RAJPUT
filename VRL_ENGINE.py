@@ -249,6 +249,198 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
         silent=silent, spot_3m=spot_3m)
 
 
+def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
+                   silent: bool = False, state: dict = None,
+                   other_token: int = 0) -> dict:
+    """V8 — 3-min fresh-break entry (parallel strategy).
+
+    Gates:
+      1. GREEN candle (option close > open)
+      2. FRESH BREAK (≥ 2 of last 3 prior closes ≤ ema9_low)
+      3. (optional re-entry path) cross-leg confirmation handled in
+         MAIN's re-entry watcher, not here.
+    Same-candle guard prevents same-candle re-fires (state-driven).
+    """
+    if state is None:
+        state = {}
+    result = {
+        "fired": False, "strategy": "V8", "entry_price": 0, "entry_mode": "",
+        "ema9_high": 0, "ema9_low": 0, "close": 0, "open": 0,
+        "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
+        "band_width": 0, "reject_reason": "", "fired_candle_ts": "",
+        "fresh_break_count": 0,
+        # cross-leg attached when re-entry watcher fires
+        "xleg_other_close": 0.0, "xleg_other_ema9l": 0.0, "xleg_other_dying": False,
+    }
+    try:
+        opt_3m = D.add_indicators(D.get_historical_data(token, "3minute", 20))
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < 5:
+            result["reject_reason"] = "insufficient_3m_data"
+            return result
+
+        last = opt_3m.iloc[-2]
+        # ── Same-candle guard ──
+        fired_ts = str(last.name)
+        result["fired_candle_ts"] = fired_ts
+        if state.get("_last_fired_candle_ts", "") == fired_ts:
+            result["reject_reason"] = "same_candle_already_fired"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} same_candle_guard ts={fired_ts}")
+            return result
+
+        close = float(last["close"]); open_ = float(last["open"])
+        high = float(last["high"]); low = float(last["low"])
+        ema9_high = float(last.get("ema9_high", 0))
+        ema9_low  = float(last.get("ema9_low", 0))
+        _candle_range = high - low
+        _body_pct = round((abs(close - open_) / _candle_range * 100)
+                          if _candle_range > 0 else 0, 1)
+        _is_green = (close > open_)
+        result.update({
+            "entry_price": round(close, 2),
+            "ema9_high": round(ema9_high, 2),
+            "ema9_low": round(ema9_low, 2),
+            "close": round(close, 2), "open": round(open_, 2),
+            "high": round(high, 2), "low": round(low, 2),
+            "band_width": round(ema9_high - ema9_low, 2),
+            "candle_green": _is_green, "body_pct": _body_pct,
+        })
+
+        # ── Time window (rail, same as V7) ──
+        now = datetime.now()
+        warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
+        cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:00")
+        if D.is_market_open():
+            mins = now.hour * 60 + now.minute
+            wm = int(warmup_until.split(":")[0])*60 + int(warmup_until.split(":")[1])
+            cm = int(cutoff_after.split(":")[0])*60 + int(cutoff_after.split(":")[1])
+            if mins < wm:
+                result["reject_reason"] = "before_" + warmup_until
+                return result
+            if mins >= cm:
+                result["reject_reason"] = "after_" + cutoff_after
+                return result
+
+        # ── GATE 1: GREEN candle ──
+        if not _is_green:
+            result["reject_reason"] = "red_candle"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate1_red_candle "
+                            f"close={round(close,1)} open={round(open_,1)}")
+            return result
+
+        # ── GATE 2: FRESH BREAK ──
+        if close <= ema9_low:
+            result["reject_reason"] = "close_below_ema9_low"
+            return result
+        pre3 = opt_3m.iloc[-5:-2]
+        if len(pre3) < 3:
+            result["reject_reason"] = "insufficient_history"
+            return result
+        below = int((pre3["close"] <= pre3["ema9_low"]).sum())
+        result["fresh_break_count"] = below
+        if below < 2:
+            result["reject_reason"] = f"not_fresh_{below}of3_below"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2_not_fresh "
+                            f"only {below}/3 priors below band")
+            return result
+
+        # ── Cross-leg snapshot (informational) ──
+        if other_token:
+            try:
+                opt3m_other = D.add_indicators(
+                    D.get_historical_data(other_token, "3minute", 10))
+                if opt3m_other is not None and len(opt3m_other) >= 2:
+                    o_last = opt3m_other.iloc[-2]
+                    o_close = float(o_last["close"])
+                    o_ema9l = float(o_last.get("ema9_low", 0))
+                    result["xleg_other_close"] = round(o_close, 2)
+                    result["xleg_other_ema9l"] = round(o_ema9l, 2)
+                    result["xleg_other_dying"] = (o_ema9l > 0 and o_close < o_ema9l)
+            except Exception:
+                pass
+
+        result["fired"] = True
+        result["entry_mode"] = "CLOSE_FILL"
+        if not silent:
+            logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
+                        f"ema9l={round(ema9_low,1)} fresh={below}/3 "
+                        f"(2-gate V8, 3-min)")
+        return result
+
+    except Exception as e:
+        logger.error("[ENGINE-V8] Entry error: " + str(e))
+        result["fired"] = False
+        result["reject_reason"] = "error_" + str(e)[:50]
+        return result
+
+
+def check_v8_continuation_reentry(token: int, option_type: str,
+                                   other_token: int, state: dict = None) -> dict:
+    """V8 cross-leg continuation re-entry path.
+    Called only when V8 just exited and re-entry watcher is armed.
+
+    Conditions:
+      - Same-side option: GREEN + close > ema9_low
+      - Other-side option: RED + close < ema9_low (cross-leg dying)
+
+    Returns dict with fired=True if all conditions met, else with reject_reason.
+    """
+    if state is None: state = {}
+    result = {
+        "fired": False, "strategy": "V8", "entry_mode": "REENTRY_XLEG",
+        "reject_reason": "", "entry_price": 0,
+        "fired_candle_ts": "", "ema9_low": 0, "close": 0, "open": 0,
+    }
+    try:
+        opt_3m = D.add_indicators(D.get_historical_data(token, "3minute", 10))
+        if opt_3m is None or opt_3m.empty or len(opt_3m) < 2:
+            result["reject_reason"] = "insufficient_3m_data"; return result
+        last = opt_3m.iloc[-2]
+        fired_ts = str(last.name)
+        result["fired_candle_ts"] = fired_ts
+        # Same-candle guard
+        if state.get("_last_fired_candle_ts", "") == fired_ts:
+            result["reject_reason"] = "same_candle_already_fired"; return result
+
+        close = float(last["close"]); open_ = float(last["open"])
+        ema9_low = float(last.get("ema9_low", 0))
+        result["entry_price"] = round(close, 2)
+        result["close"] = round(close, 2); result["open"] = round(open_, 2)
+        result["ema9_low"] = round(ema9_low, 2)
+
+        if close <= open_:
+            result["reject_reason"] = "self_red_candle"; return result
+        if close <= ema9_low:
+            result["reject_reason"] = "self_close_below_ema9l"; return result
+
+        # Cross-leg confirm: other side RED + close < ema9_low
+        opt3_other = D.add_indicators(D.get_historical_data(other_token, "3minute", 10))
+        if opt3_other is None or opt3_other.empty or len(opt3_other) < 2:
+            result["reject_reason"] = "xleg_no_data"; return result
+        o_last = opt3_other.iloc[-2]
+        o_open = float(o_last["open"]); o_close = float(o_last["close"])
+        o_ema9l = float(o_last.get("ema9_low", 0))
+        result["xleg_other_close"] = round(o_close, 2)
+        result["xleg_other_ema9l"] = round(o_ema9l, 2)
+        if o_close >= o_open:
+            result["reject_reason"] = "xleg_not_red"; return result
+        if o_ema9l > 0 and o_close >= o_ema9l:
+            result["reject_reason"] = "xleg_not_below_band"; return result
+        result["xleg_other_dying"] = True
+
+        result["fired"] = True
+        logger.info(f"[ENGINE-V8] {option_type} REENTRY-XLEG FIRED "
+                    f"self_close={round(close,1)} other_close={round(o_close,1)} "
+                    f"other_ema9l={round(o_ema9l,1)} (cross-leg confirmed)")
+        return result
+    except Exception as e:
+        logger.error("[ENGINE-V8] Re-entry error: " + str(e))
+        result["reject_reason"] = "error_" + str(e)[:50]
+        return result
+
+
 def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
     out = {
         "xleg_signal":       "NA",

@@ -158,6 +158,20 @@ state   = deepcopy(DEFAULT_STATE)
 _running = True
 
 # ═══════════════════════════════════════════════════════════════
+#  V8 SHADOW STATE (parallel 3-min strategy, evaluation only)
+# ═══════════════════════════════════════════════════════════════
+# Phase 1 (today): V8 fires Telegram alerts but does NOT execute trades.
+# This lets us watch V8 signal quality without risking V7 stability.
+# Phase 2 (after market close): flip V8_SHADOW_MODE = False to enable
+# real V8 trades alongside V7.
+V8_SHADOW_MODE = True
+_v8_state = {
+    "_last_fired_candle_ts": "",     # same-candle guard
+    "_signals_today": 0,             # count for /pulse
+    "_last_signal_time": "",
+}
+
+# ═══════════════════════════════════════════════════════════════
 #  STRIKE LOCKING — stable scanning, no flickering
 # ═══════════════════════════════════════════════════════════════
 
@@ -379,6 +393,10 @@ def _reconcile_positions(kite):
 
 
 def _reset_daily(today_str: str):
+    # V8 shadow daily counters
+    _v8_state["_signals_today"]    = 0
+    _v8_state["_last_signal_time"] = ""
+    _v8_state["_last_fired_candle_ts"] = ""
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
@@ -2660,6 +2678,59 @@ def _strategy_loop(kite):
                     elif _k.startswith("PE_ATM"):
                         all_results["PE"] = _v
 
+                # ═══════════════════════════════════════════════════════
+                #  V8 SHADOW EVALUATION — 3-min parallel strategy
+                # ═══════════════════════════════════════════════════════
+                # Runs INDEPENDENTLY of V7. Same ATM strikes (locked).
+                # In SHADOW mode (V8_SHADOW_MODE=True), only sends
+                # Telegram alerts; does not execute trades. This gives
+                # us a real signal stream to evaluate V8 quality before
+                # going live.
+                try:
+                    from VRL_ENGINE import check_entry_v8
+                    _v8_ce_info = (_locked_tokens or {}).get("CE", {})
+                    _v8_pe_info = (_locked_tokens or {}).get("PE", {})
+                    _v8_ce_tok = int(_v8_ce_info.get("token", 0) or 0)
+                    _v8_pe_tok = int(_v8_pe_info.get("token", 0) or 0)
+                    for _v8_dir, _v8_token, _v8_other in [
+                        ("CE", _v8_ce_tok, _v8_pe_tok),
+                        ("PE", _v8_pe_tok, _v8_ce_tok),
+                    ]:
+                        if not _v8_token:
+                            continue
+                        _v8_res = check_entry_v8(
+                            token=_v8_token, option_type=_v8_dir,
+                            spot_ltp=spot_ltp, silent=False,
+                            state=_v8_state, other_token=_v8_other)
+                        if _v8_res.get("fired"):
+                            # Stamp same-candle guard so we don't spam
+                            _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
+                            _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
+                            _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
+                            _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
+                            _xleg = ""
+                            if _v8_res.get("xleg_other_dying"):
+                                _xleg = (
+                                    f"X-Leg ✓ {('PE' if _v8_dir=='CE' else 'CE')} dying "
+                                    f"({_v8_res.get('xleg_other_close',0):.1f} < ema9l "
+                                    f"{_v8_res.get('xleg_other_ema9l',0):.1f})\n"
+                                )
+                            _shadow_tag = "👻 <b>V8 SHADOW SIGNAL</b>" if V8_SHADOW_MODE else "⚡ <b>V8 SIGNAL</b>"
+                            _tg_send(
+                                _shadow_tag + "\n"
+                                + _v8_dir + " " + str(_v8_strike)
+                                + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
+                                + "Close " + "{:.1f}".format(_v8_res["close"])
+                                + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
+                                + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
+                                + "Fresh " + str(_v8_res.get("fresh_break_count", 0)) + "/3 priors below band\n"
+                                + _xleg
+                                + ("<i>SHADOW MODE — no actual trade</i>" if V8_SHADOW_MODE
+                                   else "Entering...")
+                            )
+                except Exception as _v8e:
+                    logger.warning("[V8-SHADOW] eval error: " + str(_v8e))
+
                 try:
                     vix_ltp = D.get_vix()
                 except Exception:
@@ -2956,9 +3027,11 @@ def _cmd_pulse(args):
             + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>TODAY</b>\n"
-            + str(len(_trades_today)) + " trades · "
+            + "🕐 V7: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
+            + "👻 V8 (shadow): " + str(_v8_state.get("_signals_today", 0))
+            + " signals (last " + str(_v8_state.get("_last_signal_time", "—")) + ")\n"
             + ("Last: " + str(_last_t.get("entry_time", "?")) + " "
                + str(_last_t.get("direction", "?")) + " "
                + str(_last_t.get("strike", "?")) + " "
