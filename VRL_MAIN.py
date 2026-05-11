@@ -754,6 +754,17 @@ TRADE_FIELDNAMES = [
     "spike_close", "spike_target", "spike_fill", "spike_wait_used",
 ]
 
+def _trade_csv_reader(f):
+    """Return a DictReader that works whether or not the trade log has a header row.
+    Peeks at the first 4 bytes: if it starts with 'date' the file has a header,
+    otherwise inject TRADE_FIELDNAMES so no data row is silently consumed."""
+    first = f.read(4)
+    f.seek(0)
+    if first.startswith("date"):
+        return csv.DictReader(f)
+    return csv.DictReader(f, fieldnames=TRADE_FIELDNAMES)
+
+
 def _cleanup_trade_log():
     """One-time cleanup: remove corrupted rows where date doesn't match YYYY-MM-DD."""
     path = D.TRADE_LOG_PATH
@@ -763,9 +774,7 @@ def _cleanup_trade_log():
         import re
         date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
         with open(path, "r") as f:
-            reader = csv.DictReader(f)
-            if not reader.fieldnames:
-                return
+            reader = _trade_csv_reader(f)
             good_rows = [r for r in reader if date_re.match(r.get("date", ""))]
         # Rewrite with correct header + good rows only
         with open(path, "w", newline="") as f:
@@ -879,19 +888,22 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     except Exception:
         pass
 
-    # One-shot header migration: if the existing CSV header is missing
-    # any TRADE_FIELDNAMES column, rewrite the file with the new header
+    # One-shot header migration: add missing columns or prepend header when absent
     if not is_new:
         try:
             with open(D.TRADE_LOG_PATH, "r", newline="") as _f_chk:
                 _r_chk = csv.reader(_f_chk)
                 _hdr = next(_r_chk, None) or []
-                _missing = [c for c in TRADE_FIELDNAMES if c not in _hdr]
-            if _missing:
-                logger.info("[MAIN] Trade-log header upgrade: adding "
-                            + ", ".join(_missing))
+            _has_header = "date" in _hdr
+            _missing = [c for c in TRADE_FIELDNAMES if c not in _hdr] if _has_header else list(TRADE_FIELDNAMES)
+            if _missing or not _has_header:
+                logger.info("[MAIN] Trade-log header upgrade: has_header="
+                            + str(_has_header) + " missing=" + str(_missing))
                 with open(D.TRADE_LOG_PATH, "r", newline="") as _f_rd:
-                    _old_rows = list(csv.DictReader(_f_rd))
+                    if _has_header:
+                        _old_rows = list(csv.DictReader(_f_rd))
+                    else:
+                        _old_rows = list(csv.DictReader(_f_rd, fieldnames=TRADE_FIELDNAMES))
                 with open(D.TRADE_LOG_PATH, "w", newline="") as _f_wr:
                     _w = csv.DictWriter(_f_wr, fieldnames=TRADE_FIELDNAMES,
                                         extrasaction="ignore")
@@ -929,7 +941,7 @@ def _read_today_trades() -> list:
         return trades
     try:
         with open(D.TRADE_LOG_PATH, "r") as f:
-            for row in csv.DictReader(f):
+            for row in _trade_csv_reader(f):
                 if row.get("date", "") == today_str:
                     trades.append(row)
     except Exception as e:
@@ -3659,8 +3671,7 @@ def _cmd_xleg(args):
         cutoff = (_date.today() - _td(days=7)).isoformat()
         rows = []
         with open(path, "r") as f:
-            rdr = _csv.DictReader(f)
-            for r in rdr:
+            for r in _trade_csv_reader(f):
                 if (r.get("date") or "") >= cutoff:
                     rows.append(r)
         if not rows:
@@ -4188,7 +4199,7 @@ def main():
                 continue
             try:
                 with open(log_path) as f:
-                    raw_rows = list(_csv.DictReader(f))
+                    raw_rows = list(_trade_csv_reader(f))
 
                 found = []
                 for r in raw_rows:
@@ -4237,7 +4248,7 @@ def main():
         _csv_trades = []
         if os.path.isfile(_csv_path):
             with open(_csv_path) as _sf:
-                for _row in _sync_csv.DictReader(_sf):
+                for _row in _trade_csv_reader(_sf):
                     _d = _row.get("date", "").strip()
                     if _d == _today_iso:
                         _csv_trades.append(_row)
