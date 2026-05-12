@@ -330,18 +330,12 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 1: GREEN candle with minimum body ≥ 20% ──
+        # ── GATE 1: GREEN candle ──
         if not _is_green:
             result["reject_reason"] = "red_candle"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate1_red_candle "
                             f"close={round(close,1)} open={round(open_,1)}")
-            return result
-        if _body_pct < 20:
-            result["reject_reason"] = f"body_too_small_{_body_pct}pct"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate1b_body_small "
-                            f"body={_body_pct}%")
             return result
 
         # ── GATE 2: close must be above EMA9 band ──
@@ -350,7 +344,6 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             return result
 
         # ── GATE 2B: option EMA9_low must be rising (slope >= 0) ──
-        # Both CE and PE: if the option itself is losing value (EMA9 falling), skip
         _prev_ema9_low = float(opt_3m.iloc[-3].get("ema9_low", 0) or 0)
         _slope = round(ema9_low - _prev_ema9_low, 2)
         result["ema9_low_slope"] = _slope
@@ -361,19 +354,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"slope={_slope} (option ema9l falling)")
             return result
 
-        # ── GATE 2C: 2-candle slope confirmation ──
-        # Previous candle's slope must also be >= 0 — filters single-candle bounces
-        if len(opt_3m) >= 4:
-            _prev2_ema9_low = float(opt_3m.iloc[-4].get("ema9_low", 0) or 0)
-            _slope_prev = round(_prev_ema9_low - _prev2_ema9_low, 2)
-            if _slope_prev < 0:
-                result["reject_reason"] = f"slope2c_not_confirmed_{_slope_prev}"
-                if not silent:
-                    logger.info(f"[REJECT-V8] {option_type} gate2c_slope_not_confirmed "
-                                f"prev_slope={_slope_prev}")
-                return result
-
-        # ── Fetch opposite leg data (used for Gate 2D + cross-leg snapshot) ──
+        # ── Fetch opposite leg data (cross-leg snapshot) ──
         _opt3m_other = None
         if other_token:
             try:
@@ -382,26 +363,9 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             except Exception:
                 pass
 
-        # ── GATE 2D: opposite leg not trending against entry direction ──
-        # If the opposite option has RSI > 55, it's trending strongly against us —
-        # current entry is likely just a retracement, not a real setup
-        if _opt3m_other is not None and len(_opt3m_other) >= 2:
-            _other_rsi = float(_opt3m_other.iloc[-2].get("RSI", 0) or 0)
-            result["other_rsi"] = round(_other_rsi, 1)
-            if _other_rsi > 55:
-                result["reject_reason"] = f"other_rsi_trending_{round(_other_rsi, 1)}"
-                if not silent:
-                    logger.info(f"[REJECT-V8] {option_type} gate2d_other_trending "
-                                f"other_rsi={round(_other_rsi, 1)}")
-                return result
-
-        # ── GATE 3: RSI momentum (3-min) ──
-        # 3A: RSI >= 38 (minimum momentum floor, allows early recovery)
-        # 3B: RSI not breaking down — drop vs prior candle must be < 2 pts
-        #     (filters genuine fading; ignores 3-min tick noise of 0-1.9 pts)
+        # ── GATE 3A: RSI >= 38 (minimum momentum floor) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
         _rsi_prev = float(opt_3m.iloc[-3].get("RSI", 0) or 0)
-        _rsi_drop = round(_rsi_prev - _rsi_now, 2)
         result["rsi"] = round(_rsi_now, 1)
         result["rsi_prev"] = round(_rsi_prev, 1)
         if _rsi_now < 38:
@@ -409,13 +373,6 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3a_rsi_below_38 "
                             f"rsi={round(_rsi_now,1)}")
-            return result
-        if _rsi_drop >= 2:
-            result["reject_reason"] = f"rsi_breaking_down_{round(_rsi_now,1)}_drop_{round(_rsi_drop,1)}"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate3b_rsi_breakdown "
-                            f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)} "
-                            f"drop={round(_rsi_drop,1)}")
             return result
 
         # ── Cross-leg snapshot (informational) ──
