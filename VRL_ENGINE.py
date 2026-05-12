@@ -349,6 +349,24 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             result["reject_reason"] = "close_below_ema9_low"
             return result
 
+        # ── GATE 2B: EMA9 slope must align with direction ──
+        # CE needs band rising (slope >= 0), PE needs band falling (slope <= 0)
+        _prev_ema9_low = float(opt_3m.iloc[-3].get("ema9_low", 0) or 0)
+        _slope = round(ema9_low - _prev_ema9_low, 2)
+        result["ema9_low_slope"] = _slope
+        if option_type == "CE" and _slope < 0:
+            result["reject_reason"] = f"slope_bearish_{_slope}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2b_slope_bearish "
+                            f"slope={_slope} (ema9l falling)")
+            return result
+        if option_type == "PE" and _slope > 0:
+            result["reject_reason"] = f"slope_bullish_{_slope}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2b_slope_bullish "
+                            f"slope={_slope} (ema9l rising)")
+            return result
+
         # ── GATE 3: RSI momentum (3-min) ──
         # 3A: RSI >= 38 (minimum momentum floor, allows early recovery)
         # 3B: RSI not breaking down — drop vs prior candle must be < 2 pts
