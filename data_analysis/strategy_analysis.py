@@ -396,7 +396,7 @@ def md_table(headers, rows):
     return "\n".join(lines)
 
 
-def generate_report(trades, extra_date=None):
+def generate_report(trades, extra_date=None, from_date=None):
     v7_trades, v8_trades = split_v7_v8(trades)
     v7m = compute_metrics(v7_trades, "V7 (15-min)")
     v8m = compute_metrics(v8_trades, "V8 (3-min)")
@@ -408,14 +408,17 @@ def generate_report(trades, extra_date=None):
     hourly_analysis = hourly_gate_analysis(v7_trades)
     xleg_analysis = xleg_gate_analysis(v7_trades)
 
-    run_date = date.today().strftime("%Y-%m-%d")
+    run_date   = date.today().strftime("%Y-%m-%d")
+    dates_seen = sorted({t.get("date", "") for t in trades if t.get("date")})
+    data_range = f"{dates_seen[0]} → {dates_seen[-1]}" if dates_seen else "unknown"
+    era_note   = f"Filtered from {from_date}" if from_date else "All history"
     lines = []
 
     # ── Header ──
     lines += [
         f"# VRL v16.7 — Strategy Analysis Report",
         f"",
-        f"> Generated: {run_date} | Data: May 1–11 2026 (+ today if pushed)",
+        f"> Generated: {run_date} | {era_note} | Range: {data_range}",
         f"> V7 = 15-min candle strategy | V8 = 3-min candle strategy",
         f"",
         f"---",
@@ -743,12 +746,22 @@ def generate_report(trades, extra_date=None):
 # ─────────────────────────────────────────────────────────────
 def main():
     extra_date = None
-    if len(sys.argv) > 1:
-        extra_date = sys.argv[1].replace("-", "")  # accept 20260512 or 2026-05-12
+    from_date  = "2026-05-01"   # default: only current V7 era
+    for arg in sys.argv[1:]:
+        a = arg.replace("-", "")
+        if arg.startswith("--from="):
+            from_date = arg.split("=", 1)[1]
+        elif len(a) == 8 and a.isdigit():
+            extra_date = a
 
     print("[VRL Analysis] Loading trades...")
     trades = load_all_trades(extra_date)
-    print(f"[VRL Analysis] Loaded {len(trades)} total trades")
+    print(f"[VRL Analysis] Loaded {len(trades)} total trades (all history)")
+
+    # Filter to current strategy era only
+    if from_date:
+        trades = [t for t in trades if t.get("date", "") >= from_date]
+        print(f"[VRL Analysis] Filtered to {from_date}+ → {len(trades)} trades")
 
     v7_trades, v8_trades = split_v7_v8(trades)
     print(f"  V7: {len(v7_trades)} | V8: {len(v8_trades)}")
@@ -768,7 +781,7 @@ def main():
     print(f"{'='*55}")
 
     print(f"\n[VRL Analysis] Generating report...")
-    report = generate_report(trades, extra_date)
+    report = generate_report(trades, extra_date, from_date)
 
     with open(REPORT_PATH, "w") as f:
         f.write(report)
