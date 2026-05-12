@@ -20,10 +20,11 @@ from collections import defaultdict
 from datetime import datetime, date
 
 # ── Paths ──
-SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-MULTI_DIR    = os.path.join(SCRIPT_DIR, "multi_day")
-TODAY_DIR    = os.path.join(SCRIPT_DIR, "today")
-REPORT_PATH  = os.path.join(SCRIPT_DIR, "STRATEGY_REPORT.md")
+SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
+MULTI_DIR       = os.path.join(SCRIPT_DIR, "multi_day")
+TODAY_DIR       = os.path.join(SCRIPT_DIR, "today")
+REPORT_PATH     = os.path.join(SCRIPT_DIR, "STRATEGY_REPORT.md")
+MASTER_LOG_PATH = os.path.expanduser("~/lab_data/vrl_trade_log.csv")
 
 # ── V7 SL ladder (current production) ──
 V7_SL_TIERS = [
@@ -53,20 +54,13 @@ V7_INITIAL_SL_TIGHT   = -10
 # Data loading
 # ─────────────────────────────────────────────────────────────
 def load_all_trades(extra_date=None):
-    """Load all trades from multi_day/ + today/ + optional extra_date."""
-    files = sorted(glob.glob(os.path.join(MULTI_DIR, "trades_*.csv")))
-    today_files = sorted(glob.glob(os.path.join(TODAY_DIR, "trades_*.csv")))
-    files += today_files
-
-    if extra_date:
-        for dd in [MULTI_DIR, TODAY_DIR]:
-            ep = os.path.join(dd, f"trades_{extra_date}.csv")
-            if os.path.isfile(ep) and ep not in files:
-                files.append(ep)
-
+    """Load all trades from vrl_trade_log.csv (master) + multi_day/ CSVs."""
     all_trades = []
     seen = set()
-    for fpath in files:
+
+    def _ingest(fpath):
+        if not os.path.isfile(fpath):
+            return
         with open(fpath, newline="") as f:
             for row in csv.DictReader(f):
                 key = (row.get("date"), row.get("entry_time"), row.get("symbol"))
@@ -74,6 +68,19 @@ def load_all_trades(extra_date=None):
                     continue
                 seen.add(key)
                 all_trades.append(row)
+
+    # 1. Master live log (contains ALL days including today)
+    _ingest(MASTER_LOG_PATH)
+
+    # 2. Archived per-day CSVs (fill in any days not in master)
+    for fpath in sorted(glob.glob(os.path.join(MULTI_DIR, "trades_*.csv"))):
+        _ingest(fpath)
+    for fpath in sorted(glob.glob(os.path.join(TODAY_DIR, "trades_*.csv"))):
+        _ingest(fpath)
+
+    if extra_date:
+        for dd in [MULTI_DIR, TODAY_DIR]:
+            _ingest(os.path.join(dd, f"trades_{extra_date}.csv"))
 
     return all_trades
 
