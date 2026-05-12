@@ -120,6 +120,9 @@ DEFAULT_STATE = {
     # rejects re-entry when current candle == this, stops the
     # 2026-05-07 same-candle re-fire bug.
     "_last_fired_candle_ts": "",
+    # V8 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
+    # check_entry_v8 skips the very next candle then clears the flag.
+    "_sl_cooldown_skip_next": False,
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -323,6 +326,9 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
         elif pnl_pts < 0:
             _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+        # 1-candle cooldown on EMERGENCY_SL — blocks check_entry_v8 on next candle
+        if reason == "EMERGENCY_SL":
+            state["_sl_cooldown_skip_next"] = True
         # Arm re-entry watcher (2 candles, cross-leg continuation)
         _v8_state["_reentry_armed"]              = True
         _v8_state["_reentry_attempts"]           = 0
@@ -1582,6 +1588,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_direction"] = direction
             state["last_exit_peak"] = peak
             state["last_exit_reason"] = reason
+            if reason == "EMERGENCY_SL":
+                state["_sl_cooldown_skip_next"] = True
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
             # Capture strike + direction BEFORE state.update() wipes them

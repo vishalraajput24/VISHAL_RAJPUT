@@ -288,6 +288,15 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 logger.info(f"[REJECT-V8] {option_type} same_candle_guard ts={fired_ts}")
             return result
 
+        # ── EMERGENCY_SL 1-candle cooldown ──
+        if state.get("_sl_cooldown_skip_next"):
+            state["_sl_cooldown_skip_next"] = False
+            result["reject_reason"] = "sl_cooldown_skip"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} sl_cooldown_skip — "
+                            f"skipping first candle after EMERGENCY_SL")
+            return result
+
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
         ema9_high = float(last.get("ema9_high", 0))
@@ -346,6 +355,29 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"only {below}/3 priors below band")
             return result
 
+        # ── GATE 3: RSI momentum (3-min) ──
+        # 3A: RSI >= 38 (minimum momentum floor, allows early recovery)
+        # 3B: RSI not breaking down — drop vs prior candle must be < 2 pts
+        #     (filters genuine fading; ignores 3-min tick noise of 0-1.9 pts)
+        _rsi_now  = float(last.get("RSI", 0) or 0)
+        _rsi_prev = float(opt_3m.iloc[-3].get("RSI", 0) or 0)
+        _rsi_drop = round(_rsi_prev - _rsi_now, 2)
+        result["rsi"] = round(_rsi_now, 1)
+        result["rsi_prev"] = round(_rsi_prev, 1)
+        if _rsi_now < 38:
+            result["reject_reason"] = f"rsi_below_38_{round(_rsi_now, 1)}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate3a_rsi_below_38 "
+                            f"rsi={round(_rsi_now,1)}")
+            return result
+        if _rsi_drop >= 2:
+            result["reject_reason"] = f"rsi_breaking_down_{round(_rsi_now,1)}_drop_{round(_rsi_drop,1)}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate3b_rsi_breakdown "
+                            f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)} "
+                            f"drop={round(_rsi_drop,1)}")
+            return result
+
         # ── Cross-leg snapshot (informational) ──
         if other_token:
             try:
@@ -366,7 +398,8 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
         if not silent:
             logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} fresh={below}/3 "
-                        f"(2-gate V8, 3-min)")
+                        f"rsi={round(_rsi_now,1)} (prev={round(_rsi_prev,1)}) "
+                        f"(3-gate V8, 3-min)")
         return result
 
     except Exception as e:
