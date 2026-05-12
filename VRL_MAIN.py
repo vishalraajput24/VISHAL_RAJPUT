@@ -366,8 +366,8 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         # 1-candle cooldown on EMERGENCY_SL — blocks check_entry_v8 on next candle
         if reason == "EMERGENCY_SL":
             state["_sl_cooldown_skip_next"] = True
-        # Arm re-entry watcher (2 candles, cross-leg continuation)
-        _v8_state["_reentry_armed"]              = True
+        # Arm re-entry watcher only for natural exits — not for manual force exit
+        _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
         _v8_state["_reentry_attempts"]           = 0
         _v8_state["_reentry_last_checked_epoch"] = 0.0
         _v8_state["_reentry_direction"]          = direction
