@@ -280,6 +280,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
         "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
     )
+    _save_v8_state()
 
 
 def _v8_execute_paper_exit(reason: str, exit_price: float):
@@ -383,6 +384,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         + str(_v8_state.get("_wins_today", 0)) + "W "
         + str(_v8_state.get("_losses_today", 0)) + "L)"
     )
+    _save_v8_state()
 
 
 def _v8_check_exit():
@@ -420,6 +422,7 @@ def _v8_check_exit():
             "Prev " + str(prev_tier) + "  →  New " + trail_tier
             + "  SL Rs" + "{:.1f}".format(trail_sl)
         )
+        _save_v8_state()
 
     # Emergency SL (-12) — TICK based
     if pnl <= -12:
@@ -594,6 +597,55 @@ def _load_state():
                 logger.debug("[MAIN] restart band refresh: " + str(_rte))
     except Exception as e:
         logger.error("[MAIN] State load error: " + str(e))
+
+
+_V8_PERSIST_FIELDS = [
+    "in_trade", "symbol", "token", "direction", "strike",
+    "entry_price", "entry_time", "qty",
+    "peak_pnl", "active_ratchet_tier", "active_ratchet_sl",
+    "candles_held", "_other_token",
+    "_sl_cooldown_skip_next",
+    "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
+]
+
+def _save_v8_state():
+    try:
+        with _v8_lock:
+            subset = {k: _v8_state.get(k) for k in _V8_PERSIST_FIELDS}
+        tmp = D.V8_STATE_FILE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(subset, f, indent=2, default=str)
+        os.replace(tmp, D.V8_STATE_FILE_PATH)
+    except Exception as e:
+        logger.error("[V8] State save error: " + str(e))
+
+def _load_v8_state():
+    if not os.path.isfile(D.V8_STATE_FILE_PATH):
+        return
+    try:
+        with open(D.V8_STATE_FILE_PATH) as f:
+            saved = json.load(f)
+        with _v8_lock:
+            for k, v in saved.items():
+                if k in _v8_state:
+                    _v8_state[k] = v
+        logger.info("[V8] State loaded from disk")
+        if _v8_state.get("in_trade"):
+            _sym  = str(_v8_state.get("symbol", ""))
+            _ep   = float(_v8_state.get("entry_price", 0))
+            _peak = float(_v8_state.get("peak_pnl", 0))
+            _tier = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
+            logger.info("[V8] Was in trade on last shutdown — " + _sym + " monitoring resumed")
+            _tg_send(
+                "⚡ <b>V8 restarted mid-trade</b>\n"
+                "Symbol : " + _sym + "\n"
+                "Entry  : Rs" + "{:.2f}".format(_ep) + "\n"
+                "Peak   : +" + "{:.1f}".format(_peak) + " pts\n"
+                "Tier   : " + _tier + "\n"
+                "Resuming exit monitoring."
+            )
+    except Exception as e:
+        logger.error("[V8] State load error: " + str(e))
 
 
 def _reconcile_positions(kite):
@@ -4187,6 +4239,7 @@ def main():
     logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
 
     _load_state()
+    _load_v8_state()
     _reconcile_positions(kite)
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
