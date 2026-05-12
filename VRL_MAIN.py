@@ -199,6 +199,8 @@ _v8_state = {
     "_trades_today": 0,
     "_wins_today": 0,
     "_losses_today": 0,
+    # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
+    "_sl_cooldown_skip_next": False,
 }
 _v8_lock = threading.Lock()
 
@@ -247,7 +249,6 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["candles_held"]          = 0
         _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
         _v8_state["_other_token"]          = int(other_token or 0)
-        _v8_state["_entry_full_result"]    = entry_result
         # Clear any pending re-entry state (fresh setup wins)
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
@@ -365,7 +366,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
         # 1-candle cooldown on EMERGENCY_SL — blocks check_entry_v8 on next candle
         if reason == "EMERGENCY_SL":
-            state["_sl_cooldown_skip_next"] = True
+            _v8_state["_sl_cooldown_skip_next"] = True
         # Arm re-entry watcher only for natural exits — not for manual force exit
         _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
         _v8_state["_reentry_attempts"]           = 0

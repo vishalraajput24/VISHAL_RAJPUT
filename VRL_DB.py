@@ -346,6 +346,18 @@ def init_db():
                 ("trades",       "entry_vwap_bonus",         "TEXT DEFAULT ''"),
                 # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification
                 ("trades",       "entry_straddle_info",      "TEXT DEFAULT ''"),
+                # v16.7 — xleg / spike / bias fields (were in CSV only)
+                ("trades",       "bias",               "TEXT DEFAULT ''"),
+                ("trades",       "hourly_rsi",         "REAL DEFAULT 0"),
+                ("trades",       "xleg_signal",        "TEXT DEFAULT ''"),
+                ("trades",       "xleg_other_close",   "REAL DEFAULT 0"),
+                ("trades",       "xleg_other_ema9l",   "REAL DEFAULT 0"),
+                ("trades",       "xleg_other_dying",   "INTEGER DEFAULT 0"),
+                ("trades",       "xleg_other_margin",  "REAL DEFAULT 0"),
+                ("trades",       "spike_close",        "REAL DEFAULT 0"),
+                ("trades",       "spike_target",       "REAL DEFAULT 0"),
+                ("trades",       "spike_fill",         "INTEGER DEFAULT 0"),
+                ("trades",       "spike_wait_used",    "REAL DEFAULT 0"),
             ]:
                 try:
                     c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
@@ -818,6 +830,11 @@ _TRADE_FIELDS = [
     "entry_straddle_period", "entry_straddle_info",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap",
+    # v16.7 — fields present in CSV but missing from DB (sync fix)
+    "bias", "hourly_rsi",
+    "xleg_signal", "xleg_other_close", "xleg_other_ema9l",
+    "xleg_other_dying", "xleg_other_margin",
+    "spike_close", "spike_target", "spike_fill", "spike_wait_used",
 ]
 
 def insert_trade(row):
