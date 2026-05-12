@@ -204,9 +204,22 @@ _v8_lock = threading.Lock()
 
 
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
-    """V8 reuses the same -12/12-step ladder as V7."""
-    from VRL_ENGINE import compute_trail_sl
-    return compute_trail_sl(entry_price, peak_pnl)
+    """V8 SL ladder (3-min): LOCK_4 at +12, then custom tiers up to LOCK_50."""
+    if peak_pnl < 12:
+        return round(entry_price - 12, 2), "INITIAL"
+    if peak_pnl >= 50:
+        lock, tier = 50, "LOCK_50"
+    elif peak_pnl >= 40:
+        lock, tier = 36, "LOCK_36"
+    elif peak_pnl >= 36:
+        lock, tier = 30, "LOCK_30"
+    elif peak_pnl >= 30:
+        lock, tier = 20, "LOCK_20"
+    elif peak_pnl >= 24:
+        lock, tier = 12, "LOCK_12"
+    else:
+        lock, tier = 4, "LOCK_4"
+    return round(entry_price + lock, 2), tier
 
 
 def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
