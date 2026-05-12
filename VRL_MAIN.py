@@ -305,6 +305,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
     exit_time = datetime.now().strftime("%H:%M:%S")
 
     # Charges (reuse engine's calc)
+    charges = {}
     try:
         from VRL_ENGINE import calculate_charges
         charges = calculate_charges(entry_price, exit_price, qty, num_exit_orders=1)
@@ -314,20 +315,43 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         net_pnl = pnl_rs
         total_charges = 0.0
 
-    # Log to CSV (entry_mode tagged V8 so we can split V7/V8 in analysis)
+    # Log to CSV + DB (entry_mode tagged V8 so we can split V7/V8 in analysis)
     try:
+        _v8_row = {
+            "date": date.today().isoformat(),
+            "entry_time": entry_time, "exit_time": exit_time,
+            "symbol": symbol, "direction": direction, "strike": strike,
+            "entry_price": entry_price, "exit_price": exit_price,
+            "pnl_pts": pnl_pts, "pnl_rs": pnl_rs,
+            "gross_pnl_rs": pnl_rs, "net_pnl_rs": net_pnl,
+            "peak_pnl": peak, "exit_reason": reason,
+            "dte": "", "candles_held": candles, "session": "",
+            "sl_pts": -12, "vix_at_entry": 0,
+            "entry_mode": "V8_" + tier,
+            "bias": "", "hourly_rsi": 0,
+            "brokerage": charges.get("brokerage", 0) if isinstance(charges, dict) else 0,
+            "stt": charges.get("stt", 0) if isinstance(charges, dict) else 0,
+            "exchange_charges": charges.get("exchange", 0) if isinstance(charges, dict) else 0,
+            "gst": charges.get("gst", 0) if isinstance(charges, dict) else 0,
+            "stamp_duty": charges.get("stamp", 0) if isinstance(charges, dict) else 0,
+            "total_charges": total_charges, "num_exit_orders": 1,
+            "qty_exited": qty, "entry_slippage": 0, "exit_slippage": 0,
+            "lot_id": "ALL",
+            "entry_ema9_high": "", "entry_ema9_low": "",
+            "exit_ema9_high": "", "exit_ema9_low": "",
+            "entry_band_position": "", "exit_band_position": "",
+            "entry_body_pct": "",
+            "xleg_signal": "", "xleg_other_close": "", "xleg_other_ema9l": "",
+            "xleg_other_dying": "", "xleg_other_margin": "",
+            "spike_close": "", "spike_target": "", "spike_fill": "", "spike_wait_used": "",
+        }
         import csv as _csv
-        log_path = os.path.join(os.path.expanduser("~"), "lab_data", "vrl_trade_log.csv")
+        log_path = D.TRADE_LOG_PATH
         with open(log_path, "a", newline="") as f:
-            w = _csv.writer(f)
-            w.writerow([
-                date.today().isoformat(), entry_time, exit_time,
-                symbol, direction, strike, entry_price, exit_price,
-                pnl_pts, pnl_rs, pnl_rs, net_pnl, peak, reason,
-                "", candles, "", 0, 0, "V8_" + tier,
-                "", 0, 0, "", "", "", "", "", "", qty,
-                0, 0, "ALL",
-            ])
+            w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
+            w.writerow(_v8_row)
+        import VRL_DB as _VDB
+        _VDB.insert_trade(_v8_row)
     except Exception as _le:
         logger.warning("[V8] Trade log write error: " + str(_le))
 

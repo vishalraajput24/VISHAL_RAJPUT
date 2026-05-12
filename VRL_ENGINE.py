@@ -330,12 +330,18 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 1: GREEN candle ──
+        # ── GATE 1: GREEN candle with minimum body ≥ 20% ──
         if not _is_green:
             result["reject_reason"] = "red_candle"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate1_red_candle "
                             f"close={round(close,1)} open={round(open_,1)}")
+            return result
+        if _body_pct < 20:
+            result["reject_reason"] = f"body_too_small_{_body_pct}pct"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate1b_body_small "
+                            f"body={_body_pct}%")
             return result
 
         # ── GATE 2: close must be above EMA9 band ──
