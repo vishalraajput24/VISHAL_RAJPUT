@@ -1359,20 +1359,21 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
             failures.append("EXCHANGE_SL: SL order_id=" + str(sl_id)
                             + " not cleared after exit")
 
-    # CHECK 19: Dashboard JSON reflects PNL
+    # CHECK 19: V7 state PNL matches V7-only CSV PNL (excludes V8 trades)
     try:
-        if os.path.isfile(_DASH_PATH):
-            with open(_DASH_PATH) as f:
-                dash = json.load(f)
-            today_block = dash.get("today", {}) or {}
-            try:
-                tg_pnl   = round(float(state.get("daily_pnl", 0) or 0), 1)
-                dash_pnl = round(float(today_block.get("pnl", 0) or 0), 1)
-                if abs(tg_pnl - dash_pnl) > 1.0:
-                    failures.append("ALIGN_PNL: state=" + str(tg_pnl)
-                                    + " dashboard=" + str(dash_pnl))
-            except Exception:
-                pass
+        tg_pnl = round(float(state.get("daily_pnl", 0) or 0), 1)
+        today = str(date.today())
+        csv_v7_pnl = 0.0
+        if os.path.isfile(_CSV_PATH):
+            with open(_CSV_PATH) as _f19:
+                for _r in csv.DictReader(_f19):
+                    if (_r.get("date", "").strip() == today
+                            and not str(_r.get("entry_mode", "")).startswith("V8_")):
+                        csv_v7_pnl += float(_r.get("pnl_pts", 0) or 0)
+        csv_v7_pnl = round(csv_v7_pnl, 1)
+        if abs(tg_pnl - csv_v7_pnl) > 1.0:
+            failures.append("ALIGN_PNL: state=" + str(tg_pnl)
+                            + " csv_v7=" + str(csv_v7_pnl))
     except Exception as e:
         failures.append("CHECK19_ERR: " + str(e))
 
