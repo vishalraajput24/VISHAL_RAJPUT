@@ -361,6 +361,40 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"slope={_slope} (option ema9l falling)")
             return result
 
+        # ── GATE 2C: 2-candle slope confirmation ──
+        # Previous candle's slope must also be >= 0 — filters single-candle bounces
+        if len(opt_3m) >= 4:
+            _prev2_ema9_low = float(opt_3m.iloc[-4].get("ema9_low", 0) or 0)
+            _slope_prev = round(_prev_ema9_low - _prev2_ema9_low, 2)
+            if _slope_prev < 0:
+                result["reject_reason"] = f"slope2c_not_confirmed_{_slope_prev}"
+                if not silent:
+                    logger.info(f"[REJECT-V8] {option_type} gate2c_slope_not_confirmed "
+                                f"prev_slope={_slope_prev}")
+                return result
+
+        # ── Fetch opposite leg data (used for Gate 2D + cross-leg snapshot) ──
+        _opt3m_other = None
+        if other_token:
+            try:
+                _opt3m_other = D.add_indicators(
+                    D.get_historical_data(other_token, "3minute", 10))
+            except Exception:
+                pass
+
+        # ── GATE 2D: opposite leg not trending against entry direction ──
+        # If the opposite option has RSI > 55, it's trending strongly against us —
+        # current entry is likely just a retracement, not a real setup
+        if _opt3m_other is not None and len(_opt3m_other) >= 2:
+            _other_rsi = float(_opt3m_other.iloc[-2].get("RSI", 0) or 0)
+            result["other_rsi"] = round(_other_rsi, 1)
+            if _other_rsi > 55:
+                result["reject_reason"] = f"other_rsi_trending_{round(_other_rsi, 1)}"
+                if not silent:
+                    logger.info(f"[REJECT-V8] {option_type} gate2d_other_trending "
+                                f"other_rsi={round(_other_rsi, 1)}")
+                return result
+
         # ── GATE 3: RSI momentum (3-min) ──
         # 3A: RSI >= 38 (minimum momentum floor, allows early recovery)
         # 3B: RSI not breaking down — drop vs prior candle must be < 2 pts
@@ -385,12 +419,10 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             return result
 
         # ── Cross-leg snapshot (informational) ──
-        if other_token:
+        if _opt3m_other is not None:
             try:
-                opt3m_other = D.add_indicators(
-                    D.get_historical_data(other_token, "3minute", 10))
-                if opt3m_other is not None and len(opt3m_other) >= 2:
-                    o_last = opt3m_other.iloc[-2]
+                if len(_opt3m_other) >= 2:
+                    o_last = _opt3m_other.iloc[-2]
                     o_close = float(o_last["close"])
                     o_ema9l = float(o_last.get("ema9_low", 0))
                     result["xleg_other_close"] = round(o_close, 2)
