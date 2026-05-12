@@ -338,21 +338,9 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"close={round(close,1)} open={round(open_,1)}")
             return result
 
-        # ── GATE 2: FRESH BREAK ──
+        # ── GATE 2: close must be above EMA9 band ──
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
-            return result
-        pre3 = opt_3m.iloc[-5:-2]
-        if len(pre3) < 3:
-            result["reject_reason"] = "insufficient_history"
-            return result
-        below = int((pre3["close"] <= pre3["ema9_low"]).sum())
-        result["fresh_break_count"] = below
-        if below < 2:
-            result["reject_reason"] = f"not_fresh_{below}of3_below"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate2_not_fresh "
-                            f"only {below}/3 priors below band")
             return result
 
         # ── GATE 3: RSI momentum (3-min) ──
