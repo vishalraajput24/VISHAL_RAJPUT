@@ -385,7 +385,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
         result["entry_mode"] = "CLOSE_FILL"
         if not silent:
             logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
-                        f"ema9l={round(ema9_low,1)} fresh={below}/3 "
+                        f"ema9l={round(ema9_low,1)} "
                         f"rsi={round(_rsi_now,1)} (prev={round(_rsi_prev,1)}) "
                         f"(3-gate V8, 3-min)")
         return result
