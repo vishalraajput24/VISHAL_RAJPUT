@@ -273,13 +273,12 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (3-min)\n"
         "Close  " + "{:.1f}".format(entry_result.get("close", 0))
         + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
-        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN  "
-        + "Fresh " + str(entry_result.get("fresh_break_count", 0)) + "/3\n"
+        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
         + _xleg_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
         "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
-        "Trail: peak ≥12→BE | ≥24→+12 | ≥30→+20 | ≥40→+36 | ≥50→+50\n"
+        "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
     )
 
 
@@ -3057,7 +3056,6 @@ def _strategy_loop(kite):
                                             + "Close " + "{:.1f}".format(_v8_res["close"])
                                             + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
                                             + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
-                                            + "Fresh " + str(_v8_res.get("fresh_break_count", 0)) + "/3 priors below band\n"
                                             + _xleg + "<i>SHADOW MODE — no actual trade</i>"
                                         )
                                     else:
