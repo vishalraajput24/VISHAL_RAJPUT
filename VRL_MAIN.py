@@ -1536,7 +1536,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
 
     _tg_send(
-        _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
+        "🕐 <b>V7 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
+        + _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
         + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _core +
@@ -2915,7 +2916,7 @@ def _strategy_loop(kite):
                                             continue
                                         _re_close = float(_re_result.get("close", 0) or 0)
                                         _tg_send(
-                                            "🔄 <b>RE-ENTRY CONFIRMED " + _re_dir + " "
+                                            "🔄 <b>V7 RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
                                             "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
