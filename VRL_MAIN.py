@@ -3615,13 +3615,26 @@ def _cmd_resume(args):
 
 
 def _cmd_forceexit(args):
+    v7_open = False
+    v8_open = False
     with _state_lock:
-        if not state.get("in_trade"):
-            _tg_send("No open trade.")
-            return
-        state["force_exit"] = True
+        if state.get("in_trade"):
+            state["force_exit"] = True
+            v7_open = True
+    with _v8_lock:
+        if _v8_state.get("in_trade"):
+            v8_open = True
+    if not v7_open and not v8_open:
+        _tg_send("No open trade.")
+        return
     _tg_send("🚨 Force exit triggered.")
     logger.warning("[CTRL] Force exit")
+    if v8_open:
+        _tok = int(_v8_state.get("token", 0) or 0)
+        _ltp = D.get_ltp(_tok) if _tok else 0
+        if _ltp <= 0:
+            _ltp = float(_v8_state.get("entry_price", 0))
+        _v8_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
 
 
 def _cmd_restart(args):
