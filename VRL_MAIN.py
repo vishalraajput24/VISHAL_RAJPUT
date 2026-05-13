@@ -4326,7 +4326,10 @@ def main():
 
             wins   = [t for t in trades_today if _get_pnl(t) > 0]
             losses = [t for t in trades_today if _get_pnl(t) < 0]
-            pnl    = sum(_get_pnl(t) for t in trades_today)
+            # state["daily_pnl"] is V7-only — exclude V8 trades to match CHECK 19
+            v7_trades = [t for t in trades_today
+                         if not str(t.get("entry_mode", "")).startswith("V8_")]
+            pnl    = sum(_get_pnl(t) for t in v7_trades)
 
             with _state_lock:
                 state["daily_pnl"]          = round(pnl, 2)
