@@ -168,6 +168,7 @@ _running = True
 # Phase 2 (after market close): flip V8_SHADOW_MODE = False to enable
 # real V8 trades alongside V7.
 V8_SHADOW_MODE = False  # PAPER mode — V8 takes real (paper) trades alongside V7.
+V7_SHADOW_MODE = True   # V7 shadow: signals logged silently, no trades, no Telegram alerts.
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
     "_signals_today": 0,             # count for /pulse
@@ -2800,7 +2801,7 @@ def _strategy_loop(kite):
 
                 # ── RE-ENTRY WATCHER (V7: 2-candle window) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
-                if _re_armed and not state.get("in_trade"):
+                if _re_armed and not state.get("in_trade") and not V7_SHADOW_MODE:
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
@@ -3037,9 +3038,19 @@ def _strategy_loop(kite):
                         option_ltp_now, profile, session,
                         direction=opt_type)
                     if ok:
-                        best_result = result
-                        best_type = opt_type
-                        best_opt_info = opt_info
+                        if V7_SHADOW_MODE:
+                            # Shadow: stamp candle guard, log signal, skip trade
+                            with _state_lock:
+                                state["_last_fired_candle_ts"] = str(result.get("fired_candle_ts", ""))
+                            logger.info("[V7-SHADOW] " + opt_type + " " + str(result.get("_strike", ""))
+                                        + " close=" + str(result.get("close", ""))
+                                        + " rsi=" + str(result.get("rsi", ""))
+                                        + " body=" + str(result.get("body_pct", "")) + "%"
+                                        + " xleg_dying=" + str(result.get("xleg_other_dying", "")))
+                        else:
+                            best_result = result
+                            best_type = opt_type
+                            best_opt_info = opt_info
                     else:
                         logger.info("[MAIN] Entry blocked (" + opt_type
                                     + " " + _win_label + "): " + reason)
