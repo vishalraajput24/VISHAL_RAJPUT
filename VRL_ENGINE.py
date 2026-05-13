@@ -396,6 +396,16 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"rsi={round(_rsi_now,1)}")
             return result
 
+        # ── GATE 3B: RSI must be rising >= 2.0 pts (genuine momentum, not drift) ──
+        _rsi_rise = round(_rsi_now - _rsi_prev, 2)
+        result["rsi_rise"] = _rsi_rise
+        if _rsi_rise < 2.0:
+            result["reject_reason"] = f"rsi_not_rising_{_rsi_rise}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate3b_rsi_not_rising "
+                            f"rise={_rsi_rise} rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
+            return result
+
         # ── Cross-leg snapshot (informational) ──
         if _opt3m_other is not None:
             try:

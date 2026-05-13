@@ -3153,6 +3153,10 @@ def _strategy_loop(kite):
 
                         # Path A: Fresh entry (always available)
                         if not _v8_re_handled and not _v8_state.get("in_trade"):
+                            _v8_ce_gate_rejected = False
+                            _v8_pe_gate_rejected = False
+                            _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
+                            _v8_in_both_cooldown = (time.time() - _v8_both_rej_ts < 180)
                             for _v8_dir, _v8_token, _v8_other in [
                                 ("CE", _v8_ce_tok, _v8_pe_tok),
                                 ("PE", _v8_pe_tok, _v8_ce_tok),
@@ -3163,37 +3167,49 @@ def _strategy_loop(kite):
                                     token=_v8_token, option_type=_v8_dir,
                                     spot_ltp=spot_ltp, silent=False,
                                     state=_v8_state, other_token=_v8_other)
-                                if _v8_res.get("fired"):
-                                    _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
-                                    _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
-                                    _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
-                                    _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
-                                    if V8_SHADOW_MODE:
-                                        # Stamp guard, send alert only
-                                        _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
-                                        _xleg = ""
-                                        if _v8_res.get("xleg_other_dying"):
-                                            _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir=='CE' else 'CE') + " dying ("
-                                                     + "{:.1f}".format(_v8_res.get('xleg_other_close',0))
-                                                     + " < ema9l "
-                                                     + "{:.1f}".format(_v8_res.get('xleg_other_ema9l',0)) + ")\n")
-                                        _tg_send(
-                                            "👻 <b>V8 SHADOW SIGNAL</b>\n"
-                                            + _v8_dir + " " + str(_v8_strike)
-                                            + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
-                                            + "Close " + "{:.1f}".format(_v8_res["close"])
-                                            + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
-                                            + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
-                                            + _xleg + "<i>SHADOW MODE — no actual trade</i>"
-                                        )
-                                    else:
-                                        # LIVE: execute paper entry
-                                        _v8_execute_paper_entry(
-                                            direction=_v8_dir, strike=_v8_strike,
-                                            symbol=_v8_symbol, token=_v8_token,
-                                            entry_price=_v8_res["entry_price"],
-                                            entry_result=_v8_res, other_token=_v8_other)
-                                    break  # one V8 entry per cycle
+                                if not _v8_res.get("fired"):
+                                    if _v8_dir == "CE": _v8_ce_gate_rejected = True
+                                    else: _v8_pe_gate_rejected = True
+                                    continue
+                                # Gates passed — check both-sides cooldown
+                                if _v8_in_both_cooldown:
+                                    _age = round(time.time() - _v8_both_rej_ts)
+                                    logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
+                                                f"age={_age}s (both rejected {round(_age/60,1)}min ago)")
+                                    continue
+                                _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
+                                _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
+                                _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
+                                _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
+                                if V8_SHADOW_MODE:
+                                    # Stamp guard, send alert only
+                                    _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
+                                    _xleg = ""
+                                    if _v8_res.get("xleg_other_dying"):
+                                        _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir=='CE' else 'CE') + " dying ("
+                                                 + "{:.1f}".format(_v8_res.get('xleg_other_close',0))
+                                                 + " < ema9l "
+                                                 + "{:.1f}".format(_v8_res.get('xleg_other_ema9l',0)) + ")\n")
+                                    _tg_send(
+                                        "👻 <b>V8 SHADOW SIGNAL</b>\n"
+                                        + _v8_dir + " " + str(_v8_strike)
+                                        + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
+                                        + "Close " + "{:.1f}".format(_v8_res["close"])
+                                        + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
+                                        + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
+                                        + _xleg + "<i>SHADOW MODE — no actual trade</i>"
+                                    )
+                                else:
+                                    # LIVE: execute paper entry
+                                    _v8_execute_paper_entry(
+                                        direction=_v8_dir, strike=_v8_strike,
+                                        symbol=_v8_symbol, token=_v8_token,
+                                        entry_price=_v8_res["entry_price"],
+                                        entry_result=_v8_res, other_token=_v8_other)
+                                break  # one V8 entry per cycle
+                            # Both sides rejected by gates → mark timestamp for cooldown
+                            if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
+                                _v8_state["_v8_both_rejected_ts"] = time.time()
                 except Exception as _v8e:
                     import traceback as _v8tb
                     logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
