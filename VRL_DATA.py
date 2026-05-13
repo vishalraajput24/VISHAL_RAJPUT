@@ -1342,17 +1342,11 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
     # Skip all warnings on weekends and NSE holidays — no Telegram spam
     if not is_trading_day(now):
         return msgs, upd
-    # 1. Daily bias 9:20
+    # 1. Daily bias 9:20 \u2014 computed for internal use only (no Telegram)
     if now.hour == 9 and 20 <= now.minute <= 22 and not state.get("_bias_done"):
         try:
-            b = compute_daily_bias(kite)
+            compute_daily_bias(kite)
             upd["_bias_done"] = True
-            if b.get("bias") != "UNKNOWN":
-                ic = {"BULL": "\U0001f402", "BEAR": "\U0001f43b",
-                      "SIDEWAYS": "\u26a0\ufe0f", "NEUTRAL": "\u3030\ufe0f"}
-                msgs.append(ic.get(b["bias"], "?") + " <b>DAILY BIAS: " + b["bias"] + "</b>\n"
-                            + b.get("details", "") + "\n"
-                            + "EMA21: " + str(b.get("ema21", 0)) + "  ADX: " + str(b.get("adx", 0)))
         except Exception as _e:
             logger.warning("[WARN] Bias: " + str(_e))
     # 2. Straddle capture 9:30
