@@ -280,7 +280,8 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
         "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
-        "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
+        "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n",
+        priority="critical"
     )
     _save_v8_state()
 
@@ -409,7 +410,8 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         "V8 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
         + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
         + str(_v8_state.get("_wins_today", 0)) + "W "
-        + str(_v8_state.get("_losses_today", 0)) + "L)"
+        + str(_v8_state.get("_losses_today", 0)) + "L)",
+        priority="critical"
     )
     _save_v8_state()
 
@@ -447,7 +449,8 @@ def _v8_check_exit():
             "⚡ <b>V8 SL UPGRADED → " + trail_tier + "</b>\n"
             "Peak +{:.1f}".format(peak) + " pts\n"
             "Prev " + str(prev_tier) + "  →  New " + trail_tier
-            + "  SL Rs" + "{:.1f}".format(trail_sl)
+            + "  SL Rs" + "{:.1f}".format(trail_sl),
+            priority="critical"
         )
         _save_v8_state()
 
@@ -1082,7 +1085,7 @@ def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
 
 from collections import deque as _deque
 _tg_timestamps = _deque(maxlen=20)
-_TG_FLOOD_LIMIT = 5
+_TG_FLOOD_LIMIT = 15   # was 5 — Telegram allows ~30/sec; 15/10s is safe
 _TG_FLOOD_WINDOW = 10  # seconds
 
 def _tg_safe(s) -> str:
