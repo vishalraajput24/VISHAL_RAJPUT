@@ -460,7 +460,11 @@ def check_v8_continuation_reentry(token: int, option_type: str,
         _range = high - low
         _body_pct = round(abs(close - open_) / _range * 100) if _range > 0 else 0
         result["body_pct"] = _body_pct
-        if close <= open_ or _body_pct < 20:
+        if close <= open_:
+            result["reject_reason"] = f"red_candle_body_{_body_pct}pct"
+            logger.info(f"[REJECT-V8-RE] {option_type} G1_red_candle body={_body_pct}%")
+            return result
+        if _body_pct < 20:
             result["reject_reason"] = f"weak_candle_body_{_body_pct}pct"
             logger.info(f"[REJECT-V8-RE] {option_type} G1_weak_body body={_body_pct}%")
             return result
