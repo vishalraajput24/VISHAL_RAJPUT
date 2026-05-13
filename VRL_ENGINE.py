@@ -338,6 +338,13 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"close={round(close,1)} open={round(open_,1)}")
             return result
 
+        # ── GATE 1B: body >= 20% (no doji/near-doji fresh entries) ──
+        if _body_pct < 20:
+            result["reject_reason"] = f"low_body_{_body_pct}pct"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate1b_low_body body={_body_pct}%")
+            return result
+
         # ── GATE 2: close must be above EMA9 band ──
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"

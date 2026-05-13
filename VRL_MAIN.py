@@ -3090,15 +3090,37 @@ def _strategy_loop(kite):
                                                 entry_price=_re_res.get("entry_price", 0),
                                                 entry_result=_re_res, other_token=_re_oth)
                                             _v8_state["_reentry_armed"] = False
-                                        elif _re_attempts >= 2:
-                                            _v8_state["_reentry_armed"] = False
-                                            _tg_send(
-                                                "⚡ <b>V8 RE-ENTRY DROPPED</b>\n"
-                                                + _re_dir + " " + str(_re_strike)
-                                                + " — 2/2 attempts failed\n"
-                                                "Reason: " + str(_re_res.get("reject_reason", "?")) + "\n"
-                                                "Waiting for fresh setup."
-                                            )
+                                        else:
+                                            # Scan the OTHER side — if it passes fresh entry, take it now
+                                            _opp_dir = "PE" if _re_dir == "CE" else "CE"
+                                            _opp_tok = _v8_pe_tok if _re_dir == "CE" else _v8_ce_tok
+                                            if _opp_tok:
+                                                _opp_res = check_entry_v8(
+                                                    token=_opp_tok, option_type=_opp_dir,
+                                                    spot_ltp=spot_ltp, silent=True,
+                                                    state=_v8_state,
+                                                    other_token=_re_tok)
+                                                if _opp_res.get("fired"):
+                                                    _v8_re_handled = True
+                                                    _v8_state["_reentry_armed"] = False
+                                                    _opp_strike = (_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("strike", atm_strike)
+                                                    _v8_execute_paper_entry(
+                                                        direction=_opp_dir,
+                                                        strike=_opp_strike,
+                                                        symbol=(_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("symbol", ""),
+                                                        token=_opp_tok,
+                                                        entry_price=_opp_res.get("entry_price", 0),
+                                                        entry_result=_opp_res,
+                                                        other_token=_re_tok)
+                                            if not _v8_re_handled and _re_attempts >= 2:
+                                                _v8_state["_reentry_armed"] = False
+                                                _tg_send(
+                                                    "⚡ <b>V8 RE-ENTRY DROPPED</b>\n"
+                                                    + _re_dir + " " + str(_re_strike)
+                                                    + " — 2/2 attempts failed\n"
+                                                    "Reason: " + str(_re_res.get("reject_reason", "?")) + "\n"
+                                                    "Waiting for fresh setup."
+                                                )
                             except Exception as _ree:
                                 logger.warning("[V8] re-entry error: " + str(_ree))
 

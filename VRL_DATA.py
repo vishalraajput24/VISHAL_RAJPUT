@@ -1358,8 +1358,7 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
             if _sa > 0:
                 capture_straddle(kite, _sa, expiry)
                 upd["_straddle_done"] = True
-                if _straddle_captured:
-                    msgs.append("\U0001f4ca <b>STRADDLE CAPTURED</b>\nATM CE+PE: \u20b9" + str(int(_straddle_open)))
+                pass  # straddle value captured internally, no Telegram alert
         except Exception as _e:
             logger.warning("[WARN] Straddle: " + str(_e))
     # 4. Hourly RSI (every hour — only during market hours)
@@ -1368,8 +1367,7 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
         try:
             hr = check_hourly_rsi(kite)
             upd["_hourly_rsi_ts"] = _t.time()
-            if hr.get("warning"):
-                msgs.append("\u26a0\ufe0f <b>" + hr["msg"] + "</b>")
+            # hourly RSI computed for internal use only \u2014 no Telegram alert
         except Exception as _e:
             logger.warning("[WARN] Hourly: " + str(_e))
     return msgs, upd
