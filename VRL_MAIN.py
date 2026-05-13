@@ -202,6 +202,8 @@ _v8_state = {
     "_losses_today": 0,
     # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
     "_sl_cooldown_skip_next": False,
+    # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
+    "_v8_both_rejected_ts": 0.0,
 }
 _v8_lock = threading.Lock()
 
@@ -636,6 +638,7 @@ _V8_PERSIST_FIELDS = [
     "candles_held", "_other_token",
     "_sl_cooldown_skip_next",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
+    "_v8_both_rejected_ts",
 ]
 
 def _save_v8_state():
@@ -3156,7 +3159,8 @@ def _strategy_loop(kite):
                             _v8_ce_gate_rejected = False
                             _v8_pe_gate_rejected = False
                             _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
-                            _v8_in_both_cooldown = (time.time() - _v8_both_rej_ts < 180)
+                            # Only active if timestamp was actually set (not default 0)
+                            _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 180)
                             for _v8_dir, _v8_token, _v8_other in [
                                 ("CE", _v8_ce_tok, _v8_pe_tok),
                                 ("PE", _v8_pe_tok, _v8_ce_tok),
@@ -3165,7 +3169,8 @@ def _strategy_loop(kite):
                                     continue
                                 _v8_res = check_entry_v8(
                                     token=_v8_token, option_type=_v8_dir,
-                                    spot_ltp=spot_ltp, silent=False,
+                                    spot_ltp=spot_ltp,
+                                    silent=_v8_in_both_cooldown,  # suppress spam while in cooldown
                                     state=_v8_state, other_token=_v8_other)
                                 if not _v8_res.get("fired"):
                                     if _v8_dir == "CE": _v8_ce_gate_rejected = True
@@ -3175,7 +3180,10 @@ def _strategy_loop(kite):
                                 if _v8_in_both_cooldown:
                                     _age = round(time.time() - _v8_both_rej_ts)
                                     logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
-                                                f"age={_age}s (both rejected {round(_age/60,1)}min ago)")
+                                                f"age={_age}s ({round(_age/60,1)}min) — gates passed but blocked")
+                                    # Count as "failed" so timestamp keeps refreshing
+                                    if _v8_dir == "CE": _v8_ce_gate_rejected = True
+                                    else: _v8_pe_gate_rejected = True
                                     continue
                                 _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
                                 _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
@@ -3207,9 +3215,14 @@ def _strategy_loop(kite):
                                         entry_price=_v8_res["entry_price"],
                                         entry_result=_v8_res, other_token=_v8_other)
                                 break  # one V8 entry per cycle
-                            # Both sides rejected by gates → mark timestamp for cooldown
+                            # Both sides failed (gate-rejected OR cooldown-blocked) → refresh timestamp
                             if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
+                                _prev_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
                                 _v8_state["_v8_both_rejected_ts"] = time.time()
+                                if _prev_ts == 0:
+                                    logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (3 min block)")
+                                elif not _v8_in_both_cooldown:
+                                    logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
                 except Exception as _v8e:
                     import traceback as _v8tb
                     logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
