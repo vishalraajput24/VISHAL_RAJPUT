@@ -1216,7 +1216,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v16.7 V7 (15-min RSI)\n"
         "Timeframe: 15-min option candles\n"
-        "Entry   : 09:35 - 15:00 IST  |  Cooldown: 0min (removed)\n"
+        "Entry   : " + CFG.entry_ema9_band("warmup_until", "09:45") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST  |  Cooldown: 0min (removed)\n"
         "Gates   : 1) 15-min close > EMA9_low\n"
         "          2) RSI >= 40 AND rising (now > prior)\n"
         "Spot    : tracked for display — NOT a gate\n"
