@@ -123,6 +123,17 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                     logger.info(f"[REJECT] {option_type} same_candle_guard "
                                 f"already_fired_on={fired_ts}")
                 return result
+            # Belt: candle must have closed AFTER our last exit
+            # Catches same-candle re-fires even if string comparison drifts
+            _exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0) if state else 0
+            if _exit_epoch > 0:
+                _candle_close_epoch = (last.name + timedelta(minutes=15)).timestamp()
+                if _candle_close_epoch <= _exit_epoch:
+                    result["reject_reason"] = "pre_exit_candle"
+                    if not silent:
+                        logger.info(f"[REJECT] {option_type} pre_exit_candle "
+                                    f"candle_close={_candle_close_epoch:.0f} exit={_exit_epoch:.0f}")
+                    return result
         except Exception as _ge:
             logger.warning("[ENGINE] same-candle guard error: " + str(_ge))
 

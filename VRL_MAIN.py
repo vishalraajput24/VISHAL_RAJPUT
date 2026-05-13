@@ -1708,7 +1708,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 # Each new 15-min candle close is a re-entry attempt.
                 # If 2 consecutive attempts fail, window expires and we
                 # rely on fresh-entry path only.
-                "_reentry_armed":      True,
+                "_reentry_armed":      (reason != "FORCE_EXIT"),
                 "_reentry_exit_ts":    _exit_epoch,
                 "_reentry_attempts":   0,
                 "_reentry_last_checked_epoch": 0.0,
