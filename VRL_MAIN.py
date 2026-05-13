@@ -238,6 +238,9 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
     is_reentry = (entry_result.get("entry_mode") == "REENTRY_XLEG")
 
     with _v8_lock:
+        if _v8_state.get("in_trade"):
+            logger.warning("[V8] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
+            return
         _v8_state["in_trade"]              = True
         _v8_state["symbol"]                = symbol
         _v8_state["token"]                 = token
@@ -293,6 +296,9 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
     with _v8_lock:
         if not _v8_state.get("in_trade"):
             return
+        # Read all values FIRST (before clearing), then mark closed immediately.
+        # Any concurrent call (TG thread vs main loop) now sees in_trade=False and returns —
+        # eliminating the duplicate-exit race condition.
         entry_price = float(_v8_state.get("entry_price", 0))
         symbol      = _v8_state.get("symbol", "")
         direction   = _v8_state.get("direction", "")
@@ -304,7 +310,37 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         tier        = _v8_state.get("active_ratchet_tier", "")
         token       = int(_v8_state.get("token", 0) or 0)
         other_tok   = int(_v8_state.get("_other_token", 0) or 0)
+        pnl_pts_now = round(exit_price - entry_price, 2)
+        # Clear position state
+        _v8_state["in_trade"]            = False
+        _v8_state["symbol"]              = ""
+        _v8_state["token"]               = 0
+        _v8_state["direction"]           = ""
+        _v8_state["strike"]              = 0
+        _v8_state["entry_price"]         = 0.0
+        _v8_state["peak_pnl"]            = 0.0
+        _v8_state["active_ratchet_tier"] = ""
+        _v8_state["active_ratchet_sl"]   = 0.0
+        _v8_state["candles_held"]        = 0
+        # Update daily counters and arm re-entry under the same lock
+        _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
+        _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
+        if pnl_pts_now > 0:
+            _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
+        elif pnl_pts_now < 0:
+            _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+        if reason == "EMERGENCY_SL":
+            _v8_state["_sl_cooldown_skip_next"] = True
+        _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
+        _v8_state["_reentry_attempts"]           = 0
+        _v8_state["_reentry_last_checked_epoch"] = 0.0
+        _v8_state["_reentry_direction"]          = direction
+        _v8_state["_reentry_token"]              = token
+        _v8_state["_reentry_strike"]             = strike
+        _v8_state["_reentry_other_token"]        = other_tok
+        _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
 
+    # --- Lock released: safe to read captured locals for logging ---
     pnl_pts = round(exit_price - entry_price, 2)
     pnl_rs  = round(pnl_pts * qty, 2)
     exit_time = datetime.now().strftime("%H:%M:%S")
@@ -359,38 +395,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _VDB.insert_trade(_v8_row)
     except Exception as _le:
         logger.warning("[V8] Trade log write error: " + str(_le))
-
-    # Update daily
-    with _v8_lock:
-        _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts, 2)
-        _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
-        if pnl_pts > 0:
-            _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
-        elif pnl_pts < 0:
-            _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
-        # 1-candle cooldown on EMERGENCY_SL — blocks check_entry_v8 on next candle
-        if reason == "EMERGENCY_SL":
-            _v8_state["_sl_cooldown_skip_next"] = True
-        # Arm re-entry watcher only for natural exits — not for manual force exit
-        _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
-        _v8_state["_reentry_attempts"]           = 0
-        _v8_state["_reentry_last_checked_epoch"] = 0.0
-        _v8_state["_reentry_direction"]          = direction
-        _v8_state["_reentry_token"]              = token
-        _v8_state["_reentry_strike"]             = strike
-        _v8_state["_reentry_other_token"]        = other_tok
-        _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
-        # Clear position
-        _v8_state["in_trade"]            = False
-        _v8_state["symbol"]              = ""
-        _v8_state["token"]               = 0
-        _v8_state["direction"]           = ""
-        _v8_state["strike"]              = 0
-        _v8_state["entry_price"]         = 0.0
-        _v8_state["peak_pnl"]            = 0.0
-        _v8_state["active_ratchet_tier"] = ""
-        _v8_state["active_ratchet_sl"]   = 0.0
-        _v8_state["candles_held"]        = 0
 
     logger.info("[V8] PAPER EXIT: " + symbol + " qty=" + str(qty)
                 + " ref=" + str(exit_price) + " reason=" + reason
