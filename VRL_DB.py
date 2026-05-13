@@ -346,18 +346,6 @@ def init_db():
                 ("trades",       "entry_vwap_bonus",         "TEXT DEFAULT ''"),
                 # v15.2.5 Fix 5: STRONG / NEUTRAL / WEAK / NA classification
                 ("trades",       "entry_straddle_info",      "TEXT DEFAULT ''"),
-                # v16.7 — xleg / spike / bias fields (were in CSV only)
-                ("trades",       "bias",               "TEXT DEFAULT ''"),
-                ("trades",       "hourly_rsi",         "REAL DEFAULT 0"),
-                ("trades",       "xleg_signal",        "TEXT DEFAULT ''"),
-                ("trades",       "xleg_other_close",   "REAL DEFAULT 0"),
-                ("trades",       "xleg_other_ema9l",   "REAL DEFAULT 0"),
-                ("trades",       "xleg_other_dying",   "INTEGER DEFAULT 0"),
-                ("trades",       "xleg_other_margin",  "REAL DEFAULT 0"),
-                ("trades",       "spike_close",        "REAL DEFAULT 0"),
-                ("trades",       "spike_target",       "REAL DEFAULT 0"),
-                ("trades",       "spike_fill",         "INTEGER DEFAULT 0"),
-                ("trades",       "spike_wait_used",    "REAL DEFAULT 0"),
             ]:
                 try:
                     c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}")
@@ -368,6 +356,29 @@ def init_db():
         conn.commit()
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
+
+        # v16.7 — unconditional: add xleg/spike/bias columns if missing
+        # (Must run on ALL schema versions — previous code wrongly placed
+        # these inside _schema_v < 15 block, causing silent INSERT failures)
+        for _col, _typ in [
+            ("bias",             "TEXT DEFAULT ''"),
+            ("hourly_rsi",       "REAL DEFAULT 0"),
+            ("xleg_signal",      "TEXT DEFAULT ''"),
+            ("xleg_other_close", "REAL DEFAULT 0"),
+            ("xleg_other_ema9l", "REAL DEFAULT 0"),
+            ("xleg_other_dying", "INTEGER DEFAULT 0"),
+            ("xleg_other_margin","REAL DEFAULT 0"),
+            ("spike_close",      "REAL DEFAULT 0"),
+            ("spike_target",     "REAL DEFAULT 0"),
+            ("spike_fill",       "INTEGER DEFAULT 0"),
+            ("spike_wait_used",  "REAL DEFAULT 0"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {_col} {_typ}")
+                logger.info(f"[DB] v16.7 migrate: added trades.{_col}")
+            except Exception:
+                pass  # column already exists
+        conn.commit()
 
         # One-shot migration to drop dead v13 columns. Gated by
         # schema_meta.version so it doesn't re-run after success.
