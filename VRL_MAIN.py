@@ -4221,57 +4221,22 @@ def main():
     _kite = kite
     D.init(kite)
 
+    # Phase 1 health: Token + REST spot (before WS starts — WS check happens after start_websocket)
+    _health_lines_pre = []
+    _health_ok_pre = True
     try:
-        _health_ok = True
-        _health_lines = []
-        try:
-            _prof = kite.profile()
-            _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
-        except Exception as _he:
-            _health_lines.append("Token: ❌ " + str(_he)[:60])
-            _health_ok = False
-        try:
-            _sq = kite.ltp(["NSE:NIFTY 50"])
-            _sp = float(list(_sq.values())[0]["last_price"])
-            _health_lines.append("Spot: ✅ " + str(round(_sp, 1)))
-        except Exception as _he:
-            _health_lines.append("Spot: ❌ " + str(_he)[:60])
-            _health_ok = False
-        import time as _time_h
-        _ws_ltp = 0.0
-        _market_open_now = D.is_market_open()
-        if _market_open_now:
-            for _ in range(15):
-                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if _ws_ltp > 0:
-                    break
-                _time_h.sleep(1)
-            if _ws_ltp > 0:
-                _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
-            else:
-                _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
-                _health_ok = False
-        else:
-            with D._tick_lock:
-                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
-            if _entry:
-                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
-                _health_lines.append(
-                    "WS: 💤 market closed (last tick "
-                    + str(_age_min) + "m ago at "
-                    + str(round(_entry["ltp"], 1)) + ")"
-                )
-            else:
-                _health_lines.append("WS: 💤 market closed (no ticks yet)")
-        _icon = "✅" if _health_ok else "⚠️"
-        _tg_send(
-            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
-            + "\n".join(_health_lines) + "\n"
-            "Time: " + datetime.now().strftime("%H:%M:%S IST")
-        )
-        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines)))
-    except Exception as _the:
-        logger.warning("[MAIN] Token health check error: " + str(_the))
+        _prof = kite.profile()
+        _health_lines_pre.append("Token: ✅ " + str(_prof.get("user_name", "?")))
+    except Exception as _he:
+        _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
+        _health_ok_pre = False
+    try:
+        _sq = kite.ltp(["NSE:NIFTY 50"])
+        _sp = float(list(_sq.values())[0]["last_price"])
+        _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
+    except Exception as _he:
+        _health_lines_pre.append("Spot: ❌ " + str(_he)[:60])
+        _health_ok_pre = False
 
     try:
         D.set_autoheal_callback(_tg_send)
@@ -4405,6 +4370,46 @@ def main():
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
     time.sleep(2)
+
+    # Phase 2 health: WS tick check (runs after WS is started + subscribed)
+    try:
+        import time as _time_h
+        _ws_ltp = 0.0
+        _market_open_now = D.is_market_open()
+        _health_lines_ws = list(_health_lines_pre)
+        _health_ok_ws = _health_ok_pre
+        if _market_open_now:
+            for _ in range(30):  # up to 30s for WS to connect and deliver first tick
+                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if _ws_ltp > 0:
+                    break
+                _time_h.sleep(1)
+            if _ws_ltp > 0:
+                _health_lines_ws.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+            else:
+                _health_lines_ws.append("WS: ⚠️ no tick after 30s (feed may be down)")
+                _health_ok_ws = False
+        else:
+            with D._tick_lock:
+                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+            if _entry:
+                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
+                _health_lines_ws.append(
+                    "WS: 💤 market closed (last tick "
+                    + str(_age_min) + "m ago at "
+                    + str(round(_entry["ltp"], 1)) + ")"
+                )
+            else:
+                _health_lines_ws.append("WS: 💤 market closed (no ticks yet)")
+        _icon = "✅" if _health_ok_ws else "⚠️"
+        _tg_send(
+            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
+            + "\n".join(_health_lines_ws) + "\n"
+            + "Time: " + datetime.now().strftime("%H:%M:%S IST")
+        )
+        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines_ws)))
+    except Exception as _the:
+        logger.warning("[MAIN] Token health check error: " + str(_the))
 
     try:
         _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
