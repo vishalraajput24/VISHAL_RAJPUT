@@ -375,6 +375,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_token"]              = token
         _v8_state["_reentry_strike"]             = strike
         _v8_state["_reentry_other_token"]        = other_tok
+        _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
         # Clear position
         _v8_state["in_trade"]            = False
         _v8_state["symbol"]              = ""

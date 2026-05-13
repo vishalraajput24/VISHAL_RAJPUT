@@ -406,14 +406,11 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
 def check_v8_continuation_reentry(token: int, option_type: str,
                                    other_token: int, state: dict = None) -> dict:
-    """V8 cross-leg continuation re-entry path.
-    Called only when V8 just exited and re-entry watcher is armed.
-
-    Conditions:
-      - Same-side option: GREEN + close > ema9_low
-      - Other-side option: RED + close < ema9_low (cross-leg dying)
-
-    Returns dict with fired=True if all conditions met, else with reject_reason.
+    """V8 pullback-retest re-entry. 4 gates:
+      G1: body >= 20%          (real bounce candle, not doji)
+      G2: close <= exit_price  (price pulled back, no chasing)
+      G3: close > ema9_low     (trend still intact)
+      G4: xLeg dying           (other leg below its ema9_low)
     """
     if state is None: state = {}
     result = {
@@ -428,40 +425,58 @@ def check_v8_continuation_reentry(token: int, option_type: str,
         last = opt_3m.iloc[-2]
         fired_ts = str(last.name)
         result["fired_candle_ts"] = fired_ts
-        # Same-candle guard
         if state.get("_last_fired_candle_ts", "") == fired_ts:
             result["reject_reason"] = "same_candle_already_fired"; return result
 
-        close = float(last["close"]); open_ = float(last["open"])
+        close    = float(last["close"])
+        open_    = float(last["open"])
+        high     = float(last["high"])
+        low      = float(last["low"])
         ema9_low = float(last.get("ema9_low", 0))
         result["entry_price"] = round(close, 2)
-        result["close"] = round(close, 2); result["open"] = round(open_, 2)
-        result["ema9_low"] = round(ema9_low, 2)
+        result["close"]       = round(close, 2)
+        result["open"]        = round(open_, 2)
+        result["ema9_low"]    = round(ema9_low, 2)
 
-        if close <= open_:
-            result["reject_reason"] = "self_red_candle"; return result
+        # ── G1: body >= 20% (green candle with real conviction) ──
+        _range = high - low
+        _body_pct = round(abs(close - open_) / _range * 100) if _range > 0 else 0
+        result["body_pct"] = _body_pct
+        if close <= open_ or _body_pct < 20:
+            result["reject_reason"] = f"weak_candle_body_{_body_pct}pct"
+            logger.info(f"[REJECT-V8-RE] {option_type} G1_weak_body body={_body_pct}%")
+            return result
+
+        # ── G2: close <= exit_price (price pulled back, not chasing) ──
+        _exit_px = float(state.get("_reentry_exit_price", 0) or 0)
+        result["exit_price_ref"] = round(_exit_px, 2)
+        if _exit_px > 0 and close > _exit_px:
+            result["reject_reason"] = f"chasing_above_exit_{round(close,1)}_gt_{round(_exit_px,1)}"
+            logger.info(f"[REJECT-V8-RE] {option_type} G2_chasing close={round(close,1)} exit_ref={round(_exit_px,1)}")
+            return result
+
+        # ── G3: close > ema9_low (trend intact) ──
         if close <= ema9_low:
-            result["reject_reason"] = "self_close_below_ema9l"; return result
+            result["reject_reason"] = "close_below_ema9l"; return result
 
-        # Cross-leg confirm: other side RED + close < ema9_low
+        # ── G4: xLeg dying (other leg below its ema9_low) ──
         opt3_other = D.add_indicators(D.get_historical_data(other_token, "3minute", 10))
         if opt3_other is None or opt3_other.empty or len(opt3_other) < 2:
             result["reject_reason"] = "xleg_no_data"; return result
-        o_last = opt3_other.iloc[-2]
-        o_open = float(o_last["open"]); o_close = float(o_last["close"])
+        o_last  = opt3_other.iloc[-2]
+        o_close = float(o_last["close"])
         o_ema9l = float(o_last.get("ema9_low", 0))
         result["xleg_other_close"] = round(o_close, 2)
         result["xleg_other_ema9l"] = round(o_ema9l, 2)
-        if o_close >= o_open:
-            result["reject_reason"] = "xleg_not_red"; return result
         if o_ema9l > 0 and o_close >= o_ema9l:
-            result["reject_reason"] = "xleg_not_below_band"; return result
+            result["reject_reason"] = "xleg_not_dying"; return result
         result["xleg_other_dying"] = True
 
         result["fired"] = True
-        logger.info(f"[ENGINE-V8] {option_type} REENTRY-XLEG FIRED "
-                    f"self_close={round(close,1)} other_close={round(o_close,1)} "
-                    f"other_ema9l={round(o_ema9l,1)} (cross-leg confirmed)")
+        logger.info(f"[ENGINE-V8] {option_type} REENTRY FIRED "
+                    f"close={round(close,1)} body={_body_pct}% "
+                    f"exit_ref={round(_exit_px,1)} ema9l={round(ema9_low,1)} "
+                    f"xleg_other={round(o_close,1)}<{round(o_ema9l,1)}")
         return result
     except Exception as e:
         logger.error("[ENGINE-V8] Re-entry error: " + str(e))
