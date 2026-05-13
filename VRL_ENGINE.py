@@ -141,7 +141,7 @@ def _evaluate_entry_gates_pure(opt_3m, option_type: str, spot_ltp: float, now,
                           if _candle_range > 0 else 0, 1)
         _is_green = (close > open_)
         _margin = round(close - ema9_low, 2)
-        _rsi_rising = (rsi_now > rsi_prev)
+        _rsi_rising = (rsi_now > rsi_prev + 0.5)  # require genuine rise, not rounding noise
 
         result.update({
             "entry_price": round(close, 2), "ema9_high": round(ema9_high, 2),

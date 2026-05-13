@@ -2828,6 +2828,14 @@ def _strategy_loop(kite):
                                         expiry_date=expiry, kite=kite,
                                         silent=False, state=state)
                                     _passed = _re_result.get("fired", False)
+                                    # Body gate for V7 re-entry: require ≥ 20% body (no doji confirmation)
+                                    if _passed:
+                                        _re_body = float(_re_result.get("body_pct", 0) or 0)
+                                        if _re_body < 20:
+                                            _passed = False
+                                            _re_result["fired"] = False
+                                            _re_result["reject_reason"] = f"reentry_weak_body_{_re_body}pct"
+                                            logger.info(f"[REENTRY-V7] {_re_dir} body={_re_body}% < 20% — rejected")
                                     if not _passed:
                                         _why = _re_result.get("reject_reason", "?")
                                         if _re_attempts >= 2:
