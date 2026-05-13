@@ -2402,6 +2402,12 @@ def _strategy_loop(kite):
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
             D.check_and_reconnect()
+
+            # ── V8 tick-based exit: runs every 1-second scan cycle ──
+            # Must be OUTSIDE the _is_new_1min_candle gate — exits need to
+            # fire on every tick, not once per minute at candle close.
+            _v8_check_exit()
+
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
                 if D.is_market_open() and not _wm_warm:
@@ -3077,10 +3083,9 @@ def _strategy_loop(kite):
                     _v8_ce_tok = int(_v8_ce_info.get("token", 0) or 0)
                     _v8_pe_tok = int(_v8_pe_info.get("token", 0) or 0)
 
-                    # If V8 is in trade → manage exit only
-                    if _v8_state.get("in_trade"):
-                        _v8_check_exit()
-                    else:
+                    # Entry logic — only when V8 is NOT in a trade
+                    # (exit is handled every scan cycle outside the 1-min gate)
+                    if not _v8_state.get("in_trade"):
                         # First try re-entry path (cross-leg) if armed
                         _v8_re_armed = bool(_v8_state.get("_reentry_armed", False))
                         _v8_re_handled = False
