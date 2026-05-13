@@ -361,15 +361,18 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             result["reject_reason"] = "close_below_ema9_low"
             return result
 
-        # ── GATE 2B: option EMA9_low must be rising (slope >= 0) ──
-        _prev_ema9_low = float(opt_3m.iloc[-3].get("ema9_low", 0) or 0)
-        _slope = round(ema9_low - _prev_ema9_low, 2)
-        result["ema9_low_slope"] = _slope
-        if _slope < 0:
+        # ── GATE 2B: option EMA9_low must be rising on BOTH last 2 candles ──
+        _prev_ema9_low  = float(opt_3m.iloc[-3].get("ema9_low", 0) or 0)
+        _prev2_ema9_low = float(opt_3m.iloc[-4].get("ema9_low", 0) or 0) if len(opt_3m) >= 4 else _prev_ema9_low
+        _slope  = round(ema9_low - _prev_ema9_low, 2)
+        _slope2 = round(_prev_ema9_low - _prev2_ema9_low, 2)
+        result["ema9_low_slope"]  = _slope
+        result["ema9_low_slope2"] = _slope2
+        if _slope < 0 or _slope2 < 0:
             result["reject_reason"] = f"slope_falling_{_slope}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate2b_slope_falling "
-                            f"slope={_slope} (option ema9l falling)")
+                            f"slope={_slope},{_slope2} (option ema9l falling 2-candle)")
             return result
 
         # ── Fetch opposite leg data (cross-leg snapshot) ──
@@ -402,7 +405,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                     o_ema9l = float(o_last.get("ema9_low", 0))
                     result["xleg_other_close"] = round(o_close, 2)
                     result["xleg_other_ema9l"] = round(o_ema9l, 2)
-                    result["xleg_other_dying"] = (o_ema9l > 0 and o_close < o_ema9l)
+                    result["xleg_other_dying"] = (o_ema9l > 0 and o_close < o_ema9l - 0.5)
             except Exception:
                 pass
 
@@ -490,7 +493,7 @@ def check_v8_continuation_reentry(token: int, option_type: str,
         o_ema9l = float(o_last.get("ema9_low", 0))
         result["xleg_other_close"] = round(o_close, 2)
         result["xleg_other_ema9l"] = round(o_ema9l, 2)
-        if o_ema9l > 0 and o_close >= o_ema9l:
+        if o_ema9l > 0 and o_close >= o_ema9l - 0.5:
             result["reject_reason"] = "xleg_not_dying"; return result
         result["xleg_other_dying"] = True
 
@@ -522,7 +525,7 @@ def evaluate_cross_leg(self_dir: str, opt_3m_other) -> dict:
         other_ema9l = float(last.get("ema9_low", 0))
         if other_ema9l <= 0:
             return out
-        other_dying = other_close < other_ema9l
+        other_dying = other_close < other_ema9l - 0.5
         out["xleg_other_close"]  = round(other_close, 2)
         out["xleg_other_ema9l"]  = round(other_ema9l, 2)
         out["xleg_other_dying"]  = bool(other_dying)
