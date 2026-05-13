@@ -41,7 +41,8 @@ lots:
 entry:
   ema9_band:
     body_pct_min: 40         # display-only in V6 (gate dropped)
-    warmup_until: "09:45"    # skip first 2 candles (09:30+09:45 too noisy, 31%WR, -301pts)
+    warmup_until: "09:45"     # V7: skip first 2 candles (09:30+09:45 too noisy, 31%WR, -301pts)
+    warmup_until_v8: "09:35" # V8: allow from 09:30 candle (3-min, less noisy than 15-min)
     cutoff_after: "15:00"
     # 2026-05-07: cooldown 0 caused 10 same-candle re-fires (-287 pts).
     # Engine now has same-candle guard, but keep cooldown as safety belt.

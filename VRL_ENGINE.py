@@ -315,9 +315,9 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             "candle_green": _is_green, "body_pct": _body_pct,
         })
 
-        # ── Time window (rail, same as V7) ──
+        # ── Time window (V8 has its own warmup key, independent of V7) ──
         now = datetime.now()
-        warmup_until = CFG.entry_ema9_band("warmup_until", "09:35")
+        warmup_until = CFG.entry_ema9_band("warmup_until_v8", "09:35")
         cutoff_after = CFG.entry_ema9_band("cutoff_after", "15:00")
         if D.is_market_open():
             mins = now.hour * 60 + now.minute
