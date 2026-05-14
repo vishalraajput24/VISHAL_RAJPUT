@@ -358,17 +358,6 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"close={round(close,1)} ema9l={round(ema9_low,1)}")
             return result
 
-        # ── GATE 2B: EMA9_low must not be falling (support holding) ──
-        _prev_ema9_low = float(opt_3m.iloc[-3].get("ema9_low", 0) or 0)
-        _slope = round(ema9_low - _prev_ema9_low, 2)
-        result["ema9_low_slope"] = _slope
-        if _slope < 0:
-            result["reject_reason"] = f"ema9l_falling_{_slope}"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate2b_ema9l_falling "
-                            f"ema9l={round(ema9_low,1)} prev={round(_prev_ema9_low,1)} slope={_slope}")
-            return result
-
         # ── GATE 3: band width >= 10 (real momentum, not choppy) ──
         _bw = round(ema9_high - ema9_low, 2)
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
