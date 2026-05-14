@@ -263,13 +263,14 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                    silent: bool = False, state: dict = None,
                    other_token: int = 0) -> dict:
-    """V8 — 3-min fresh-break entry (parallel strategy).
+    """V8 — 3-min entry on live forming candle (5-gate).
 
     Gates:
-      1. GREEN candle (option close > open)
-      2. FRESH BREAK (≥ 2 of last 3 prior closes ≤ ema9_low)
-      3. (optional re-entry path) cross-leg confirmation handled in
-         MAIN's re-entry watcher, not here.
+      G1. GREEN candle (close > open)
+      G2. Close > EMA9_low (broke above support band)
+      G3. band_width >= 10 (real momentum, not choppy)
+      G4. other_close <= other_band_mid (other side falling = directional)
+      G5. RSI > 50 AND rising vs previous closed candle
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -279,7 +280,6 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
         "ema9_high": 0, "ema9_low": 0, "close": 0, "open": 0,
         "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
         "band_width": 0, "band_mid": 0, "reject_reason": "", "fired_candle_ts": "",
-        "fresh_break_count": 0,
         # cross-leg attached when re-entry watcher fires
         "xleg_other_close": 0.0, "xleg_other_ema9l": 0.0, "xleg_other_dying": False,
     }
@@ -389,8 +389,8 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                                         f"other={round(_o_close,1)} > other_mid={_o_mid} "
                                         f"(sideways — other side not falling)")
                         return result
-            except Exception:
-                pass
+            except Exception as _g4e:
+                logger.warning(f"[ENGINE-V8] Gate4 data error for {option_type} other_token={other_token}: {_g4e} — gate4 skipped")
 
         # ── GATE 5: RSI > 50 and rising (momentum confirmed) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
