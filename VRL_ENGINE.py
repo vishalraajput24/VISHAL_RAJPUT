@@ -278,7 +278,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
         "fired": False, "strategy": "V8", "entry_price": 0, "entry_mode": "",
         "ema9_high": 0, "ema9_low": 0, "close": 0, "open": 0,
         "high": 0, "low": 0, "candle_green": False, "body_pct": 0,
-        "band_width": 0, "reject_reason": "", "fired_candle_ts": "",
+        "band_width": 0, "band_mid": 0, "reject_reason": "", "fired_candle_ts": "",
         "fresh_break_count": 0,
         # cross-leg attached when re-entry watcher fires
         "xleg_other_close": 0.0, "xleg_other_ema9l": 0.0, "xleg_other_dying": False,
@@ -323,6 +323,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             "close": round(close, 2), "open": round(open_, 2),
             "high": round(high, 2), "low": round(low, 2),
             "band_width": round(ema9_high - ema9_low, 2),
+            "band_mid": round((ema9_high + ema9_low) / 2, 2),
             "candle_green": _is_green, "body_pct": _body_pct,
         })
 
@@ -375,6 +376,24 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"slope={_slope},{_slope2} (option ema9l falling 2-candle)")
             return result
 
+        # ── GATE 2C: band must be wide enough (choppy market filter) ──
+        _bw = round(ema9_high - ema9_low, 2)
+        if _bw < 10:
+            result["reject_reason"] = f"band_too_narrow_{_bw}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2c_band_narrow "
+                            f"width={_bw} (need >=10)")
+            return result
+
+        # ── GATE 2D: close must be in upper half of EMA band ──
+        _band_mid = round((ema9_high + ema9_low) / 2, 2)
+        if close < _band_mid:
+            result["reject_reason"] = f"close_in_lower_half_mid={_band_mid}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2d_lower_half "
+                            f"close={round(close,1)} mid={_band_mid} ema9h={round(ema9_high,1)}")
+            return result
+
         # ── Fetch opposite leg data (cross-leg snapshot) ──
         _opt3m_other = None
         if other_token:
@@ -423,9 +442,10 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
         result["entry_mode"] = "CLOSE_FILL"
         if not silent:
             logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
-                        f"ema9l={round(ema9_low,1)} "
+                        f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
+                        f"bw={_bw} mid={_band_mid} "
                         f"rsi={round(_rsi_now,1)} (prev={round(_rsi_prev,1)}) "
-                        f"(3-gate V8, 3-min)")
+                        f"(5-gate V8, 3-min)")
         return result
 
     except Exception as e:
