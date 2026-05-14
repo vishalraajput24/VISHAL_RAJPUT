@@ -3197,7 +3197,7 @@ def _strategy_loop(kite):
                                 _v8_res = check_entry_v8(
                                     token=_v8_token, option_type=_v8_dir,
                                     spot_ltp=spot_ltp,
-                                    silent=_v8_in_both_cooldown,  # suppress spam while in cooldown
+                                    silent=False,  # always log — silent caused permanent invisible cooldown
                                     state=_v8_state, other_token=_v8_other)
                                 if not _v8_res.get("fired"):
                                     if _v8_dir == "CE": _v8_ce_gate_rejected = True
@@ -3239,14 +3239,15 @@ def _strategy_loop(kite):
                                         entry_price=_v8_res["entry_price"],
                                         entry_result=_v8_res, other_token=_v8_other)
                                 break  # one V8 entry per cycle
-                            # Both sides failed (gate-rejected OR cooldown-blocked) → refresh timestamp
+                            # Both sides failed → arm cooldown only if not already active.
+                            # Old code refreshed timestamp every minute → cooldown NEVER expired → V8 permanent silence.
                             if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
-                                _prev_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
-                                _v8_state["_v8_both_rejected_ts"] = time.time()
-                                if _prev_ts == 0:
-                                    logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (3 min block)")
-                                elif not _v8_in_both_cooldown:
-                                    logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
+                                if not _v8_in_both_cooldown:
+                                    _v8_state["_v8_both_rejected_ts"] = time.time()
+                                    if _v8_both_rej_ts == 0:
+                                        logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (3 min block)")
+                                    else:
+                                        logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
                 except Exception as _v8e:
                     import traceback as _v8tb
                     logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
