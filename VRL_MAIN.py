@@ -187,6 +187,8 @@ _v8_state = {
     "active_ratchet_sl": 0.0,
     "candles_held": 0,
     "_last_minute": "",
+    "_other_token": 0,          # other leg's token — needed for re-entry after restart
+    "_reentry_exit_price": 0.0, # exit price of last trade — re-entry anti-chase gate
     # Re-entry watcher (cross-leg continuation, 2-candle window)
     "_reentry_armed": False,
     "_reentry_attempts": 0,
@@ -3803,19 +3805,22 @@ def _cmd_forceexit(args):
         if state.get("in_trade"):
             state["force_exit"] = True
             v7_open = True
+    _v8_tok = 0
+    _v8_entry_px = 0.0
     with _v8_lock:
         if _v8_state.get("in_trade"):
             v8_open = True
+            _v8_tok = int(_v8_state.get("token", 0) or 0)
+            _v8_entry_px = float(_v8_state.get("entry_price", 0) or 0)
     if not v7_open and not v8_open:
         _tg_send("No open trade.")
         return
     _tg_send("🚨 Force exit triggered.")
     logger.warning("[CTRL] Force exit")
     if v8_open:
-        _tok = int(_v8_state.get("token", 0) or 0)
-        _ltp = D.get_ltp(_tok) if _tok else 0
+        _ltp = D.get_ltp(_v8_tok) if _v8_tok else 0
         if _ltp <= 0:
-            _ltp = float(_v8_state.get("entry_price", 0))
+            _ltp = _v8_entry_px
         _v8_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
 
 
