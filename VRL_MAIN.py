@@ -2322,15 +2322,23 @@ def _strategy_loop(kite):
         state["_last_1min_candle"] = ""
 
     try:
-        _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        _prev_close = state.get("prev_close", 0)
-        if _prev_close > 0 and _startup_spot > 0:
-            _gap = abs(_startup_spot - _prev_close)
-            _gap_threshold = CFG.get().get("strike", {}).get("gap_relock_threshold", 200)
-            if _gap > _gap_threshold:
-                logger.info("[MAIN] GAP " + str(round(_gap)) + "pts — forcing strike relock at open")
-                _tg_send("🔔 <b>GAP OPEN</b> " + str(round(_gap)) + "pts — strikes will relock")
-                _reset_strike_lock()
+        _now_startup = datetime.now()
+        _startup_mins = _now_startup.hour * 60 + _now_startup.minute
+        # Only check gap at true market open window (09:00–09:34).
+        # Mid-day restarts must NOT compare prev_close to current intraday spot.
+        if 540 <= _startup_mins < 574:
+            _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            _prev_close = state.get("prev_close", 0)
+            if _prev_close > 0 and _startup_spot > 0:
+                _gap = abs(_startup_spot - _prev_close)
+                _gap_threshold = CFG.get().get("strike", {}).get("gap_relock_threshold", 200)
+                if _gap > _gap_threshold:
+                    logger.info("[MAIN] GAP " + str(round(_gap)) + "pts — forcing strike relock at open")
+                    _tg_send("🔔 <b>GAP OPEN</b> " + str(round(_gap)) + "pts — strikes will relock")
+                    _reset_strike_lock()
+        else:
+            logger.info("[MAIN] Gap-open check skipped (mid-day restart at "
+                        + _now_startup.strftime("%H:%M") + ")")
     except Exception:
         pass
 
