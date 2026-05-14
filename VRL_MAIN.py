@@ -511,6 +511,7 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
+                _locked_tokens[_dt]["strike"] = _strike  # ensure strike survives into V8 entry display
 
         # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
         # Keys: CE_UP / CE_DN / PE_UP / PE_DN
