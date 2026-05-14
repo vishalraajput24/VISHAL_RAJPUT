@@ -204,6 +204,8 @@ _v8_state = {
     "_sl_cooldown_skip_next": False,
     # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
     "_v8_both_rejected_ts": 0.0,
+    # Date of last trade — used to detect new day and reset daily counters on restart
+    "_last_trade_date": "",
 }
 _v8_lock = threading.Lock()
 
@@ -339,6 +341,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_strike"]             = strike
         _v8_state["_reentry_other_token"]        = other_tok
         _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
+        _v8_state["_last_trade_date"]            = date.today().isoformat()
 
     # --- Lock released: safe to read captured locals for logging ---
     pnl_pts = round(exit_price - entry_price, 2)
@@ -643,7 +646,7 @@ _V8_PERSIST_FIELDS = [
     "candles_held", "_other_token",
     "_sl_cooldown_skip_next",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
-    "_v8_both_rejected_ts",
+    "_v8_both_rejected_ts", "_last_trade_date",
 ]
 
 def _save_v8_state():
@@ -668,6 +671,17 @@ def _load_v8_state():
                 if k in _v8_state:
                     _v8_state[k] = v
         logger.info("[V8] State loaded from disk")
+        # Reset daily counters if state file is from a previous day
+        _today = date.today().isoformat()
+        _last_date = str(saved.get("_last_trade_date", ""))
+        if _last_date != _today:
+            with _v8_lock:
+                _v8_state["_pnl_today_pts"] = 0.0
+                _v8_state["_trades_today"]  = 0
+                _v8_state["_wins_today"]    = 0
+                _v8_state["_losses_today"]  = 0
+                _v8_state["_v8_both_rejected_ts"] = 0.0
+            logger.info("[V8] New trading day — daily counters reset (last_date=" + _last_date + ")")
         if _v8_state.get("in_trade"):
             _sym  = str(_v8_state.get("symbol", ""))
             _ep   = float(_v8_state.get("entry_price", 0))
