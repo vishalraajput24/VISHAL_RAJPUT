@@ -33,6 +33,7 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 | G2B | EMA9_low slope ≥ 0 on BOTH last 2 candles (2-candle slope) |
 | G2C | `band_width = ema9_high - ema9_low >= 10` (choppy market filter) |
 | G2D | `close >= (ema9_high + ema9_low) / 2` (close in upper half of EMA band) |
+| G2E | `other_close <= other_band_mid` (other side in LOWER half of its own band = falling) |
 | G3A | RSI ≥ 38 |
 | G3B | RSI rise ≥ 2.0 pts vs previous candle |
 | xLeg | Other side dying: `close < ema9l - 0.5` (0.5pt margin prevents rounding false positives) |

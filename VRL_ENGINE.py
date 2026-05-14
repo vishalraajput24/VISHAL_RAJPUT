@@ -394,12 +394,30 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"close={round(close,1)} mid={_band_mid} ema9h={round(ema9_high,1)}")
             return result
 
-        # ── Fetch opposite leg data (cross-leg snapshot) ──
+        # ── Fetch opposite leg + GATE 2E: other side must be falling ──
+        # Other side close must be in the LOWER half of its own EMA band.
+        # If both sides are in their upper halves → sideways market, not directional.
         _opt3m_other = None
         if other_token:
             try:
                 _opt3m_other = D.add_indicators(
                     D.get_historical_data(other_token, "3minute", 10))
+                if _opt3m_other is not None and len(_opt3m_other) >= 2:
+                    _o_last  = _opt3m_other.iloc[-2]
+                    _o_close = float(_o_last["close"])
+                    _o_ema9h = float(_o_last.get("ema9_high", 0))
+                    _o_ema9l = float(_o_last.get("ema9_low", 0))
+                    _o_mid   = round((_o_ema9h + _o_ema9l) / 2, 2) if _o_ema9h > 0 else 0
+                    result["xleg_other_close"] = round(_o_close, 2)
+                    result["xleg_other_ema9l"] = round(_o_ema9l, 2)
+                    result["xleg_other_dying"] = (_o_ema9l > 0 and _o_close < _o_ema9l - 0.5)
+                    if _o_mid > 0 and _o_close > _o_mid:
+                        result["reject_reason"] = f"other_not_falling_mid={_o_mid}"
+                        if not silent:
+                            logger.info(f"[REJECT-V8] {option_type} gate2e_other_not_falling "
+                                        f"other={round(_o_close,1)} > other_mid={_o_mid} "
+                                        f"(sideways — other side in upper half)")
+                        return result
             except Exception:
                 pass
 
@@ -425,19 +443,6 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"rise={_rsi_rise} rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
             return result
 
-        # ── Cross-leg snapshot (informational) ──
-        if _opt3m_other is not None:
-            try:
-                if len(_opt3m_other) >= 2:
-                    o_last = _opt3m_other.iloc[-2]
-                    o_close = float(o_last["close"])
-                    o_ema9l = float(o_last.get("ema9_low", 0))
-                    result["xleg_other_close"] = round(o_close, 2)
-                    result["xleg_other_ema9l"] = round(o_ema9l, 2)
-                    result["xleg_other_dying"] = (o_ema9l > 0 and o_close < o_ema9l - 0.5)
-            except Exception:
-                pass
-
         result["fired"] = True
         result["entry_mode"] = "CLOSE_FILL"
         if not silent:
@@ -445,7 +450,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
                         f"bw={_bw} mid={_band_mid} "
                         f"rsi={round(_rsi_now,1)} (prev={round(_rsi_prev,1)}) "
-                        f"(5-gate V8, 3-min)")
+                        f"(6-gate V8, 3-min)")
         return result
 
     except Exception as e:
