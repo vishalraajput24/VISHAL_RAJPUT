@@ -28,21 +28,15 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 | Gate | Check |
 |------|-------|
 | G1 | Candle must be green (close > open) |
-| G1B | Body ≥ 20% of high-low range |
-| G2 | Close > EMA9_low |
-| G2B | EMA9_low slope ≥ 0 on BOTH last 2 candles (2-candle slope) |
-| G2C | `band_width = ema9_high - ema9_low >= 10` (choppy market filter) |
-| G2D | `close >= (ema9_high + ema9_low) / 2` (close in upper half of EMA band) |
-| G2E | `other_close <= other_band_mid` (other side in LOWER half of its own band = falling) |
-| G3A | RSI ≥ 38 |
-| G3B | RSI rise ≥ 2.0 pts vs previous candle |
-| xLeg | Other side dying: `close < ema9l - 0.5` (0.5pt margin prevents rounding false positives) |
+| G2 | Close > EMA9_low (broke above support band) |
+| G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
+| G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
 
-**G2C + G2D data basis** (9 days, 1404 candles with fwd data):
+**Data basis** (9 days, 1404 candles):
 - Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
-- G2C + G2D together: avg_fwd = +20.4 pts, win% = 42.8%, n=381 (58% fewer entries)
+- G3 (bw>=10) alone: avg_fwd = +16.3 pts, win% = 41.7%
 - Band width 8-10 = -3.0 avg return (BAD). Band 12-16 = +18.1 avg (BEST).
-- Close in lower half of band: +2.5 avg. Upper half: +11.9 avg.
+- G4 ensures directional divergence — both sides rising = sideways = skip.
 
 ### Exit Ladder (_v8_compute_trail_sl)
 ```
