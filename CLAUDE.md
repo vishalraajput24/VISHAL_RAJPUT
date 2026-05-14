@@ -31,6 +31,7 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 | G2 | Close > EMA9_low (broke above support band) |
 | G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
+| G5 | RSI > 50 AND RSI rising (above midpoint and building momentum) |
 
 **Data basis** (9 days, 1404 candles):
 - Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910

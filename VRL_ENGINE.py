@@ -393,13 +393,31 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             except Exception:
                 pass
 
+        # ── GATE 5: RSI > 50 and rising (momentum confirmed) ──
+        _rsi_now  = float(last.get("RSI", 0) or 0)
+        _rsi_prev = float(opt_3m.iloc[-3].get("RSI", 0) or 0)
+        result["rsi"] = round(_rsi_now, 1)
+        result["rsi_prev"] = round(_rsi_prev, 1)
+        if _rsi_now <= 50:
+            result["reject_reason"] = f"rsi_below_50_{round(_rsi_now,1)}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_50 "
+                            f"rsi={round(_rsi_now,1)}")
+            return result
+        if _rsi_now <= _rsi_prev:
+            result["reject_reason"] = f"rsi_not_rising_{round(_rsi_now,1)}_prev={round(_rsi_prev,1)}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_not_rising "
+                            f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
+            return result
+
         result["fired"] = True
         result["entry_mode"] = "CLOSE_FILL"
         if not silent:
             logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
-                        f"bw={_bw} mid={_band_mid} "
-                        f"(4-gate V8, 3-min)")
+                        f"bw={_bw} rsi={round(_rsi_now,1)} "
+                        f"(5-gate V8, 3-min)")
         return result
 
     except Exception as e:
