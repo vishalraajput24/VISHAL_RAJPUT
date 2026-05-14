@@ -82,8 +82,8 @@ EXCHANGE_NFO     = CFG.get()["instrument"].get("exchange_nfo", "NFO")
 EXCHANGE_NSE     = CFG.get()["instrument"].get("exchange_nse", "NSE")
 LOT_SIZE_BASE    = CFG.lot_size()
 LOT_SIZE         = LOT_SIZE_BASE
-STRIKE_STEP         = CFG.strike_cfg("step", 100)
-STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
+STRIKE_STEP         = CFG.strike_cfg("step_normal", 50)
+STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_dte0", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
 
@@ -102,7 +102,7 @@ LOOKBACK_5M = CFG.lookback("5m")
 TRADE_START_HOUR  = CFG.market_hours("trade_start_hour", 9)
 TRADE_START_MIN   = CFG.market_hours("trade_start_min", 15)
 ENTRY_CUTOFF_HOUR = CFG.market_hours("entry_cutoff_hour", 15)
-ENTRY_CUTOFF_MIN  = CFG.market_hours("entry_cutoff_min", 10)
+ENTRY_CUTOFF_MIN  = CFG.market_hours("entry_cutoff_min", 0)
 MARKET_OPEN_HOUR  = CFG.market_hours("open_hour", 9)
 MARKET_OPEN_MIN   = CFG.market_hours("open_min", 15)
 MARKET_CLOSE_HOUR = CFG.market_hours("close_hour", 15)
@@ -810,7 +810,7 @@ def is_market_open() -> bool:
         return False
     start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
     end   = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MIN, second=0, microsecond=0)
-    return start <= now <= end
+    return start <= now < end
 
 def is_trading_window(now: datetime = None) -> bool:
     if now is None:
@@ -819,7 +819,7 @@ def is_trading_window(now: datetime = None) -> bool:
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
     end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
-    return start <= now <= end
+    return start <= now < end
 
 def _get_nfo_instruments(kite=None):
     """Fetch NFO instruments once per day, cached."""
