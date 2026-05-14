@@ -3185,9 +3185,6 @@ def _strategy_loop(kite):
                                     _age = round(time.time() - _v8_both_rej_ts)
                                     logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
                                                 f"age={_age}s ({round(_age/60,1)}min) — gates passed but blocked")
-                                    # Count as "failed" so timestamp keeps refreshing
-                                    if _v8_dir == "CE": _v8_ce_gate_rejected = True
-                                    else: _v8_pe_gate_rejected = True
                                     continue
                                 _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
                                 _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
