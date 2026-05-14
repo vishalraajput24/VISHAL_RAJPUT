@@ -1428,7 +1428,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     actual_price = fill["fill_price"]
     actual_qty   = fill["fill_qty"]
     _entry_slippage = fill.get("slippage", 0)
-    hard_sl = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
+    hard_sl = abs(CFG.exit_ema9_band("emergency_sl_pts", -12))
     phase1_sl = compute_entry_sl(actual_price, hard_sl)
 
     # Extract the OTHER side token for manage_exit divergence check.
@@ -1552,7 +1552,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     )
 
     # V6 single emergency floor + simple trail ladder.
-    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
+    _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -12))
     _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
