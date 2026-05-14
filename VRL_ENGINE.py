@@ -289,8 +289,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
-        last = opt_3m.iloc[-2]
-        # ── Same-candle guard ──
+        last = opt_3m.iloc[-1]   # live forming candle — early entry
         fired_ts = str(last.name)
         result["fired_candle_ts"] = fired_ts
         if state.get("_last_fired_candle_ts", "") == fired_ts:
@@ -375,7 +374,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 _opt3m_other = D.add_indicators(
                     D.get_historical_data(other_token, "3minute", 10))
                 if _opt3m_other is not None and len(_opt3m_other) >= 2:
-                    _o_last  = _opt3m_other.iloc[-2]
+                    _o_last  = _opt3m_other.iloc[-1]   # live candle of other side
                     _o_close = float(_o_last["close"])
                     _o_ema9h = float(_o_last.get("ema9_high", 0))
                     _o_ema9l = float(_o_last.get("ema9_low", 0))
@@ -395,7 +394,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
         # ── GATE 5: RSI > 50 and rising (momentum confirmed) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
-        _rsi_prev = float(opt_3m.iloc[-3].get("RSI", 0) or 0)
+        _rsi_prev = float(opt_3m.iloc[-2].get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
         result["rsi_prev"] = round(_rsi_prev, 1)
         if _rsi_now <= 50:
