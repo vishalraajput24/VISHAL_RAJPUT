@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean — V7)
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v17 (V7 shadow + V8 live)
 #  Timeframe: 15-minute option candles (current single-strategy)
 #  Entry: 2 gates (option-side only).
 #    1. 15-min candle close > EMA9_low (option)
@@ -572,8 +572,8 @@ def _evaluate_exit_chain_pure(state: dict, option_ltp: float, opt_3m_full, now, 
     pnl = round(option_ltp - entry, 2)
     peak = max(state.get("peak_pnl", 0), pnl)
     state["peak_pnl"] = peak
-    # ── V6 single-floor emergency SL: -10 pts ──
-    _emergency_sl = CFG.exit_ema9_band("emergency_sl_pts", -10)
+    # ── Emergency SL: -12 pts (config: exit.ema9_band.emergency_sl_pts) ──
+    _emergency_sl = CFG.exit_ema9_band("emergency_sl_pts", -12)
     if pnl <= _emergency_sl:
         return [{"lot_id": "ALL", "reason": "EMERGENCY_SL", "price": option_ltp}]
     if market_open:

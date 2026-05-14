@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_CONFIG.py — VISHAL RAJPUT TRADE v16.7
+#  VRL_CONFIG.py — VISHAL RAJPUT TRADE v17
 #  Central config loader. Loads config.yaml, validates required
-#  v16.7 sections, exposes typed accessors.
+#  sections, exposes typed accessors.
 #  Immutable at runtime — restart to reload.
 # ═══════════════════════════════════════════════════════════════
 
@@ -25,7 +25,7 @@ _CONFIG_PATH = os.environ.get(
 )
 
 _cfg = None
-_CONFIG_VERSION = "14.0"
+_CONFIG_VERSION = "17.0"
 
 
 class ConfigError(Exception):

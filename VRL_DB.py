@@ -1,6 +1,6 @@
 #!/home/user/kite_env/bin/python3
 # ═══════════════════════════════════════════════════════════════
-#  VRL_DB.py — VISHAL RAJPUT TRADE v16.7
+#  VRL_DB.py — VISHAL RAJPUT TRADE v17
 #  SQLite database helper. WAL mode for concurrent reads.
 #  All lab data + trades in ~/lab_data/vrl_data.db
 #
