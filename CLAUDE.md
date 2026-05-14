@@ -5,10 +5,17 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
 - **V8**: 3-min candle strategy — **LIVE paper trading** (active)
 
+**Current version**: `v17` (merged to main 2026-05-14 via PR #7)
+
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
 **Trade CSV**: `~/lab_data/vrl_trade_log.csv`
 **V8 State**: `VISHAL_RAJPUT/state/vrl_v8_state.json`
+
+### Deploy after any main merge
+```bash
+cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vrl-main.service
+```
 
 ---
 
@@ -159,9 +166,81 @@ Should be eliminated by BUG-07 fix. If seen again: check if `_v8_execute_paper_e
 
 ---
 
+### BUG-08: V8 permanently silent during both-sides cooldown
+**Symptom**: No V8 log lines for 30+ minutes. Bot appeared dead.
+**Root cause 1**: `silent=_v8_in_both_cooldown` → zero log output while cooldown was active.
+**Root cause 2**: `_v8_both_rejected_ts` refreshed every 60s even while cooldown was active → never expired.
+**Fix 1**: Changed to `silent=False` — V8 always logs.
+**Fix 2**: Timestamp only armed when cooldown is NOT already active:
+```python
+if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
+    if not _v8_in_both_cooldown:
+        _v8_state["_v8_both_rejected_ts"] = time.time()
+```
+**Location**: VRL_MAIN.py main loop cooldown block.
+
+---
+
+### BUG-09: Gate4 silent exception swallowing data errors
+**Symptom**: Cross-leg divergence gate bypassed without any log when other-side data was missing.
+**Root cause**: Bare `except: pass` — any exception silently skipped Gate4.
+**Fix**: `except Exception as _g4e: logger.warning(f"... {_g4e} — gate4 skipped")`
+**Location**: VRL_ENGINE.py Gate4 block.
+
+---
+
+### BUG-10: `_other_token` missing from `_v8_state` init dict
+**Symptom**: After restart, `_other_token` never restored — `_load_v8_state` uses `if k in _v8_state` guard.
+**Fix**: Added `"_other_token": 0` and `"_reentry_exit_price": 0.0` to initial `_v8_state` dict.
+**Location**: VRL_MAIN.py `_v8_state` initial dict (~line 188).
+
+---
+
+### BUG-11: `_cmd_forceexit` read token/entry_price outside lock
+**Symptom**: Potential race — TG thread read `_v8_state` values between main-loop writes.
+**Fix**: Moved both reads inside `with _v8_lock:` block.
+**Location**: VRL_MAIN.py `_cmd_forceexit`.
+
+---
+
+### BUG-12: Emergency SL default -10 instead of -12 (3 places)
+**Symptom**: If config failed to load, fallback SL was -10 (looser than intended -12).
+**Fix**: Changed `-10` → `-12` in VRL_MAIN.py (lines ~1431, ~1555) and VRL_ENGINE.py (line ~576).
+
+---
+
+### BUG-13: STRIKE_STEP used wrong config key
+**Symptom**: `CFG.strike_cfg("step", 100)` — key `"step"` doesn't exist; correct keys are `"step_normal"` / `"step_dte0"`.
+**Fix**: `CFG.strike_cfg("step_normal", 50)` and `CFG.strike_cfg("step_dte0", 50)`.
+**Location**: VRL_DATA.py STRIKE_STEP / STRIKE_STEP_EXPIRY.
+
+---
+
+### BUG-14: ENTRY_CUTOFF_MIN default wrong (10 → 0)
+**Symptom**: `CFG.market_hours("entry_cutoff_min", 10)` default 10 → cutoff 15:10 if config fails (should be 15:00).
+**Fix**: Changed fallback default to `0`.
+**Location**: VRL_DATA.py.
+
+---
+
+### BUG-15: Market close boundary off-by-one second
+**Symptom**: `now <= end` allowed 15:30:00 exactly as "market open".
+**Fix**: Changed to `now < end` in `is_market_open()` and `is_trading_window()`.
+**Location**: VRL_DATA.py.
+
+---
+
 ## Pending / Collect Data
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
 - xLeg dying leg: require dying leg's own EMA also falling 2+ candles
 - Max trades/day limit (suggest: 10)
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
 - Daily loss limit (suggest: -50 pts → stop entries)
+- Time blackout windows (11:00–11:30, 13:00–14:30) — collect data first
+
+---
+
+## GitHub / Branch Rules
+- **main** is protected — direct push blocked, PRs required
+- Keep only 1 open PR at a time
+- After merge: `git checkout main && git pull` locally to stay in sync
