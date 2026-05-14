@@ -71,9 +71,10 @@ SESSIONS_DIR     = os.path.join(LAB_DIR, "sessions")
 LIVE_LOG_FILE    = os.path.join(LIVE_LOG_DIR, "vrl_live.log")
 LAB_LOG_FILE     = os.path.join(LAB_LOG_DIR,  "vrl_lab.log")
 TRADE_LOG_PATH   = os.path.join(LAB_DIR,      "vrl_trade_log.csv")
-STATE_FILE_PATH  = os.path.join(STATE_DIR,    "vrl_live_state.json")
-PID_FILE_PATH    = os.path.join(STATE_DIR,    "vrl_live.pid")
-TOKEN_FILE_PATH  = os.path.join(STATE_DIR,    "access_token.json")
+STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_live_state.json")
+V8_STATE_FILE_PATH  = os.path.join(STATE_DIR, "vrl_v8_state.json")
+PID_FILE_PATH       = os.path.join(STATE_DIR, "vrl_live.pid")
+TOKEN_FILE_PATH     = os.path.join(STATE_DIR, "access_token.json")
 
 # ── All constants now read from config.yaml via VRL_CONFIG ──
 INSTRUMENT_NAME  = CFG.instrument_name()
@@ -81,8 +82,8 @@ EXCHANGE_NFO     = CFG.get()["instrument"].get("exchange_nfo", "NFO")
 EXCHANGE_NSE     = CFG.get()["instrument"].get("exchange_nse", "NSE")
 LOT_SIZE_BASE    = CFG.lot_size()
 LOT_SIZE         = LOT_SIZE_BASE
-STRIKE_STEP         = CFG.strike_cfg("step", 100)
-STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_expiry", 50)
+STRIKE_STEP         = CFG.strike_cfg("step_normal", 50)
+STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_dte0", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
 
@@ -101,7 +102,7 @@ LOOKBACK_5M = CFG.lookback("5m")
 TRADE_START_HOUR  = CFG.market_hours("trade_start_hour", 9)
 TRADE_START_MIN   = CFG.market_hours("trade_start_min", 15)
 ENTRY_CUTOFF_HOUR = CFG.market_hours("entry_cutoff_hour", 15)
-ENTRY_CUTOFF_MIN  = CFG.market_hours("entry_cutoff_min", 10)
+ENTRY_CUTOFF_MIN  = CFG.market_hours("entry_cutoff_min", 0)
 MARKET_OPEN_HOUR  = CFG.market_hours("open_hour", 9)
 MARKET_OPEN_MIN   = CFG.market_hours("open_min", 15)
 MARKET_CLOSE_HOUR = CFG.market_hours("close_hour", 15)
@@ -809,7 +810,7 @@ def is_market_open() -> bool:
         return False
     start = now.replace(hour=MARKET_OPEN_HOUR,  minute=MARKET_OPEN_MIN,  second=0, microsecond=0)
     end   = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MIN, second=0, microsecond=0)
-    return start <= now <= end
+    return start <= now < end
 
 def is_trading_window(now: datetime = None) -> bool:
     if now is None:
@@ -818,7 +819,7 @@ def is_trading_window(now: datetime = None) -> bool:
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
     end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
-    return start <= now <= end
+    return start <= now < end
 
 def _get_nfo_instruments(kite=None):
     """Fetch NFO instruments once per day, cached."""
@@ -1341,17 +1342,11 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
     # Skip all warnings on weekends and NSE holidays — no Telegram spam
     if not is_trading_day(now):
         return msgs, upd
-    # 1. Daily bias 9:20
+    # 1. Daily bias 9:20 \u2014 computed for internal use only (no Telegram)
     if now.hour == 9 and 20 <= now.minute <= 22 and not state.get("_bias_done"):
         try:
-            b = compute_daily_bias(kite)
+            compute_daily_bias(kite)
             upd["_bias_done"] = True
-            if b.get("bias") != "UNKNOWN":
-                ic = {"BULL": "\U0001f402", "BEAR": "\U0001f43b",
-                      "SIDEWAYS": "\u26a0\ufe0f", "NEUTRAL": "\u3030\ufe0f"}
-                msgs.append(ic.get(b["bias"], "?") + " <b>DAILY BIAS: " + b["bias"] + "</b>\n"
-                            + b.get("details", "") + "\n"
-                            + "EMA21: " + str(b.get("ema21", 0)) + "  ADX: " + str(b.get("adx", 0)))
         except Exception as _e:
             logger.warning("[WARN] Bias: " + str(_e))
     # 2. Straddle capture 9:30
@@ -1363,8 +1358,7 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
             if _sa > 0:
                 capture_straddle(kite, _sa, expiry)
                 upd["_straddle_done"] = True
-                if _straddle_captured:
-                    msgs.append("\U0001f4ca <b>STRADDLE CAPTURED</b>\nATM CE+PE: \u20b9" + str(int(_straddle_open)))
+                pass  # straddle value captured internally, no Telegram alert
         except Exception as _e:
             logger.warning("[WARN] Straddle: " + str(_e))
     # 4. Hourly RSI (every hour — only during market hours)
@@ -1373,8 +1367,7 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
         try:
             hr = check_hourly_rsi(kite)
             upd["_hourly_rsi_ts"] = _t.time()
-            if hr.get("warning"):
-                msgs.append("\u26a0\ufe0f <b>" + hr["msg"] + "</b>")
+            # hourly RSI computed for internal use only \u2014 no Telegram alert
         except Exception as _e:
             logger.warning("[WARN] Hourly: " + str(_e))
     return msgs, upd

@@ -1,0 +1,1602 @@
+2026-05-11 00:00:00 | INFO     | [DATA] Token cache cleared
+2026-05-11 00:00:00 | INFO     | [MAIN] _eod_exited reset for new day
+2026-05-11 00:00:00 | INFO     | [DB] Cleaned spot_1min: 216 rows (before 2026-04-11)
+2026-05-11 00:00:00 | INFO     | [DB] Cleaned option_1min: 425 rows (before 2026-04-11)
+2026-05-11 00:00:00 | INFO     | [DB] Cleaned option_3min: 146 rows (before 2026-04-11)
+2026-05-11 00:00:00 | INFO     | [DB] Cleaned signal_scans: 432 rows (before 2026-04-11)
+2026-05-11 00:00:00 | INFO     | [DB] Total cleaned: 1219 rows
+2026-05-11 00:00:00 | INFO     | [MAIN] Daily reset
+2026-05-11 00:00:03 | INFO     | [PRELOAD] CE 24250 3minute: fetched 375 candles (had 29)
+2026-05-11 00:00:03 | INFO     | [PRELOAD] Market-open 5-strike window ATM=24200 total_candles=529
+2026-05-11 04:30:00 | WARNING  | [DATA] Auth token rejected — pausing retries until re-auth via VRL_CONFIG.
+2026-05-11 07:00:12 | INFO     | [MAIN] Shutdown signal received
+2026-05-11 07:00:12 | INFO     | [MAIN] Clean shutdown
+2026-05-11 07:00:15 | INFO     | [MAIN] ═══ VISHAL RAJPUT TRADE v16.7 STARTING ═══
+2026-05-11 07:00:15 | INFO     | [MAIN] Mode: PAPER
+2026-05-11 07:00:15 | INFO     | [MAIN] Scalps: DISABLED (data-backed decision)
+2026-05-11 07:00:15 | WARNING  | [MAIN] Token is from 2026-05-10, not today (2026-05-11) — forcing fresh auth
+2026-05-11 07:00:15 | WARNING  | [AUTH] Stale token from 2026-05-10 — ignoring
+2026-05-11 07:00:15 | INFO     | [AUTH] Step 1: Password login
+2026-05-11 07:00:15 | INFO     | [AUTH] Step 1 OK
+2026-05-11 07:00:15 | INFO     | [AUTH] Step 2: TOTP
+2026-05-11 07:00:15 | INFO     | [AUTH] Step 2 OK
+2026-05-11 07:00:17 | INFO     | [AUTH] Step 3: Fetching request_token
+2026-05-11 07:00:17 | INFO     | [AUTH] Step 3a: finish_url=https://kite.zerodha.com/connect/finish?api_key=w7v9me3rckr5
+2026-05-11 07:00:17 | INFO     | [AUTH] Step 3 OK — PgtBhSjT...
+2026-05-11 07:00:17 | INFO     | [AUTH] Step 4: Generating session
+2026-05-11 07:00:17 | INFO     | [AUTH] Done ✓
+2026-05-11 07:00:17 | INFO     | [AUTH] Auto-login successful ✓
+2026-05-11 07:00:17 | INFO     | [MAIN] Token health: Token: ✅ Vishal Raghunath Rajput | Spot: ✅ 24176.2 | WS: 💤 market closed (no ticks yet)
+2026-05-11 07:00:17 | INFO     | [DATA] Account: Vishal Raghunath Rajput bal=12927.3
+2026-05-11 07:00:20 | INFO     | [DATA] Lot size from broker: 65 (cached for 2026-05-11)
+2026-05-11 07:00:20 | INFO     | [MAIN] Lot size from broker: 65
+2026-05-11 07:00:20 | INFO     | [MAIN] State loaded from disk
+2026-05-11 07:00:20 | INFO     | [DATA] Lab cleanup: removed 2 files older than 30 days
+2026-05-11 07:00:20 | INFO     | [LOGPATH] live: /home/vishalraajput24/logs/live (13 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] lab: /home/vishalraajput24/logs/lab (31 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] auth: /home/vishalraajput24/logs/auth (2 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] web: /home/vishalraajput24/logs/web (1 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] health: /home/vishalraajput24/logs/health (0 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] zones: /home/vishalraajput24/logs/zones (0 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] ml: /home/vishalraajput24/logs/ml (0 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] errors: /home/vishalraajput24/logs/errors (29 files)
+2026-05-11 07:00:20 | INFO     | [LOGPATH] flow: /home/vishalraajput24/logs/flow (0 files)
+2026-05-11 07:00:20 | INFO     | [MAIN] No trades found for today — starting fresh
+2026-05-11 07:00:20 | INFO     | [DB] Startup integrity check: ok
+2026-05-11 07:00:20 | INFO     | [DB] Schema v16 — legacy ALTER TABLE blocks skipped
+2026-05-11 07:00:20 | INFO     | [DB] Database initialized: /home/vishalraajput24/lab_data/vrl_data.db
+2026-05-11 07:00:20 | INFO     | [DB] Schema v16 — migration already done, skipped
+2026-05-11 07:00:20 | INFO     | [SYNC] CSV/DB in sync for 2026-05-11 (CSV=0 DB=0)
+2026-05-11 07:00:20 | INFO     | [WS] Ticker started
+2026-05-11 07:00:20 | INFO     | [WS] Subscribed: {256265, 264969}
+2026-05-11 07:00:20 | INFO     | [WS] Connected
+2026-05-11 07:00:22 | INFO     | [MAIN] Pre-warm: 125 3-min spot candles loaded from history
+2026-05-11 07:00:23 | INFO     | [CTRL] Telegram listener started v16.7
+2026-05-11 07:00:23 | INFO     | [CTRL] Listener thread launched
+2026-05-11 07:00:23 | INFO     | [MAIN] All systems ready. Strategy loop starting.
+2026-05-11 07:00:23 | INFO     | [MAIN] Strategy loop started
+2026-05-11 07:00:23 | INFO     | [MAIN] Trade log cleaned: 432 valid rows kept
+2026-05-11 07:00:24 | INFO     | [BIAS] SIDEWAYS EMA21=24023.46 ADX=11.5
+2026-05-11 07:00:24 | INFO     | [MAIN] Daily bias: SIDEWAYS
+2026-05-11 07:00:24 | INFO     | [HOURLY] RSI=52.9
+2026-05-11 07:00:24 | INFO     | [MAIN] Hourly RSI: 52.9
+2026-05-11 07:00:24 | INFO     | [MAIN] Expiry on startup: 2026-05-12
+2026-05-11 07:06:15 | ERROR    | [WS] Error: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-05-11 07:06:15 | WARNING  | [WS] Closed: 1006 connection was closed uncleanly (peer dropped the TCP connection without previous WebSocket closing handshake)
+2026-05-11 07:06:15 | INFO     | [WS] Reconnecting in 1s (attempt 1)
+2026-05-11 07:06:16 | INFO     | [WS] Ticker started
+2026-05-11 07:06:16 | INFO     | [WS] Connected
+2026-05-11 07:06:19 | INFO     | [WS] Connected
+2026-05-11 09:15:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 09:15:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23941.7
+2026-05-11 09:15:36 | INFO     | [PRELOAD] CE 23950 3minute: fetched 376 candles (had 1)
+2026-05-11 09:15:36 | INFO     | [PRELOAD] PE 23950 3minute: fetched 376 candles (had 1)
+2026-05-11 09:15:36 | INFO     | [PRELOAD] Strike lock 23950 CE=377 PE=377
+2026-05-11 09:18:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23950 target=23900 spot=23914.0 (dist=36.0 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 09:18:35 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 09:18:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23914.0
+2026-05-11 09:18:35 | INFO     | [PRELOAD] CE 23900 3minute: fetched 376 candles (had 1)
+2026-05-11 09:18:36 | INFO     | [PRELOAD] PE 23900 3minute: fetched 376 candles (had 1)
+2026-05-11 09:18:36 | INFO     | [PRELOAD] Strike lock 23900 CE=377 PE=377
+2026-05-11 09:20:00 | INFO     | [BIAS] SIDEWAYS EMA21=24014.03 ADX=11.0
+2026-05-11 09:24:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23900 target=23950 spot=23940.4 (dist=40.4 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 09:24:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 09:24:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23940.4
+2026-05-11 09:30:00 | INFO     | [STRADDLE] CE=128.0 PE=120.6 Sum=248.6
+2026-05-11 09:35:35 | INFO     | [REJECT] CE gate1_close_below_band close=127.5 ema9l=262.5
+2026-05-11 09:35:35 | INFO     | [ENGINE] PE FIRED close=120.6 ema9l=59.6 rsi=67.0 (prev=33.0, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 09:35:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=3049.5 (of 1 fired)
+2026-05-11 09:35:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=123.3 open=127.5
+2026-05-11 09:35:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:35:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs120.6
+2026-05-11 09:35:35 | INFO     | [XLEG] PE entry — other CE close=123.35 ema9l=168.75 margin=-45.40 → PASS
+2026-05-11 09:35:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950PE qty=130 ref=120.6
+2026-05-11 09:35:35 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-11 09:35:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223950PE price=120.6 ema_gap=0 rsi=67.0 SL=108.6
+2026-05-11 09:35:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 09:41:07 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950PE qty=130 ref=144.6 reason=VISHAL_TRAIL
+2026-05-11 09:41:07 | INFO     | [POST_EXIT] Token 10687746 (PE 23950) held 10 min for post-exit observation
+2026-05-11 09:41:07 | INFO     | [WS] Unsubscribed: {10687234, 10687490, 10689026, 10686978, 10689282}
+2026-05-11 09:41:07 | INFO     | [MAIN] EXIT ALL NIFTY2651223950PE price=144.6 pnl=24.0pts reason=VISHAL_TRAIL
+2026-05-11 09:41:07 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-11 09:41:35 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 09:41:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23895.8
+2026-05-11 09:41:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:41:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:41:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=130.4 open=139.2
+2026-05-11 09:41:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:41:35 | WARNING  | [DATA] Stale tick token=10686978 age=27.7s
+2026-05-11 09:41:35 | WARNING  | [DATA] Stale tick token=10687234 age=27.7s
+2026-05-11 09:42:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:42:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:42:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=129.3 open=130.4
+2026-05-11 09:42:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:43:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:43:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:43:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=129.3 open=130.4
+2026-05-11 09:43:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:44:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:44:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:15:00+05:30
+2026-05-11 09:44:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=129.3 open=130.4
+2026-05-11 09:44:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:45:35 | INFO     | [ENGINE] PE FIRED close=159.4 ema9l=71.3 rsi=74.1 (prev=66.7, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 09:45:35 | INFO     | [REENTRY] pre-entry blocked: Cooldown: 0.5min
+2026-05-11 09:46:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=262.4
+2026-05-11 09:46:35 | INFO     | [ENGINE] PE FIRED close=130.9 ema9l=58.2 rsi=74.1 (prev=66.4, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 09:46:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=6357.75 (of 1 fired)
+2026-05-11 09:46:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=119.8 open=129.3
+2026-05-11 09:46:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:46:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs130.9
+2026-05-11 09:46:35 | INFO     | [XLEG] PE entry — other CE close=119.85 ema9l=154.94 margin=-35.09 → PASS
+2026-05-11 09:46:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223900PE qty=130 ref=130.9
+2026-05-11 09:46:35 | INFO     | [DATA] Active trade set: strike=23900 dir=PE
+2026-05-11 09:46:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223900PE price=130.9 ema_gap=0 rsi=74.1 SL=118.9
+2026-05-11 09:46:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 09:48:08 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223900PE qty=130 ref=118.9 reason=EMERGENCY_SL
+2026-05-11 09:48:08 | INFO     | [POST_EXIT] Token 10687234 (PE 23900) held 10 min for post-exit observation
+2026-05-11 09:48:08 | INFO     | [WS] Unsubscribed: {10686722, 10686978, 10687490, 10686466}
+2026-05-11 09:48:09 | INFO     | [MAIN] EXIT ALL NIFTY2651223900PE price=118.9 pnl=-12.0pts reason=EMERGENCY_SL
+2026-05-11 09:48:09 | INFO     | [VALIDATE] Exit: 10/10 checks passed ✅
+2026-05-11 09:48:35 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 09:48:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23889.1
+2026-05-11 09:48:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:48:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:48:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=121.9 open=130.9
+2026-05-11 09:48:35 | WARNING  | [DATA] Stale tick token=10686978 age=27.0s
+2026-05-11 09:49:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:49:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:49:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=121.9 open=130.9
+2026-05-11 09:50:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:50:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:50:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=121.9 open=130.9
+2026-05-11 09:51:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:51:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:51:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=123.0 open=126.6
+2026-05-11 09:51:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:52:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:52:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:52:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=123.0 open=126.6
+2026-05-11 09:52:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:53:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:53:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:53:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=123.0 open=126.6
+2026-05-11 09:53:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:54:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:54:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:54:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.5 open=125.5
+2026-05-11 09:55:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:55:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:55:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.5 open=125.5
+2026-05-11 09:56:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:56:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:56:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.5 open=125.5
+2026-05-11 09:57:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:57:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:57:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.8 open=124.3
+2026-05-11 09:57:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:58:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:58:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:58:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.8 open=124.3
+2026-05-11 09:58:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 09:59:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:59:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 09:30:00+05:30
+2026-05-11 09:59:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.8 open=124.3
+2026-05-11 09:59:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:00:00 | INFO     | [HOURLY] RSI=33.9
+2026-05-11 10:00:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:00:35 | INFO     | [REENTRY] attempt 1/2 failed: rsi_not_rising_78.3_vs_79.1
+2026-05-11 10:00:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:00:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:00:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.5 open=118.8
+2026-05-11 10:00:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=129.7 open=130.0
+2026-05-11 10:01:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:01:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:01:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.5 open=118.8
+2026-05-11 10:01:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=129.7 open=130.0
+2026-05-11 10:02:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:02:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:02:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=118.5 open=118.8
+2026-05-11 10:02:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=129.7 open=130.0
+2026-05-11 10:03:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:03:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:03:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.8 open=129.7
+2026-05-11 10:04:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:04:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:04:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.8 open=129.7
+2026-05-11 10:05:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:05:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:05:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=123.8 open=129.7
+2026-05-11 10:06:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:06:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:06:35 | INFO     | [ENGINE-V8] CE FIRED close=127.0 ema9l=126.4 fresh=3/3 (2-gate V8, 3-min)
+2026-05-11 10:06:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223900CE qty=130 entry=127.0 mode=CLOSE_FILL
+2026-05-11 10:07:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:07:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:08:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:08:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:09:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:09:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:10:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:10:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:11:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:11:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:12:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:12:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:13:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:13:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:14:35 | INFO     | [REJECT] CE gate1_close_below_band close=118.5 ema9l=233.0
+2026-05-11 10:14:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=78.3 rsi_prev=79.1
+2026-05-11 10:15:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.6 rsi_prev=80.7
+2026-05-11 10:15:35 | INFO     | [REENTRY] window exhausted (2/2): rsi_not_rising_75.6_vs_80.7
+2026-05-11 10:15:35 | INFO     | [REJECT] CE gate1_close_below_band close=123.8 ema9l=210.2
+2026-05-11 10:15:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.6 rsi_prev=80.7
+2026-05-11 10:16:35 | INFO     | [REJECT] CE gate1_close_below_band close=123.8 ema9l=210.2
+2026-05-11 10:16:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.6 rsi_prev=80.7
+2026-05-11 10:17:35 | INFO     | [REJECT] CE gate1_close_below_band close=123.8 ema9l=210.2
+2026-05-11 10:17:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.6 rsi_prev=80.7
+2026-05-11 10:18:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23900 target=23850 spot=23860.1 (dist=39.9 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 10:18:35 | INFO     | [WS] Subscribed: {10687234, 10686466, 10686722, 10686978, 10685954, 10686210}
+2026-05-11 10:18:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23850 (neighbors 23800/23900 pre-warmed) at spot=23860.1
+2026-05-11 10:18:35 | INFO     | [PRELOAD] CE 23850 3minute: fetched 376 candles (had 3)
+2026-05-11 10:18:36 | INFO     | [PRELOAD] PE 23850 3minute: fetched 376 candles (had 3)
+2026-05-11 10:18:36 | INFO     | [PRELOAD] Strike lock 23850 CE=379 PE=379
+2026-05-11 10:18:36 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:18:36 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:18:36 | INFO     | [V8] PAPER EXIT: NIFTY2651223900CE qty=130 ref=115.0 reason=EMERGENCY_SL pnl=-12.0pts
+2026-05-11 10:19:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:19:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:19:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=138.0 open=150.9
+2026-05-11 10:19:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:20:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:20:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:20:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=138.0 open=150.9
+2026-05-11 10:20:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:21:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:21:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:21:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=131.2 open=139.4
+2026-05-11 10:21:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:22:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:22:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:22:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=131.2 open=139.4
+2026-05-11 10:22:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:23:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:23:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:23:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=131.2 open=139.4
+2026-05-11 10:23:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 10:24:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:24:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:24:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=104.3 open=110.0
+2026-05-11 10:25:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:25:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:25:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=104.3 open=110.0
+2026-05-11 10:26:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:26:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:26:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=104.3 open=110.0
+2026-05-11 10:27:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:27:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:27:35 | INFO     | [ENGINE-V8] CE FIRED close=142.5 ema9l=139.1 fresh=3/3 (2-gate V8, 3-min)
+2026-05-11 10:27:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223850CE qty=130 entry=142.5 mode=CLOSE_FILL
+2026-05-11 10:28:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:28:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:29:35 | INFO     | [REJECT] CE gate1_close_below_band close=150.9 ema9l=242.0
+2026-05-11 10:29:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=75.0 rsi_prev=80.5
+2026-05-11 10:30:35 | INFO     | [REJECT] CE gate1_close_below_band close=139.9 ema9l=218.5
+2026-05-11 10:30:35 | INFO     | [ENGINE] PE FIRED close=100.1 ema9l=69.4 rsi=60.6 (prev=59.7, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 10:30:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23850 score=392.83 (of 1 fired)
+2026-05-11 10:30:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs100.1
+2026-05-11 10:30:35 | INFO     | [XLEG] PE entry — other CE close=139.95 ema9l=138.74 margin=+1.21 → FAIL
+2026-05-11 10:30:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223850PE qty=130 ref=100.1
+2026-05-11 10:30:35 | INFO     | [DATA] Active trade set: strike=23850 dir=PE
+2026-05-11 10:30:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223850PE price=100.1 ema_gap=0 rsi=60.6 SL=88.1
+2026-05-11 10:30:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 10:39:46 | WARNING  | [CTRL] Force exit
+2026-05-11 10:39:46 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223850PE qty=130 ref=106.1 reason=FORCE_EXIT
+2026-05-11 10:39:46 | INFO     | [POST_EXIT] Token 10686722 (PE 23850) held 10 min for post-exit observation
+2026-05-11 10:39:46 | INFO     | [WS] Unsubscribed: {10686210, 10686466, 10686978, 10687234, 10685954}
+2026-05-11 10:39:46 | INFO     | [MAIN] EXIT ALL NIFTY2651223850PE price=106.1 pnl=6.0pts reason=FORCE_EXIT
+2026-05-11 10:39:46 | WARNING  | [VALIDATE] SYNC: DB=3 CSV=4
+2026-05-11 10:39:46 | WARNING  | [VALIDATE] ALIGN_PNL: state=18.0 dashboard=6.0
+2026-05-11 10:39:47 | INFO     | [WS] Subscribed: {10687234, 10686466, 10686722, 10686978, 10685954, 10686210}
+2026-05-11 10:39:47 | INFO     | [MAIN] Strikes LOCKED: ATM=23850 (neighbors 23800/23900 pre-warmed) at spot=23856.2
+2026-05-11 10:39:47 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:39:47 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:40:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:40:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:41:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:41:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:42:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:42:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:43:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:43:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:44:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:44:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:15:00+05:30
+2026-05-11 10:45:35 | INFO     | [ENGINE] PE FIRED close=105.1 ema9l=74.8 rsi=78.6 (prev=77.6, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 10:45:35 | INFO     | [CLOSE_FILL] RE-ENTRY PE at candle close Rs105.1
+2026-05-11 10:45:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223850PE qty=130 ref=105.1
+2026-05-11 10:45:35 | INFO     | [DATA] Active trade set: strike=23850 dir=PE
+2026-05-11 10:45:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223850PE price=105.1 ema_gap=0 rsi=78.6 SL=93.1
+2026-05-11 10:45:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 10:54:24 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223850PE qty=130 ref=93.0 reason=EMERGENCY_SL
+2026-05-11 10:54:24 | INFO     | [POST_EXIT] Token 10686722 (PE 23850) held 10 min for post-exit observation
+2026-05-11 10:54:24 | INFO     | [WS] Unsubscribed: {10686210, 10686466, 10686978, 10687234, 10685954}
+2026-05-11 10:54:24 | INFO     | [MAIN] EXIT ALL NIFTY2651223850PE price=93.0 pnl=-12.1pts reason=EMERGENCY_SL
+2026-05-11 10:54:24 | WARNING  | [VALIDATE] SYNC: DB=4 CSV=5
+2026-05-11 10:54:24 | WARNING  | [VALIDATE] ALIGN_PNL: state=5.9 dashboard=-6.1
+2026-05-11 10:54:35 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 10:54:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23886.7
+2026-05-11 10:54:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:54:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:54:35 | WARNING  | [DATA] Stale tick token=10686466 age=10.9s
+2026-05-11 10:54:35 | WARNING  | [DATA] Stale tick token=10686978 age=11.0s
+2026-05-11 10:54:35 | WARNING  | [DATA] Stale tick token=10687234 age=11.0s
+2026-05-11 10:55:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:55:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:56:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:56:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:57:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:57:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:58:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:58:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:59:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 10:59:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 10:30:00+05:30
+2026-05-11 11:00:00 | INFO     | [HOURLY] RSI=34.4
+2026-05-11 11:00:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=62.9 rsi_prev=72.2
+2026-05-11 11:00:35 | INFO     | [REENTRY] attempt 1/2 failed: rsi_not_rising_62.9_vs_72.2
+2026-05-11 11:00:36 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:00:36 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:01:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:01:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:02:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:02:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:03:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:03:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:04:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:04:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:05:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:05:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:06:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:06:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:07:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:07:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:08:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:08:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:09:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:09:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:10:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:10:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:11:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:11:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:12:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:12:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:13:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:13:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:14:35 | INFO     | [REJECT] CE gate1_close_below_band close=119.8 ema9l=158.3
+2026-05-11 11:14:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=63.3 rsi_prev=72.2
+2026-05-11 11:15:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=54.5 rsi_prev=62.2
+2026-05-11 11:15:35 | INFO     | [REENTRY] window exhausted (2/2): rsi_not_rising_54.5_vs_62.2
+2026-05-11 11:15:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:15:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:16:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:16:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:17:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:17:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:18:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:18:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:19:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:19:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:20:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:20:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:21:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23900 target=23950 spot=23937.5 (dist=37.5 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 11:21:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 11:21:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23937.5
+2026-05-11 11:21:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:21:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:22:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:22:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:23:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:23:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:24:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:24:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:25:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:25:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:26:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:26:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:27:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.6 ema9l=125.1
+2026-05-11 11:27:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=56.3 rsi_prev=63.9
+2026-05-11 11:28:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23950 target=23900 spot=23913.8 (dist=36.2 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 11:28:35 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 11:28:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23913.8
+2026-05-11 11:28:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:28:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:28:35 | INFO     | [V8] PAPER EXIT: NIFTY2651223850CE qty=130 ref=162.5 reason=VISHAL_TRAIL pnl=20.0pts
+2026-05-11 11:29:35 | INFO     | [REJECT] CE gate1_close_below_band close=134.8 ema9l=149.8
+2026-05-11 11:29:35 | INFO     | [REJECT] PE gate2_rsi_not_rising rsi_now=55.6 rsi_prev=63.3
+2026-05-11 11:29:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=136.6 open=144.6
+2026-05-11 11:30:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:30:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:30:35 | INFO     | [ENGINE-V8] CE REENTRY-XLEG FIRED self_close=172.4 other_close=70.2 other_ema9l=73.7 (cross-leg confirmed)
+2026-05-11 11:30:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223900CE qty=130 entry=172.45 mode=REENTRY_XLEG
+2026-05-11 11:31:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:31:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:32:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:32:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:33:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:33:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:34:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:34:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:35:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:35:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:36:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:36:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:37:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:37:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:38:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:38:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:39:35 | INFO     | [REJECT] CE gate1_close_below_band close=141.5 ema9l=145.8
+2026-05-11 11:39:35 | INFO     | [REJECT] PE gate1_close_below_band close=89.8 ema9l=93.7
+2026-05-11 11:40:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=23900 target=23950 spot=23935.4 (dist=35.4 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 11:40:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 11:40:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23935.4
+2026-05-11 11:40:35 | INFO     | [REJECT] CE gate1_close_below_band close=114.8 ema9l=121.1
+2026-05-11 11:40:35 | INFO     | [REJECT] PE gate1_close_below_band close=112.6 ema9l=115.8
+2026-05-11 11:41:35 | INFO     | [REJECT] CE gate1_close_below_band close=114.8 ema9l=121.1
+2026-05-11 11:41:35 | INFO     | [REJECT] PE gate1_close_below_band close=112.6 ema9l=115.8
+2026-05-11 11:42:35 | INFO     | [REJECT] CE gate1_close_below_band close=114.8 ema9l=121.1
+2026-05-11 11:42:35 | INFO     | [REJECT] PE gate1_close_below_band close=112.6 ema9l=115.8
+2026-05-11 11:43:35 | INFO     | [REJECT] CE gate1_close_below_band close=114.8 ema9l=121.1
+2026-05-11 11:43:35 | INFO     | [REJECT] PE gate1_close_below_band close=112.6 ema9l=115.8
+2026-05-11 11:44:35 | INFO     | [REJECT] CE gate1_close_below_band close=114.8 ema9l=121.1
+2026-05-11 11:44:35 | INFO     | [REJECT] PE gate1_close_below_band close=112.6 ema9l=115.8
+2026-05-11 11:45:36 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:45:36 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:46:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:46:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:47:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:47:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:47:35 | INFO     | [V8] PAPER EXIT: NIFTY2651223900CE qty=130 ref=172.45 reason=VISHAL_TRAIL pnl=0.0pts
+2026-05-11 11:48:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:48:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:48:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=109.0 open=124.5
+2026-05-11 11:48:35 | INFO     | [ENGINE-V8] PE FIRED close=115.3 ema9l=107.0 fresh=2/3 (2-gate V8, 3-min)
+2026-05-11 11:48:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223950PE qty=130 entry=115.3 mode=CLOSE_FILL
+2026-05-11 11:49:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:49:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:50:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:50:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:51:36 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:51:36 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:52:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:52:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:53:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:53:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:54:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:54:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:55:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:55:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:56:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:56:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:57:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:57:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:58:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:58:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 11:59:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=35.2
+2026-05-11 11:59:35 | INFO     | [REJECT] PE gate1_close_below_band close=101.2 ema9l=112.7
+2026-05-11 12:00:00 | INFO     | [HOURLY] RSI=37.8
+2026-05-11 12:00:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:00:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:01:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:01:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:02:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:02:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:03:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:03:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:04:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:04:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:05:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:05:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:06:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:06:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:07:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:07:36 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:08:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:08:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:09:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:09:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:10:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:10:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:11:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:11:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:12:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:12:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:13:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:13:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:14:35 | INFO     | [REJECT] CE gate1_close_below_band close=112.7 ema9l=115.3
+2026-05-11 12:14:35 | INFO     | [REJECT] PE gate1_close_below_band close=109.3 ema9l=110.2
+2026-05-11 12:15:36 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:15:36 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:16:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:16:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:17:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:17:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:18:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:18:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:19:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:19:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:20:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:20:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:21:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:21:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:22:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:22:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:23:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:23:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:24:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:24:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:24:35 | INFO     | [V8] PAPER EXIT: NIFTY2651223950PE qty=130 ref=103.3 reason=EMERGENCY_SL pnl=-12.0pts
+2026-05-11 12:25:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:25:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:25:35 | INFO     | [REJECT-V8] CE gate2_not_fresh only 0/3 priors below band
+2026-05-11 12:25:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=102.4 open=111.2
+2026-05-11 12:26:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:26:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:26:35 | INFO     | [REJECT-V8] CE gate2_not_fresh only 0/3 priors below band
+2026-05-11 12:26:35 | INFO     | [REJECT-V8] PE gate1_red_candle close=102.4 open=111.2
+2026-05-11 12:27:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:27:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:27:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=116.0 open=118.0
+2026-05-11 12:27:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 1/3 priors below band
+2026-05-11 12:28:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:28:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:28:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=116.0 open=118.0
+2026-05-11 12:28:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 1/3 priors below band
+2026-05-11 12:29:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=36.2
+2026-05-11 12:29:35 | INFO     | [REJECT] PE gate1_close_below_band close=106.0 ema9l=108.9
+2026-05-11 12:29:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=116.0 open=118.0
+2026-05-11 12:29:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 1/3 priors below band
+2026-05-11 12:30:35 | INFO     | [REJECT] CE gate1_close_below_band close=108.7 ema9l=111.4
+2026-05-11 12:30:35 | INFO     | [ENGINE] PE FIRED close=112.0 ema9l=107.3 rsi=50.7 (prev=48.5, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 12:30:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=201.4 (of 1 fired)
+2026-05-11 12:30:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=108.7 open=116.0
+2026-05-11 12:30:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 1/3 priors below band
+2026-05-11 12:30:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs112.05
+2026-05-11 12:30:35 | INFO     | [XLEG] PE entry — other CE close=108.7 ema9l=108.82 margin=-0.12 → PASS
+2026-05-11 12:30:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950PE qty=130 ref=112.05
+2026-05-11 12:30:35 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-11 12:30:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223950PE price=112.05 ema_gap=0 rsi=50.7 SL=100.05
+2026-05-11 12:30:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 12:41:01 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950PE qty=130 ref=112.05 reason=VISHAL_TRAIL
+2026-05-11 12:41:01 | INFO     | [POST_EXIT] Token 10687746 (PE 23950) held 10 min for post-exit observation
+2026-05-11 12:41:01 | INFO     | [WS] Unsubscribed: {10687234, 10687490, 10689026, 10686978, 10689282}
+2026-05-11 12:41:01 | INFO     | [MAIN] EXIT ALL NIFTY2651223950PE price=112.05 pnl=0.0pts reason=VISHAL_TRAIL
+2026-05-11 12:41:01 | WARNING  | [VALIDATE] SYNC: DB=5 CSV=9
+2026-05-11 12:41:01 | WARNING  | [VALIDATE] ALIGN_PNL: state=5.9 dashboard=1.9
+2026-05-11 12:41:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 12:41:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23925.6
+2026-05-11 12:41:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:41:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:41:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=92.5 open=110.2
+2026-05-11 12:41:35 | INFO     | [REJECT-V8] PE gate2_not_fresh only 0/3 priors below band
+2026-05-11 12:41:35 | WARNING  | [DATA] Stale tick token=10687490 age=33.9s
+2026-05-11 12:42:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:42:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:42:35 | INFO     | [ENGINE-V8] CE FIRED close=103.4 ema9l=100.0 fresh=2/3 (2-gate V8, 3-min)
+2026-05-11 12:42:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223950CE qty=130 entry=103.4 mode=CLOSE_FILL
+2026-05-11 12:43:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:43:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:44:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:44:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:15:00+05:30
+2026-05-11 12:45:35 | INFO     | [REJECT] PE gate1_close_below_band close=94.8 ema9l=103.9
+2026-05-11 12:45:35 | INFO     | [REENTRY] attempt 1/2 failed: close_below_ema9_low
+2026-05-11 12:45:35 | INFO     | [ENGINE] CE FIRED close=120.0 ema9l=107.3 rsi=52.7 (prev=50.6, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 12:45:35 | INFO     | [REJECT] PE gate1_close_below_band close=94.8 ema9l=103.9
+2026-05-11 12:45:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=415.58 (of 1 fired)
+2026-05-11 12:45:35 | INFO     | [MAIN] Entry blocked (CE ATM): Cooldown: 0.4min
+2026-05-11 12:46:35 | INFO     | [ENGINE] CE FIRED close=120.0 ema9l=107.3 rsi=52.7 (prev=50.6, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 12:46:35 | INFO     | [REJECT] PE gate1_close_below_band close=94.8 ema9l=103.9
+2026-05-11 12:46:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=415.58 (of 1 fired)
+2026-05-11 12:46:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs120.0
+2026-05-11 12:46:35 | INFO     | [XLEG] CE entry — other PE close=94.8 ema9l=102.67 margin=-7.87 → PASS
+2026-05-11 12:46:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950CE qty=130 ref=120.0
+2026-05-11 12:46:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-11 12:46:35 | INFO     | [MAIN] ENTRY CE NIFTY2651223950CE price=120.0 ema_gap=0 rsi=52.7 SL=108.0
+2026-05-11 12:46:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 12:54:12 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950CE qty=130 ref=107.4 reason=EMERGENCY_SL
+2026-05-11 12:54:12 | INFO     | [POST_EXIT] Token 10687490 (CE 23950) held 10 min for post-exit observation
+2026-05-11 12:54:12 | INFO     | [WS] Unsubscribed: {10687234, 10687746, 10689026, 10686978, 10689282}
+2026-05-11 12:54:12 | INFO     | [MAIN] EXIT ALL NIFTY2651223950CE price=107.4 pnl=-12.6pts reason=EMERGENCY_SL
+2026-05-11 12:54:12 | WARNING  | [VALIDATE] SYNC: DB=6 CSV=10
+2026-05-11 12:54:12 | WARNING  | [VALIDATE] ALIGN_PNL: state=-6.7 dashboard=-10.7
+2026-05-11 12:54:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 12:54:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23935.2
+2026-05-11 12:54:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:54:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:54:35 | WARNING  | [DATA] Stale tick token=10687746 age=23.0s
+2026-05-11 12:55:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:55:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:56:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:56:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:57:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:57:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:58:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:58:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:59:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 12:59:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:30:00+05:30
+2026-05-11 13:00:00 | INFO     | [HOURLY] RSI=39.0
+2026-05-11 13:00:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=22.2
+2026-05-11 13:00:35 | INFO     | [REENTRY] attempt 1/2 failed: rsi_below_40_22.2
+2026-05-11 13:00:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=22.2
+2026-05-11 13:00:36 | INFO     | [ENGINE] PE FIRED close=102.9 ema9l=101.8 rsi=58.5 (prev=56.4, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 13:00:36 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=77.17 (of 1 fired)
+2026-05-11 13:00:36 | INFO     | [CLOSE_FILL] PE entry at candle close Rs102.9
+2026-05-11 13:00:36 | INFO     | [XLEG] PE entry — other CE close=109.65 ema9l=106.33 margin=+3.32 → FAIL
+2026-05-11 13:00:36 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950PE qty=130 ref=102.9
+2026-05-11 13:00:36 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-11 13:00:36 | INFO     | [MAIN] ENTRY PE NIFTY2651223950PE price=102.9 ema_gap=0 rsi=58.5 SL=90.9
+2026-05-11 13:00:36 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 13:10:01 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950PE qty=130 ref=102.9 reason=VISHAL_TRAIL
+2026-05-11 13:10:01 | INFO     | [POST_EXIT] Token 10687746 (PE 23950) held 10 min for post-exit observation
+2026-05-11 13:10:01 | INFO     | [WS] Unsubscribed: {10687234, 10687490, 10689026, 10686978, 10689282}
+2026-05-11 13:10:01 | INFO     | [MAIN] EXIT ALL NIFTY2651223950PE price=102.9 pnl=0.0pts reason=VISHAL_TRAIL
+2026-05-11 13:10:01 | WARNING  | [VALIDATE] SYNC: DB=7 CSV=11
+2026-05-11 13:10:01 | WARNING  | [VALIDATE] ALIGN_PNL: state=-6.7 dashboard=-10.7
+2026-05-11 13:10:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 13:10:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23943.0
+2026-05-11 13:10:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:10:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:10:35 | WARNING  | [DATA] Stale tick token=10687490 age=33.5s
+2026-05-11 13:10:35 | WARNING  | [DATA] Stale tick token=10687490 age=33.5s
+2026-05-11 13:11:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:11:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:12:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:12:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:13:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:13:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:14:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:14:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 12:45:00+05:30
+2026-05-11 13:15:36 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:15:36 | INFO     | [REENTRY] attempt 1/2 failed: close_below_ema9_low
+2026-05-11 13:15:36 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:15:36 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:16:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:16:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:17:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:17:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:18:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:18:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:19:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:19:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:20:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:20:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:21:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:21:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:22:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:22:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:23:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:23:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:24:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:24:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:25:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:25:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:26:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:26:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:27:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:27:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:28:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:28:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:29:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=23.9
+2026-05-11 13:29:35 | INFO     | [REJECT] PE gate1_close_below_band close=96.0 ema9l=100.6
+2026-05-11 13:30:35 | INFO     | [REJECT] PE gate1_close_below_band close=94.9 ema9l=99.3
+2026-05-11 13:30:35 | INFO     | [REENTRY] window exhausted (2/2): close_below_ema9_low
+2026-05-11 13:30:35 | INFO     | [ENGINE] CE FIRED close=117.4 ema9l=104.9 rsi=41.2 (prev=40.7, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 13:30:35 | INFO     | [REJECT] PE gate1_close_below_band close=94.9 ema9l=99.3
+2026-05-11 13:30:35 | INFO     | [MAIN] BEST CANDIDATE: CE ATM strike=23950 score=159.13 (of 1 fired)
+2026-05-11 13:30:35 | INFO     | [CLOSE_FILL] CE entry at candle close Rs117.4
+2026-05-11 13:30:35 | INFO     | [XLEG] CE entry — other PE close=94.9 ema9l=96.8 margin=-1.90 → PASS
+2026-05-11 13:30:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950CE qty=130 ref=117.4
+2026-05-11 13:30:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-11 13:30:35 | INFO     | [MAIN] ENTRY CE NIFTY2651223950CE price=117.4 ema_gap=0 rsi=41.2 SL=105.4
+2026-05-11 13:30:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 13:36:55 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950CE qty=130 ref=129.4 reason=VISHAL_TRAIL
+2026-05-11 13:36:55 | INFO     | [POST_EXIT] Token 10687490 (CE 23950) held 10 min for post-exit observation
+2026-05-11 13:36:55 | INFO     | [WS] Unsubscribed: {10687234, 10687746, 10689026, 10686978, 10689282}
+2026-05-11 13:36:55 | INFO     | [MAIN] EXIT ALL NIFTY2651223950CE price=129.4 pnl=12.0pts reason=VISHAL_TRAIL
+2026-05-11 13:36:55 | WARNING  | [VALIDATE] SYNC: DB=8 CSV=12
+2026-05-11 13:36:55 | WARNING  | [VALIDATE] ALIGN_PNL: state=5.3 dashboard=1.3
+2026-05-11 13:36:55 | INFO     | [WS] Subscribed: {10687490, 10689026, 10689282, 10689794, 10689538, 10687746}
+2026-05-11 13:36:55 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=23976.7
+2026-05-11 13:36:56 | INFO     | [PRELOAD] CE 24000 3minute: fetched 376 candles (had 12)
+2026-05-11 13:36:56 | INFO     | [PRELOAD] PE 24000 3minute: fetched 376 candles (had 9)
+2026-05-11 13:36:56 | INFO     | [PRELOAD] Strike lock 24000 CE=388 PE=385
+2026-05-11 13:36:56 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:36:56 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:37:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:37:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:38:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24000 target=23950 spot=23956.9 (dist=43.1 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 13:38:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 13:38:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23956.9
+2026-05-11 13:38:36 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:38:36 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:39:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:39:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:39:35 | INFO     | [V8] PAPER EXIT: NIFTY2651223950CE qty=130 ref=115.4 reason=VISHAL_TRAIL pnl=12.0pts
+2026-05-11 13:40:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:40:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:40:35 | INFO     | [REJECT-V8] CE gate1_red_candle close=123.0 open=129.2
+2026-05-11 13:40:35 | INFO     | [ENGINE-V8] PE FIRED close=89.8 ema9l=89.5 fresh=2/3 (2-gate V8, 3-min)
+2026-05-11 13:40:35 | INFO     | [V8] PAPER ENTRY: NIFTY2651223950PE qty=130 entry=89.8 mode=CLOSE_FILL
+2026-05-11 13:41:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:41:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:42:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:42:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:43:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:43:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:44:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:44:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:15:00+05:30
+2026-05-11 13:45:35 | INFO     | [ENGINE] CE FIRED close=123.3 ema9l=106.1 rsi=46.9 (prev=45.1, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 13:45:35 | INFO     | [CLOSE_FILL] RE-ENTRY CE at candle close Rs123.3
+2026-05-11 13:45:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950CE qty=130 ref=123.3
+2026-05-11 13:45:35 | INFO     | [DATA] Active trade set: strike=23950 dir=CE
+2026-05-11 13:45:35 | INFO     | [MAIN] ENTRY CE NIFTY2651223950CE price=123.3 ema_gap=0 rsi=46.9 SL=111.3
+2026-05-11 13:45:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 13:56:04 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950CE qty=130 ref=135.3 reason=VISHAL_TRAIL
+2026-05-11 13:56:04 | INFO     | [POST_EXIT] Token 10687490 (CE 23950) held 10 min for post-exit observation
+2026-05-11 13:56:04 | INFO     | [WS] Unsubscribed: {10687234, 10687746, 10689026, 10686978, 10689282}
+2026-05-11 13:56:04 | INFO     | [MAIN] EXIT ALL NIFTY2651223950CE price=135.3 pnl=12.0pts reason=VISHAL_TRAIL
+2026-05-11 13:56:04 | WARNING  | [VALIDATE] SYNC: DB=9 CSV=14
+2026-05-11 13:56:04 | WARNING  | [VALIDATE] ALIGN_PNL: state=17.3 dashboard=25.3
+2026-05-11 13:56:35 | INFO     | [WS] Subscribed: {10687490, 10689026, 10689282, 10689794, 10689538, 10687746}
+2026-05-11 13:56:35 | INFO     | [MAIN] Strikes LOCKED: ATM=24000 (neighbors 23950/24050 pre-warmed) at spot=23986.1
+2026-05-11 13:56:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:56:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:56:35 | WARNING  | [DATA] Stale tick token=10687746 age=31.0s
+2026-05-11 13:56:35 | WARNING  | [DATA] Stale tick token=10689026 age=30.7s
+2026-05-11 13:56:35 | WARNING  | [DATA] Stale tick token=10689282 age=32.0s
+2026-05-11 13:57:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:57:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:58:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:58:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:59:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 13:59:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 13:30:00+05:30
+2026-05-11 14:00:00 | INFO     | [HOURLY] RSI=40.9
+2026-05-11 14:00:35 | INFO     | [MAIN] ATM drift past hysteresis: locked=24000 target=23950 spot=23963.5 (dist=36.5 > 35) — RELOCKING (neighbor pre-warmed)
+2026-05-11 14:00:35 | INFO     | [WS] Subscribed: {10687490, 10687746, 10686978, 10689282, 10689026, 10687234}
+2026-05-11 14:00:35 | INFO     | [MAIN] Strikes LOCKED: ATM=23950 (neighbors 23900/24000 pre-warmed) at spot=23963.5
+2026-05-11 14:00:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:00:35 | INFO     | [REENTRY] attempt 1/2 failed: rsi_not_rising_67.6_vs_68.0
+2026-05-11 14:00:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:00:36 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:01:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:01:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:02:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:02:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:03:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:03:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:04:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:04:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:05:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:05:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:06:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:06:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:07:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:07:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:08:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:08:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:09:36 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:09:36 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:10:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:10:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:11:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:11:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:12:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:12:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:13:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:13:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:14:35 | INFO     | [REJECT] CE gate2_rsi_not_rising rsi_now=67.6 rsi_prev=68.0
+2026-05-11 14:14:35 | INFO     | [REJECT] PE gate1_close_below_band close=86.4 ema9l=89.8
+2026-05-11 14:15:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=20.7
+2026-05-11 14:15:35 | INFO     | [REENTRY] window exhausted (2/2): rsi_below_40_20.7
+2026-05-11 14:15:35 | INFO     | [REJECT] CE gate2_rsi_below_40 rsi=20.7
+2026-05-11 14:15:35 | INFO     | [ENGINE] PE FIRED close=92.0 ema9l=87.9 rsi=49.0 (prev=46.2, rising) spot_bias=BULLISH (2-gate V7, 15-min)
+2026-05-11 14:15:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23950 score=148.67 (of 1 fired)
+2026-05-11 14:15:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs91.95
+2026-05-11 14:15:35 | INFO     | [XLEG] PE entry — other CE close=112.15 ema9l=116.91 margin=-4.76 → PASS
+2026-05-11 14:15:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223950PE qty=130 ref=91.95
+2026-05-11 14:15:35 | INFO     | [DATA] Active trade set: strike=23950 dir=PE
+2026-05-11 14:15:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223950PE price=91.95 ema_gap=0 rsi=49.0 SL=79.95
+2026-05-11 14:15:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 14:50:43 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223950PE qty=130 ref=111.95 reason=VISHAL_TRAIL
+2026-05-11 14:50:43 | INFO     | [POST_EXIT] Token 10687746 (PE 23950) held 10 min for post-exit observation
+2026-05-11 14:50:43 | INFO     | [WS] Unsubscribed: {10687234, 10687490, 10689026, 10686978, 10689282}
+2026-05-11 14:50:43 | INFO     | [MAIN] EXIT ALL NIFTY2651223950PE price=111.95 pnl=20.0pts reason=VISHAL_TRAIL
+2026-05-11 14:50:43 | WARNING  | [VALIDATE] SYNC: DB=10 CSV=15
+2026-05-11 14:50:43 | WARNING  | [VALIDATE] ALIGN_PNL: state=37.3 dashboard=45.3
+2026-05-11 14:50:44 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 14:50:44 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23908.4
+2026-05-11 14:50:44 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:50:44 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:50:44 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:50:44 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 5.0min
+2026-05-11 14:51:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:51:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:51:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:51:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 4.1min
+2026-05-11 14:52:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:52:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:52:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:52:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 3.1min
+2026-05-11 14:53:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:53:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:53:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:53:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 2.1min
+2026-05-11 14:54:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:54:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:54:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:54:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 1.1min
+2026-05-11 14:55:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:55:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:55:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:55:35 | INFO     | [MAIN] Entry blocked (PE ATM): Cooldown: 0.1min
+2026-05-11 14:56:35 | INFO     | [REJECT] CE gate1_close_below_band close=115.4 ema9l=128.9
+2026-05-11 14:56:35 | INFO     | [ENGINE] PE FIRED close=87.6 ema9l=68.8 rsi=52.9 (prev=49.9, rising) spot_bias=BEARISH (2-gate V7, 15-min)
+2026-05-11 14:56:35 | INFO     | [MAIN] BEST CANDIDATE: PE ATM strike=23900 score=600.04 (of 1 fired)
+2026-05-11 14:56:35 | INFO     | [CLOSE_FILL] PE entry at candle close Rs87.6
+2026-05-11 14:56:35 | INFO     | [XLEG] PE entry — other CE close=108.55 ema9l=113.01 margin=-4.46 → PASS
+2026-05-11 14:56:35 | INFO     | [TRADE] PAPER ENTRY: NIFTY2651223900PE qty=130 ref=87.6
+2026-05-11 14:56:35 | INFO     | [DATA] Active trade set: strike=23900 dir=PE
+2026-05-11 14:56:35 | INFO     | [MAIN] ENTRY PE NIFTY2651223900PE price=87.6 ema_gap=0 rsi=52.9 SL=75.6
+2026-05-11 14:56:35 | INFO     | [VALIDATE] Entry: 10/10 checks passed ✅
+2026-05-11 14:58:49 | WARNING  | [CTRL] Force exit
+2026-05-11 14:58:49 | INFO     | [TRADE] PAPER EXIT: NIFTY2651223900PE qty=130 ref=98.65 reason=FORCE_EXIT
+2026-05-11 14:58:49 | INFO     | [POST_EXIT] Token 10687234 (PE 23900) held 10 min for post-exit observation
+2026-05-11 14:58:49 | INFO     | [WS] Unsubscribed: {10686722, 10686978, 10687490, 10686466}
+2026-05-11 14:58:49 | INFO     | [MAIN] EXIT ALL NIFTY2651223900PE price=98.65 pnl=11.05pts reason=FORCE_EXIT
+2026-05-11 14:58:49 | WARNING  | [VALIDATE] SYNC: DB=11 CSV=16
+2026-05-11 14:58:49 | WARNING  | [VALIDATE] ALIGN_PNL: state=48.4 dashboard=56.3
+2026-05-11 14:58:50 | INFO     | [WS] Subscribed: {10687746, 10686978, 10687234, 10686466, 10687490, 10686722}
+2026-05-11 14:58:50 | INFO     | [MAIN] Strikes LOCKED: ATM=23900 (neighbors 23850/23950 pre-warmed) at spot=23881.1
+2026-05-11 14:58:50 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 14:30:00+05:30
+2026-05-11 14:58:50 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 14:30:00+05:30
+2026-05-11 14:59:35 | INFO     | [REJECT] CE same_candle_guard already_fired_on=2026-05-11 14:30:00+05:30
+2026-05-11 14:59:35 | INFO     | [REJECT] PE same_candle_guard already_fired_on=2026-05-11 14:30:00+05:30
+2026-05-11 15:00:00 | INFO     | [HOURLY] RSI=35.3
+2026-05-11 15:25:00 | INFO     | [MAIN] prev_close source: WS @ 15:25:00 (spot=23808.2)
+2026-05-11 15:30:00 | INFO     | [MAIN] _eod_exited=True at 15:30:00 (no trade open → flag-only)
+2026-05-11 15:35:00 | INFO     | [MAIN] prev_close saved: 23815.8
+2026-05-11 15:45:00 | INFO     | [MAIN] Running daily lab cleanup at 15:45
+2026-05-11 15:48:46 | WARNING  | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:48:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:49:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:50:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:51:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:52:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:53:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:54:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:55:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:56:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:57:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:58:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 15:59:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:00:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:01:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:02:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:03:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:04:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:05:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:06:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:07:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:08:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:09:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:10:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:11:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:12:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:13:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:14:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:15:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:16:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:16:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:16:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:16:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:16:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:17:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:18:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:19:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:20:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:21:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:22:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:23:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:24:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:25:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:26:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:27:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:28:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:29:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:30:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:31:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:32:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:33:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:34:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:35:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:36:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:37:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:38:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:39:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:42 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:40:52 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:02 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:12 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:22 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:32 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:41:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:42:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:43:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:44:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:45:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:46:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:47:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:48:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:03 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:13 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:23 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:33 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:43 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:49:53 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:50:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:51:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:52:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:53:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:54:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:55:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:56:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:24 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:34 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:44 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:57:54 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:04 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:14 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:58:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 16:59:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:00:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:01:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:02:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:03:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:04:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:45 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:05:55 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:05 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:15 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:25 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:35 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:06:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:07:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:08:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:09:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:10:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:11:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:12:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:13:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:16 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:26 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:36 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:46 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:14:56 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:06 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:15:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:16:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:17:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:18:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:19:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:20:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:21:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:37 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:47 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:22:57 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:07 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:17 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:27 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:23:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:24:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:25:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:26:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:27:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:28:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:29:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:30:58 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:08 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:18 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:28 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:38 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:48 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:31:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:32:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:33:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:34:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:35:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:36:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:37:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:38:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:29 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:39 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:49 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:39:59 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:40:09 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:40:19 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:40:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:40:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:40:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:41:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:42:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:43:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:44:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:45:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:46:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:47:50 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:00 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:10 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:20 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:30 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:40 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:48:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:49:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:41 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:50:51 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:51:01 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:51:11 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:51:21 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 17:51:31 | DEBUG    | [DB] Update opt1m fwd: database is locked
+2026-05-11 22:30:41 | DEBUG    | [DATA] VIX quote fallback failed: Unknown Content-Type (text/html; charset=UTF-8) with response: (b'<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->\n<!--[if IE 7]>    <html class="no-js ie7 oldie" lang="en-US"> <![endif]-->\n<!--[if IE 8]>    <html class="no-js ie8 oldie" lang="en-US"> <![endif]-->\n<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->\n<head>\n\n<title>kite.trade | 502: Bad gateway</title>\n<meta charset="UTF-8" />\n<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />\n<meta http-equiv="X-UA-Compatible" content="IE=Edge" />\n<meta name="robots" content="noindex, nofollow" />\n<meta name="viewport" content="width=device-width,initial-scale=1" />\n<link rel="stylesheet" id="cf_styles-css" href="/cdn-cgi/styles/main.css" />\n</head>\n<body>\n<div id="cf-wrapper">\n    <div id="cf-error-details" class="p-0">\n        <header class="mx-auto pt-10 lg:pt-6 lg:px-8 w-240 lg:w-full mb-8">\n            <h1 class="inline-block sm:block sm:mb-2 font-light text-60 lg:text-4xl text-black-dark leading-tight mr-2">\n                <span class="inline-block">Bad gateway</span>\n                <span class="code-label">Error code 502</span>\n            </h1>\n            <div>\n                Visit <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&utm_campaign=api.kite.trade" target="_blank" rel="noopener noreferrer">cloudflare.com</a> for more information.\n            </div>\n            <div class="mt-3">2026-05-11 17:00:41 UTC</div>\n        </header>\n        <div class="my-8 bg-gradient-gray">\n            <div class="w-240 lg:w-full mx-auto">\n                <div class="clearfix md:px-8">\n                    <div id="cf-browser-status" class=" relative w-1/3 md:w-full py-15 md:p-0 md:py-8 md:text-left md:border-solid md:border-0 md:border-b md:border-gray-400 overflow-hidden float-left md:float-none text-center">\n  <div class="relative mb-10 md:m-0">\n    \n    <span class="cf-icon-browser block md:hidden h-20 bg-center bg-no-repeat"></span>\n    <span class="cf-icon-ok w-12 h-12 absolute left-1/2 md:left-auto md:right-0 md:top-0 -ml-6 -bottom-4"></span>\n    \n  </div>\n  <span class="md:block w-full truncate">You</span>\n  <h3 class="md:inline-block mt-3 md:mt-0 text-2xl text-gray-600 font-light leading-1.3">\n  \n    Browser\n  \n  </h3>\n  \n  <span class="leading-1.3 text-2xl text-green-success">Working</span>\n  \n</div>\n                    <div id="cf-cloudflare-status" class=" relative w-1/3 md:w-full py-15 md:p-0 md:py-8 md:text-left md:border-solid md:border-0 md:border-b md:border-gray-400 overflow-hidden float-left md:float-none text-center">\n  <div class="relative mb-10 md:m-0">\n    <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&#38;utm_campaign=api.kite.trade" target="_blank" rel="noopener noreferrer">\n    <span class="cf-icon-cloud block md:hidden h-20 bg-center bg-no-repeat"></span>\n    <span class="cf-icon-ok w-12 h-12 absolute left-1/2 md:left-auto md:right-0 md:top-0 -ml-6 -bottom-4"></span>\n    </a>\n  </div>\n  <span class="md:block w-full truncate">Mumbai</span>\n  <h3 class="md:inline-block mt-3 md:mt-0 text-2xl text-gray-600 font-light leading-1.3">\n  <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&utm_campaign=api.kite.trade" target="_blank" rel="noopener noreferrer">\n    Cloudflare\n  </a>\n  </h3>\n  \n  <span class="leading-1.3 text-2xl text-green-success">Working</span>\n  \n</div>\n                    <div id="cf-host-status" class="cf-error-source relative w-1/3 md:w-full py-15 md:p-0 md:py-8 md:text-left md:border-solid md:border-0 md:border-b md:border-gray-400 overflow-hidden float-left md:float-none text-center">\n  <div class="relative mb-10 md:m-0">\n    \n    <span class="cf-icon-server block md:hidden h-20 bg-center bg-no-repeat"></span>\n    <span class="cf-icon-error w-12 h-12 absolute left-1/2 md:left-auto md:right-0 md:top-0 -ml-6 -bottom-4"></span>\n    \n  </div>\n  <span class="md:block w-full truncate">api.kite.trade</span>\n  <h3 class="md:inline-block mt-3 md:mt-0 text-2xl text-gray-600 font-light leading-1.3">\n  \n    Host\n  \n  </h3>\n  \n  <span class="leading-1.3 text-2xl text-red-error">Error</span>\n  \n</div>\n                </div>\n            </div>\n        </div>\n\n        <div class="w-240 lg:w-full mx-auto mb-8 lg:px-8">\n            <div class="clearfix">\n                <div class="w-1/2 md:w-full float-left pr-6 md:pb-10 md:pr-0 leading-relaxed">\n                    <h2 class="text-3xl font-normal leading-1.3 mb-4">What happened?</h2>\n                    <p>The web server reported a bad gateway error.</p>\n                </div>\n                <div class="w-1/2 md:w-full float-left leading-relaxed">\n                    <h2 class="text-3xl font-normal leading-1.3 mb-4">What can I do?</h2>\n                    <p class="mb-6">Please try again in a few minutes.</p>\n                </div>\n            </div>\n        </div>\n\n        <div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">\n    <p class="text-13">\n      <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold">9fa2bdc78d2e47c5</strong></span>\n      <span class="cf-footer-separator sm:hidden">&bull;</span>\n      <span id="cf-footer-item-ip" class="cf-footer-item hidden sm:block sm:mb-1">\n        Your IP:\n        <button type="button" id="cf-footer-ip-reveal" class="cf-footer-ip-reveal-btn">Click to reveal</button>\n        <span class="hidden" id="cf-footer-ip">34.14.175.26</span>\n        <span class="cf-footer-separator sm:hidden">&bull;</span>\n      </span>\n      <span class="cf-footer-item sm:block sm:mb-1"><span>Performance &amp; security by</span> <a rel="noopener noreferrer" href="https://www.cloudflare.com/5xx-error-landing?utm_source=errorcode_502&#38;utm_campaign=api.kite.trade" id="brand_link" target="_blank">Cloudflare</a></span>\n      \n    </p>\n    <script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>\n  </div><!-- /.error-footer -->\n\n    </div>\n</div>\n</body>\n</html>')

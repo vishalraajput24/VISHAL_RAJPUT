@@ -357,6 +357,29 @@ def init_db():
         _initialized = True
         logger.info("[DB] Database initialized: " + DB_PATH)
 
+        # v16.7 — unconditional: add xleg/spike/bias columns if missing
+        # (Must run on ALL schema versions — previous code wrongly placed
+        # these inside _schema_v < 15 block, causing silent INSERT failures)
+        for _col, _typ in [
+            ("bias",             "TEXT DEFAULT ''"),
+            ("hourly_rsi",       "REAL DEFAULT 0"),
+            ("xleg_signal",      "TEXT DEFAULT ''"),
+            ("xleg_other_close", "REAL DEFAULT 0"),
+            ("xleg_other_ema9l", "REAL DEFAULT 0"),
+            ("xleg_other_dying", "INTEGER DEFAULT 0"),
+            ("xleg_other_margin","REAL DEFAULT 0"),
+            ("spike_close",      "REAL DEFAULT 0"),
+            ("spike_target",     "REAL DEFAULT 0"),
+            ("spike_fill",       "INTEGER DEFAULT 0"),
+            ("spike_wait_used",  "REAL DEFAULT 0"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {_col} {_typ}")
+                logger.info(f"[DB] v16.7 migrate: added trades.{_col}")
+            except Exception:
+                pass  # column already exists
+        conn.commit()
+
         # One-shot migration to drop dead v13 columns. Gated by
         # schema_meta.version so it doesn't re-run after success.
         if _schema_v < 15:
@@ -818,6 +841,11 @@ _TRADE_FIELDS = [
     "entry_straddle_period", "entry_straddle_info",
     "entry_atm_strike", "entry_band_width",
     "entry_spot_vwap", "entry_spot_vs_vwap",
+    # v16.7 — fields present in CSV but missing from DB (sync fix)
+    "bias", "hourly_rsi",
+    "xleg_signal", "xleg_other_close", "xleg_other_ema9l",
+    "xleg_other_dying", "xleg_other_margin",
+    "spike_close", "spike_target", "spike_fill", "spike_wait_used",
 ]
 
 def insert_trade(row):
@@ -1098,7 +1126,10 @@ def db_stats() -> dict:
 # Zero impact on trading speed (runs after orders, not in critical path).
 
 # v15.2 — single live entry mode
-VALID_ENTRY_MODES = ("EMA9_BREAKOUT", "REENTRY")
+# v16.7-final — CLOSE_FILL is the new fresh-entry tag (instant fill at
+# 3-min candle close). EMA9_BREAKOUT/REENTRY kept for back-compat with
+# trades logged before the candle-close fill change.
+VALID_ENTRY_MODES = ("CLOSE_FILL", "EMA9_BREAKOUT", "REENTRY")
 
 # Old strings that may still appear in historical trades; do NOT raise
 # errors on them, but they're not allowed as fresh entries either.
@@ -1356,20 +1387,21 @@ def validate_exit(state, exit_pnl, exit_price, exit_reason,
             failures.append("EXCHANGE_SL: SL order_id=" + str(sl_id)
                             + " not cleared after exit")
 
-    # CHECK 19: Dashboard JSON reflects PNL
+    # CHECK 19: V7 state PNL matches V7-only CSV PNL (excludes V8 trades)
     try:
-        if os.path.isfile(_DASH_PATH):
-            with open(_DASH_PATH) as f:
-                dash = json.load(f)
-            today_block = dash.get("today", {}) or {}
-            try:
-                tg_pnl   = round(float(state.get("daily_pnl", 0) or 0), 1)
-                dash_pnl = round(float(today_block.get("pnl", 0) or 0), 1)
-                if abs(tg_pnl - dash_pnl) > 1.0:
-                    failures.append("ALIGN_PNL: state=" + str(tg_pnl)
-                                    + " dashboard=" + str(dash_pnl))
-            except Exception:
-                pass
+        tg_pnl = round(float(state.get("daily_pnl", 0) or 0), 1)
+        today = str(date.today())
+        csv_v7_pnl = 0.0
+        if os.path.isfile(_CSV_PATH):
+            with open(_CSV_PATH) as _f19:
+                for _r in csv.DictReader(_f19):
+                    if (_r.get("date", "").strip() == today
+                            and not str(_r.get("entry_mode", "")).startswith("V8_")):
+                        csv_v7_pnl += float(_r.get("pnl_pts", 0) or 0)
+        csv_v7_pnl = round(csv_v7_pnl, 1)
+        if abs(tg_pnl - csv_v7_pnl) > 1.0:
+            failures.append("ALIGN_PNL: state=" + str(tg_pnl)
+                            + " csv_v7=" + str(csv_v7_pnl))
     except Exception as e:
         failures.append("CHECK19_ERR: " + str(e))
 

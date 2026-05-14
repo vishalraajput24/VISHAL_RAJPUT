@@ -1,6 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — Central Configuration
-#  3-gate entry  +  4-rule exit chain  +  peak-driven SL ladder
+#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL) — Central Configuration
+#  Timeframe: 15-minute option candles
+#  2-gate entry: 15-min close > EMA9_low + RSI >= 40 AND rising
+#  3-rule exit: Emergency -10 / EOD 15:20 / Vishal Trail (TICK-based)
+#  Simple 4-tier ladder: INITIAL → LOCK_2 → LOCK_5 → LOCK_DYN
 # ═══════════════════════════════════════════════════════════════
 
 version: "v16.7"
@@ -29,16 +32,22 @@ lots:
   count: 2
   size: 65
 
-# ── v16.7 Entry configuration (Vishal Clean — 3 gates) ─────────
-# 3 hard gates: GREEN candle, close > EMA9_low, body >= body_pct_min.
-# Time window (warmup/cutoff) is an operational rail, not a strategy
-# gate. Slope and band-width are tracked for dashboard display only —
-# they never gate entry or trigger exits in v16.7 final.
+# ── V6 Entry configuration (Vishal Clean V6 — 3 gates) ────────
+# 3 simple gates: GREEN candle on option, FRESH-BREAK above EMA9_low
+# (≥ 2 of last 3 prior closes were ≤ ema9_low), spot bias confirms
+# direction (CE: spot > spot_ema9_low | PE: spot < spot_ema9_low).
+# Cutoff moved to 15:00 (was 15:10) so trail has time to work.
+# body_pct_min and slope/band-width are display-only in V6.
 entry:
   ema9_band:
-    body_pct_min: 40
-    warmup_until: "09:35"
-    cutoff_after: "15:10"
+    body_pct_min: 40         # display-only in V6 (gate dropped)
+    warmup_until: "09:45"     # V7: skip first 2 candles (09:30+09:45 too noisy, 31%WR, -301pts)
+    warmup_until_v8: "09:35" # V8: allow from 09:30 candle (3-min, less noisy than 15-min)
+    cutoff_after: "15:00"
+    # 2026-05-07: cooldown 0 caused 10 same-candle re-fires (-287 pts).
+    # Engine now has same-candle guard, but keep cooldown as safety belt.
+    # 5 min covers any 3-min/15-min candle flutters; engine guard handles
+    # the precise "one entry per closed candle" rule.
     cooldown_minutes: 5
     # Display-only — kept so dashboard / pulse can show band info.
     band_width_min: 7
@@ -85,22 +94,14 @@ entry:
     multi_candidate_enabled: false
     multi_candidate_strike_range: 50
 
-# ── v16.7 Exit configuration ──────────────────────────────────
-# 3 rules: EMERGENCY_SL, EOD_EXIT, VISHAL_TRAIL.
-# Trail logic in VRL_ENGINE.compute_trail_sl
-# (INITIAL / LOCK_M5 / LOCK_3 / LOCK_5 / LOCK_8 / LOCK_15 / LOCK_DYN).
+# ── V6 Exit configuration ─────────────────────────────────────
+# 3 rules: EMERGENCY_SL (-10 single floor), EOD_EXIT (15:20),
+# VISHAL_TRAIL (simple 4-tier: INITIAL → LOCK_BE → LOCK_5 → LOCK_DYN).
+# Trail logic in VRL_ENGINE.compute_trail_sl.
+# Max single-trade loss: 10 × 2 × 65 = ₹1,300.
 exit:
   ema9_band:
-    # ── v16.7+ Loosened from -10 → -18 (slmax backtest, 5d Apr22-28) ──
-    # 5d sweep showed -10 was kicking out trades that dipped intra-candle
-    # then recovered. Plateau at -18 (trades that survive past -18 never
-    # come back in this dataset, so deeper floors add no benefit). Result:
-    #   -10 (old): +521.8 pts, 87.1% WR, avgL -7.9
-    #   -18 (new): +569.6 pts, 88.7% WR, avgL -4.7  (+47.8 pts/5d)
-    # The 3-min close-based trail (-10) still catches genuinely dying
-    # trades — emergency -18 is now a true catastrophic backstop.
-    # Max single-trade loss: 18 × 2 × 65 = ₹2,340 (was ₹1,300).
-    emergency_sl_pts: -18
+    emergency_sl_pts: -12
     eod_exit_time: "15:20"
 
 # ── Strike selection ───────────────────────────────────────────
@@ -126,7 +127,7 @@ market_hours:
   trade_start_hour: 9
   trade_start_min: 15
   entry_cutoff_hour: 15
-  entry_cutoff_min: 10
+  entry_cutoff_min: 0
 
 # ── Data collection (untouched per refactor scope) ────────────
 lab:

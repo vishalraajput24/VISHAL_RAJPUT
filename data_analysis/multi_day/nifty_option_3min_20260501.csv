@@ -1,0 +1,3 @@
+timestamp,strike,type,open,high,low,close,volume,spot_ref,atm_distance,dte,session_block,body_pct,adx,rsi,ema9,ema21,ema_spread,ema9_gap,volume_ratio,ema9_high,ema9_low,fwd_3c,fwd_6c,fwd_9c,fwd_outcome
+2026-04-30 15:24:00,24000,CE,210.95,224,210,220.85,1421875,23997.55,2.0,4,OPEN,70.7,29.1,59.3,209.48,205.81,3.66,11.37,1.07,213.87,200.75,,,,
+2026-04-30 15:24:00,24000,PE,157.5,157.5,141.6,145.15,1498835,23997.55,2.0,4,OPEN,77.7,23.8,39.3,157.22,160.79,-3.57,12.07,1.0,165.14,152.91,,,,

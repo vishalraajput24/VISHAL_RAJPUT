@@ -1,10 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL)
 #  Master orchestration.
-#  Entry: 3 gates — GREEN candle + close > EMA9_low + body ≥ 40%
+#  Timeframe: 15-minute option candles.
+#  Entry: 2 simple gates (option-side only)
+#    1. 15-min candle close > EMA9_low
+#    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
+#    Spot bias is computed for display only — not a gate.
 #  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
-#        (INITIAL/LOCK_3/LOCK_5/LOCK_8/LOCK_15/LOCK_DYN tiers).
-#  Re-entry: wait 1 full 3-min candle after exit, must pass 3-gate, then candle/2 fill.
+#        12-step ladder + 30/40/50 specifics: INITIAL(-12) → LOCK_BE(@12) →
+#        LOCK_12(@24) → LOCK_20(@30) → LOCK_24(@36) → LOCK_36(@40) → LOCK_50(@50+)
+#  Cooldown: 5 min, BOTH sides after any exit.
+#  Re-entry: standard scan resumes after cooldown — fresh-break filter
+#            naturally blocks chase-the-move re-entries.
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -100,14 +107,22 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
-    # v16.7-final re-entry watcher (wait next full 3-min candle)
+    # V7 re-entry watcher — 2-candle window after exit
     "_reentry_armed"     : False,
-    "_reentry_exit_ts"   : 0.0,   # ── CHANGED: now epoch float, not string
-    # v16.7-final candle/2 cooldown (3 min after every attempt)
+    "_reentry_exit_ts"   : 0.0,
+    "_reentry_attempts"  : 0,         # count of candles checked
+    "_reentry_last_checked_epoch": 0.0,
     "_next_candle2_after": 0.0,
     "_reentry_direction" : "",
     "_reentry_token"     : 0,
     "_reentry_strike"    : 0,
+    # Same-candle guard: timestamp of last fired candle (str). Engine
+    # rejects re-entry when current candle == this, stops the
+    # 2026-05-07 same-candle re-fire bug.
+    "_last_fired_candle_ts": "",
+    # V8 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
+    # check_entry_v8 skips the very next candle then clears the flag.
+    "_sl_cooldown_skip_next": False,
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -146,6 +161,332 @@ state   = deepcopy(DEFAULT_STATE)
 _running = True
 
 # ═══════════════════════════════════════════════════════════════
+#  V8 SHADOW STATE (parallel 3-min strategy, evaluation only)
+# ═══════════════════════════════════════════════════════════════
+# Phase 1 (today): V8 fires Telegram alerts but does NOT execute trades.
+# This lets us watch V8 signal quality without risking V7 stability.
+# Phase 2 (after market close): flip V8_SHADOW_MODE = False to enable
+# real V8 trades alongside V7.
+V8_SHADOW_MODE = False  # PAPER mode — V8 takes real (paper) trades alongside V7.
+V7_SHADOW_MODE = True   # V7 shadow: signals logged silently, no trades, no Telegram alerts.
+_v8_state = {
+    "_last_fired_candle_ts": "",     # same-candle guard
+    "_signals_today": 0,             # count for /pulse
+    "_last_signal_time": "",
+    # Paper position state (parallel to V7, independent).
+    "in_trade": False,
+    "symbol": "",
+    "token": 0,
+    "direction": "",
+    "strike": 0,
+    "entry_price": 0.0,
+    "entry_time": "",
+    "qty": 0,
+    "peak_pnl": 0.0,
+    "active_ratchet_tier": "",
+    "active_ratchet_sl": 0.0,
+    "candles_held": 0,
+    "_last_minute": "",
+    "_other_token": 0,          # other leg's token — needed for re-entry after restart
+    "_reentry_exit_price": 0.0, # exit price of last trade — re-entry anti-chase gate
+    # Re-entry watcher (cross-leg continuation, 2-candle window)
+    "_reentry_armed": False,
+    "_reentry_attempts": 0,
+    "_reentry_last_checked_epoch": 0.0,
+    "_reentry_direction": "",
+    "_reentry_token": 0,
+    "_reentry_strike": 0,
+    "_reentry_other_token": 0,
+    # Daily cumulative
+    "_pnl_today_pts": 0.0,
+    "_trades_today": 0,
+    "_wins_today": 0,
+    "_losses_today": 0,
+    # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
+    "_sl_cooldown_skip_next": False,
+    # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
+    "_v8_both_rejected_ts": 0.0,
+    # Date of last trade — used to detect new day and reset daily counters on restart
+    "_last_trade_date": "",
+}
+_v8_lock = threading.Lock()
+
+
+def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
+    """V8 SL ladder (3-min): LOCK_4 at +12, then custom tiers up to LOCK_50."""
+    if peak_pnl < 12:
+        return round(entry_price - 12, 2), "INITIAL"
+    if peak_pnl >= 50:
+        lock, tier = 50, "LOCK_50"
+    elif peak_pnl >= 40:
+        lock, tier = 36, "LOCK_36"
+    elif peak_pnl >= 36:
+        lock, tier = 30, "LOCK_30"
+    elif peak_pnl >= 30:
+        lock, tier = 20, "LOCK_20"
+    elif peak_pnl >= 24:
+        lock, tier = 12, "LOCK_12"
+    else:
+        lock, tier = 4, "LOCK_4"
+    return round(entry_price + lock, 2), tier
+
+
+def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
+                             entry_price: float, entry_result: dict,
+                             other_token: int = 0):
+    """Open a V8 paper position. Records in _v8_state, sends Telegram alert."""
+    import VRL_CONFIG as CFG
+    lot_count = CFG.get().get("lots", {}).get("count", 2)
+    qty = lot_count * D.get_lot_size()
+    now_str = datetime.now().strftime("%H:%M:%S")
+    is_reentry = (entry_result.get("entry_mode") == "REENTRY_XLEG")
+
+    with _v8_lock:
+        if _v8_state.get("in_trade"):
+            logger.warning("[V8] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
+            return
+        _v8_state["in_trade"]              = True
+        _v8_state["symbol"]                = symbol
+        _v8_state["token"]                 = token
+        _v8_state["direction"]             = direction
+        _v8_state["strike"]                = int(strike or 0)
+        _v8_state["entry_price"]           = float(entry_price)
+        _v8_state["entry_time"]            = now_str
+        _v8_state["qty"]                   = qty
+        _v8_state["peak_pnl"]              = 0.0
+        _v8_state["active_ratchet_tier"]   = "INITIAL"
+        _v8_state["active_ratchet_sl"]     = round(entry_price - 12, 2)
+        _v8_state["candles_held"]          = 0
+        _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
+        _v8_state["_other_token"]          = int(other_token or 0)
+        # Clear any pending re-entry state (fresh setup wins)
+        _v8_state["_reentry_armed"]        = False
+        _v8_state["_reentry_attempts"]     = 0
+
+    logger.info("[V8] PAPER ENTRY: " + symbol + " qty=" + str(qty)
+                + " entry=" + str(entry_price) + " mode="
+                + str(entry_result.get("entry_mode", "")))
+
+    _ce_pe = "🟢" if direction == "CE" else "🔴"
+    _mode_tag = "REENTRY (X-LEG)" if is_reentry else "FRESH"
+    _xleg_line = ""
+    if entry_result.get("xleg_other_dying"):
+        _xleg_line = (
+            "X-Leg ✓ " + ("PE" if direction=='CE' else 'CE') + " dying ("
+            + "{:.1f}".format(entry_result.get("xleg_other_close", 0))
+            + " < ema9l "
+            + "{:.1f}".format(entry_result.get("xleg_other_ema9l", 0)) + ")\n"
+        )
+    _tg_send(
+        "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
+        + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (3-min)\n"
+        "Close  " + "{:.1f}".format(entry_result.get("close", 0))
+        + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
+        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
+        + _xleg_line +
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>STOP</b>\n"
+        "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
+        "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n",
+        priority="critical"
+    )
+    _save_v8_state()
+
+
+def _v8_execute_paper_exit(reason: str, exit_price: float):
+    """Close V8 paper position. Logs trade to CSV, arms re-entry watcher."""
+    with _v8_lock:
+        if not _v8_state.get("in_trade"):
+            return
+        # Read all values FIRST (before clearing), then mark closed immediately.
+        # Any concurrent call (TG thread vs main loop) now sees in_trade=False and returns —
+        # eliminating the duplicate-exit race condition.
+        entry_price = float(_v8_state.get("entry_price", 0))
+        symbol      = _v8_state.get("symbol", "")
+        direction   = _v8_state.get("direction", "")
+        strike      = int(_v8_state.get("strike", 0) or 0)
+        qty         = int(_v8_state.get("qty", 0) or 0)
+        peak        = float(_v8_state.get("peak_pnl", 0))
+        entry_time  = _v8_state.get("entry_time", "")
+        candles     = int(_v8_state.get("candles_held", 0) or 0)
+        tier        = _v8_state.get("active_ratchet_tier", "")
+        token       = int(_v8_state.get("token", 0) or 0)
+        other_tok   = int(_v8_state.get("_other_token", 0) or 0)
+        pnl_pts_now = round(exit_price - entry_price, 2)
+        # Clear position state
+        _v8_state["in_trade"]            = False
+        _v8_state["symbol"]              = ""
+        _v8_state["token"]               = 0
+        _v8_state["direction"]           = ""
+        _v8_state["strike"]              = 0
+        _v8_state["entry_price"]         = 0.0
+        _v8_state["peak_pnl"]            = 0.0
+        _v8_state["active_ratchet_tier"] = ""
+        _v8_state["active_ratchet_sl"]   = 0.0
+        _v8_state["candles_held"]        = 0
+        # Update daily counters and arm re-entry under the same lock
+        _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
+        _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
+        if pnl_pts_now > 0:
+            _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
+        elif pnl_pts_now < 0:
+            _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+        if reason == "EMERGENCY_SL":
+            _v8_state["_sl_cooldown_skip_next"] = True
+        _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
+        _v8_state["_reentry_attempts"]           = 0
+        _v8_state["_reentry_last_checked_epoch"] = 0.0
+        _v8_state["_reentry_direction"]          = direction
+        _v8_state["_reentry_token"]              = token
+        _v8_state["_reentry_strike"]             = strike
+        _v8_state["_reentry_other_token"]        = other_tok
+        _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
+        _v8_state["_last_trade_date"]            = date.today().isoformat()
+
+    # --- Lock released: safe to read captured locals for logging ---
+    pnl_pts = round(exit_price - entry_price, 2)
+    pnl_rs  = round(pnl_pts * qty, 2)
+    exit_time = datetime.now().strftime("%H:%M:%S")
+
+    # Charges (reuse engine's calc)
+    charges = {}
+    try:
+        from VRL_ENGINE import calculate_charges
+        charges = calculate_charges(entry_price, exit_price, qty, num_exit_orders=1)
+        net_pnl = charges["net_pnl"]
+        total_charges = charges["total_charges"]
+    except Exception:
+        net_pnl = pnl_rs
+        total_charges = 0.0
+
+    # Log to CSV + DB (entry_mode tagged V8 so we can split V7/V8 in analysis)
+    try:
+        _v8_row = {
+            "date": date.today().isoformat(),
+            "entry_time": entry_time, "exit_time": exit_time,
+            "symbol": symbol, "direction": direction, "strike": strike,
+            "entry_price": entry_price, "exit_price": exit_price,
+            "pnl_pts": pnl_pts, "pnl_rs": pnl_rs,
+            "gross_pnl_rs": pnl_rs, "net_pnl_rs": net_pnl,
+            "peak_pnl": peak, "exit_reason": reason,
+            "dte": "", "candles_held": candles, "session": "",
+            "sl_pts": -12, "vix_at_entry": 0,
+            "entry_mode": "V8_" + tier,
+            "bias": "", "hourly_rsi": 0,
+            "brokerage": charges.get("brokerage", 0) if isinstance(charges, dict) else 0,
+            "stt": charges.get("stt", 0) if isinstance(charges, dict) else 0,
+            "exchange_charges": charges.get("exchange", 0) if isinstance(charges, dict) else 0,
+            "gst": charges.get("gst", 0) if isinstance(charges, dict) else 0,
+            "stamp_duty": charges.get("stamp", 0) if isinstance(charges, dict) else 0,
+            "total_charges": total_charges, "num_exit_orders": 1,
+            "qty_exited": qty, "entry_slippage": 0, "exit_slippage": 0,
+            "lot_id": "ALL",
+            "entry_ema9_high": "", "entry_ema9_low": "",
+            "exit_ema9_high": "", "exit_ema9_low": "",
+            "entry_band_position": "", "exit_band_position": "",
+            "entry_body_pct": "",
+            "xleg_signal": "", "xleg_other_close": "", "xleg_other_ema9l": "",
+            "xleg_other_dying": "", "xleg_other_margin": "",
+            "spike_close": "", "spike_target": "", "spike_fill": "", "spike_wait_used": "",
+        }
+        import csv as _csv
+        log_path = D.TRADE_LOG_PATH
+        with open(log_path, "a", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
+            w.writerow(_v8_row)
+        import VRL_DB as _VDB
+        _VDB.insert_trade(_v8_row)
+    except Exception as _le:
+        logger.warning("[V8] Trade log write error: " + str(_le))
+
+    logger.info("[V8] PAPER EXIT: " + symbol + " qty=" + str(qty)
+                + " ref=" + str(exit_price) + " reason=" + reason
+                + " pnl=" + str(pnl_pts) + "pts")
+
+    _emoji = "🟢" if pnl_pts >= 0 else "🔴"
+    _tg_send(
+        "⚡ <b>V8 EXIT " + direction + " " + str(strike) + "</b>\n"
+        + reason + "    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Entry  Rs" + "{:.1f}".format(entry_price) + "\n"
+        "Exit   Rs" + "{:.1f}".format(exit_price) + "\n"
+        "Peak   +" + "{:.1f}".format(peak) + " pts  Trail " + str(tier) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Gross  " + ("+" if pnl_rs >= 0 else "") + "Rs" + "{:.0f}".format(pnl_rs) + "\n"
+        "Charges -Rs" + "{:.0f}".format(total_charges) + "\n"
+        "Net    " + ("+" if net_pnl >= 0 else "") + "Rs" + "{:.0f}".format(net_pnl) + "\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "V8 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+        + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
+        + str(_v8_state.get("_wins_today", 0)) + "W "
+        + str(_v8_state.get("_losses_today", 0)) + "L)",
+        priority="critical"
+    )
+    _save_v8_state()
+
+
+def _v8_check_exit():
+    """Tick-based exit check for V8 position. Called every scan cycle."""
+    with _v8_lock:
+        if not _v8_state.get("in_trade"):
+            return
+        token       = int(_v8_state.get("token", 0) or 0)
+        entry_price = float(_v8_state.get("entry_price", 0))
+        peak        = float(_v8_state.get("peak_pnl", 0))
+
+    if not token: return
+    ltp = D.get_ltp(token)
+    if ltp <= 0: return
+    pnl = round(ltp - entry_price, 2)
+
+    # Update peak
+    if pnl > peak:
+        with _v8_lock:
+            _v8_state["peak_pnl"] = pnl
+        peak = pnl
+
+    # Compute trail SL using V7 ladder (12-step + 30/40/50)
+    trail_sl, trail_tier = _v8_compute_trail_sl(entry_price, peak)
+    with _v8_lock:
+        prev_tier = _v8_state.get("active_ratchet_tier", "")
+        _v8_state["active_ratchet_tier"] = trail_tier
+        _v8_state["active_ratchet_sl"]   = trail_sl
+
+    # Tier upgrade alert (matches V7 style)
+    if prev_tier and prev_tier != trail_tier and trail_tier != "INITIAL":
+        _tg_send(
+            "⚡ <b>V8 SL UPGRADED → " + trail_tier + "</b>\n"
+            "Peak +{:.1f}".format(peak) + " pts\n"
+            "Prev " + str(prev_tier) + "  →  New " + trail_tier
+            + "  SL Rs" + "{:.1f}".format(trail_sl),
+            priority="critical"
+        )
+        _save_v8_state()
+
+    # Emergency SL (-12) — TICK based
+    if pnl <= -12:
+        _v8_execute_paper_exit("EMERGENCY_SL", round(entry_price - 12, 2))
+        return
+
+    # Trail SL — TICK based for locked tiers (peak ≥ 12)
+    if trail_tier != "INITIAL" and ltp <= trail_sl:
+        _v8_execute_paper_exit("VISHAL_TRAIL", float(trail_sl))
+        return
+
+    # EOD exit
+    eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20") if hasattr(CFG, "exit_ema9_band") else "15:20"
+    try:
+        _eh, _em = eod_str.split(":")
+        eod_mins = int(_eh) * 60 + int(_em)
+    except Exception:
+        eod_mins = 15 * 60 + 20
+    now_mins = datetime.now().hour * 60 + datetime.now().minute
+    if now_mins >= eod_mins:
+        _v8_execute_paper_exit("EOD_EXIT", float(ltp))
+
+# ═══════════════════════════════════════════════════════════════
 #  STRIKE LOCKING — stable scanning, no flickering
 # ═══════════════════════════════════════════════════════════════
 
@@ -175,6 +516,7 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
+                _locked_tokens[_dt]["strike"] = _strike  # ensure strike survives into V8 entry display
 
         # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
         # Keys: CE_UP / CE_DN / PE_UP / PE_DN
@@ -299,6 +641,67 @@ def _load_state():
         logger.error("[MAIN] State load error: " + str(e))
 
 
+_V8_PERSIST_FIELDS = [
+    "in_trade", "symbol", "token", "direction", "strike",
+    "entry_price", "entry_time", "qty",
+    "peak_pnl", "active_ratchet_tier", "active_ratchet_sl",
+    "candles_held", "_other_token",
+    "_sl_cooldown_skip_next",
+    "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
+    "_v8_both_rejected_ts", "_last_trade_date",
+]
+
+def _save_v8_state():
+    try:
+        with _v8_lock:
+            subset = {k: _v8_state.get(k) for k in _V8_PERSIST_FIELDS}
+        tmp = D.V8_STATE_FILE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(subset, f, indent=2, default=str)
+        os.replace(tmp, D.V8_STATE_FILE_PATH)
+    except Exception as e:
+        logger.error("[V8] State save error: " + str(e))
+
+def _load_v8_state():
+    if not os.path.isfile(D.V8_STATE_FILE_PATH):
+        return
+    try:
+        with open(D.V8_STATE_FILE_PATH) as f:
+            saved = json.load(f)
+        with _v8_lock:
+            for k, v in saved.items():
+                if k in _v8_state:
+                    _v8_state[k] = v
+        logger.info("[V8] State loaded from disk")
+        # Reset daily counters if state file is from a previous day
+        _today = date.today().isoformat()
+        _last_date = str(saved.get("_last_trade_date", ""))
+        if _last_date != _today:
+            with _v8_lock:
+                _v8_state["_pnl_today_pts"] = 0.0
+                _v8_state["_trades_today"]  = 0
+                _v8_state["_wins_today"]    = 0
+                _v8_state["_losses_today"]  = 0
+                _v8_state["_v8_both_rejected_ts"] = 0.0
+            logger.info("[V8] New trading day — daily counters reset (last_date=" + _last_date + ")")
+        if _v8_state.get("in_trade"):
+            _sym  = str(_v8_state.get("symbol", ""))
+            _ep   = float(_v8_state.get("entry_price", 0))
+            _peak = float(_v8_state.get("peak_pnl", 0))
+            _tier = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
+            logger.info("[V8] Was in trade on last shutdown — " + _sym + " monitoring resumed")
+            _tg_send(
+                "⚡ <b>V8 restarted mid-trade</b>\n"
+                "Symbol : " + _sym + "\n"
+                "Entry  : Rs" + "{:.2f}".format(_ep) + "\n"
+                "Peak   : +" + "{:.1f}".format(_peak) + " pts\n"
+                "Tier   : " + _tier + "\n"
+                "Resuming exit monitoring."
+            )
+    except Exception as e:
+        logger.error("[V8] State load error: " + str(e))
+
+
 def _reconcile_positions(kite):
     """
     Startup position reconciliation — compare saved state with broker.
@@ -367,6 +770,10 @@ def _reconcile_positions(kite):
 
 
 def _reset_daily(today_str: str):
+    # V8 shadow daily counters
+    _v8_state["_signals_today"]    = 0
+    _v8_state["_last_signal_time"] = ""
+    _v8_state["_last_fired_candle_ts"] = ""
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
@@ -471,6 +878,17 @@ TRADE_FIELDNAMES = [
     "spike_close", "spike_target", "spike_fill", "spike_wait_used",
 ]
 
+def _trade_csv_reader(f):
+    """Return a DictReader that works whether or not the trade log has a header row.
+    Peeks at the first 4 bytes: if it starts with 'date' the file has a header,
+    otherwise inject TRADE_FIELDNAMES so no data row is silently consumed."""
+    first = f.read(4)
+    f.seek(0)
+    if first.startswith("date"):
+        return csv.DictReader(f)
+    return csv.DictReader(f, fieldnames=TRADE_FIELDNAMES)
+
+
 def _cleanup_trade_log():
     """One-time cleanup: remove corrupted rows where date doesn't match YYYY-MM-DD."""
     path = D.TRADE_LOG_PATH
@@ -480,9 +898,7 @@ def _cleanup_trade_log():
         import re
         date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
         with open(path, "r") as f:
-            reader = csv.DictReader(f)
-            if not reader.fieldnames:
-                return
+            reader = _trade_csv_reader(f)
             good_rows = [r for r in reader if date_re.match(r.get("date", ""))]
         # Rewrite with correct header + good rows only
         with open(path, "w", newline="") as f:
@@ -596,19 +1012,22 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
     except Exception:
         pass
 
-    # One-shot header migration: if the existing CSV header is missing
-    # any TRADE_FIELDNAMES column, rewrite the file with the new header
+    # One-shot header migration: add missing columns or prepend header when absent
     if not is_new:
         try:
             with open(D.TRADE_LOG_PATH, "r", newline="") as _f_chk:
                 _r_chk = csv.reader(_f_chk)
                 _hdr = next(_r_chk, None) or []
-                _missing = [c for c in TRADE_FIELDNAMES if c not in _hdr]
-            if _missing:
-                logger.info("[MAIN] Trade-log header upgrade: adding "
-                            + ", ".join(_missing))
+            _has_header = "date" in _hdr
+            _missing = [c for c in TRADE_FIELDNAMES if c not in _hdr] if _has_header else list(TRADE_FIELDNAMES)
+            if _missing or not _has_header:
+                logger.info("[MAIN] Trade-log header upgrade: has_header="
+                            + str(_has_header) + " missing=" + str(_missing))
                 with open(D.TRADE_LOG_PATH, "r", newline="") as _f_rd:
-                    _old_rows = list(csv.DictReader(_f_rd))
+                    if _has_header:
+                        _old_rows = list(csv.DictReader(_f_rd))
+                    else:
+                        _old_rows = list(csv.DictReader(_f_rd, fieldnames=TRADE_FIELDNAMES))
                 with open(D.TRADE_LOG_PATH, "w", newline="") as _f_wr:
                     _w = csv.DictWriter(_f_wr, fieldnames=TRADE_FIELDNAMES,
                                         extrasaction="ignore")
@@ -646,7 +1065,7 @@ def _read_today_trades() -> list:
         return trades
     try:
         with open(D.TRADE_LOG_PATH, "r") as f:
-            for row in csv.DictReader(f):
+            for row in _trade_csv_reader(f):
                 if row.get("date", "") == today_str:
                     trades.append(row)
     except Exception as e:
@@ -690,7 +1109,7 @@ def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
 
 from collections import deque as _deque
 _tg_timestamps = _deque(maxlen=20)
-_TG_FLOOD_LIMIT = 5
+_TG_FLOOD_LIMIT = 15   # was 5 — Telegram allows ~30/sec; 15/10s is safe
 _TG_FLOOD_WINDOW = 10  # seconds
 
 def _tg_safe(s) -> str:
@@ -823,30 +1242,32 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7\n"
-        "Entry   : 09:35 - 15:10 IST  |  5-min same-direction cooldown\n"
-        "Gates   : 1) GREEN candle\n"
-        "          2) close > EMA9_low\n"
-        "          3) body >= 40%\n"
+        "<b>STRATEGY</b>  Vishal Clean v16.7 V7 (15-min RSI)\n"
+        "Timeframe: 15-min option candles\n"
+        "Entry   : " + CFG.entry_ema9_band("warmup_until", "09:45") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST  |  Cooldown: 0min (removed)\n"
+        "Gates   : 1) 15-min close > EMA9_low\n"
+        "          2) RSI >= 40 AND rising (now > prior)\n"
+        "Spot    : tracked for display — NOT a gate\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  (first match wins)\n"
-        "1. Emergency -10pts\n"
+        "1. Emergency  -12 pts (TICK-based, instant)\n"
         "2. EOD 15:20\n"
-        "3. Vishal Trail (peak ladder)\n"
+        "3. Vishal Trail (TICK-based, 12-step + 30/40/50)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER</b> (peak-driven ratchet)\n"
-        "peak <5    SL = entry-10        (INITIAL)\n"
-        "peak >=5   SL = entry-5         (LOCK_M5)\n"
-        "peak >=8   SL = entry+3         (LOCK_3)\n"
-        "peak >=12  SL = entry+5         (LOCK_5)\n"
-        "peak >=15  SL = entry+8         (LOCK_8)\n"
-        "peak >=20  SL = entry+15        (LOCK_15)\n"
-        "peak >=21  SL = entry+(peak-5)  (LOCK_DYN)\n"
+        "<b>SL LADDER (V7)</b>\n"
+        "peak < 12  SL = entry - 12      (INITIAL)\n"
+        "peak >= 12 SL = entry            (LOCK_BE)\n"
+        "peak >= 24 SL = entry + 12       (LOCK_12)\n"
+        "peak >= 30 SL = entry + 20       (LOCK_20)\n"
+        "peak >= 36 SL = entry + 24       (LOCK_24)\n"
+        "peak >= 40 SL = entry + 36       (LOCK_36)\n"
+        "peak >= 50 SL = entry + 50       (LOCK_50)\n"
+        "peak >= 60 SL = peak rounded by 12 (12-step continues)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RE-ENTRY</b>  wait 1 full 3-min candle\n"
-        "Confirmation candle must pass 3-gate, then candle/2 fill\n"
-        "→ re-enter same side. Else fresh setup only.\n"
+        "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
+        "After exit: NO cooldown. Re-entry watcher tries up to 2 candles\n"
+        "for next 15-min candle close that passes 2-gate. Else fresh setup.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "/help for commands"
     )
@@ -1024,6 +1445,12 @@ def _execute_entry(kite, option_info: dict, option_type: str,
 
     with _state_lock:
         state["in_trade"]           = True
+        # Same-candle guard: remember which closed candle this entry came
+        # from so engine rejects re-entry on the same candle for any reason
+        # (cooldown=0, fast scan loop, immediate emergency exit, etc.).
+        _fts = entry_result.get("fired_candle_ts") if entry_result else None
+        if _fts:
+            state["_last_fired_candle_ts"] = str(_fts)
         state["symbol"]             = symbol
         state["token"]              = token
         state["direction"]          = option_type
@@ -1111,23 +1538,27 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     else:
         _xl_line = "X-Leg   — no data\n"
 
+    _rsi  = float(entry_result.get("rsi", 0) or 0)
+    _rsi_prev = float(entry_result.get("rsi_prev", 0) or 0)
+    _rsi_arrow = "↑" if entry_result.get("rsi_rising") else "↓"
     _core = (
-        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + "\n"
+        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + " (15-min)\n"
         "Mode    " + str(_entry_mode_tag) + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
-        "Body    " + str(_body) + "% GREEN\n"
+        "RSI     " + "{:.1f}".format(_rsi) + " " + _rsi_arrow
+        + " (prev " + "{:.1f}".format(_rsi_prev) + ")\n"
         + _xl_line +
         "Band    " + "{:.1f}".format(_bw) + " pts  (display)\n"
-        "Slope   " + _slope_tag + "{:.1f}".format(_slope) + " pts/candle  (display)\n"
     )
 
+    # V6 single emergency floor + simple trail ladder.
     _sl_pts = abs(CFG.exit_ema9_band("emergency_sl_pts", -10))
     _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail arms at peak +8 (LOCK_3 = entry+3)\n"
+        "Trail: peak ≥12→BE | ≥24→+12 | ≥30→+20 | ≥40→+36 | ≥50→+50\n"
     )
 
     _slip_block = ""
@@ -1135,7 +1566,8 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
 
     _tg_send(
-        _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
+        "🕐 <b>V7 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
+        + _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
         + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _core +
@@ -1275,6 +1707,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             state["last_exit_direction"] = direction
             state["last_exit_peak"] = peak
             state["last_exit_reason"] = reason
+            if reason == "EMERGENCY_SL":
+                state["_sl_cooldown_skip_next"] = True
             state["last_exit_price"] = round(actual_exit, 2)
             old_token = state["token"]
             # Capture strike + direction BEFORE state.update() wipes them
@@ -1298,12 +1732,14 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
                 "candles_held": 0, "force_exit": False, "_exit_failed": False,
                 "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
                 "_last_milestone": 0,
-                # Re-entry watcher (v16.7-final): wait for next FULL
-                # 3-min candle to close. If that candle independently
-                # passes 3-gate, re-enter on same side using candle/2
-                # fill. Else drop.
-                "_reentry_armed":      True,
-                "_reentry_exit_ts":    _exit_epoch,   # ── CHANGED: epoch float
+                # Re-entry watcher (V7): 2-candle window after exit.
+                # Each new 15-min candle close is a re-entry attempt.
+                # If 2 consecutive attempts fail, window expires and we
+                # rely on fresh-entry path only.
+                "_reentry_armed":      (reason != "FORCE_EXIT"),
+                "_reentry_exit_ts":    _exit_epoch,
+                "_reentry_attempts":   0,
+                "_reentry_last_checked_epoch": 0.0,
                 "_reentry_direction":  str(old_dir or ""),
                 "_reentry_token":      int(old_token or 0),
                 "_reentry_strike":     int(old_strike or 0),
@@ -1386,7 +1822,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             pass
 
         _tg_send(
-            _dir_emoji + " <b>EXIT " + _sym_exit + "</b>\n"
+            _dir_emoji + " <b>V7 EXIT " + _sym_exit + "</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>" + reason + "</b>    " + _sign_pnl + "{:.1f}".format(pnl) + " pts\n"
             + _reason_line +
@@ -1888,15 +2324,23 @@ def _strategy_loop(kite):
         state["_last_1min_candle"] = ""
 
     try:
-        _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        _prev_close = state.get("prev_close", 0)
-        if _prev_close > 0 and _startup_spot > 0:
-            _gap = abs(_startup_spot - _prev_close)
-            _gap_threshold = CFG.get().get("strike", {}).get("gap_relock_threshold", 200)
-            if _gap > _gap_threshold:
-                logger.info("[MAIN] GAP " + str(round(_gap)) + "pts — forcing strike relock at open")
-                _tg_send("🔔 <b>GAP OPEN</b> " + str(round(_gap)) + "pts — strikes will relock")
-                _reset_strike_lock()
+        _now_startup = datetime.now()
+        _startup_mins = _now_startup.hour * 60 + _now_startup.minute
+        # Only check gap at true market open window (09:00–09:34).
+        # Mid-day restarts must NOT compare prev_close to current intraday spot.
+        if 540 <= _startup_mins < 574:
+            _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+            _prev_close = state.get("prev_close", 0)
+            if _prev_close > 0 and _startup_spot > 0:
+                _gap = abs(_startup_spot - _prev_close)
+                _gap_threshold = CFG.get().get("strike", {}).get("gap_relock_threshold", 200)
+                if _gap > _gap_threshold:
+                    logger.info("[MAIN] GAP " + str(round(_gap)) + "pts — forcing strike relock at open")
+                    _tg_send("🔔 <b>GAP OPEN</b> " + str(round(_gap)) + "pts — strikes will relock")
+                    _reset_strike_lock()
+        else:
+            logger.info("[MAIN] Gap-open check skipped (mid-day restart at "
+                        + _now_startup.strftime("%H:%M") + ")")
     except Exception:
         pass
 
@@ -1990,6 +2434,12 @@ def _strategy_loop(kite):
             spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
 
             D.check_and_reconnect()
+
+            # ── V8 tick-based exit: runs every 1-second scan cycle ──
+            # Must be OUTSIDE the _is_new_1min_candle gate — exits need to
+            # fire on every tick, not once per minute at candle close.
+            _v8_check_exit()
+
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
                 if D.is_market_open() and not _wm_warm:
@@ -2201,7 +2651,7 @@ def _strategy_loop(kite):
                             _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
                                            if _prev_sl > 0 else "entry-10")
                             _tg_send(
-                                _icon + " <b>SL UPGRADED → " + _new_tier + "</b>\n"
+                                _icon + " <b>V7 SL UPGRADED → " + _new_tier + "</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                 + _r_emoji + " " + _r_sym + "   Peak +"
                                 + "{:.1f}".format(_r_peak) + "\n"
@@ -2242,7 +2692,7 @@ def _strategy_loop(kite):
                                 _lock_str = (("+" if _lock >= 0 else "")
                                              + "{:.1f}".format(_lock))
                                 _tg_send(
-                                    _ms_icon + " <b>Peak +" + str(_m)
+                                    _ms_icon + " <b>V7 Peak +" + str(_m)
                                     + " pts</b>   " + _r_tier + "\n"
                                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                     "Peak  +" + "{:.1f}".format(_peak) + "\n"
@@ -2390,45 +2840,72 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # ── RE-ENTRY WATCHER (epoch‑based comparison) ──
+                # ── RE-ENTRY WATCHER (V7: 2-candle window) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
-                if _re_armed and not state.get("in_trade"):
+                if _re_armed and not state.get("in_trade") and not V7_SHADOW_MODE:
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
                     _re_exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0)
+                    _re_attempts = int(state.get("_reentry_attempts", 0) or 0)
+                    _re_last_checked = float(state.get("_reentry_last_checked_epoch", 0) or 0)
                     if _re_dir and _re_token and _re_exit_epoch > 0:
                         try:
-                            _re_3m = D.get_option_3min(_re_token, lookback=10)
-                            if _re_3m is not None and len(_re_3m) >= 4:
-                                _re_last = _re_3m.iloc[-2]
-                                # candle close time = bucket start + 3 min
-                                _re_close_dt = _re_last.name + timedelta(minutes=3)
+                            _re_15m = D.add_indicators(
+                                D.get_historical_data(_re_token, "15minute", 30))
+                            if _re_15m is not None and len(_re_15m) >= 16:
+                                _re_last = _re_15m.iloc[-2]
+                                _re_close_dt = _re_last.name + timedelta(minutes=15)
                                 _re_close_epoch = _re_close_dt.timestamp()
-                                if _re_close_epoch > _re_exit_epoch:
+                                # Only check this candle once: must be after exit AND newer than last check
+                                if (_re_close_epoch > _re_exit_epoch
+                                    and _re_close_epoch > _re_last_checked):
+                                    with _state_lock:
+                                        state["_reentry_attempts"] = _re_attempts + 1
+                                        state["_reentry_last_checked_epoch"] = _re_close_epoch
+                                    _re_attempts += 1
                                     _re_result = check_entry(
                                         token=_re_token, option_type=_re_dir,
                                         spot_ltp=spot_ltp, dte=dte,
                                         expiry_date=expiry, kite=kite,
                                         silent=False, state=state)
                                     _passed = _re_result.get("fired", False)
+                                    # Body gate for V7 re-entry: require ≥ 20% body (no doji confirmation)
+                                    if _passed:
+                                        _re_body = float(_re_result.get("body_pct", 0) or 0)
+                                        if _re_body < 20:
+                                            _passed = False
+                                            _re_result["fired"] = False
+                                            _re_result["reject_reason"] = f"reentry_weak_body_{_re_body}pct"
+                                            logger.info(f"[REENTRY-V7] {_re_dir} body={_re_body}% < 20% — rejected")
                                     if not _passed:
                                         _why = _re_result.get("reject_reason", "?")
-                                        _tg_send(
-                                            "🚫 <b>RE-ENTRY DROPPED</b>\n"
-                                            + _re_dir + " " + str(_re_strike)
-                                            + " — confirmation candle FAILED 3-gate\n"
-                                            "Reason: " + str(_why) + "\n"
-                                            "Waiting for fresh setup."
-                                        )
-                                        logger.info("[REENTRY] confirmation candle "
-                                            + _re_close_dt.strftime("%H:%M:%S") + " failed: " + str(_why))
-                                        with _state_lock:
-                                            state["_reentry_armed"] = False
-                                            state["_reentry_exit_ts"] = 0.0
-                                            state["_reentry_direction"] = ""
-                                            state["_reentry_token"] = 0
-                                            state["_reentry_strike"] = 0
+                                        if _re_attempts >= 2:
+                                            # 2-candle window exhausted → disarm
+                                            _tg_send(
+                                                "🚫 <b>RE-ENTRY DROPPED</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + " — 2/2 candles failed (V7)\n"
+                                                "Last reason: " + str(_why) + "\n"
+                                                "Waiting for fresh setup."
+                                            )
+                                            logger.info("[REENTRY] window exhausted (2/2): " + str(_why))
+                                            with _state_lock:
+                                                state["_reentry_armed"] = False
+                                                state["_reentry_exit_ts"] = 0.0
+                                                state["_reentry_direction"] = ""
+                                                state["_reentry_token"] = 0
+                                                state["_reentry_strike"] = 0
+                                                state["_reentry_attempts"] = 0
+                                                state["_reentry_last_checked_epoch"] = 0.0
+                                        else:
+                                            _tg_send(
+                                                "⏳ <b>RE-ENTRY ATTEMPT 1/2 FAILED</b>\n"
+                                                + _re_dir + " " + str(_re_strike)
+                                                + " — Reason: " + str(_why) + "\n"
+                                                "Waiting next 15-min candle (1 more attempt)."
+                                            )
+                                            logger.info(f"[REENTRY] attempt {_re_attempts}/2 failed: " + str(_why))
                                     else:
                                         _re_result["entry_mode"] = "REENTRY"
                                         _re_result["_strike"] = _re_strike
@@ -2489,70 +2966,20 @@ def _strategy_loop(kite):
                                                 state["_reentry_exit_ts"] = 0.0
                                             logger.info("[REENTRY] pre-entry blocked: " + str(why))
                                             continue
+                                        _re_close = float(_re_result.get("close", 0) or 0)
                                         _tg_send(
-                                            "🔄 <b>RE-ENTRY CONFIRMED " + _re_dir + " "
+                                            "🔄 <b>V7 RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
                                             "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
                                             + str(int(_re_result.get("body_pct", 0))) + "%\n"
-                                            "Proceeding to candle/2 entry"
+                                            "Filling at candle close Rs" + "{:.2f}".format(_re_close)
                                         )
-                                        _re_high = float(_re_result.get("high", 0) or 0)
-                                        _re_low  = float(_re_result.get("low",  0) or 0)
-                                        _re_close = float(_re_result.get("close", 0) or 0)
-                                        _re_ema9l = float(_re_result.get("ema9_low", 0) or 0)
-                                        _spike_wait_re = int(CFG.entry_ema9_band("spike_wait_secs", 60))
-                                        _re_skip = False
-                                        if _re_high > 0 and _re_low > 0 and _spike_wait_re > 0:
-                                            _re_mid = (_re_high + _re_low) / 2.0
-                                            if _re_ema9l > 0 and _re_mid < _re_ema9l:
-                                                _spk_target_re = round(_re_ema9l, 2)
-                                            else:
-                                                _spk_target_re = round(_re_mid, 2)
-                                            _spk_cur_re = D.get_ltp(_re_token) or 0
-                                            if _spk_cur_re > 0 and _spk_cur_re <= _spk_target_re:
-                                                _spk_fill_re = _spk_cur_re
-                                                _spk_used_re = 0
-                                            else:
-                                                _tg_send(
-                                                    "⏳ <b>CANDLE/2 (RE-ENTRY)</b>\n"
-                                                    + _re_dir + " " + str(_re_strike) + "\n"
-                                                    "Target Rs" + "{:.1f}".format(_spk_target_re)
-                                                    + " · LTP Rs" + "{:.1f}".format(_spk_cur_re) + "\n"
-                                                    "Waiting " + str(_spike_wait_re) + "s for pullback"
-                                                )
-                                                _spk_fill_re, _spk_used_re = _wait_for_pullback(
-                                                    _re_token, _spk_target_re, _spike_wait_re)
-                                            if _spk_fill_re is None:
-                                                _tg_send(
-                                                    "⏭ <b>RE-ENTRY SKIPPED</b>\n"
-                                                    + _re_dir + " " + str(_re_strike)
-                                                    + " · target Rs" + "{:.1f}".format(_spk_target_re)
-                                                    + " · no pullback in " + str(_spike_wait_re) + "s"
-                                                )
-                                                _re_skip = True
-                                            else:
-                                                _re_result["close"] = _spk_fill_re
-                                                _re_result["entry_price"] = _spk_fill_re
-                                                _re_result["spike_close"] = _re_close
-                                                _re_result["spike_target"] = _spk_target_re
-                                                _re_result["spike_fill"] = _spk_fill_re
-                                                _re_result["spike_wait_used"] = _spk_used_re
-                                                _saved_re = round(_re_close - _spk_fill_re, 2)
-                                                _tg_send(
-                                                    "✅ <b>RE-ENTRY FILLED</b>\n"
-                                                    + _re_dir + " " + str(_re_strike)
-                                                    + " Rs" + "{:.2f}".format(_spk_fill_re)
-                                                    + " (target Rs" + "{:.1f}".format(_spk_target_re) + ")\n"
-                                                    "Saved " + ("+" if _saved_re >= 0 else "")
-                                                    + "{:.1f}".format(_saved_re) + " pts vs candle close"
-                                                )
-                                        if _re_skip:
-                                            with _state_lock:
-                                                state["last_exit_direction"] = _saved_lex
-                                                state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = 0.0
-                                            continue
+                                        # V5 CLOSE FILL — re-entry at candle close, no wait
+                                        _re_result["entry_price"] = _re_close
+                                        _re_result["entry_mode"]  = "CLOSE_FILL"
+                                        logger.info("[CLOSE_FILL] RE-ENTRY " + _re_dir
+                                                    + " at candle close Rs" + str(_re_close))
                                         with _state_lock:
                                             state["_reentry_armed"] = False
                                             state["_reentry_exit_ts"] = 0.0
@@ -2652,9 +3079,19 @@ def _strategy_loop(kite):
                         option_ltp_now, profile, session,
                         direction=opt_type)
                     if ok:
-                        best_result = result
-                        best_type = opt_type
-                        best_opt_info = opt_info
+                        if V7_SHADOW_MODE:
+                            # Shadow: stamp candle guard, log signal, skip trade
+                            with _state_lock:
+                                state["_last_fired_candle_ts"] = str(result.get("fired_candle_ts", ""))
+                            logger.info("[V7-SHADOW] " + opt_type + " " + str(result.get("_strike", ""))
+                                        + " close=" + str(result.get("close", ""))
+                                        + " rsi=" + str(result.get("rsi", ""))
+                                        + " body=" + str(result.get("body_pct", "")) + "%"
+                                        + " xleg_dying=" + str(result.get("xleg_other_dying", "")))
+                        else:
+                            best_result = result
+                            best_type = opt_type
+                            best_opt_info = opt_info
                     else:
                         logger.info("[MAIN] Entry blocked (" + opt_type
                                     + " " + _win_label + "): " + reason)
@@ -2664,6 +3101,158 @@ def _strategy_loop(kite):
                         all_results["CE"] = _v
                     elif _k.startswith("PE_ATM"):
                         all_results["PE"] = _v
+
+                # ═══════════════════════════════════════════════════════
+                #  V8 — 3-min parallel strategy (LIVE paper or shadow)
+                # ═══════════════════════════════════════════════════════
+                # Independent of V7. Own state, own entry, own exit.
+                # SHADOW mode = Telegram alerts only.
+                # LIVE mode  = paper trades alongside V7.
+                try:
+                    from VRL_ENGINE import check_entry_v8, check_v8_continuation_reentry
+                    _v8_ce_info = (_locked_tokens or {}).get("CE", {})
+                    _v8_pe_info = (_locked_tokens or {}).get("PE", {})
+                    _v8_ce_tok = int(_v8_ce_info.get("token", 0) or 0)
+                    _v8_pe_tok = int(_v8_pe_info.get("token", 0) or 0)
+
+                    # Entry logic — only when V8 is NOT in a trade
+                    # (exit is handled every scan cycle outside the 1-min gate)
+                    if not _v8_state.get("in_trade"):
+                        # First try re-entry path (cross-leg) if armed
+                        _v8_re_armed = bool(_v8_state.get("_reentry_armed", False))
+                        _v8_re_handled = False
+                        if _v8_re_armed:
+                            _re_dir = _v8_state.get("_reentry_direction", "")
+                            _re_tok = int(_v8_state.get("_reentry_token", 0) or 0)
+                            _re_oth = int(_v8_state.get("_reentry_other_token", 0) or 0)
+                            _re_strike = int(_v8_state.get("_reentry_strike", 0) or 0)
+                            _re_attempts = int(_v8_state.get("_reentry_attempts", 0) or 0)
+                            _re_last_ts = float(_v8_state.get("_reentry_last_checked_epoch", 0) or 0)
+                            try:
+                                _re_3m = D.add_indicators(D.get_historical_data(_re_tok, "3minute", 10))
+                                if _re_3m is not None and len(_re_3m) >= 2:
+                                    _re_close_dt = _re_3m.iloc[-2].name + timedelta(minutes=3)
+                                    _re_close_epoch = _re_close_dt.timestamp()
+                                    if _re_close_epoch > _re_last_ts:
+                                        _v8_state["_reentry_attempts"] = _re_attempts + 1
+                                        _v8_state["_reentry_last_checked_epoch"] = _re_close_epoch
+                                        _re_attempts += 1
+                                        _re_res = check_v8_continuation_reentry(
+                                            token=_re_tok, option_type=_re_dir,
+                                            other_token=_re_oth, state=_v8_state)
+                                        if _re_res.get("fired"):
+                                            _v8_re_handled = True
+                                            _v8_execute_paper_entry(
+                                                direction=_re_dir, strike=_re_strike,
+                                                symbol=(_v8_ce_info if _re_dir == "CE" else _v8_pe_info).get("symbol", ""),
+                                                token=_re_tok,
+                                                entry_price=_re_res.get("entry_price", 0),
+                                                entry_result=_re_res, other_token=_re_oth)
+                                            _v8_state["_reentry_armed"] = False
+                                        else:
+                                            # Scan the OTHER side — if it passes fresh entry, take it now
+                                            _opp_dir = "PE" if _re_dir == "CE" else "CE"
+                                            _opp_tok = _v8_pe_tok if _re_dir == "CE" else _v8_ce_tok
+                                            if _opp_tok:
+                                                _opp_res = check_entry_v8(
+                                                    token=_opp_tok, option_type=_opp_dir,
+                                                    spot_ltp=spot_ltp, silent=True,
+                                                    state=_v8_state,
+                                                    other_token=_re_tok)
+                                                if _opp_res.get("fired"):
+                                                    _v8_re_handled = True
+                                                    _v8_state["_reentry_armed"] = False
+                                                    _opp_strike = (_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("strike", atm_strike)
+                                                    _v8_execute_paper_entry(
+                                                        direction=_opp_dir,
+                                                        strike=_opp_strike,
+                                                        symbol=(_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("symbol", ""),
+                                                        token=_opp_tok,
+                                                        entry_price=_opp_res.get("entry_price", 0),
+                                                        entry_result=_opp_res,
+                                                        other_token=_re_tok)
+                                            if not _v8_re_handled and _re_attempts >= 2:
+                                                _v8_state["_reentry_armed"] = False
+                                                _tg_send(
+                                                    "⚡ <b>V8 RE-ENTRY DROPPED</b>\n"
+                                                    + _re_dir + " " + str(_re_strike)
+                                                    + " — 2/2 attempts failed\n"
+                                                    "Reason: " + str(_re_res.get("reject_reason", "?")) + "\n"
+                                                    "Waiting for fresh setup."
+                                                )
+                            except Exception as _ree:
+                                logger.warning("[V8] re-entry error: " + str(_ree))
+
+                        # Path A: Fresh entry (always available)
+                        if not _v8_re_handled and not _v8_state.get("in_trade"):
+                            _v8_ce_gate_rejected = False
+                            _v8_pe_gate_rejected = False
+                            _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
+                            # Only active if timestamp was actually set (not default 0)
+                            _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 180)
+                            for _v8_dir, _v8_token, _v8_other in [
+                                ("CE", _v8_ce_tok, _v8_pe_tok),
+                                ("PE", _v8_pe_tok, _v8_ce_tok),
+                            ]:
+                                if not _v8_token:
+                                    continue
+                                _v8_res = check_entry_v8(
+                                    token=_v8_token, option_type=_v8_dir,
+                                    spot_ltp=spot_ltp,
+                                    silent=False,  # always log — silent caused permanent invisible cooldown
+                                    state=_v8_state, other_token=_v8_other)
+                                if not _v8_res.get("fired"):
+                                    if _v8_dir == "CE": _v8_ce_gate_rejected = True
+                                    else: _v8_pe_gate_rejected = True
+                                    continue
+                                # Gates passed — check both-sides cooldown
+                                if _v8_in_both_cooldown:
+                                    _age = round(time.time() - _v8_both_rej_ts)
+                                    logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
+                                                f"age={_age}s ({round(_age/60,1)}min) — gates passed but blocked")
+                                    continue
+                                _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
+                                _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
+                                _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
+                                _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
+                                if V8_SHADOW_MODE:
+                                    # Stamp guard, send alert only
+                                    _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
+                                    _xleg = ""
+                                    if _v8_res.get("xleg_other_dying"):
+                                        _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir=='CE' else 'CE') + " dying ("
+                                                 + "{:.1f}".format(_v8_res.get('xleg_other_close',0))
+                                                 + " < ema9l "
+                                                 + "{:.1f}".format(_v8_res.get('xleg_other_ema9l',0)) + ")\n")
+                                    _tg_send(
+                                        "👻 <b>V8 SHADOW SIGNAL</b>\n"
+                                        + _v8_dir + " " + str(_v8_strike)
+                                        + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
+                                        + "Close " + "{:.1f}".format(_v8_res["close"])
+                                        + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
+                                        + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
+                                        + _xleg + "<i>SHADOW MODE — no actual trade</i>"
+                                    )
+                                else:
+                                    # LIVE: execute paper entry
+                                    _v8_execute_paper_entry(
+                                        direction=_v8_dir, strike=_v8_strike,
+                                        symbol=_v8_symbol, token=_v8_token,
+                                        entry_price=_v8_res["entry_price"],
+                                        entry_result=_v8_res, other_token=_v8_other)
+                                break  # one V8 entry per cycle
+                            # Both sides failed → arm cooldown only if not already active.
+                            # Old code refreshed timestamp every minute → cooldown NEVER expired → V8 permanent silence.
+                            if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
+                                if not _v8_in_both_cooldown:
+                                    _v8_state["_v8_both_rejected_ts"] = time.time()
+                                    if _v8_both_rej_ts == 0:
+                                        logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (3 min block)")
+                                    else:
+                                        logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
+                except Exception as _v8e:
+                    import traceback as _v8tb
+                    logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
 
                 try:
                     vix_ltp = D.get_vix()
@@ -2700,107 +3289,13 @@ def _strategy_loop(kite):
                     logger.debug("[DASH] " + str(_de))
 
                 if best_result and best_opt_info:
-                    _cd_until = float(state.get("_next_candle2_after", 0) or 0)
-                    if _cd_until > time.time():
-                        _wait_left = round(_cd_until - time.time(), 0)
-                        logger.info("[CANDLE/2] cooldown active — silent skip ("
-                                    + str(int(_wait_left)) + "s left)")
-                        best_result = None
-                        best_opt_info = None
-
-                if best_result and best_opt_info:
-                    _spike_wait = int(CFG.entry_ema9_band("spike_wait_secs", 60))
+                    # V5 CLOSE FILL — enter at candle close (body high of green candle).
+                    # No pullback wait, no midpoint, no Option-B. Instant fill at close.
                     _entry_close_x = float(best_result.get("close", 0) or 0)
-                    _entry_high_x  = float(best_result.get("high", 0) or 0)
-                    _entry_low_x   = float(best_result.get("low", 0) or 0)
-                    _entry_ema9l_x = float(best_result.get("ema9_low", 0) or 0)
-                    if _spike_wait > 0 and _entry_high_x > 0 and _entry_low_x > 0:
-                        _midpoint = (_entry_high_x + _entry_low_x) / 2.0
-                        if _entry_ema9l_x > 0 and _midpoint < _entry_ema9l_x:
-                            _spk_target = round(_entry_ema9l_x, 2)
-                            logger.info(
-                                "[CANDLE/2] target clamped to EMA9_low Rs"
-                                + str(_spk_target) + " (midpoint Rs"
-                                + "{:.2f}".format(_midpoint) + " was below band)")
-                        else:
-                            _spk_target = round(_midpoint, 2)
-                        state["_next_candle2_after"] = time.time() + 180
-                        _spk_tok = best_opt_info.get("token", 0)
-                        _spk_cur_ltp = D.get_ltp(_spk_tok) or 0
-                        if _spk_cur_ltp > 0 and _spk_cur_ltp <= _spk_target:
-                            _spk_fill = _spk_cur_ltp
-                            _spk_used = 0
-                            logger.info(
-                                "[CANDLE/2] " + best_type + " immediate fill Rs"
-                                + str(_spk_fill) + " (target Rs" + str(_spk_target)
-                                + ", saved " + "{:.2f}".format(_entry_close_x - _spk_fill)
-                                + " pts vs close)")
-                        else:
-                            _tg_send(
-                                "⏳ <b>CANDLE/2 WAIT</b>\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                + best_type + " " + str(best_result.get("_strike", 0)) + "\n"
-                                "Candle  H " + "{:.1f}".format(_entry_high_x)
-                                + " · L " + "{:.1f}".format(_entry_low_x)
-                                + " · C " + "{:.1f}".format(_entry_close_x) + "\n"
-                                "Target  Rs" + "{:.1f}".format(_spk_target)
-                                + "  ((H+L)/2)\n"
-                                "LTP     Rs" + "{:.1f}".format(_spk_cur_ltp) + "\n"
-                                "Wait    " + str(_spike_wait) + "s for pullback"
-                            )
-                            _spk_fill, _spk_used = _wait_for_pullback(
-                                _spk_tok, _spk_target, _spike_wait)
-                            if _spk_fill is None:
-                                # ==================== OPTION B ====================
-                                current_ltp = D.get_ltp(_spk_tok) or 0
-                                if current_ltp > 0 and _entry_ema9l_x < current_ltp <= _entry_close_x:
-                                    _spk_fill = current_ltp
-                                    _spk_used = _spike_wait
-                                    best_result["entry_mode"] = "OPTION_B"
-                                    _tg_send(
-                                        "\U0001f7e1 <b>OPTION\u2011B FILL</b>\n"
-                                        + best_type + " " + str(best_result.get("_strike", 0))
-                                        + " Rs" + "{:.2f}".format(_spk_fill)
-                                        + "  (LTP after " + str(_spike_wait) + "s)\n"
-                                        "Midpoint not reached, but LTP \u2264 close"
-                                    )
-                                    logger.info(
-                                        "[OPTION-B] " + best_type + " filled at LTP Rs"
-                                        + str(_spk_fill))
-                                else:
-                                    _tg_send(
-                                        "\u23ed <b>SKIPPED — no pullback to midpoint</b>\n"
-                                        + best_type + " " + str(best_result.get("_strike", 0))
-                                        + "  target Rs" + "{:.1f}".format(_spk_target) + "\n"
-                                        "No retest in " + str(_spike_wait)
-                                        + "s. Waiting for fresh setup."
-                                    )
-                                    logger.info(
-                                        "[CANDLE/2] " + best_type + " SKIP — no pullback in "
-                                        + str(_spike_wait) + "s")
-                                    best_result = None
-                                    best_opt_info = None
-                            else:
-                                _saved_pts = round(_entry_close_x - _spk_fill, 2)
-                                _tg_send(
-                                    "✅ <b>FILLED at midpoint</b>\n"
-                                    + best_type + " " + str(best_result.get("_strike", 0))
-                                    + " Rs" + "{:.2f}".format(_spk_fill)
-                                    + "  (target Rs" + "{:.1f}".format(_spk_target) + ")\n"
-                                    "Saved   " + ("+" if _saved_pts >= 0 else "")
-                                    + "{:.1f}".format(_saved_pts) + " pts vs candle close\n"
-                                    "Wait    " + "{:.1f}".format(_spk_used) + "s"
-                                )
-                                logger.info(
-                                    "[ANTI-SPIKE] " + best_type + " filled Rs"
-                                    + str(_spk_fill) + " after " + str(_spk_used) + "s")
-                        if best_result is not None:
-                            best_result["close"] = _spk_fill
-                            best_result["entry_price"] = _spk_fill
-                            best_result["spike_close"] = _entry_close_x
-                            best_result["spike_target"] = _spk_target
-                            best_result["spike_fill"] = _spk_fill
-                            best_result["spike_wait_used"] = _spk_used
+                    best_result["entry_price"] = _entry_close_x
+                    best_result["entry_mode"]  = "CLOSE_FILL"
+                    logger.info("[CLOSE_FILL] " + best_type + " entry at candle close Rs"
+                                + str(_entry_close_x))
 
                 if best_result and best_opt_info:
                     _xl_signal = "NA"
@@ -3055,9 +3550,20 @@ def _cmd_pulse(args):
             + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>TODAY</b>\n"
-            + str(len(_trades_today)) + " trades · "
+            + "🕐 V7: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
+            + ("👻 V8 (shadow): " if V8_SHADOW_MODE else "⚡ V8 (live): ")
+            + str(_v8_state.get("_trades_today", 0)) + " trades · "
+            + str(_v8_state.get("_wins_today", 0)) + "W "
+            + str(_v8_state.get("_losses_today", 0)) + "L · "
+            + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+            + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts"
+            + (" | V8 active: " + str(_v8_state.get("direction", "")) + " "
+               + str(_v8_state.get("strike", ""))
+               + " peak +" + "{:.1f}".format(_v8_state.get("peak_pnl", 0))
+               if _v8_state.get("in_trade") else "")
+            + "\n"
             + ("Last: " + str(_last_t.get("entry_time", "?")) + " "
                + str(_last_t.get("direction", "?")) + " "
                + str(_last_t.get("strike", "?")) + " "
@@ -3076,38 +3582,39 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>CONFIG</b>\n"
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
-            + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts\n"
+            + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts (display)\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: " + str(_xb.get("emergency_sl_pts", "?")) + "pts\n"
+            + "SL: -12 (TICK, single floor)\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
             + str(_eb.get("cutoff_after", "?")) + "  "
             + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
-            "Cooldown: " + str(_cd) + "min\n"
+            "Cooldown: " + str(_cd) + "min BOTH sides\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER (Vishal Clean v16.7)</b>\n"
-            "INITIAL    (peak <5)    entry-10\n"
-            "⚠️ LOCK_M5  (peak >=5)   entry-5\n"
-            "🛡️ LOCK_3   (peak >=8)   entry+3\n"
-            "🔒 LOCK_5   (peak >=12)  entry+5\n"
-            "🔒🔒 LOCK_8 (peak >=15)  entry+8\n"
-            "🔒🔒 LOCK_15(peak >=20)  entry+15\n"
-            "🔒🔒🔒 LOCK_DYN(>=21)   entry+(peak-5)\n"
+            "<b>SL LADDER (V7, Em -12 TICK)</b>\n"
+            "INITIAL    (peak <12)   entry-12\n"
+            "🛡️ LOCK_BE (peak >=12) entry\n"
+            "🔒 LOCK_12 (peak >=24) entry+12\n"
+            "🔒 LOCK_20 (peak >=30) entry+20\n"
+            "🔒 LOCK_24 (peak >=36) entry+24\n"
+            "🔒🔒 LOCK_36 (peak >=40) entry+36\n"
+            "🔒🔒🔒 LOCK_50 (peak >=50) entry+50 (continues 12-step above)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>3-GATE ENTRY</b>\n"
-            "1. Time " + str(_eb.get("warmup_until", "09:35")) + " - "
-            + str(_eb.get("cutoff_after", "15:10")) + "\n"
-            "2. GREEN candle (close > open)\n"
-            "3. Close > EMA9_low\n"
-            "4. Body ≥ " + str(_eb.get("body_pct_min", 40)) + "%\n"
+            "<b>2-GATE ENTRY (V7 — 15-min RSI)</b>\n"
+            "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
+            + str(_eb.get("cutoff_after", "15:00")) + "\n"
+            "1. 15-min candle close > EMA9_low\n"
+            "2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])\n"
+            "(spot bias tracked for display only — not a gate)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>EXIT CHAIN</b>\n"
-            "1. Emergency -10 | 2. EOD 15:20 | 3. Vishal Trail\n"
-            "Re-entry: wait 1 full 3-min candle, must pass 3-gate, then candle/2 fill\n"
+            "1. Emergency -12 pts (TICK) | 2. EOD 15:20 | 3. Vishal Trail (TICK)\n"
+            "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
+            "first 2-gate fire (CE or PE) at 15-min close after cooldown enters.\n"
         )
         _tg_send(msg)
     except Exception as e:
@@ -3137,7 +3644,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean) — 3-gate entry, "
+        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7) — 15-min RSI entry, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -3292,13 +3799,29 @@ def _cmd_resume(args):
 
 
 def _cmd_forceexit(args):
+    v7_open = False
+    v8_open = False
     with _state_lock:
-        if not state.get("in_trade"):
-            _tg_send("No open trade.")
-            return
-        state["force_exit"] = True
+        if state.get("in_trade"):
+            state["force_exit"] = True
+            v7_open = True
+    _v8_tok = 0
+    _v8_entry_px = 0.0
+    with _v8_lock:
+        if _v8_state.get("in_trade"):
+            v8_open = True
+            _v8_tok = int(_v8_state.get("token", 0) or 0)
+            _v8_entry_px = float(_v8_state.get("entry_price", 0) or 0)
+    if not v7_open and not v8_open:
+        _tg_send("No open trade.")
+        return
     _tg_send("🚨 Force exit triggered.")
     logger.warning("[CTRL] Force exit")
+    if v8_open:
+        _ltp = D.get_ltp(_v8_tok) if _v8_tok else 0
+        if _ltp <= 0:
+            _ltp = _v8_entry_px
+        _v8_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
 
 
 def _cmd_restart(args):
@@ -3367,8 +3890,7 @@ def _cmd_xleg(args):
         cutoff = (_date.today() - _td(days=7)).isoformat()
         rows = []
         with open(path, "r") as f:
-            rdr = _csv.DictReader(f)
-            for r in rdr:
+            for r in _trade_csv_reader(f):
                 if (r.get("date") or "") >= cutoff:
                     rows.append(r)
         if not rows:
@@ -3785,57 +4307,22 @@ def main():
     _kite = kite
     D.init(kite)
 
+    # Phase 1 health: Token + REST spot (before WS starts — WS check happens after start_websocket)
+    _health_lines_pre = []
+    _health_ok_pre = True
     try:
-        _health_ok = True
-        _health_lines = []
-        try:
-            _prof = kite.profile()
-            _health_lines.append("Token: ✅ " + str(_prof.get("user_name", "?")))
-        except Exception as _he:
-            _health_lines.append("Token: ❌ " + str(_he)[:60])
-            _health_ok = False
-        try:
-            _sq = kite.ltp(["NSE:NIFTY 50"])
-            _sp = float(list(_sq.values())[0]["last_price"])
-            _health_lines.append("Spot: ✅ " + str(round(_sp, 1)))
-        except Exception as _he:
-            _health_lines.append("Spot: ❌ " + str(_he)[:60])
-            _health_ok = False
-        import time as _time_h
-        _ws_ltp = 0.0
-        _market_open_now = D.is_market_open()
-        if _market_open_now:
-            for _ in range(15):
-                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                if _ws_ltp > 0:
-                    break
-                _time_h.sleep(1)
-            if _ws_ltp > 0:
-                _health_lines.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
-            else:
-                _health_lines.append("WS: ⚠️ no tick after 15s (feed may be down)")
-                _health_ok = False
-        else:
-            with D._tick_lock:
-                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
-            if _entry:
-                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
-                _health_lines.append(
-                    "WS: 💤 market closed (last tick "
-                    + str(_age_min) + "m ago at "
-                    + str(round(_entry["ltp"], 1)) + ")"
-                )
-            else:
-                _health_lines.append("WS: 💤 market closed (no ticks yet)")
-        _icon = "✅" if _health_ok else "⚠️"
-        _tg_send(
-            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
-            + "\n".join(_health_lines) + "\n"
-            "Time: " + datetime.now().strftime("%H:%M:%S IST")
-        )
-        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines)))
-    except Exception as _the:
-        logger.warning("[MAIN] Token health check error: " + str(_the))
+        _prof = kite.profile()
+        _health_lines_pre.append("Token: ✅ " + str(_prof.get("user_name", "?")))
+    except Exception as _he:
+        _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
+        _health_ok_pre = False
+    try:
+        _sq = kite.ltp(["NSE:NIFTY 50"])
+        _sp = float(list(_sq.values())[0]["last_price"])
+        _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
+    except Exception as _he:
+        _health_lines_pre.append("Spot: ❌ " + str(_he)[:60])
+        _health_ok_pre = False
 
     try:
         D.set_autoheal_callback(_tg_send)
@@ -3852,6 +4339,7 @@ def main():
     logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
 
     _load_state()
+    _load_v8_state()
     _reconcile_positions(kite)
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
@@ -3896,7 +4384,7 @@ def main():
                 continue
             try:
                 with open(log_path) as f:
-                    raw_rows = list(_csv.DictReader(f))
+                    raw_rows = list(_trade_csv_reader(f))
 
                 found = []
                 for r in raw_rows:
@@ -3924,7 +4412,10 @@ def main():
 
             wins   = [t for t in trades_today if _get_pnl(t) > 0]
             losses = [t for t in trades_today if _get_pnl(t) < 0]
-            pnl    = sum(_get_pnl(t) for t in trades_today)
+            # state["daily_pnl"] is V7-only — exclude V8 trades to match CHECK 19
+            v7_trades = [t for t in trades_today
+                         if not str(t.get("entry_mode", "")).startswith("V8_")]
+            pnl    = sum(_get_pnl(t) for t in v7_trades)
 
             with _state_lock:
                 state["daily_pnl"]          = round(pnl, 2)
@@ -3945,7 +4436,7 @@ def main():
         _csv_trades = []
         if os.path.isfile(_csv_path):
             with open(_csv_path) as _sf:
-                for _row in _sync_csv.DictReader(_sf):
+                for _row in _trade_csv_reader(_sf):
                     _d = _row.get("date", "").strip()
                     if _d == _today_iso:
                         _csv_trades.append(_row)
@@ -3968,6 +4459,46 @@ def main():
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
     time.sleep(2)
+
+    # Phase 2 health: WS tick check (runs after WS is started + subscribed)
+    try:
+        import time as _time_h
+        _ws_ltp = 0.0
+        _market_open_now = D.is_market_open()
+        _health_lines_ws = list(_health_lines_pre)
+        _health_ok_ws = _health_ok_pre
+        if _market_open_now:
+            for _ in range(30):  # up to 30s for WS to connect and deliver first tick
+                _ws_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                if _ws_ltp > 0:
+                    break
+                _time_h.sleep(1)
+            if _ws_ltp > 0:
+                _health_lines_ws.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+            else:
+                _health_lines_ws.append("WS: ⚠️ no tick after 30s (feed may be down)")
+                _health_ok_ws = False
+        else:
+            with D._tick_lock:
+                _entry = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+            if _entry:
+                _age_min = int((_time_h.time() - _entry["ts"]) / 60)
+                _health_lines_ws.append(
+                    "WS: 💤 market closed (last tick "
+                    + str(_age_min) + "m ago at "
+                    + str(round(_entry["ltp"], 1)) + ")"
+                )
+            else:
+                _health_lines_ws.append("WS: 💤 market closed (no ticks yet)")
+        _icon = "✅" if _health_ok_ws else "⚠️"
+        _tg_send(
+            _icon + " <b>TOKEN HEALTH CHECK</b>\n"
+            + "\n".join(_health_lines_ws) + "\n"
+            + "Time: " + datetime.now().strftime("%H:%M:%S IST")
+        )
+        logger.info("[MAIN] Token health: " + (" | ".join(_health_lines_ws)))
+    except Exception as _the:
+        logger.warning("[MAIN] Token health check error: " + str(_the))
 
     try:
         _pw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "3minute", 30)
