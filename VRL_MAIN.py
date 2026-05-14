@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v17 (Vishal Clean V7+V8)
 #  Master orchestration.
 #  Timeframe: 15-minute option candles.
 #  Entry: 2 simple gates (option-side only)
@@ -1242,7 +1242,7 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v16.7 V7 (15-min RSI)\n"
+        "<b>STRATEGY</b>  Vishal Clean v17 — V7 shadow / V8 live (3-min)\n"
         "Timeframe: 15-min option candles\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until", "09:45") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST  |  Cooldown: 0min (removed)\n"
         "Gates   : 1) 15-min close > EMA9_low\n"
@@ -3644,7 +3644,7 @@ def _cmd_help(args):
         "/forceexit  — emergency exit all lots\n"
         "/restart    — restart bot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7) — 15-min RSI entry, "
+        "VISHAL RAJPUT TRADE v17 — V8 live 3-min / V7 shadow 15-min, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

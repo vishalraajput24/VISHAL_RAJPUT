@@ -1,12 +1,10 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v16.7 (Vishal Clean V7 FINAL) — Central Configuration
-#  Timeframe: 15-minute option candles
-#  2-gate entry: 15-min close > EMA9_low + RSI >= 40 AND rising
-#  3-rule exit: Emergency -10 / EOD 15:20 / Vishal Trail (TICK-based)
-#  Simple 4-tier ladder: INITIAL → LOCK_2 → LOCK_5 → LOCK_DYN
+#  VISHAL RAJPUT TRADE v17 — Central Configuration
+#  V8 (LIVE):   3-min | 5-gate entry | Trail SL LOCK_4→LOCK_50
+#  V7 (SHADOW): 15-min | 2-gate | signals only, no trades
 # ═══════════════════════════════════════════════════════════════
 
-version: "v16.7"
+version: "v17"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 2
