@@ -488,6 +488,7 @@ _locked_at_spot   = None
 _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
+_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 10s
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
@@ -2428,6 +2429,86 @@ def _strategy_loop(kite):
             # fire on every tick, not once per minute at candle close.
             _v8_check_exit()
 
+            # ── V8 entry: scan every 10 seconds (outside 1-min gate) ──
+            # BUG-16 fix: entry was gated to once-per-minute at :35s.
+            # If candle turned green at :40s, bot missed it until next minute.
+            # Now checks every 10s — same_candle_guard prevents double-entry.
+            global _v8_last_entry_scan_ts
+            if (not _v8_state.get("in_trade")
+                    and D.is_trading_window(now)
+                    and _locked_tokens
+                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                _v8_last_entry_scan_ts = time.time()
+                try:
+                    from VRL_ENGINE import check_entry_v8
+                    _v8_ce_info = (_locked_tokens or {}).get("CE", {})
+                    _v8_pe_info = (_locked_tokens or {}).get("PE", {})
+                    _v8_ce_tok  = int(_v8_ce_info.get("token", 0) or 0)
+                    _v8_pe_tok  = int(_v8_pe_info.get("token", 0) or 0)
+                    _v8_ce_gate_rejected = False
+                    _v8_pe_gate_rejected = False
+                    _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
+                    _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 60)
+                    for _v8_dir, _v8_token, _v8_other in [
+                        ("CE", _v8_ce_tok, _v8_pe_tok),
+                        ("PE", _v8_pe_tok, _v8_ce_tok),
+                    ]:
+                        if not _v8_token:
+                            continue
+                        _v8_res = check_entry_v8(
+                            token=_v8_token, option_type=_v8_dir,
+                            spot_ltp=spot_ltp,
+                            silent=False,
+                            state=_v8_state, other_token=_v8_other)
+                        if not _v8_res.get("fired"):
+                            if _v8_dir == "CE": _v8_ce_gate_rejected = True
+                            else: _v8_pe_gate_rejected = True
+                            continue
+                        if _v8_in_both_cooldown:
+                            _age = round(time.time() - _v8_both_rej_ts)
+                            logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
+                                        f"age={_age}s — gates passed but blocked")
+                            continue
+                        _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
+                        _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
+                        _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
+                            "strike", _locked_ce_strike or _locked_pe_strike or 0)
+                        _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
+                        if V8_SHADOW_MODE:
+                            _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
+                            _xleg = ""
+                            if _v8_res.get("xleg_other_dying"):
+                                _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir == 'CE' else 'CE') + " dying ("
+                                         + "{:.1f}".format(_v8_res.get('xleg_other_close', 0))
+                                         + " < ema9l "
+                                         + "{:.1f}".format(_v8_res.get('xleg_other_ema9l', 0)) + ")\n")
+                            _tg_send(
+                                "👻 <b>V8 SHADOW SIGNAL</b>\n"
+                                + _v8_dir + " " + str(_v8_strike)
+                                + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
+                                + "Close " + "{:.1f}".format(_v8_res["close"])
+                                + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
+                                + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
+                                + _xleg + "<i>SHADOW MODE — no actual trade</i>"
+                            )
+                        else:
+                            _v8_execute_paper_entry(
+                                direction=_v8_dir, strike=_v8_strike,
+                                symbol=_v8_symbol, token=_v8_token,
+                                entry_price=_v8_res["entry_price"],
+                                entry_result=_v8_res, other_token=_v8_other)
+                        break
+                    if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
+                        if not _v8_in_both_cooldown:
+                            _v8_state["_v8_both_rejected_ts"] = time.time()
+                            if _v8_both_rej_ts == 0:
+                                logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (1 min block)")
+                            else:
+                                logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
+                except Exception as _v8e:
+                    import traceback as _v8tb
+                    logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
+
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
                 if D.is_market_open() and not _wm_warm:
@@ -3090,157 +3171,7 @@ def _strategy_loop(kite):
                     elif _k.startswith("PE_ATM"):
                         all_results["PE"] = _v
 
-                # ═══════════════════════════════════════════════════════
-                #  V8 — 3-min parallel strategy (LIVE paper or shadow)
-                # ═══════════════════════════════════════════════════════
-                # Independent of V7. Own state, own entry, own exit.
-                # SHADOW mode = Telegram alerts only.
-                # LIVE mode  = paper trades alongside V7.
-                try:
-                    from VRL_ENGINE import check_entry_v8, check_v8_continuation_reentry
-                    _v8_ce_info = (_locked_tokens or {}).get("CE", {})
-                    _v8_pe_info = (_locked_tokens or {}).get("PE", {})
-                    _v8_ce_tok = int(_v8_ce_info.get("token", 0) or 0)
-                    _v8_pe_tok = int(_v8_pe_info.get("token", 0) or 0)
-
-                    # Entry logic — only when V8 is NOT in a trade
-                    # (exit is handled every scan cycle outside the 1-min gate)
-                    if not _v8_state.get("in_trade"):
-                        # First try re-entry path (cross-leg) if armed
-                        _v8_re_armed = bool(_v8_state.get("_reentry_armed", False))
-                        _v8_re_handled = False
-                        if _v8_re_armed:
-                            _re_dir = _v8_state.get("_reentry_direction", "")
-                            _re_tok = int(_v8_state.get("_reentry_token", 0) or 0)
-                            _re_oth = int(_v8_state.get("_reentry_other_token", 0) or 0)
-                            _re_strike = int(_v8_state.get("_reentry_strike", 0) or 0)
-                            _re_attempts = int(_v8_state.get("_reentry_attempts", 0) or 0)
-                            _re_last_ts = float(_v8_state.get("_reentry_last_checked_epoch", 0) or 0)
-                            try:
-                                _re_3m = D.add_indicators(D.get_historical_data(_re_tok, "3minute", 10))
-                                if _re_3m is not None and len(_re_3m) >= 2:
-                                    _re_close_dt = _re_3m.iloc[-2].name + timedelta(minutes=3)
-                                    _re_close_epoch = _re_close_dt.timestamp()
-                                    if _re_close_epoch > _re_last_ts:
-                                        _v8_state["_reentry_attempts"] = _re_attempts + 1
-                                        _v8_state["_reentry_last_checked_epoch"] = _re_close_epoch
-                                        _re_attempts += 1
-                                        _re_res = check_v8_continuation_reentry(
-                                            token=_re_tok, option_type=_re_dir,
-                                            other_token=_re_oth, state=_v8_state)
-                                        if _re_res.get("fired"):
-                                            _v8_re_handled = True
-                                            _v8_execute_paper_entry(
-                                                direction=_re_dir, strike=_re_strike,
-                                                symbol=(_v8_ce_info if _re_dir == "CE" else _v8_pe_info).get("symbol", ""),
-                                                token=_re_tok,
-                                                entry_price=_re_res.get("entry_price", 0),
-                                                entry_result=_re_res, other_token=_re_oth)
-                                            _v8_state["_reentry_armed"] = False
-                                        else:
-                                            # Scan the OTHER side — if it passes fresh entry, take it now
-                                            _opp_dir = "PE" if _re_dir == "CE" else "CE"
-                                            _opp_tok = _v8_pe_tok if _re_dir == "CE" else _v8_ce_tok
-                                            if _opp_tok:
-                                                _opp_res = check_entry_v8(
-                                                    token=_opp_tok, option_type=_opp_dir,
-                                                    spot_ltp=spot_ltp, silent=True,
-                                                    state=_v8_state,
-                                                    other_token=_re_tok)
-                                                if _opp_res.get("fired"):
-                                                    _v8_re_handled = True
-                                                    _v8_state["_reentry_armed"] = False
-                                                    _opp_strike = (_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("strike", atm_strike)
-                                                    _v8_execute_paper_entry(
-                                                        direction=_opp_dir,
-                                                        strike=_opp_strike,
-                                                        symbol=(_v8_pe_info if _re_dir == "CE" else _v8_ce_info).get("symbol", ""),
-                                                        token=_opp_tok,
-                                                        entry_price=_opp_res.get("entry_price", 0),
-                                                        entry_result=_opp_res,
-                                                        other_token=_re_tok)
-                                            if not _v8_re_handled and _re_attempts >= 2:
-                                                _v8_state["_reentry_armed"] = False
-                                                _tg_send(
-                                                    "⚡ <b>V8 RE-ENTRY DROPPED</b>\n"
-                                                    + _re_dir + " " + str(_re_strike)
-                                                    + " — 2/2 attempts failed\n"
-                                                    "Reason: " + str(_re_res.get("reject_reason", "?")) + "\n"
-                                                    "Waiting for fresh setup."
-                                                )
-                            except Exception as _ree:
-                                logger.warning("[V8] re-entry error: " + str(_ree))
-
-                        # Path A: Fresh entry (always available)
-                        if not _v8_re_handled and not _v8_state.get("in_trade"):
-                            _v8_ce_gate_rejected = False
-                            _v8_pe_gate_rejected = False
-                            _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
-                            # Only active if timestamp was actually set (not default 0)
-                            _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 60)
-                            for _v8_dir, _v8_token, _v8_other in [
-                                ("CE", _v8_ce_tok, _v8_pe_tok),
-                                ("PE", _v8_pe_tok, _v8_ce_tok),
-                            ]:
-                                if not _v8_token:
-                                    continue
-                                _v8_res = check_entry_v8(
-                                    token=_v8_token, option_type=_v8_dir,
-                                    spot_ltp=spot_ltp,
-                                    silent=False,  # always log — silent caused permanent invisible cooldown
-                                    state=_v8_state, other_token=_v8_other)
-                                if not _v8_res.get("fired"):
-                                    if _v8_dir == "CE": _v8_ce_gate_rejected = True
-                                    else: _v8_pe_gate_rejected = True
-                                    continue
-                                # Gates passed — check both-sides cooldown
-                                if _v8_in_both_cooldown:
-                                    _age = round(time.time() - _v8_both_rej_ts)
-                                    logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
-                                                f"age={_age}s ({round(_age/60,1)}min) — gates passed but blocked")
-                                    continue
-                                _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
-                                _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
-                                _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("strike", atm_strike)
-                                _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
-                                if V8_SHADOW_MODE:
-                                    # Stamp guard, send alert only
-                                    _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
-                                    _xleg = ""
-                                    if _v8_res.get("xleg_other_dying"):
-                                        _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir=='CE' else 'CE') + " dying ("
-                                                 + "{:.1f}".format(_v8_res.get('xleg_other_close',0))
-                                                 + " < ema9l "
-                                                 + "{:.1f}".format(_v8_res.get('xleg_other_ema9l',0)) + ")\n")
-                                    _tg_send(
-                                        "👻 <b>V8 SHADOW SIGNAL</b>\n"
-                                        + _v8_dir + " " + str(_v8_strike)
-                                        + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
-                                        + "Close " + "{:.1f}".format(_v8_res["close"])
-                                        + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
-                                        + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
-                                        + _xleg + "<i>SHADOW MODE — no actual trade</i>"
-                                    )
-                                else:
-                                    # LIVE: execute paper entry
-                                    _v8_execute_paper_entry(
-                                        direction=_v8_dir, strike=_v8_strike,
-                                        symbol=_v8_symbol, token=_v8_token,
-                                        entry_price=_v8_res["entry_price"],
-                                        entry_result=_v8_res, other_token=_v8_other)
-                                break  # one V8 entry per cycle
-                            # Both sides failed → arm cooldown only if not already active.
-                            # Old code refreshed timestamp every minute → cooldown NEVER expired → V8 permanent silence.
-                            if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
-                                if not _v8_in_both_cooldown:
-                                    _v8_state["_v8_both_rejected_ts"] = time.time()
-                                    if _v8_both_rej_ts == 0:
-                                        logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (1 min block)")
-                                    else:
-                                        logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
-                except Exception as _v8e:
-                    import traceback as _v8tb
-                    logger.warning("[V8] eval error: " + str(_v8e) + "\n" + _v8tb.format_exc())
+                # V8 entry handled above in the 10-second scan (outside 1-min gate)
 
                 try:
                     vix_ltp = D.get_vix()
