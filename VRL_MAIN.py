@@ -327,7 +327,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
         if reason == "EMERGENCY_SL":
             _v8_state["_sl_cooldown_skip_next"] = True
-        _v8_state["_reentry_armed"]              = (reason != "FORCE_EXIT")
+        _v8_state["_reentry_armed"]              = False  # disabled — fresh setup only
         _v8_state["_reentry_attempts"]           = 0
         _v8_state["_reentry_last_checked_epoch"] = 0.0
         _v8_state["_reentry_direction"]          = direction
