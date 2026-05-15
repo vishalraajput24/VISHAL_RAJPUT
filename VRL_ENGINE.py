@@ -429,6 +429,32 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
                         f"bw={_bw} rsi={round(_rsi_now,1)} "
                         f"(5-gate V8, 3-min)")
+
+        # ── GATE 6 (SHADOW): StochRSI(5) oversold cross ──
+        # Does NOT block entry — logs only. Collect data for 2 weeks then decide.
+        # Condition: smooth_%K crossed up from <=20 (oversold) previous candle.
+        try:
+            _rsi_s = opt_3m["RSI"].astype(float)
+            if len(_rsi_s) >= 9:
+                _srsi_range = _rsi_s.rolling(5).max() - _rsi_s.rolling(5).min()
+                _srsi_k     = (_rsi_s - _rsi_s.rolling(5).min()) / _srsi_range.replace(0, 1) * 100
+                _srsi_smooth = _srsi_k.rolling(3).mean()
+                _g6_k_now   = round(float(_srsi_smooth.iloc[-1]), 1)
+                _g6_k_prev  = round(float(_srsi_smooth.iloc[-2]), 1)
+                _g6_pass    = (_g6_k_prev <= 20 and _g6_k_now > _g6_k_prev)
+                result["g6_stochrsi_os_cross"] = _g6_pass
+                result["g6_k_now"]  = _g6_k_now
+                result["g6_k_prev"] = _g6_k_prev
+                if not silent:
+                    logger.info(f"[G6-SHADOW] {option_type} StochRSI_OsCross(5) "
+                                f"{'PASS' if _g6_pass else 'SKIP'} "
+                                f"k={_g6_k_now} prev={_g6_k_prev}")
+            else:
+                result["g6_stochrsi_os_cross"] = None
+        except Exception as _g6e:
+            logger.warning(f"[G6-SHADOW] {option_type} error: {_g6e}")
+            result["g6_stochrsi_os_cross"] = None
+
         return result
 
     except Exception as e:

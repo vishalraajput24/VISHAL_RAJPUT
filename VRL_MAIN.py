@@ -269,6 +269,11 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
             + " < ema9l "
             + "{:.1f}".format(entry_result.get("xleg_other_ema9l", 0)) + ")\n"
         )
+    _g6 = entry_result.get("g6_stochrsi_os_cross")
+    _g6_line = ("G6  StochRSI_OsCross(5) "
+                + ("✅ PASS" if _g6 else ("❌ SKIP" if _g6 is False else "—"))
+                + (" k=" + str(entry_result.get("g6_k_now", "")) if _g6 is not None else "")
+                + " [shadow]\n")
     _tg_send(
         "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
         + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
@@ -277,7 +282,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "Close  " + "{:.1f}".format(entry_result.get("close", 0))
         + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
         "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
-        + _xleg_line +
+        + _xleg_line + _g6_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
         "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
