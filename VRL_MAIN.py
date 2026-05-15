@@ -3491,6 +3491,31 @@ def _cmd_pulse(args):
                 + ("+" if _room >= 0 else "") + str(_room) + ")"
             )
 
+        _v8_in_trade = _v8_state.get("in_trade", False)
+        _v8_pos_str = ""
+        if _v8_in_trade:
+            _v8_ep  = float(_v8_state.get("entry_price", 0) or 0)
+            _v8_tok = int(_v8_state.get("token", 0) or 0)
+            _v8_ltp = D.get_ltp(_v8_tok) if _v8_tok else 0
+            _v8_pn  = round(_v8_ltp - _v8_ep, 1) if _v8_ltp else 0
+            _v8_pk  = float(_v8_state.get("peak_pnl", 0) or 0)
+            _v8_tier = _v8_state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
+            _v8_sl  = float(_v8_state.get("active_ratchet_sl", 0) or 0)
+            if _v8_sl <= 0: _v8_sl = round(_v8_ep - 12, 2)
+            _v8_lock = round(_v8_sl - _v8_ep, 1)
+            _v8_room = round(_v8_ltp - _v8_sl, 1) if _v8_ltp else 0
+            _v8_dir_emj = "🟢" if _v8_state.get("direction") == "CE" else "🔴"
+            _v8_sym = _v8_state.get("direction", "") + " " + str(_v8_state.get("strike", ""))
+            _v8_pos_str = (
+                "[V8] " + _v8_dir_emj + " " + _v8_sym + "  "
+                + ("+" if _v8_pn >= 0 else "") + str(_v8_pn) + "pts\n"
+                + "Entry Rs" + str(_v8_ep) + " → Rs" + str(round(_v8_ltp, 2))
+                + " · Peak +" + str(_v8_pk) + "\n"
+                + "Tier: " + _v8_tier + " @ Rs" + str(round(_v8_sl, 2))
+                + " (Lock " + ("+" if _v8_lock >= 0 else "") + str(_v8_lock)
+                + " · Room " + ("+" if _v8_room >= 0 else "") + str(_v8_room) + ")"
+            )
+
         _ce_lck = _locked_ce_strike or "?"
         _pe_lck = _locked_pe_strike or "?"
         _last_scan = state.get("_last_scan_minute", "?")
@@ -3560,8 +3585,10 @@ def _cmd_pulse(args):
                + str(_last_t.get("exit_reason", "?")) + ")\n" if _last_t else "")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>POSITION</b>\n"
-            + _pos_str + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + (_pos_str + "\n" if _in_trade else "")
+            + (_v8_pos_str + "\n" if _v8_in_trade else "")
+            + ("—\n" if not _in_trade and not _v8_in_trade else "")
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ENGINE</b>\n"
             + ("Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
                + "Last scan: " + str(_last_scan) + "\n"
