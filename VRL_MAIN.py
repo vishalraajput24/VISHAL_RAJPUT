@@ -3177,7 +3177,7 @@ def _strategy_loop(kite):
                             _v8_pe_gate_rejected = False
                             _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
                             # Only active if timestamp was actually set (not default 0)
-                            _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 180)
+                            _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 60)
                             for _v8_dir, _v8_token, _v8_other in [
                                 ("CE", _v8_ce_tok, _v8_pe_tok),
                                 ("PE", _v8_pe_tok, _v8_ce_tok),
@@ -3235,7 +3235,7 @@ def _strategy_loop(kite):
                                 if not _v8_in_both_cooldown:
                                     _v8_state["_v8_both_rejected_ts"] = time.time()
                                     if _v8_both_rej_ts == 0:
-                                        logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (3 min block)")
+                                        logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (1 min block)")
                                     else:
                                         logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
                 except Exception as _v8e:
