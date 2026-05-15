@@ -6,6 +6,7 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V8**: 3-min candle strategy — **LIVE paper trading** (active)
 
 **Current version**: `v17` (merged to main 2026-05-14 via PR #7)
+**Next**: re-entry disabled (fresh-setup-only), pending merge
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
@@ -36,9 +37,10 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 |------|-------|
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
+| G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
 | G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | RSI > 50 AND RSI rising (above midpoint and building momentum) |
+| G5 | RSI > 50 AND RSI rising ≥ 2 pts vs previous candle |
 
 **Data basis** (9 days, 1404 candles):
 - Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
@@ -156,7 +158,7 @@ Any new state key that must survive restarts MUST be added to both:
 Normal for V7 (15-min candles). After firing on candle C, blocks until candle C+1 closes (up to 15 min). NOT a bug.
 
 ### Both-sides cooldown armed at market open
-Normal. Opening 1-2 minutes often have both CE+PE failing gates (insufficient candles, choppy open). Cooldown blocks for 3 min, then clears.
+Normal. Opening 1-2 minutes often have both CE+PE failing gates (insufficient candles, choppy open). Cooldown blocks for **1 min** (was 3 min), then clears.
 
 ### EMERGENCY_SL cluster (3+ in a row)
 Sign of choppy market or wrong direction bias. No automatic protection yet — consider adding: "3 consecutive EMERGENCY_SL → pause 30 min."
@@ -230,6 +232,11 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 
 ---
 
+## Design Decisions (Locked)
+- **Re-entry disabled** (2026-05-15): After analyzing 11:32 losing re-entry (price reversed 5.5 pts below exit within 33s), decided re-entry adds risk without edge. `_v8_execute_paper_exit` always sets `_reentry_armed = False`. Fresh setup only after every exit.
+- **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction.
+- **Gate 2B** (2026-05-15): EMA9_low slope must be ≥ 0 for last 2 candles. Blocks fake breakouts on falling support.
+
 ## Pending / Collect Data
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
 - xLeg dying leg: require dying leg's own EMA also falling 2+ candles
@@ -237,6 +244,8 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
 - Daily loss limit (suggest: -50 pts → stop entries)
 - Time blackout windows (11:00–11:30, 13:00–14:30) — collect data first
+- EOD data collector `VRL_COLLECTOR.py` (cron 15:35): ATM±300 strikes, NIFTY spot 1-min, VIX — save as Parquet
+- Trade enrichment tool `VRL_ANALYSIS.py`: `--date`, `--esl`, `--gates`, `--deep` flags
 
 ---
 
