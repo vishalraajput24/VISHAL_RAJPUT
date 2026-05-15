@@ -261,6 +261,8 @@ def analyze_timeframes(all_opts, all_spots):
                 r5 = _resample_to(grp, rule)
                 if r5.empty: continue
                 r5 = _add_indicators(r5)
+                if "green" not in r5.columns:
+                    r5["green"] = r5["close"] > r5["open"]
                 for _, row in r5[r5["green"] == True].iterrows():
                     rows.append({"fwd_1c": row.get("fwd_1c", np.nan),
                                  "fwd_3c": row.get("fwd_3c", np.nan)})
@@ -278,6 +280,8 @@ def analyze_timeframes(all_opts, all_spots):
     for df in all_spots:
         if df.empty: continue
         df2 = _add_indicators(df)
+        if "green" not in df2.columns:
+            df2["green"] = df2["close"] > df2["open"]
         for _, row in df2[df2["green"] == True].iterrows():
             spot_rows.append({"fwd_1c": row.get("fwd_1c", np.nan),
                               "fwd_3c": row.get("fwd_3c", np.nan)})
