@@ -266,11 +266,12 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
     """V8 — 3-min entry on live forming candle (5-gate).
 
     Gates:
-      G1. GREEN candle (close > open)
-      G2. Close > EMA9_low (broke above support band)
-      G3. band_width >= 10 (real momentum, not choppy)
-      G4. other_close <= other_band_mid (other side falling = directional)
-      G5. RSI > 50 AND rising vs previous closed candle
+      G1.  GREEN candle (close > open)
+      G2.  Close > EMA9_low (broke above support band)
+      G2B. EMA9_low slope >= 0 (support band flat or rising — blocks fake breakouts)
+      G3.  band_width >= 10 (real momentum, not choppy)
+      G4.  other_close <= other_band_mid (other side falling = directional)
+      G5.  RSI > 50 AND rising vs previous closed candle
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -355,6 +356,17 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate2_below_band "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)}")
+            return result
+
+        # ── GATE 2B: EMA9_low slope must be flat or rising ──
+        # Falling support band = fake breakout. Blocks doji-on-declining-EMA entries.
+        _prev_ema9l = float(opt_3m.iloc[-2].get("ema9_low", 0))
+        _ema9l_slope = round(ema9_low - _prev_ema9l, 2)
+        if _prev_ema9l > 0 and _ema9l_slope < 0:
+            result["reject_reason"] = f"gate2b_ema9l_falling_{_ema9l_slope}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate2b_ema9l_falling "
+                            f"ema9l={round(ema9_low,2)} prev={round(_prev_ema9l,2)} slope={_ema9l_slope}")
             return result
 
         # ── GATE 3: band width >= 10 (real momentum, not choppy) ──
