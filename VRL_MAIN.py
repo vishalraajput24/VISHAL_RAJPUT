@@ -3819,16 +3819,21 @@ def _cmd_deploy(args):
 
     def _run(cmd):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=_cwd)
-        return r.stdout.strip(), r.returncode
+        combined = (r.stdout + r.stderr).strip()
+        return combined, r.returncode
 
     _tg_send("📦 Pulling latest from main...")
 
     # capture commit hash before pull
     before_sha, _ = _run(["git", "rev-parse", "--short", "HEAD"])
 
-    pull_out, rc = _run(["git", "pull", "origin", "main"])
+    fetch_out, rc = _run(["git", "fetch", "origin", "main"])
     if rc != 0:
-        _tg_send("❌ Pull failed:\n<pre>" + pull_out[-600:] + "</pre>")
+        _tg_send("❌ Fetch failed:\n<pre>" + fetch_out[-600:] + "</pre>")
+        return
+    reset_out, rc = _run(["git", "reset", "--hard", "origin/main"])
+    if rc != 0:
+        _tg_send("❌ Reset failed:\n<pre>" + reset_out[-600:] + "</pre>")
         return
 
     after_sha, _ = _run(["git", "rev-parse", "--short", "HEAD"])
