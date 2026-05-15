@@ -305,6 +305,90 @@ def analyze_timeframes(all_opts, all_spots):
 
 
 # ══════════════════════════════════════════════════════════════════
+# SECTION 7 — MINIMISED STRATEGY BACKTEST
+# Compare 4 variants on same data:
+#   baseline      : G1 (green candle) only
+#   current       : G1 + G2 + G2B + G3(bw>=10) + G5(rsi>50,rise>=2)
+#   mini_G2_G6    : G1 + G2 + G6(StochRSI oversold cross)          ← candidate
+#   mini_G2_G3_G6 : G1 + G2 + G3(bw>=10) + G6                     ← candidate+BW
+# Note: G4 (cross-leg) requires paired CE/PE match — excluded here.
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_minimised(all_opts):
+    _log("\n━━━━ 7. MINIMISED STRATEGY BACKTEST ━━━━")
+    rows = []
+    for df in all_opts:
+        if "strike" not in df.columns or "opt_type" not in df.columns:
+            continue
+        for (strike, opt_type), grp in df.groupby(["strike", "opt_type"]):
+            grp = grp.sort_index().copy()
+            if len(grp) < 4:
+                continue
+            # G2B: EMA9L slope for last 2 candles — must be ≥0 both
+            grp["_sl1"] = grp["ema9l"].diff()
+            grp["_sl2"] = grp["ema9l"].diff().shift(1)
+            grp["_rsi_prev"] = grp["rsi"].shift(1)
+            grp["_rsi_rise"] = grp["rsi"] - grp["_rsi_prev"]
+
+            for _, row in grp.iterrows():
+                if not bool(row.get("green", False)):
+                    continue
+                f3 = row.get("fwd_3c", np.nan)
+                if pd.isna(f3):
+                    continue
+
+                close = float(row.get("close", 0) or 0)
+                ema9l = float(row.get("ema9l", 0) or 0)
+                bw    = float(row.get("bw", 0) or 0)
+                rsi   = float(row.get("rsi", 0) or 0)
+                rr    = float(row.get("_rsi_rise", 0) or 0)
+                k     = float(row.get("srsi_k", 50) or 50)
+                kl    = float(row.get("srsi_k_lag", 50) or 50)
+                sl1   = float(row.get("_sl1", 0) or 0)
+                sl2   = float(row.get("_sl2", 0) or 0)
+
+                g2  = close > ema9l
+                g2b = sl1 >= 0 and sl2 >= 0
+                g3  = bw >= 10
+                g5  = rsi > 50 and rr >= 2
+                g6  = kl <= 20 and k > kl
+
+                rows.append({
+                    "baseline"     : True,
+                    "current"      : g2 and g2b and g3 and g5,
+                    "mini_G2_G6"   : g2 and g6,
+                    "mini_G2_G3_G6": g2 and g3 and g6,
+                    "fwd_3c"       : f3,
+                })
+
+    if not rows:
+        _log("  no data"); return
+
+    r = pd.DataFrame(rows)
+
+    _log(f"\n{'Strategy':<18} {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}  {'total_pts':>10}")
+    _log("-" * 65)
+    for col in ("baseline", "current", "mini_G2_G6", "mini_G2_G3_G6"):
+        sub = r[r[col] == True]["fwd_3c"]
+        if len(sub) == 0:
+            _log(f"  {col:<16}: no data")
+            continue
+        win   = (sub > 0).sum()
+        total = sub.sum()
+        _log(f"  {col:<16}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={sub.mean():+.2f}  median={sub.median():+.2f}  total={total:+.0f}pts")
+
+    # Distribution: how many entries per session-day (avg trades/day approximation)
+    _log("\n  Trade frequency (entries per 75-candle session):")
+    total_series = sum(len(df.groupby(["strike", "opt_type"])) for df in all_opts)
+    sessions = len(all_opts)
+    for col in ("baseline", "current", "mini_G2_G6", "mini_G2_G3_G6"):
+        n = r[r[col] == True].shape[0]
+        per_day = round(n / sessions, 1) if sessions else 0
+        _log(f"  {col:<16}: ~{per_day} entries/session-day")
+
+
+# ══════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════
 
@@ -342,6 +426,7 @@ def main():
     analyze_stochrsi(all_opts)
     analyze_combined(all_opts)
     analyze_timeframes(all_opts, all_spots)
+    analyze_minimised(all_opts)
 
     _log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     _log("DONE.")
