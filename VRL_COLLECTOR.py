@@ -28,24 +28,26 @@ def _log(msg):
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " | " + msg, flush=True)
 
 
-def _get_today_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter dataframe to today's date only."""
+def _last_trading_date(df: pd.DataFrame):
+    """Return the most recent date present in df index (handles after-midnight runs)."""
+    try:
+        return df.index.date.max()
+    except Exception:
+        return date.today()
+
+
+def _get_session_df(df: pd.DataFrame, trading_date) -> pd.DataFrame:
+    """Filter dataframe to a specific trading date."""
     if df.empty:
         return df
-    today_str = date.today().isoformat()
     try:
-        return df[df.index.date == date.today()]
+        return df[df.index.date == trading_date]
     except Exception:
         return df
 
 
 def collect():
-    today     = date.today()
-    today_str = today.isoformat()
-    save_dir  = os.path.join(D.LAB_DIR, "collector", today_str)
-    os.makedirs(save_dir, exist_ok=True)
-
-    _log("=== VRL_COLLECTOR start: " + today_str + " ===")
+    _log("=== VRL_COLLECTOR start ===")
 
     # ── Authenticate ────────────────────────────────────────────
     try:
@@ -56,19 +58,22 @@ def collect():
         _log("AUTH FAILED: " + str(e))
         sys.exit(1)
 
-    # ── Spot price (use historical to get exact last close) ──────
+    # ── Spot price — determine trading date from historical data ─
     try:
         spot_df_raw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 400)
-        spot_df_today = _get_today_df(spot_df_raw)
-        if not spot_df_today.empty:
-            spot = float(spot_df_today["close"].iloc[-1])
-        else:
-            spot = D.get_nifty_spot() or 0
-        atm = int(round(spot / STRIKE_STEP) * STRIKE_STEP)
-        _log(f"Spot={spot:.1f}  ATM={atm}")
+        trading_date = _last_trading_date(spot_df_raw)
+        spot_df_session = _get_session_df(spot_df_raw, trading_date)
+        spot = float(spot_df_session["close"].iloc[-1]) if not spot_df_session.empty else 0
+        atm  = int(round(spot / STRIKE_STEP) * STRIKE_STEP)
+        _log(f"Trading date: {trading_date}  Spot={spot:.1f}  ATM={atm}")
     except Exception as e:
         _log("Spot fetch error: " + str(e))
+        trading_date = date.today()
         spot, atm = 0, 23500
+
+    today_str = trading_date.isoformat()
+    save_dir  = os.path.join(D.LAB_DIR, "collector", today_str)
+    os.makedirs(save_dir, exist_ok=True)
 
     # ── Nearest expiry ───────────────────────────────────────────
     try:
@@ -102,7 +107,7 @@ def collect():
             symbol = tokens[opt_type]["symbol"]
             try:
                 df = D.get_historical_data(token, "3minute", 120)
-                df = _get_today_df(df)
+                df = _get_session_df(df, trading_date)
                 if df.empty:
                     _log(f"  {opt_type} {strike}: empty")
                     continue
@@ -127,7 +132,7 @@ def collect():
 
     # ── NIFTY spot 1-min ─────────────────────────────────────────
     try:
-        spot_out = _get_today_df(spot_df_raw)
+        spot_out = spot_df_session
         if not spot_out.empty:
             spot_path = os.path.join(save_dir, "spot_1min.parquet")
             spot_out.to_parquet(spot_path)
