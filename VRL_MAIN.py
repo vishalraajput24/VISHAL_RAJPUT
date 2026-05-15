@@ -115,6 +115,7 @@ DEFAULT_STATE = {
     # V8 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
     # check_entry_v8 skips the very next candle then clears the flag.
     "_sl_cooldown_skip_next": False,
+    "_force_exit_ts"        : 0.0,
     # ── Last exit memory (cooldown) ────────────────────────
     "last_exit_time"     : "",
     "last_exit_direction": "",
@@ -196,6 +197,7 @@ _v8_state = {
     "_losses_today": 0,
     # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
     "_sl_cooldown_skip_next": False,
+    "_force_exit_ts"        : 0.0,
     # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
     "_v8_both_rejected_ts": 0.0,
     # Date of last trade — used to detect new day and reset daily counters on restart
@@ -644,7 +646,7 @@ _V8_PERSIST_FIELDS = [
     "entry_price", "entry_time", "qty",
     "peak_pnl", "active_ratchet_tier", "active_ratchet_sl",
     "candles_held", "_other_token",
-    "_sl_cooldown_skip_next",
+    "_sl_cooldown_skip_next", "_force_exit_ts",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date",
 ]
@@ -2455,9 +2457,17 @@ def _strategy_loop(kite):
             # If candle turned green at :40s, bot missed it until next minute.
             # Now checks every 10s — same_candle_guard prevents double-entry.
             global _v8_last_entry_scan_ts
+            _v8_force_exit_age = time.time() - float(_v8_state.get("_force_exit_ts", 0) or 0)
+            _v8_in_force_cooldown = (_v8_force_exit_age < 180 and float(_v8_state.get("_force_exit_ts", 0) or 0) > 0)
+            if (_v8_in_force_cooldown
+                    and not _v8_state.get("in_trade")
+                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                _v8_last_entry_scan_ts = time.time()
+                logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
             if (not _v8_state.get("in_trade")
                     and D.is_trading_window(now)
                     and _locked_tokens
+                    and not _v8_in_force_cooldown
                     and time.time() - _v8_last_entry_scan_ts >= 10):
                 _v8_last_entry_scan_ts = time.time()
                 try:
