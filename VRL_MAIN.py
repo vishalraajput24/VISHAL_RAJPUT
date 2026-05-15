@@ -3604,6 +3604,7 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DIAGNOSTIC</b>\n"
         "/pulse     — 🩺 full health check (one-shot)\n"
+        "/gates     — ⚙️ live V8 gate status for CE &amp; PE\n"
         "/xleg      — 📊 cross-leg divergence accuracy (7-day)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
@@ -3976,6 +3977,107 @@ def _cmd_xleg(args):
         _tg_send("📊 X-LEG error: " + str(e))
 
 
+def _cmd_gates(args):
+    """/gates — show live V8 gate status for CE and PE right now."""
+    try:
+        from VRL_ENGINE import check_entry_v8 as _cev8
+        _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0
+
+        _ce_info = (_locked_tokens or {}).get("CE", {})
+        _pe_info = (_locked_tokens or {}).get("PE", {})
+        _ce_tok  = int(_ce_info.get("token", 0) or 0)
+        _pe_tok  = int(_pe_info.get("token", 0) or 0)
+
+        if not _ce_tok and not _pe_tok:
+            _tg_send("⚙️ /gates — strikes not locked yet, try after 9:20")
+            return
+
+        # cooldown status
+        _fe_ts   = float(_v8_state.get("_force_exit_ts", 0) or 0)
+        _fe_age  = int(time.time() - _fe_ts) if _fe_ts > 0 else 999
+        _fe_on   = _fe_age < 180 and _fe_ts > 0
+        _br_ts   = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
+        _br_age  = int(time.time() - _br_ts) if _br_ts > 0 else 999
+        _br_on   = _br_age < 60 and _br_ts > 0
+
+        _GATE_MAP = {
+            "red_candle":            "G1 ❌ Red candle",
+            "close_below_ema9_low":  "G2 ❌ Close < EMA9_low",
+            "gate2b_ema9l_falling":  "G2B ❌ EMA9_low slope falling",
+            "band_too_narrow":       "G3 ❌ Band < 10 pts",
+            "other_not_falling_mid": "G4 ❌ Other side too high",
+            "rsi_below_50":          "G5 ❌ RSI < 50",
+            "rsi_not_rising":        "G5 ❌ RSI not rising ≥2",
+            "insufficient_3m_data":  "⏳ Insufficient candles",
+            "same_candle_already_fired": "🔒 Same-candle guard",
+            "sl_cooldown_skip":      "⏸ SL cooldown skip",
+            "before_":               "⏳ Warmup not done",
+            "after_":                "🕐 Past entry cutoff",
+        }
+
+        def _gate_line(direction, tok, other_tok, info):
+            if not tok:
+                return direction + ": no token\n"
+            res = _cev8(token=tok, option_type=direction, spot_ltp=_spot,
+                        silent=True, state=_v8_state, other_token=other_tok)
+            ltp = D.get_ltp(tok) or 0
+            bw  = res.get("band_width", 0)
+            rsi = res.get("rsi", 0)
+            rsi_prev = res.get("rsi_prev", 0)
+            close = res.get("close", 0)
+            ema9l = res.get("ema9_low", 0)
+            _g6 = res.get("g6_stochrsi_os_cross")
+            _g6_str = (" G6 ✅" if _g6 else (" G6 ❌" if _g6 is False else ""))
+
+            if res.get("fired"):
+                gate_str = "✅ ALL GATES PASS" + _g6_str
+            else:
+                rr = res.get("reject_reason", "unknown")
+                gate_str = next(
+                    (v for k, v in _GATE_MAP.items() if rr.startswith(k)),
+                    "❌ " + rr
+                )
+            _strike = info.get("strike", "?")
+            _emj = "🟢" if direction == "CE" else "🔴"
+            return (
+                _emj + " <b>" + direction + " " + str(_strike) + "</b>  Rs" + str(round(ltp, 1)) + "\n"
+                + "   Close " + str(round(close, 1))
+                + " EMA9L " + str(round(ema9l, 1))
+                + " BW " + str(round(bw, 1))
+                + " RSI " + str(rsi) + "→" + str(round(rsi + (rsi - rsi_prev), 1)) + "\n"
+                + "   " + gate_str + "\n"
+            )
+
+        _in_trade = _v8_state.get("in_trade", False)
+        _trade_line = ""
+        if _in_trade:
+            _trade_line = ("🔴 IN TRADE — " + str(_v8_state.get("direction",""))
+                           + " " + str(_v8_state.get("strike","")) + "\n")
+
+        _cd_lines = ""
+        if _fe_on:
+            _cd_lines += "⏱ force_exit cooldown " + str(180 - _fe_age) + "s remaining\n"
+        if _br_on:
+            _cd_lines += "⏱ both_sides cooldown " + str(60 - _br_age) + "s remaining\n"
+
+        ce_block = _gate_line("CE", _ce_tok, _pe_tok, _ce_info)
+        pe_block = _gate_line("PE", _pe_tok, _ce_tok, _pe_info)
+
+        _tg_send(
+            "⚙️ <b>V8 GATE STATUS</b>  Spot " + str(round(_spot, 1)) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + _trade_line
+            + _cd_lines
+            + ce_block
+            + pe_block
+            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + ("<i>In trade — entry scan paused</i>" if _in_trade else "<i>Entry scan active every 10s</i>")
+        )
+    except Exception as _ge:
+        import traceback as _gtr
+        _tg_send("⚙️ /gates error: " + str(_ge) + "\n" + _gtr.format_exc()[:300])
+
+
 _DISPATCH = {
     "/help"      : _cmd_help,
     "/pulse"     : _cmd_pulse,
@@ -3990,6 +4092,7 @@ _DISPATCH = {
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
     "/xleg"      : _cmd_xleg,
+    "/gates"     : _cmd_gates,
 }
 
 
