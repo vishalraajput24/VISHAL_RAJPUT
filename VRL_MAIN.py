@@ -3630,7 +3630,8 @@ def _cmd_help(args):
         "/pause      — block new entries\n"
         "/resume     — re-enable entries\n"
         "/forceexit  — emergency exit all lots\n"
-        "/restart    — restart bot\n"
+        "/deploy     — git pull main + restart\n"
+        "/restart    — restart bot (no pull)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v17 — V8 live 3-min / V7 shadow 15-min, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
@@ -3812,6 +3813,30 @@ def _cmd_forceexit(args):
         _v8_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
 
 
+def _cmd_deploy(args):
+    import subprocess
+    _tg_send("📦 Pulling latest from main...")
+    try:
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            capture_output=True, text=True, timeout=30,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        out = (result.stdout + result.stderr).strip()[-800:]
+        if result.returncode == 0:
+            _tg_send("✅ Pull done:\n<pre>" + out + "</pre>\n🔄 Restarting now...")
+        else:
+            _tg_send("❌ Pull failed:\n<pre>" + out + "</pre>")
+            return
+    except Exception as e:
+        _tg_send("❌ Deploy error: " + str(e))
+        return
+    logger.info("[CTRL] Deploy: git pull OK, restarting")
+    _remove_pid()
+    time.sleep(2)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 def _cmd_restart(args):
     _tg_send("🔄 Restarting...")
     logger.info("[CTRL] Restart requested")
@@ -3946,6 +3971,7 @@ _DISPATCH = {
     "/pause"     : _cmd_pause,
     "/resume"    : _cmd_resume,
     "/forceexit" : _cmd_forceexit,
+    "/deploy"    : _cmd_deploy,
     "/restart"   : _cmd_restart,
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
