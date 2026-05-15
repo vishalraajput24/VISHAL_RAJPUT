@@ -1,17 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v17 (Vishal Clean V7+V8)
-#  Master orchestration.
-#  Timeframe: 15-minute option candles.
-#  Entry: 2 simple gates (option-side only)
-#    1. 15-min candle close > EMA9_low
-#    2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])
-#    Spot bias is computed for display only — not a gate.
-#  Exit: 3-rule chain — Emergency -10, EOD 15:20, Vishal Trail
-#        12-step ladder + 30/40/50 specifics: INITIAL(-12) → LOCK_BE(@12) →
-#        LOCK_12(@24) → LOCK_20(@30) → LOCK_24(@36) → LOCK_36(@40) → LOCK_50(@50+)
-#  Cooldown: 5 min, BOTH sides after any exit.
-#  Re-entry: standard scan resumes after cooldown — fresh-break filter
-#            naturally blocks chase-the-move re-entries.
+#  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
+#  V8 (LIVE):   3-min  | 5-gate (green, close>ema9l, bw>=10, other<=mid, RSI>50 rising)
+#  V8 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
+#           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -1242,33 +1234,29 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v17 — V7 shadow / V8 live (3-min)\n"
-        "Timeframe: 15-min option candles\n"
-        "Entry   : " + CFG.entry_ema9_band("warmup_until", "09:45") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST  |  Cooldown: 0min (removed)\n"
-        "Gates   : 1) 15-min close > EMA9_low\n"
-        "          2) RSI >= 40 AND rising (now > prior)\n"
-        "Spot    : tracked for display — NOT a gate\n"
+        "<b>STRATEGY</b>  Vishal Clean v17\n"
+        "V7 SHADOW : 15-min | 2-gate | signals only\n"
+        "V8 LIVE   : 3-min  | 5-gate | PAPER trading\n"
+        "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>EXITS</b>  (first match wins)\n"
-        "1. Emergency  -12 pts (TICK-based, instant)\n"
-        "2. EOD 15:20\n"
-        "3. Vishal Trail (TICK-based, 12-step + 30/40/50)\n"
+        "<b>V8 GATES</b>\n"
+        "G1) Green candle (close > open)\n"
+        "G2) Close > EMA9_low\n"
+        "G3) Band width >= 10 pts\n"
+        "G4) Other side <= band midpoint\n"
+        "G5) RSI > 50 AND rising\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>SL LADDER (V7)</b>\n"
-        "peak < 12  SL = entry - 12      (INITIAL)\n"
-        "peak >= 12 SL = entry            (LOCK_BE)\n"
-        "peak >= 24 SL = entry + 12       (LOCK_12)\n"
-        "peak >= 30 SL = entry + 20       (LOCK_20)\n"
-        "peak >= 36 SL = entry + 24       (LOCK_24)\n"
-        "peak >= 40 SL = entry + 36       (LOCK_36)\n"
-        "peak >= 50 SL = entry + 50       (LOCK_50)\n"
-        "peak >= 60 SL = peak rounded by 12 (12-step continues)\n"
+        "<b>V8 SL LADDER</b>\n"
+        "peak < 12  → INITIAL  entry - 12\n"
+        "peak >= 12 → LOCK_4   entry + 4\n"
+        "peak >= 24 → LOCK_12  entry + 12\n"
+        "peak >= 30 → LOCK_20  entry + 20\n"
+        "peak >= 36 → LOCK_30  entry + 30\n"
+        "peak >= 40 → LOCK_36  entry + 36\n"
+        "peak >= 50 → LOCK_50  entry + 50\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>RE-ENTRY</b>  scan stays live during cooldown\n"
-        "After exit: NO cooldown. Re-entry watcher tries up to 2 candles\n"
-        "for next 15-min candle close that passes 2-gate. Else fresh setup.\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>EXITS</b>  Emergency -12 | EOD 15:20 | Trail\n"
         "/help for commands"
     )
     if not D.PAPER_MODE:
@@ -1558,7 +1546,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail: peak ≥12→BE | ≥24→+12 | ≥30→+20 | ≥40→+36 | ≥50→+50\n"
+        "Trail (V8): ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
     )
 
     _slip_block = ""
@@ -3595,14 +3583,14 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>SL LADDER (V7, Em -12 TICK)</b>\n"
-            "INITIAL    (peak <12)   entry-12\n"
-            "🛡️ LOCK_BE (peak >=12) entry\n"
-            "🔒 LOCK_12 (peak >=24) entry+12\n"
-            "🔒 LOCK_20 (peak >=30) entry+20\n"
-            "🔒 LOCK_24 (peak >=36) entry+24\n"
-            "🔒🔒 LOCK_36 (peak >=40) entry+36\n"
-            "🔒🔒🔒 LOCK_50 (peak >=50) entry+50 (continues 12-step above)\n"
+            "<b>V8 SL LADDER (Em -12 TICK)</b>\n"
+            "INITIAL  (peak <12)  entry-12\n"
+            "LOCK_4   (peak >=12) entry+4\n"
+            "LOCK_12  (peak >=24) entry+12\n"
+            "LOCK_20  (peak >=30) entry+20\n"
+            "LOCK_30  (peak >=36) entry+30\n"
+            "LOCK_36  (peak >=40) entry+36\n"
+            "LOCK_50  (peak >=50) entry+50\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>2-GATE ENTRY (V7 — 15-min RSI)</b>\n"
             "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
