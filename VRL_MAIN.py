@@ -686,15 +686,31 @@ def _load_v8_state():
             _sym  = str(_v8_state.get("symbol", ""))
             _ep   = float(_v8_state.get("entry_price", 0))
             _peak = float(_v8_state.get("peak_pnl", 0))
-            _tier = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
+            _tier  = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
+            _sl    = float(_v8_state.get("active_ratchet_sl", 0) or 0)
+            if _sl <= 0: _sl = round(_ep - 12, 2)
+            _tok   = int(_v8_state.get("token", 0) or 0)
+            _ltp   = D.get_ltp(_tok) if _tok else 0
+            _pnl   = round(_ltp - _ep, 1) if _ltp else 0
+            _room  = round(_ltp - _sl, 1) if _ltp else 0
+            _dir   = str(_v8_state.get("direction", ""))
+            _strk  = str(_v8_state.get("strike", ""))
+            _qty   = int(_v8_state.get("qty", 0) or 0)
+            _etime = str(_v8_state.get("entry_time", ""))
+            _emj   = "🟢" if _dir == "CE" else "🔴"
             logger.info("[V8] Was in trade on last shutdown — " + _sym + " monitoring resumed")
             _tg_send(
                 "⚡ <b>V8 restarted mid-trade</b>\n"
-                "Symbol : " + _sym + "\n"
-                "Entry  : Rs" + "{:.2f}".format(_ep) + "\n"
-                "Peak   : +" + "{:.1f}".format(_peak) + " pts\n"
-                "Tier   : " + _tier + "\n"
-                "Resuming exit monitoring."
+                + _emj + " " + _dir + " " + _strk + " · qty " + str(_qty) + "\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Entry  Rs" + "{:.2f}".format(_ep) + "  @ " + _etime + "\n"
+                + ("LTP    Rs" + "{:.2f}".format(_ltp)
+                   + "  (" + ("+" if _pnl >= 0 else "") + str(_pnl) + " pts)\n" if _ltp else "LTP    — (no tick yet)\n")
+                + "Peak   +" + "{:.1f}".format(_peak) + " pts\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Tier   " + _tier + " · SL Rs" + "{:.2f}".format(_sl)
+                + ("  (Room " + ("+" if _room >= 0 else "") + str(_room) + ")" if _ltp else "") + "\n"
+                "✅ Exit monitoring resumed."
             )
     except Exception as e:
         logger.error("[V8] State load error: " + str(e))
