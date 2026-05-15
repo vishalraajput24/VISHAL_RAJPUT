@@ -3815,23 +3815,44 @@ def _cmd_forceexit(args):
 
 def _cmd_deploy(args):
     import subprocess
+    _cwd = os.path.dirname(os.path.abspath(__file__))
+
+    def _run(cmd):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=_cwd)
+        return r.stdout.strip(), r.returncode
+
     _tg_send("📦 Pulling latest from main...")
-    try:
-        result = subprocess.run(
-            ["git", "pull", "origin", "main"],
-            capture_output=True, text=True, timeout=30,
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        out = (result.stdout + result.stderr).strip()[-800:]
-        if result.returncode == 0:
-            _tg_send("✅ Pull done:\n<pre>" + out + "</pre>\n🔄 Restarting now...")
-        else:
-            _tg_send("❌ Pull failed:\n<pre>" + out + "</pre>")
-            return
-    except Exception as e:
-        _tg_send("❌ Deploy error: " + str(e))
+
+    # capture commit hash before pull
+    before_sha, _ = _run(["git", "rev-parse", "--short", "HEAD"])
+
+    pull_out, rc = _run(["git", "pull", "origin", "main"])
+    if rc != 0:
+        _tg_send("❌ Pull failed:\n<pre>" + pull_out[-600:] + "</pre>")
         return
-    logger.info("[CTRL] Deploy: git pull OK, restarting")
+
+    after_sha, _ = _run(["git", "rev-parse", "--short", "HEAD"])
+
+    if before_sha == after_sha:
+        _tg_send("✅ Already up to date (no changes).\nSHA: " + after_sha + "\n🔄 Restarting...")
+    else:
+        # what changed
+        commits, _ = _run(["git", "log", before_sha + ".." + after_sha,
+                            "--oneline", "--no-decorate"])
+        files, _   = _run(["git", "diff", "--name-only", before_sha, after_sha])
+        _tg_send(
+            "✅ <b>DEPLOY SUMMARY</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>SHA</b>  " + before_sha + " → " + after_sha + "\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>Changes</b>\n<pre>" + (commits[:600] if commits else "—") + "</pre>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>Files</b>\n<pre>" + (files[:300] if files else "—") + "</pre>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔄 Restarting now..."
+        )
+
+    logger.info(f"[CTRL] Deploy: {before_sha} -> {after_sha}, restarting")
     _remove_pid()
     time.sleep(2)
     os.execv(sys.executable, [sys.executable] + sys.argv)
