@@ -2646,6 +2646,15 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
+                def _run_collector():
+                    try:
+                        import VRL_COLLECTOR as _col
+                        _col.collect()
+                        logger.info("[COLLECTOR] EOD data snapshot complete")
+                    except Exception as _ce:
+                        logger.warning("[COLLECTOR] Error: " + str(_ce))
+                threading.Thread(target=_run_collector, daemon=True,
+                                 name="vrl-collector").start()
             try:
                 if now.hour == 15 and now.minute >= 45:
                     _today_iso = date.today().isoformat()
