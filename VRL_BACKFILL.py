@@ -97,21 +97,35 @@ def backfill(days: int = BACKFILL_DAYS):
     from_dt = datetime.combine(t_days[-1], datetime.min.time())   # oldest day
     to_dt   = datetime.now()
 
-    # ── 1. NIFTY spot 1-min (full range in one call) ────────────
+    # ── 1. NIFTY spot 1-min (fetch in 59-day calendar chunks) ───
     _log(f"Fetching NIFTY spot 1-min: {t_days[-1]} → {t_days[0]} ...")
-    try:
-        raw = kite.historical_data(
-            instrument_token=D.NIFTY_SPOT_TOKEN,
-            from_date=from_dt, to_date=to_dt,
-            interval="minute", continuous=False, oi=False)
-        spot_df = pd.DataFrame(raw)
+    spot_chunks = []
+    chunk_end = datetime.now()
+    while chunk_end > datetime.combine(t_days[-1], datetime.min.time()):
+        chunk_start = chunk_end - timedelta(days=59)
+        chunk_start = max(chunk_start, datetime.combine(t_days[-1], datetime.min.time()))
+        try:
+            raw = kite.historical_data(
+                instrument_token=D.NIFTY_SPOT_TOKEN,
+                from_date=chunk_start, to_date=chunk_end,
+                interval="minute", continuous=False, oi=False)
+            if raw:
+                spot_chunks.append(pd.DataFrame(raw))
+            time.sleep(0.2)
+        except Exception as e:
+            _log(f"  Spot chunk {chunk_start.date()} error: {e}")
+        chunk_end = chunk_start - timedelta(minutes=1)
+
+    if spot_chunks:
+        spot_df = pd.concat(spot_chunks)
         spot_df.rename(columns={"date": "timestamp"}, inplace=True)
         spot_df.set_index("timestamp", inplace=True)
         spot_df = spot_df[["open", "high", "low", "close", "volume"]].apply(
             pd.to_numeric, errors="coerce").dropna()
-        _log(f"  Spot: {len(spot_df)} rows fetched")
-    except Exception as e:
-        _log("Spot fetch error: " + str(e))
+        spot_df = spot_df[~spot_df.index.duplicated(keep="last")].sort_index()
+        _log(f"  Spot: {len(spot_df)} rows fetched across {len(spot_chunks)} chunk(s)")
+    else:
+        _log("  Spot: no data fetched")
         spot_df = pd.DataFrame()
 
     # Compute per-day ATM from spot close
