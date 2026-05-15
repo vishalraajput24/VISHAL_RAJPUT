@@ -3836,7 +3836,6 @@ def _cmd_deploy(args):
     if before_sha == after_sha:
         _tg_send("✅ Already up to date (no changes).\nSHA: " + after_sha + "\n🔄 Restarting...")
     else:
-        # what changed
         commits, _ = _run(["git", "log", before_sha + ".." + after_sha,
                             "--oneline", "--no-decorate"])
         files, _   = _run(["git", "diff", "--name-only", before_sha, after_sha])
