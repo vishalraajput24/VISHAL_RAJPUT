@@ -216,6 +216,91 @@ def analyze_combined(all_opts):
 
 
 # ══════════════════════════════════════════════════════════════════
+# SECTION 6 — TIMEFRAME COMPARISON
+# Resample 3-min data to 1-min(spot), 5-min, 15-min and compare
+# win rate and avg forward return after a green candle
+# ══════════════════════════════════════════════════════════════════
+
+def _resample_to(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resample OHLCV dataframe to a coarser timeframe."""
+    if df.empty: return df
+    agg = {"open": "first", "high": "max", "low": "min",
+           "close": "last", "volume": "sum"}
+    r = df.resample(rule).agg({k: v for k, v in agg.items() if k in df.columns})
+    return r.dropna(subset=["close"])
+
+
+def analyze_timeframes(all_opts, all_spots):
+    _log("\n━━━━ 6. TIMEFRAME COMPARISON ━━━━")
+    _log("(green candle → fwd_1c and fwd_3c, filtered to CE/PE options + spot)")
+
+    results = {}
+
+    # Options at 3-min (native)
+    for label, frames in [("3min_opts", all_opts)]:
+        rows = []
+        for df in frames:
+            df2 = df[df["green"] == True].copy()
+            for _, row in df2.iterrows():
+                rows.append({"fwd_1c": row.get("fwd_1c", np.nan),
+                             "fwd_3c": row.get("fwd_3c", np.nan)})
+        r = pd.DataFrame(rows).dropna()
+        results[label] = {
+            "n"     : len(r),
+            "win1c" : round((r["fwd_1c"] > 0).mean() * 100, 1),
+            "avg1c" : round(r["fwd_1c"].mean(), 3),
+            "win3c" : round((r["fwd_3c"] > 0).mean() * 100, 1),
+            "avg3c" : round(r["fwd_3c"].mean(), 3),
+        }
+
+    # Options resampled to 5-min and 15-min
+    for tf, rule in [("5min_opts", "5min"), ("15min_opts", "15min")]:
+        rows = []
+        for df in all_opts:
+            for (strike, opt_type), grp in df.groupby(["strike", "opt_type"]):
+                r5 = _resample_to(grp, rule)
+                if r5.empty: continue
+                r5 = _add_indicators(r5)
+                for _, row in r5[r5["green"] == True].iterrows():
+                    rows.append({"fwd_1c": row.get("fwd_1c", np.nan),
+                                 "fwd_3c": row.get("fwd_3c", np.nan)})
+        r = pd.DataFrame(rows).dropna()
+        results[tf] = {
+            "n"     : len(r),
+            "win1c" : round((r["fwd_1c"] > 0).mean() * 100, 1),
+            "avg1c" : round(r["fwd_1c"].mean(), 3),
+            "win3c" : round((r["fwd_3c"] > 0).mean() * 100, 1),
+            "avg3c" : round(r["fwd_3c"].mean(), 3),
+        }
+
+    # Spot 1-min
+    spot_rows = []
+    for df in all_spots:
+        if df.empty: continue
+        df2 = _add_indicators(df)
+        for _, row in df2[df2["green"] == True].iterrows():
+            spot_rows.append({"fwd_1c": row.get("fwd_1c", np.nan),
+                              "fwd_3c": row.get("fwd_3c", np.nan)})
+    rs = pd.DataFrame(spot_rows).dropna()
+    results["1min_spot"] = {
+        "n"     : len(rs),
+        "win1c" : round((rs["fwd_1c"] > 0).mean() * 100, 1),
+        "avg1c" : round(rs["fwd_1c"].mean(), 3),
+        "win3c" : round((rs["fwd_3c"] > 0).mean() * 100, 1),
+        "avg3c" : round(rs["fwd_3c"].mean(), 3),
+    }
+
+    _log(f"\n{'TF':<14} {'n':>6}  {'win_1c':>7}  {'avg_1c':>7}  {'win_3c':>7}  {'avg_3c':>7}")
+    _log("-" * 60)
+    for tf, v in results.items():
+        _log(f"{tf:<14} {v['n']:>6}  {v['win1c']:>6.1f}%  {v['avg1c']:>+7.3f}  "
+             f"{v['win3c']:>6.1f}%  {v['avg3c']:>+7.3f}")
+
+    best = max(results.items(), key=lambda x: x[1]["avg3c"])
+    _log(f"\n  ✅ Best avg_3c: {best[0]} ({best[1]['avg3c']:+.3f} pts/candle)")
+
+
+# ══════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════
 
@@ -225,12 +310,14 @@ def main():
                    if os.path.isdir(os.path.join(COLLECTOR_DIR, d))], reverse=True)
     _log(f"Days available: {len(days)}  ({days[-1]} → {days[0]})")
 
-    all_opts = []
+    all_opts  = []
+    all_spots = []
     for day_str in days:
         try:
             opts, spot, meta = _load_day(day_str)
+            if not spot.empty:
+                all_spots.append(spot.sort_index())
             if opts.empty: continue
-            # process CE and PE separately, add indicators per series
             parts = []
             for (strike, opt_type), grp in opts.groupby(["strike","opt_type"]):
                 grp2 = _add_indicators(grp.sort_index())
@@ -250,11 +337,13 @@ def main():
     analyze_rsi(all_opts)
     analyze_stochrsi(all_opts)
     analyze_combined(all_opts)
+    analyze_timeframes(all_opts, all_spots)
 
     _log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    _log("DONE. Paste output above back and I'll give you the strategy.")
+    _log("DONE.")
     _log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 
 if __name__ == "__main__":
     main()
+
