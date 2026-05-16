@@ -389,6 +389,234 @@ def analyze_minimised(all_opts):
 
 
 # ══════════════════════════════════════════════════════════════════
+# SECTION 8 — EMA SPAN SWEEP
+# Test spans 5,7,9,11,14 — which fits best for 3-min options?
+# Base filter: G1(green) + G2(close>ema_low) + G2B(slope ≥0 x2)
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_ema_sweep(all_opts_raw):
+    _log("\n━━━━ 8. EMA SPAN SWEEP (which EMA fits best for 3-min) ━━━━")
+    _log("  Filter: G1 + G2(close>ema_low) + G2B(slope ≥0 last 2 candles)")
+    spans = [5, 7, 9, 11, 14, 21]
+    results = {s: [] for s in spans}
+
+    for opts in all_opts_raw:
+        if opts.empty or "strike" not in opts.columns:
+            continue
+        for (strike, opt_type), grp in opts.groupby(["strike", "opt_type"]):
+            grp = grp.sort_index().copy()
+            if len(grp) < max(spans) + 5:
+                continue
+            grp["fwd_3c"] = grp["close"].shift(-3) - grp["close"]
+            grp["green"]  = grp["close"] > grp["open"]
+
+            for span in spans:
+                g = grp.copy()
+                g["ema_h"]  = g["close"].ewm(span=span, adjust=False).mean()
+                g["ema_l"]  = g["low"].ewm(span=span, adjust=False).mean()
+                g["sl1"]    = g["ema_l"].diff()
+                g["sl2"]    = g["ema_l"].diff().shift(1)
+
+                filtered = g[
+                    g["green"] &
+                    (g["close"] > g["ema_l"]) &
+                    (g["sl1"] >= 0) & (g["sl2"] >= 0)
+                ]["fwd_3c"].dropna()
+                results[span].extend(filtered.tolist())
+
+    _log(f"\n  {'EMA':>8}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 44)
+    best_span, best_avg = 9, -999
+    for span in spans:
+        sub = pd.Series(results[span])
+        if len(sub) < 50:
+            continue
+        win = (sub > 0).sum()
+        avg = sub.mean()
+        marker = " ✅" if avg == max(pd.Series(results[s]).mean() for s in spans if results[s]) else ""
+        _log(f"  EMA-{span:<4}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={avg:+.3f}  median={sub.median():+.3f}{marker}")
+        if avg > best_avg:
+            best_avg, best_span = avg, span
+    _log(f"\n  ✅ Best EMA span: {best_span}  (avg={best_avg:+.3f})")
+
+
+# ══════════════════════════════════════════════════════════════════
+# SECTION 9 — RSI THRESHOLD SWEEP
+# Find optimal RSI entry threshold and rise requirement
+# Base: G1 + G2(close>ema9l) + G3(bw>=10)
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_rsi_threshold(all_opts):
+    _log("\n━━━━ 9. RSI THRESHOLD SWEEP ━━━━")
+    _log("  Base: G1 + G2 + G3(bw>=10). Testing rsi_min and rsi_rise_min.")
+
+    rows = []
+    for df in all_opts:
+        df2 = df.copy()
+        df2["rsi_prev"] = df2["rsi"].shift(1)
+        df2["rsi_rise"] = df2["rsi"] - df2["rsi_prev"]
+        for _, row in df2[df2["green"] == True].iterrows():
+            close = float(row.get("close", 0) or 0)
+            ema9l = float(row.get("ema9l", 0) or 0)
+            bw    = float(row.get("bw",    0) or 0)
+            rsi   = float(row.get("rsi",   0) or 0)
+            rr    = float(row.get("rsi_rise", 0) or 0)
+            f3    = row.get("fwd_3c", np.nan)
+            if pd.isna(f3) or close <= ema9l or bw < 10:
+                continue
+            rows.append({"rsi": rsi, "rsi_rise": rr, "fwd_3c": f3})
+
+    if not rows:
+        _log("  no data"); return
+    r = pd.DataFrame(rows)
+
+    _log(f"\n  RSI threshold (rsi_rise >= 2):")
+    _log(f"  {'threshold':>12}  {'n':>6}  {'win%':>6}  {'avg':>7}")
+    _log("  " + "-" * 38)
+    for thr in [45, 48, 50, 52, 53, 55, 57, 60]:
+        sub = r[(r["rsi"] > thr) & (r["rsi_rise"] >= 2)]["fwd_3c"]
+        if len(sub) < 10:
+            continue
+        win = (sub > 0).sum()
+        _log(f"  rsi>{thr:<5} + rise>=2: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  avg={sub.mean():+.3f}")
+
+    _log(f"\n  RSI rise requirement (rsi > 50):")
+    _log(f"  {'rise_min':>10}  {'n':>6}  {'win%':>6}  {'avg':>7}")
+    _log("  " + "-" * 38)
+    for rise_thr in [0, 1, 2, 3, 5]:
+        sub = r[(r["rsi"] > 50) & (r["rsi_rise"] >= rise_thr)]["fwd_3c"]
+        if len(sub) < 10:
+            continue
+        win = (sub > 0).sum()
+        _log(f"  rise>={rise_thr:<5}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  avg={sub.mean():+.3f}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# SECTION 10 — BAND WIDTH RANGE GRID
+# Find optimal min_bw and max_bw combination
+# Base: G1 + G2(close>ema9l)
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_bw_grid(all_opts):
+    _log("\n━━━━ 10. BAND WIDTH RANGE GRID ━━━━")
+    _log("  Find optimal BW min+max (base: G1 + G2)")
+
+    rows = []
+    for df in all_opts:
+        for _, row in df[df["green"] == True].iterrows():
+            close = float(row.get("close", 0) or 0)
+            ema9l = float(row.get("ema9l", 0) or 0)
+            bw    = float(row.get("bw",    0) or 0)
+            f3    = row.get("fwd_3c", np.nan)
+            if pd.isna(f3) or close <= ema9l:
+                continue
+            rows.append({"bw": bw, "fwd_3c": f3})
+
+    if not rows:
+        _log("  no data"); return
+    r = pd.DataFrame(rows)
+
+    _log(f"\n  {'min_bw':>7}  {'max_bw':>7}  {'n':>6}  {'win%':>6}  {'avg':>7}")
+    _log("  " + "-" * 48)
+    best = {"avg": -999, "label": ""}
+    for min_bw in [4, 6, 8, 10, 12]:
+        for max_bw in [None, 12, 16, 20, 24]:
+            if max_bw and max_bw <= min_bw:
+                continue
+            mask = r["bw"] >= min_bw
+            if max_bw:
+                mask = mask & (r["bw"] < max_bw)
+            sub = r[mask]["fwd_3c"]
+            if len(sub) < 50:
+                continue
+            win = (sub > 0).sum()
+            avg = sub.mean()
+            max_str = f"<{max_bw}" if max_bw else "no cap"
+            label = f"bw≥{min_bw} {max_str}"
+            marker = ""
+            if avg > best["avg"]:
+                best = {"avg": avg, "label": label}
+                marker = " ✅"
+            _log(f"  {min_bw:>7}  {max_str:>7}  n={len(sub):5d}  "
+                 f"win%={win/len(sub)*100:5.1f}%  avg={avg:+.3f}{marker}")
+    _log(f"\n  ✅ Best BW range: {best['label']}  (avg={best['avg']:+.3f})")
+
+
+# ══════════════════════════════════════════════════════════════════
+# SECTION 11 — TRENDING vs SIDEWAYS
+# Classify each day by NIFTY spot daily range %.
+# trending  : range% > 0.8  (strong directional move)
+# sideways  : range% < 0.5  (chopping)
+# Compare strategy performance on each day type.
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_trending_sideways(all_opts, all_spots):
+    _log("\n━━━━ 11. TRENDING vs SIDEWAYS ━━━━")
+    _log("  Day classification: spot daily (high-low)/open%")
+    _log("  trending=range>0.8%  sideways=range<0.5%  neutral=in between")
+
+    day_class = {}
+    for spot_df in all_spots:
+        if spot_df.empty:
+            continue
+        for day_d, day_spot in spot_df.groupby(spot_df.index.date):
+            if len(day_spot) < 30:
+                continue
+            rng = day_spot["high"].max() - day_spot["low"].min()
+            first_open = float(day_spot["open"].iloc[0]) or float(day_spot["close"].iloc[0])
+            rng_pct = rng / first_open * 100 if first_open > 0 else 0
+            if rng_pct > 0.8:
+                day_class[day_d] = "trending"
+            elif rng_pct < 0.5:
+                day_class[day_d] = "sideways"
+            else:
+                day_class[day_d] = "neutral"
+
+    counts = defaultdict(int)
+    for v in day_class.values():
+        counts[v] += 1
+    _log(f"  Days: trending={counts['trending']}  neutral={counts['neutral']}  sideways={counts['sideways']}")
+
+    class_data = defaultdict(lambda: {"all": [], "current": []})
+    for df in all_opts:
+        df2 = df.copy()
+        df2["rsi_prev"] = df2["rsi"].shift(1)
+        df2["rsi_rise"] = df2["rsi"] - df2["rsi_prev"]
+        for ts, row in df2[df2["green"] == True].iterrows():
+            day_d = pd.Timestamp(ts).date()
+            cls = day_class.get(day_d)
+            if not cls:
+                continue
+            f3    = row.get("fwd_3c", np.nan)
+            if pd.isna(f3):
+                continue
+            close = float(row.get("close", 0) or 0)
+            ema9l = float(row.get("ema9l", 0) or 0)
+            bw    = float(row.get("bw",    0) or 0)
+            rsi   = float(row.get("rsi",   0) or 0)
+            rr    = float(row.get("rsi_rise", 0) or 0)
+            current = (close > ema9l) and (bw >= 10) and (rsi > 50) and (rr >= 2)
+            class_data[cls]["all"].append(f3)
+            if current:
+                class_data[cls]["current"].append(f3)
+
+    _log(f"\n  {'Class':>10}  {'all_n':>6}  {'all_avg':>8}  {'curr_n':>7}  {'curr_avg':>9}  {'curr_win%':>9}")
+    _log("  " + "-" * 62)
+    for cls in ("trending", "neutral", "sideways"):
+        d = class_data.get(cls, {"all": [], "current": []})
+        all_s  = pd.Series(d["all"])
+        curr_s = pd.Series(d["current"])
+        if all_s.empty:
+            continue
+        win_pct = (curr_s > 0).sum() / len(curr_s) * 100 if len(curr_s) else 0
+        _log(f"  {cls:<10}: all={len(all_s):5d}  avg={all_s.mean():+.3f}   "
+             f"curr={len(curr_s):5d}  avg={curr_s.mean():+.3f}   win%={win_pct:.1f}%")
+
+    _log("\n  → 'trending' days = strategy works. 'sideways' days = strategy should pause.")
+
+
+# ══════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════
 
@@ -398,21 +626,24 @@ def main():
                    if os.path.isdir(os.path.join(COLLECTOR_DIR, d))], reverse=True)
     _log(f"Days available: {len(days)}  ({days[-1]} → {days[0]})")
 
-    all_opts  = []
-    all_spots = []
+    all_opts     = []
+    all_opts_raw = []   # raw OHLC without indicators — for EMA sweep
+    all_spots    = []
     for day_str in days:
         try:
             opts, spot, meta = _load_day(day_str)
             if not spot.empty:
                 all_spots.append(spot.sort_index())
-            if opts.empty: continue
+            if opts.empty:
+                continue
+            all_opts_raw.append(opts)   # keep raw copy before adding indicators
             parts = []
             for (strike, opt_type), grp in opts.groupby(["strike","opt_type"]):
                 grp2 = _add_indicators(grp.sort_index())
                 parts.append(grp2)
             if parts:
                 all_opts.append(pd.concat(parts))
-        except Exception as e:
+        except Exception:
             pass
 
     _log(f"Days with options data: {len(all_opts)}")
@@ -427,6 +658,10 @@ def main():
     analyze_combined(all_opts)
     analyze_timeframes(all_opts, all_spots)
     analyze_minimised(all_opts)
+    analyze_ema_sweep(all_opts_raw)
+    analyze_rsi_threshold(all_opts)
+    analyze_bw_grid(all_opts)
+    analyze_trending_sideways(all_opts, all_spots)
 
     _log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     _log("DONE.")
