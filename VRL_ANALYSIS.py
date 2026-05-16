@@ -617,6 +617,166 @@ def analyze_trending_sideways(all_opts, all_spots):
 
 
 # ══════════════════════════════════════════════════════════════════
+# SECTION 12 — PREMIUM BOX BREAKOUT
+# Box = rolling N-candle high/low of option's own price (no lookahead)
+# Signal: green candle + close breaks above box_high
+#
+# Part A: sweep box sizes 5,8,10,12,15,20 candles → find best N
+# Part B: at best N — RSI, box width, EMA slope at breakout moment
+# Part C: box breakout combined with existing gates
+# ══════════════════════════════════════════════════════════════════
+
+def analyze_box_breakout(all_opts):
+    _log("\n━━━━ 12. PREMIUM BOX BREAKOUT ━━━━")
+    _log("  Box = rolling N×3-min high/low of option price (shift(1) = no lookahead)")
+    _log("  Signal: green candle + close > box_high")
+
+    box_sizes = [5, 8, 10, 12, 15, 20]
+
+    # ── Part A: box size sweep ───────────────────────────────────
+    _log("\n  A. Box size sweep:")
+    _log(f"  {'N':>4}  {'window':>7}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 48)
+
+    size_rows = {}
+    for N in box_sizes:
+        rows = []
+        for df in all_opts:
+            if "strike" not in df.columns:
+                continue
+            for (strike, opt_type), grp in df.groupby(["strike", "opt_type"]):
+                grp = grp.sort_index().copy()
+                if len(grp) < N + 4:
+                    continue
+                # shift(1) ensures box is built from PAST candles only
+                grp["_box_high"]  = grp["high"].shift(1).rolling(N).max()
+                grp["_box_low"]   = grp["low"].shift(1).rolling(N).min()
+                grp["_box_width"] = grp["_box_high"] - grp["_box_low"]
+
+                signal = grp["green"] & (grp["close"] > grp["_box_high"])
+                for ts, row in grp[signal].iterrows():
+                    f3 = row.get("fwd_3c", np.nan)
+                    if pd.isna(f3):
+                        continue
+                    rows.append({
+                        "fwd_3c"    : f3,
+                        "rsi"       : float(row.get("rsi",       0) or 0),
+                        "bw"        : float(row.get("bw",        0) or 0),
+                        "box_width" : float(row.get("_box_width", 0) or 0),
+                        "ema9l"     : float(row.get("ema9l",     0) or 0),
+                        "close"     : float(row.get("close",     0) or 0),
+                    })
+        size_rows[N] = rows
+        sub = pd.Series([r["fwd_3c"] for r in rows]).dropna()
+        if len(sub) < 20:
+            _log(f"  N={N:<3} ({N*3:>3}min): insufficient data")
+            continue
+        win = (sub > 0).sum()
+        _log(f"  N={N:<3} ({N*3:>3}min): n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={sub.mean():+.3f}  median={sub.median():+.3f}")
+
+    # pick best N by avg
+    best_n, best_avg = 10, -999
+    for N, rows in size_rows.items():
+        sub = pd.Series([r["fwd_3c"] for r in rows]).dropna()
+        if len(sub) < 20:
+            continue
+        if sub.mean() > best_avg:
+            best_avg, best_n = sub.mean(), N
+    _log(f"\n  ✅ Best box size: N={best_n} ({best_n*3} min window)  avg={best_avg:+.3f}")
+
+    # ── Part B: detailed breakdown at best N ─────────────────────
+    _log(f"\n  B. Breakout anatomy at N={best_n}:")
+    rows = []
+    for df in all_opts:
+        if "strike" not in df.columns:
+            continue
+        for (strike, opt_type), grp in df.groupby(["strike", "opt_type"]):
+            grp = grp.sort_index().copy()
+            if len(grp) < best_n + 4:
+                continue
+            grp["_box_high"]  = grp["high"].shift(1).rolling(best_n).max()
+            grp["_box_low"]   = grp["low"].shift(1).rolling(best_n).min()
+            grp["_box_width"] = grp["_box_high"] - grp["_box_low"]
+            grp["_rsi_prev"]  = grp["rsi"].shift(1)
+            grp["_rsi_rise"]  = grp["rsi"] - grp["_rsi_prev"]
+            grp["_ema_slope"] = grp["ema9l"].diff()
+
+            signal = grp["green"] & (grp["close"] > grp["_box_high"])
+            for ts, row in grp[signal].iterrows():
+                f3 = row.get("fwd_3c", np.nan)
+                if pd.isna(f3):
+                    continue
+                rows.append({
+                    "fwd_3c"    : f3,
+                    "rsi"       : float(row.get("rsi",        0) or 0),
+                    "rsi_rise"  : float(row.get("_rsi_rise",  0) or 0),
+                    "bw"        : float(row.get("bw",         0) or 0),
+                    "box_width" : float(row.get("_box_width",  0) or 0),
+                    "ema_slope" : float(row.get("_ema_slope",  0) or 0),
+                })
+
+    if not rows:
+        _log("  no data"); return
+    r = pd.DataFrame(rows)
+
+    # RSI at breakout
+    _log(f"\n  RSI level at breakout:")
+    r["rsi_bucket"] = (r["rsi"] // 10) * 10
+    g = r.groupby("rsi_bucket")["fwd_3c"].agg(["mean", "count"]).round(3)
+    g = g[g["count"] >= 10].sort_index()
+    _log(g.to_string())
+
+    # Box width buckets (size of consolidation)
+    _log(f"\n  Box width (consolidation range) at breakout:")
+    r["bw_bucket"] = (r["box_width"] // 2) * 2
+    g2 = r.groupby("bw_bucket")["fwd_3c"].agg(["mean", "count"]).round(3)
+    g2 = g2[g2["count"] >= 10].sort_index()
+    _log(g2.to_string())
+
+    # EMA slope at breakout
+    _log(f"\n  EMA9_low slope at breakout (rising vs falling):")
+    r["ema_rising"] = r["ema_slope"] >= 0
+    g3 = r.groupby("ema_rising")["fwd_3c"].agg(["mean", "count"]).round(3)
+    g3.index = ["ema_falling", "ema_rising"]
+    _log(g3.to_string())
+
+    # ── Part C: box combined with current gates ──────────────────
+    _log(f"\n  C. Box breakout + gate combinations:")
+    _log(f"  {'combo':<20}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 52)
+    r["g3"]  = r["bw"] >= 10
+    r["g5"]  = (r["rsi"] > 50) & (r["rsi_rise"] >= 2)
+    r["g5b"] = (r["rsi"] > 45) & (r["rsi_rise"] >= 2)
+    r["g3h"] = r["bw"] >= 12
+    for label, mask in [
+        ("box only",          pd.Series([True] * len(r), index=r.index)),
+        ("box + G3(bw≥10)",   r["g3"]),
+        ("box + G3(bw≥12)",   r["g3h"]),
+        ("box + G5(rsi>50)",  r["g5"]),
+        ("box + G5(rsi>45)",  r["g5b"]),
+        ("box+G3+G5(>50)",    r["g3"]  & r["g5"]),
+        ("box+G3+G5(>45)",    r["g3"]  & r["g5b"]),
+        ("box+G3h+G5(>45)",   r["g3h"] & r["g5b"]),
+    ]:
+        sub = r[mask]["fwd_3c"]
+        if len(sub) < 10:
+            continue
+        win = (sub > 0).sum()
+        _log(f"  {label:<20}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={sub.mean():+.3f}  median={sub.median():+.3f}")
+
+    # Minimum box width filter
+    _log(f"\n  D. Minimum box width before breakout (bigger box = more conviction):")
+    for min_bw in [1, 2, 3, 5, 8, 10]:
+        sub = r[r["box_width"] >= min_bw]["fwd_3c"]
+        if len(sub) < 10:
+            continue
+        win = (sub > 0).sum()
+        _log(f"  box_width≥{min_bw:<3}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  avg={sub.mean():+.3f}")
+
+
+# ══════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════
 
@@ -662,6 +822,7 @@ def main():
     analyze_rsi_threshold(all_opts)
     analyze_bw_grid(all_opts)
     analyze_trending_sideways(all_opts, all_spots)
+    analyze_box_breakout(all_opts)
 
     _log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     _log("DONE.")
