@@ -38,13 +38,14 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
 | G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
-| G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
+| G3 | `band_width = ema9_high - ema9_low >= 11` (real momentum, not choppy) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | RSI > 50 AND RSI rising ≥ 2 pts vs previous candle |
+| G5 | RSI > 45 AND RSI rising vs previous candle |
 
 **Data basis** (9 days, 1404 candles):
 - Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
-- G3 (bw>=10) alone: avg_fwd = +16.3 pts, win% = 41.7%
+- G3 (bw>=11) alone: filters sub-11 noise (band 8-10 = -3.0 avg return BAD). Band 12-16 = +18.1 avg (BEST).
+- G5 RSI>45 (vs >50): +42% more signals, same quality — picks up early-momentum entries.
 - Band width 8-10 = -3.0 avg return (BAD). Band 12-16 = +18.1 avg (BEST).
 - G4 ensures directional divergence — both sides rising = sideways = skip.
 
