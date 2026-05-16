@@ -7,7 +7,7 @@ Usage:
     python3 VRL_ANALYSIS.py
 """
 
-import os, sys, json, warnings
+import os, sys, json, warnings, subprocess
 from datetime import date, datetime
 from collections import defaultdict
 
@@ -21,10 +21,35 @@ import VRL_DATA as D
 
 COLLECTOR_DIR = os.path.join(D.LAB_DIR, "collector")
 TRADE_LOG     = os.path.join(D.LAB_DIR, "vrl_trade_log.csv")
+REPO_DIR      = os.path.dirname(os.path.abspath(__file__))
+RESULTS_FILE  = os.path.join(REPO_DIR, "analysis_results.md")
 
 # ── helpers ─────────────────────────────────────────────────────
 
-def _log(msg): print(msg, flush=True)
+_results_buf = []
+
+def _log(msg):
+    print(msg, flush=True)
+    _results_buf.append(msg)
+
+
+def _save_and_push():
+    """Write results to markdown file and push to GitHub."""
+    run_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    header = f"# VRL Strategy Analysis\n\nRun: {run_at}\n\n```\n"
+    footer = "\n```\n"
+    with open(RESULTS_FILE, "w") as f:
+        f.write(header + "\n".join(_results_buf) + footer)
+    print(f"\nResults saved → {RESULTS_FILE}", flush=True)
+    try:
+        subprocess.run(["git", "add", "analysis_results.md"], cwd=REPO_DIR, check=True)
+        subprocess.run(["git", "commit", "-m",
+                        f"results: VRL_ANALYSIS run {run_at}"],
+                       cwd=REPO_DIR, check=True)
+        subprocess.run(["git", "push"], cwd=REPO_DIR, check=True)
+        print("Pushed to GitHub ✅", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Git push failed: {e}", flush=True)
 
 
 def _load_day(day_str: str):
@@ -851,6 +876,7 @@ def main():
     _log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     _log("DONE.")
     _log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    _save_and_push()
 
 
 if __name__ == "__main__":
