@@ -617,173 +617,187 @@ def analyze_trending_sideways(all_opts, all_spots):
 
 
 # ══════════════════════════════════════════════════════════════════
-# SECTION 12 — MORNING RANGE BOX + TIME FILTER
+# SECTION 12 — PREMIUM BOX BREAKOUT (after 10:30, per-series)
 #
-# Key idea (user insight):
-#   09:15–10:30 → market settles gaps, noise, opening orders
-#   10:30+      → if premium still inside morning range = SIDEWAYS, skip
-#                 if premium breaks morning range high = REAL MOVE, enter
+# Each CE/PE series has its own independent rolling box.
+# Box updates every candle (like pivot points).
+# Only active after 10:30 — market settled by then.
 #
-# Morning box = high/low of option from 09:15 to 10:30 (first 75 min)
-# After 10:30: close > morning_high → breakout confirmed
+# Signal: green candle + close > box_high + box_width >= min_width
 #
-# Also tests rolling N-candle box after 10:30 (intraday consolidations)
+# Research questions:
+#   A. Best box size N (candles)?
+#   B. Best minimum box width (10/20/30/40/50 pts)?
+#   C. Miss rate — big moves (>15 pts) caught vs missed by box filter?
+#   D. Gate combos — box alone vs box+G3 vs box+G5
 # ══════════════════════════════════════════════════════════════════
 
-def _is_after_1030(ts):
+def _after_1030(ts):
     t = pd.Timestamp(ts)
     return t.hour > 10 or (t.hour == 10 and t.minute >= 30)
 
-def _is_morning(ts):
-    t = pd.Timestamp(ts)
-    return (t.hour == 9 or (t.hour == 10 and t.minute < 30))
-
 
 def analyze_box_breakout(all_opts):
-    _log("\n━━━━ 12. MORNING RANGE BOX BREAKOUT (after 10:30) ━━━━")
-    _log("  Morning box = option high/low from 09:15–10:30")
-    _log("  After 10:30: close > morning_high = breakout = real move")
-    _log("  After 10:30: close inside box     = sideways  = skip")
+    _log("\n━━━━ 12. PREMIUM BOX BREAKOUT (per-series, after 10:30) ━━━━")
+    _log("  Rolling box on each CE/PE series independently.")
+    _log("  Signal: after 10:30 + green + close > box_high + box_width >= min_width")
 
-    # ── Part A: baseline — before vs after 10:30 (no box) ───────
-    _log("\n  A. Baseline: before 10:30 vs after 10:30 (no box filter)")
-    _log(f"  {'window':<18}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
-    _log("  " + "-" * 52)
-    for label, time_fn in [("before 10:30", _is_morning), ("after  10:30", _is_after_1030)]:
-        rows = []
-        for df in all_opts:
-            for ts, row in df[df["green"] == True].iterrows():
-                if not time_fn(ts):
-                    continue
-                f3 = row.get("fwd_3c", np.nan)
-                if pd.isna(f3):
-                    continue
-                rows.append(f3)
-        sub = pd.Series(rows).dropna()
-        if sub.empty:
-            continue
-        win = (sub > 0).sum()
-        _log(f"  {label:<18}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
-             f"avg={sub.mean():+.3f}  median={sub.median():+.3f}")
+    # ── build per-series rows once for all N sweeps ──────────────
+    # collect raw candle data per series, per day, after 10:30
+    # store box_high/width for each N at each candle
+    BOX_SIZES  = [5, 8, 10, 12, 15]
+    MIN_WIDTHS = [10, 20, 30, 40, 50]
 
-    # ── Part B: morning range box — compute per series per day ───
-    _log("\n  B. After 10:30 with morning range box filter:")
-    _log("     (morning_high = max(high) 09:15–10:30 for that series that day)")
-    _log(f"  {'filter':<28}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
-    _log("  " + "-" * 60)
-
-    all_rows = []
+    # pre-collect all after-10:30 data with indicators per series
+    series_data = []   # list of per-series DataFrames (after 10:30 only)
     for df in all_opts:
         if "strike" not in df.columns:
             continue
         for (strike, opt_type), grp in df.groupby(["strike", "opt_type"]):
             grp = grp.sort_index().copy()
+            after = grp[[_after_1030(ts) for ts in grp.index]]
+            if len(after) < max(BOX_SIZES) + 3:
+                continue
+            series_data.append(after)
 
-            # process each trading day separately
-            for day_d, day_grp in grp.groupby(grp.index.date):
-                if len(day_grp) < 5:
-                    continue
+    if not series_data:
+        _log("  no after-10:30 data"); return
 
-                # morning candles: 09:15–10:27 (before 10:30)
-                morning = day_grp[[_is_morning(ts) for ts in day_grp.index]]
-                if morning.empty:
-                    continue
-                morning_high = float(morning["high"].max())
-                morning_low  = float(morning["low"].min())
-                morning_range = morning_high - morning_low
+    # ── Part A: box size sweep ───────────────────────────────────
+    _log("\n  A. Box size sweep (min_width=0 — pure breakout signal quality):")
+    _log(f"  {'N':>4}  {'window':>7}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 50)
+    best_n, best_avg = BOX_SIZES[0], -999
+    for N in BOX_SIZES:
+        rows = []
+        for s in series_data:
+            g = s.copy()
+            g["_bh"] = g["high"].shift(1).rolling(N).max()
+            g["_bl"] = g["low"].shift(1).rolling(N).min()
+            g["_bw"] = g["_bh"] - g["_bl"]
+            sig = g["green"] & (g["close"] > g["_bh"])
+            for _, row in g[sig].iterrows():
+                f3 = row.get("fwd_3c", np.nan)
+                if not pd.isna(f3):
+                    rows.append(f3)
+        sub = pd.Series(rows).dropna()
+        if len(sub) < 20:
+            continue
+        win = (sub > 0).sum()
+        avg = sub.mean()
+        if avg > best_avg:
+            best_avg, best_n = avg, N
+        _log(f"  N={N:<3} ({N*3:>3}min): n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={avg:+.3f}  median={sub.median():+.3f}")
+    _log(f"\n  ✅ Best box size: N={best_n} ({best_n*3} min)")
 
-                # after-10:30 candles
-                after = day_grp[[_is_after_1030(ts) for ts in day_grp.index]].copy()
-                if after.empty:
-                    continue
-
-                # rolling box inside after-10:30 period (for Part C)
-                after["_rbox_high"] = after["high"].shift(1).rolling(5).max()
-                after["_rsi_prev"]  = after["rsi"].shift(1)
-                after["_rsi_rise"]  = after["rsi"] - after["_rsi_prev"]
-                after["_ema_slope"] = after["ema9l"].diff()
-
-                for ts, row in after[after["green"] == True].iterrows():
-                    f3 = row.get("fwd_3c", np.nan)
-                    if pd.isna(f3):
-                        continue
-                    close = float(row.get("close", 0) or 0)
-                    rsi   = float(row.get("rsi",   0) or 0)
-                    rr    = float(row.get("_rsi_rise", 0) or 0)
-                    bw    = float(row.get("bw",    0) or 0)
-                    esl   = float(row.get("_ema_slope", 0) or 0)
-                    rbox  = float(row.get("_rbox_high", 0) or 0)
-                    all_rows.append({
-                        "fwd_3c"       : f3,
-                        "rsi"          : rsi,
-                        "rsi_rise"     : rr,
-                        "bw"           : bw,
-                        "ema_slope"    : esl,
-                        "morning_high" : morning_high,
-                        "morning_low"  : morning_low,
-                        "morning_range": morning_range,
-                        "morning_break": close > morning_high,
-                        "rbox_break"   : (rbox > 0) and (close > rbox),
-                        "close"        : close,
-                    })
+    # ── Part B: box width minimum sweep at best N ────────────────
+    _log(f"\n  B. Box width minimum sweep (N={best_n}, after 10:30):")
+    _log("     Wider box = market had more range = more liquidity = better move?")
+    _log(f"  {'min_width':>10}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 50)
+    all_rows = []
+    for s in series_data:
+        g = s.copy()
+        g["_bh"] = g["high"].shift(1).rolling(best_n).max()
+        g["_bl"] = g["low"].shift(1).rolling(best_n).min()
+        g["_bw"] = g["_bh"] - g["_bl"]
+        g["_rsi_prev"]  = g["rsi"].shift(1)
+        g["_rsi_rise"]  = g["rsi"] - g["_rsi_prev"]
+        g["_ema_slope"] = g["ema9l"].diff()
+        sig = g["green"] & (g["close"] > g["_bh"])
+        for ts, row in g[sig].iterrows():
+            f3 = row.get("fwd_3c", np.nan)
+            if pd.isna(f3):
+                continue
+            all_rows.append({
+                "fwd_3c"   : f3,
+                "box_width": float(row.get("_bw",        0) or 0),
+                "rsi"      : float(row.get("rsi",        0) or 0),
+                "rsi_rise" : float(row.get("_rsi_rise",  0) or 0),
+                "bw"       : float(row.get("bw",         0) or 0),
+                "ema_slope": float(row.get("_ema_slope", 0) or 0),
+            })
 
     if not all_rows:
         _log("  no data"); return
     r = pd.DataFrame(all_rows)
 
-    # combinations to test
-    g3  = r["bw"] >= 10
-    g3h = r["bw"] >= 12
-    g5  = (r["rsi"] > 50) & (r["rsi_rise"] >= 2)
-    g5b = (r["rsi"] > 45) & (r["rsi_rise"] >= 2)
-    mbo = r["morning_break"]     # morning box breakout
-    rbo = r["rbox_break"]        # rolling 5-candle box breakout
-
-    for label, mask in [
-        ("after1030 no filter",     pd.Series([True]*len(r), index=r.index)),
-        ("morning_box_break",       mbo),
-        ("morning_box + G3(≥10)",   mbo & g3),
-        ("morning_box + G3(≥12)",   mbo & g3h),
-        ("morning_box + G5(>50)",   mbo & g5),
-        ("morning_box + G5(>45)",   mbo & g5b),
-        ("mbox+G3(≥10)+G5(>45)",    mbo & g3  & g5b),
-        ("mbox+G3(≥12)+G5(>45)",    mbo & g3h & g5b),
-        ("rolling5_box_break",      rbo),
-        ("rbox + G3(≥10)+G5(>45)",  rbo & g3  & g5b),
-    ]:
-        sub = r[mask]["fwd_3c"]
+    best_width, best_width_avg = 0, -999
+    for mw in MIN_WIDTHS:
+        sub = r[r["box_width"] >= mw]["fwd_3c"]
         if len(sub) < 10:
             continue
         win = (sub > 0).sum()
-        _log(f"  {label:<28}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+        avg = sub.mean()
+        if avg > best_width_avg:
+            best_width_avg, best_width = avg, mw
+        _log(f"  width≥{mw:<4}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
+             f"avg={avg:+.3f}  median={sub.median():+.3f}")
+    _log(f"\n  ✅ Best min box width: {best_width} pts")
+
+    # ── Part C: miss rate — big moves caught vs missed ───────────
+    _log(f"\n  C. Miss rate — big moves (fwd_3c > 15 pts) caught vs missed:")
+    _log(f"     Box filter: N={best_n}, width≥{best_width}")
+
+    # need ALL after-10:30 green candles (not just box breaks)
+    all_after = []
+    for s in series_data:
+        g = s.copy()
+        g["_bh"] = g["high"].shift(1).rolling(best_n).max()
+        g["_bw"] = g["_bh"] - g["low"].shift(1).rolling(best_n).min()
+        for ts, row in g[g["green"] == True].iterrows():
+            f3 = row.get("fwd_3c", np.nan)
+            if pd.isna(f3):
+                continue
+            bh  = float(row.get("_bh", 0) or 0)
+            bww = float(row.get("_bw", 0) or 0)
+            cl  = float(row.get("close", 0) or 0)
+            box_signal = (bh > 0) and (cl > bh) and (bww >= best_width)
+            all_after.append({"fwd_3c": f3, "box_signal": box_signal})
+
+    ra = pd.DataFrame(all_after)
+    big_moves = ra[ra["fwd_3c"] > 15]
+    if len(big_moves) > 0:
+        caught  = big_moves["box_signal"].sum()
+        missed  = len(big_moves) - caught
+        _log(f"  Big moves (>15 pts): {len(big_moves)} total")
+        _log(f"  Caught by box signal: {caught}  ({caught/len(big_moves)*100:.1f}%)")
+        _log(f"  Missed by box filter: {missed}  ({missed/len(big_moves)*100:.1f}%)")
+    _log(f"  All after-10:30 green candles:  {len(ra)}")
+    _log(f"  Box signals fired:              {ra['box_signal'].sum()}  "
+         f"({ra['box_signal'].mean()*100:.1f}% of candles)")
+
+    # ── Part D: gate combinations at best N + best width ─────────
+    _log(f"\n  D. Gate combinations (N={best_n}, width≥{best_width}):")
+    _log(f"  {'combo':<26}  {'n':>6}  {'win%':>6}  {'avg':>7}  {'median':>7}")
+    _log("  " + "-" * 58)
+    rw = r[r["box_width"] >= best_width].copy()
+    g3   = rw["bw"] >= 10
+    g3h  = rw["bw"] >= 12
+    g5   = (rw["rsi"] > 50) & (rw["rsi_rise"] >= 2)
+    g5b  = (rw["rsi"] > 45) & (rw["rsi_rise"] >= 2)
+    eris = rw["ema_slope"] >= 0
+    for label, mask in [
+        ("box only",              pd.Series([True]*len(rw), index=rw.index)),
+        ("box + ema rising",      eris),
+        ("box + G3(bw≥10)",       g3),
+        ("box + G3(bw≥12)",       g3h),
+        ("box + G5(rsi>50)",      g5),
+        ("box + G5(rsi>45)",      g5b),
+        ("box+G3(≥10)+G5(>45)",   g3  & g5b),
+        ("box+G3(≥12)+G5(>45)",   g3h & g5b),
+        ("box+ema+G3+G5(>45)",    eris & g3 & g5b),
+    ]:
+        sub = rw[mask]["fwd_3c"]
+        if len(sub) < 10:
+            continue
+        win = (sub > 0).sum()
+        _log(f"  {label:<26}: n={len(sub):5d}  win%={win/len(sub)*100:5.1f}%  "
              f"avg={sub.mean():+.3f}  median={sub.median():+.3f}")
 
-    # ── Part C: morning range size — does bigger box = better breakout?
-    _log(f"\n  C. Morning range size → breakout quality:")
-    _log("     (how wide was 09:15–10:30 box before it broke)")
-    _log(f"  {'range_bucket':>14}  {'n':>6}  {'win%':>6}  {'avg':>7}")
-    _log("  " + "-" * 42)
-    brk = r[r["morning_break"]].copy()
-    brk["range_bucket"] = (brk["morning_range"] // 5) * 5
-    g = brk.groupby("range_bucket")["fwd_3c"].agg(["mean", "count"]).round(3)
-    g = g[g["count"] >= 10].sort_index()
-    _log(g.to_string())
-
-    # ── Part D: RSI and EMA at the moment of morning box break ───
-    _log(f"\n  D. RSI at morning box breakout moment:")
-    brk["rsi_bucket"] = (brk["rsi"] // 10) * 10
-    g2 = brk.groupby("rsi_bucket")["fwd_3c"].agg(["mean", "count"]).round(3)
-    g2 = g2[g2["count"] >= 10].sort_index()
-    _log(g2.to_string())
-
-    _log(f"\n  EMA9_low slope at morning box breakout:")
-    brk["ema_rising"] = brk["ema_slope"] >= 0
-    g3e = brk.groupby("ema_rising")["fwd_3c"].agg(["mean", "count"]).round(3)
-    g3e.index = ["ema_falling", "ema_rising"]
-    _log(g3e.to_string())
-
-    _log(f"\n  → Summary: morning range box after 10:30 catches real moves,")
-    _log(f"    filters out sideways sessions where premium never escapes opening range.")
+    _log(f"\n  → Each CE/PE series has its own independent box.")
+    _log(f"    No cross-leg confirmation needed — if PE breaks its box, that IS the signal.")
 
 
 # ══════════════════════════════════════════════════════════════════
