@@ -282,12 +282,10 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
         + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (dual-TF tick)\n"
-        "Tick   " + "{:.1f}".format(entry_price)
-        + " > EMA9H_1m " + "{:.1f}".format(entry_result.get("ema9_high_1m", 0)) + "\n"
-        "3m BW  " + "{:.1f}".format(entry_result.get("band_width", 0))
-        + "  RSI_3m " + "{:.1f}".format(entry_result.get("rsi", 0))
-        + "  RSI_1m " + "{:.1f}".format(entry_result.get("rsi_1m", 0)) + "\n"
+        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (3-min)\n"
+        "Close  " + "{:.1f}".format(entry_result.get("close", 0))
+        + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
+        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
         + _xleg_line + _g6_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
@@ -499,7 +497,19 @@ _locked_at_spot   = None
 _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
-_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 10s
+_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
+# Shadow: dual-TF early entry tracking (1 week data collection before going live)
+_v8_shadow_dt = {
+    "active": False,       # shadow signal fired in current 3-min bucket
+    "direction": "",       # CE or PE
+    "bucket_ts": "",       # completed 3-min candle timestamp (alignment source)
+    "entry_price": 0.0,    # option price when 1-min trigger fired
+    "entry_time": "",      # HH:MM:SS when fired
+    "peak_price": 0.0,     # max option price seen since shadow entry
+    "peak_pts": 0.0,       # max_pts above entry
+    "live_entry": 0.0,     # 3-min live entry price (for comparison)
+    "last_scan_ts": 0.0,   # throttle shadow scan
+}
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
@@ -2491,11 +2501,9 @@ def _strategy_loop(kite):
                     ]:
                         if not _v8_token:
                             continue
-                        _opt_ltp = D.get_ltp(_v8_token)
                         _v8_res = check_entry_v8(
                             token=_v8_token, option_type=_v8_dir,
                             spot_ltp=spot_ltp,
-                            tick_price=_opt_ltp,
                             silent=False,
                             state=_v8_state, other_token=_v8_other)
                         if not _v8_res.get("fired"):
@@ -2546,6 +2554,123 @@ def _strategy_loop(kite):
                 except Exception as _v8e:
                     import traceback as _v8tb
                     logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
+
+            # ── SHADOW: Dual-TF early entry tracker (data collection, NO live trades) ──
+            # 3-min alignment (completed candle) + 1-min tick > EMA9_high + 1-min RSI rising
+            # Runs 1 week in shadow to find: early entry pts saved, peak distribution,
+            # expiry behaviour — then "magic number" for first gate when going live.
+            global _v8_shadow_dt
+            if (not _v8_state.get("in_trade")
+                    and D.is_trading_window(now)
+                    and _locked_tokens
+                    and time.time() - _v8_shadow_dt["last_scan_ts"] >= 3):
+                _v8_shadow_dt["last_scan_ts"] = time.time()
+                try:
+                    for _sh_dir, _sh_info in [("CE", (_locked_tokens or {}).get("CE", {})),
+                                               ("PE", (_locked_tokens or {}).get("PE", {}))]:
+                        _sh_tok = int(_sh_info.get("token", 0) or 0)
+                        if not _sh_tok:
+                            continue
+                        _sh_3m = D.add_indicators(D.get_historical_data(_sh_tok, "3minute", 20))
+                        if _sh_3m is None or len(_sh_3m) < 5:
+                            continue
+                        _sh_comp  = _sh_3m.iloc[-2]   # last COMPLETED candle
+                        _sh_bk_ts = str(_sh_comp.name)
+
+                        # Detect bucket change — log previous shadow summary
+                        if _v8_shadow_dt["bucket_ts"] != _sh_bk_ts:
+                            if _v8_shadow_dt["active"]:
+                                _cmp = ""
+                                if _v8_shadow_dt["live_entry"] > 0:
+                                    _saved = round(_v8_shadow_dt["live_entry"] - _v8_shadow_dt["entry_price"], 1)
+                                    _cmp = f" vs live={_v8_shadow_dt['live_entry']} saved={_saved:+.1f}pts"
+                                logger.info(
+                                    f"[SHADOW-DTF] {_v8_shadow_dt['direction']} BUCKET-END "
+                                    f"entry={_v8_shadow_dt['entry_price']} "
+                                    f"peak={_v8_shadow_dt['peak_price']} "
+                                    f"peak_pts={_v8_shadow_dt['peak_pts']:+.1f}{_cmp}"
+                                )
+                            _v8_shadow_dt.update({
+                                "active": False, "direction": "", "bucket_ts": _sh_bk_ts,
+                                "entry_price": 0.0, "entry_time": "", "peak_price": 0.0,
+                                "peak_pts": 0.0, "live_entry": 0.0,
+                            })
+
+                        # If already fired in this bucket — just update peak
+                        if _v8_shadow_dt["active"] and _v8_shadow_dt["direction"] == _sh_dir:
+                            _sh_ltp_pk = D.get_ltp(_sh_tok)
+                            if _sh_ltp_pk > _v8_shadow_dt["peak_price"]:
+                                _v8_shadow_dt["peak_price"] = _sh_ltp_pk
+                                _v8_shadow_dt["peak_pts"]   = round(_sh_ltp_pk - _v8_shadow_dt["entry_price"], 1)
+                            break
+
+                        if _v8_shadow_dt["active"]:
+                            break   # already fired for another dir this bucket
+
+                        # ── 3-min alignment check on completed candle ──
+                        _sh_close  = float(_sh_comp["close"])
+                        _sh_open   = float(_sh_comp["open"])
+                        _sh_ema9h  = float(_sh_comp.get("ema9_high", 0))
+                        _sh_ema9l  = float(_sh_comp.get("ema9_low", 0))
+                        _sh_bw     = round(_sh_ema9h - _sh_ema9l, 2)
+                        _sh_prev_l = float(_sh_3m.iloc[-3].get("ema9_low", 0))
+                        _sh_rsi    = float(_sh_comp.get("RSI", 0) or 0)
+                        _sh_rsi_p  = float(_sh_3m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_aligned = (
+                            _sh_close > _sh_open and
+                            _sh_close > _sh_ema9l and
+                            _sh_ema9l >= _sh_prev_l and
+                            _sh_bw >= 11 and
+                            45 < _sh_rsi < 75 and
+                            _sh_rsi > _sh_rsi_p
+                        )
+                        if not _sh_aligned:
+                            continue
+
+                        # ── 1-min tick trigger check ──
+                        _sh_1m = D.get_option_1min(_sh_tok, 15)
+                        if _sh_1m is None or len(_sh_1m) < 3:
+                            continue
+                        _sh_ema9h_1m   = float(_sh_1m.iloc[-2].get("ema9_high", 0))
+                        _sh_rsi_1m     = float(_sh_1m.iloc[-2].get("RSI", 0) or 0)
+                        _sh_rsi_1m_p   = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_ltp        = D.get_ltp(_sh_tok)
+                        if (_sh_ema9h_1m > 0 and _sh_ltp > _sh_ema9h_1m
+                                and _sh_rsi_1m > _sh_rsi_1m_p):
+                            _v8_shadow_dt.update({
+                                "active": True, "direction": _sh_dir,
+                                "bucket_ts": _sh_bk_ts,
+                                "entry_price": _sh_ltp, "entry_time": now.strftime("%H:%M:%S"),
+                                "peak_price": _sh_ltp, "peak_pts": 0.0,
+                            })
+                            logger.info(
+                                f"[SHADOW-DTF] {_sh_dir} SIGNAL "
+                                f"tick={_sh_ltp} ema9h_1m={_sh_ema9h_1m} "
+                                f"rsi_1m={_sh_rsi_1m:.1f}↑ bw_3m={_sh_bw} rsi_3m={_sh_rsi:.1f}"
+                            )
+                            _tg_send(
+                                f"🔵 <b>SHADOW DUAL-TF</b> {_sh_dir}\n"
+                                f"Tick {_sh_ltp:.1f} &gt; EMA9H_1m {_sh_ema9h_1m:.1f}\n"
+                                f"RSI_1m {_sh_rsi_1m:.1f}↑  BW_3m {_sh_bw}  RSI_3m {_sh_rsi:.1f}\n"
+                                f"<i>shadow only — tracking peak...</i>"
+                            )
+                            break
+                except Exception as _she:
+                    logger.warning(f"[SHADOW-DTF] error: {_she}")
+
+            # Capture live entry price into shadow for comparison
+            # (called from _v8_execute_paper_entry — attached via state key)
+            if (_v8_shadow_dt["active"]
+                    and _v8_shadow_dt["live_entry"] == 0
+                    and _v8_state.get("in_trade")
+                    and _v8_state.get("direction") == _v8_shadow_dt["direction"]):
+                _v8_shadow_dt["live_entry"] = float(_v8_state.get("entry_price", 0))
+                _saved = round(_v8_shadow_dt["live_entry"] - _v8_shadow_dt["entry_price"], 1)
+                logger.info(
+                    f"[SHADOW-DTF] LIVE ENTRY fired "
+                    f"shadow={_v8_shadow_dt['entry_price']} live={_v8_shadow_dt['live_entry']} "
+                    f"saved={_saved:+.1f}pts ({'EARLIER ✓' if _saved > 0 else 'LATER or same'})"
+                )
 
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)

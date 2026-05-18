@@ -262,20 +262,17 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 
 def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                    silent: bool = False, state: dict = None,
-                   other_token: int = 0, tick_price: float = 0) -> dict:
-    """V8 — Dual-TF entry: 3-min alignment (completed candle) + 1-min tick trigger.
+                   other_token: int = 0) -> dict:
+    """V8 — 3-min entry on live forming candle (5-gate).
 
-    3-min alignment gates (on last COMPLETED candle):
+    Gates:
       G1.  GREEN candle (close > open)
       G2.  Close > EMA9_low (broke above support band)
       G2B. EMA9_low slope >= 0 (support band flat or rising — blocks fake breakouts)
       G3.  band_width >= 11 (real momentum, not choppy)
       G4.  other_close <= other_band_mid (other side falling = directional)
       G5.  45 < RSI < 75 AND rising vs previous closed candle
-    1-min tick trigger (fires immediately, no candle-close wait):
-      T1.  tick_price > 1-min EMA9_high (price breaks 1-min upper band)
-      T2.  1-min RSI rising vs previous 1-min candle
-    Same-candle guard prevents re-fires on same completed 3-min candle (state-driven).
+    Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
         state = {}
@@ -293,7 +290,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             result["reject_reason"] = "insufficient_3m_data"
             return result
 
-        last = opt_3m.iloc[-2]   # last COMPLETED 3-min candle — alignment check
+        last = opt_3m.iloc[-1]   # live forming candle — early entry
         fired_ts = str(last.name)
         result["fired_candle_ts"] = fired_ts
         if state.get("_last_fired_candle_ts", "") == fired_ts:
@@ -363,7 +360,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
         # ── GATE 2B: EMA9_low slope must be flat or rising ──
         # Falling support band = fake breakout. Blocks doji-on-declining-EMA entries.
-        _prev_ema9l = float(opt_3m.iloc[-3].get("ema9_low", 0))
+        _prev_ema9l = float(opt_3m.iloc[-2].get("ema9_low", 0))
         _ema9l_slope = round(ema9_low - _prev_ema9l, 2)
         if _prev_ema9l > 0 and _ema9l_slope < 0:
             result["reject_reason"] = f"gate2b_ema9l_falling_{_ema9l_slope}"
@@ -409,7 +406,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
         # ── GATE 5: 45 < RSI < 75 and rising (momentum confirmed, not overextended) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
-        _rsi_prev = float(opt_3m.iloc[-3].get("RSI", 0) or 0)
+        _rsi_prev = float(opt_3m.iloc[-2].get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
         result["rsi_prev"] = round(_rsi_prev, 1)
         if _rsi_now <= 45:
@@ -431,46 +428,13 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
             return result
 
-        # ── 1-min TICK TRIGGER: tick > 1-min EMA9_high AND 1-min RSI rising ──
-        if tick_price > 0:
-            try:
-                opt_1m = D.get_option_1min(token, 15)
-                if opt_1m is None or len(opt_1m) < 3:
-                    result["reject_reason"] = "insufficient_1m_data"
-                    if not silent:
-                        logger.info(f"[REJECT-V8] {option_type} insufficient_1m_data")
-                    return result
-                _last_1m     = opt_1m.iloc[-2]   # last completed 1-min candle
-                _ema9h_1m    = float(_last_1m.get("ema9_high", 0))
-                _rsi_1m_now  = float(_last_1m.get("RSI", 0) or 0)
-                _rsi_1m_prev = float(opt_1m.iloc[-3].get("RSI", 0) or 0)
-                result["ema9_high_1m"] = round(_ema9h_1m, 2)
-                result["rsi_1m"]       = round(_rsi_1m_now, 1)
-                if _ema9h_1m > 0 and tick_price <= _ema9h_1m:
-                    result["reject_reason"] = f"tick_below_1m_ema9h_{round(_ema9h_1m,1)}"
-                    if not silent:
-                        logger.info(f"[REJECT-V8] {option_type} 1m_tick_gate "
-                                    f"tick={tick_price:.1f} <= ema9h_1m={_ema9h_1m:.1f}")
-                    return result
-                if _rsi_1m_now <= _rsi_1m_prev:
-                    result["reject_reason"] = f"rsi_1m_not_rising_{round(_rsi_1m_now,1)}"
-                    if not silent:
-                        logger.info(f"[REJECT-V8] {option_type} rsi_1m_not_rising "
-                                    f"rsi_1m={_rsi_1m_now:.1f} prev={_rsi_1m_prev:.1f}")
-                    return result
-            except Exception as _t1e:
-                logger.warning(f"[ENGINE-V8] 1m tick gate error {option_type}: {_t1e} — skipped")
-
-        _entry_p = tick_price if tick_price > 0 else close
-        result["fired"]       = True
-        result["entry_price"] = round(_entry_p, 2)
-        result["entry_mode"]  = "DUAL_TF_TICK" if tick_price > 0 else "CLOSE_FILL"
+        result["fired"] = True
+        result["entry_mode"] = "CLOSE_FILL"
         if not silent:
-            logger.info(f"[ENGINE-V8] {option_type} FIRED tick={round(_entry_p,1)} "
-                        f"ema9h_1m={result.get('ema9_high_1m', 0)} "
-                        f"ema9l_3m={round(ema9_low,1)} bw={_bw} "
-                        f"rsi_3m={round(_rsi_now,1)} rsi_1m={result.get('rsi_1m', 0)} "
-                        f"(dual-TF tick)")
+            logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
+                        f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
+                        f"bw={_bw} rsi={round(_rsi_now,1)} "
+                        f"(5-gate V8, 3-min)")
 
         # ── GATE 6 (SHADOW): StochRSI(5) oversold cross ──
         # Does NOT block entry — logs only. Collect data for 2 weeks then decide.
