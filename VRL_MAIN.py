@@ -282,10 +282,12 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
         + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (3-min)\n"
-        "Close  " + "{:.1f}".format(entry_result.get("close", 0))
-        + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
-        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
+        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (dual-TF tick)\n"
+        "Tick   " + "{:.1f}".format(entry_price)
+        + " > EMA9H_1m " + "{:.1f}".format(entry_result.get("ema9_high_1m", 0)) + "\n"
+        "3m BW  " + "{:.1f}".format(entry_result.get("band_width", 0))
+        + "  RSI_3m " + "{:.1f}".format(entry_result.get("rsi", 0))
+        + "  RSI_1m " + "{:.1f}".format(entry_result.get("rsi_1m", 0)) + "\n"
         + _xleg_line + _g6_line +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
@@ -2464,14 +2466,14 @@ def _strategy_loop(kite):
             _v8_in_force_cooldown = (_v8_force_exit_age < 180 and float(_v8_state.get("_force_exit_ts", 0) or 0) > 0)
             if (_v8_in_force_cooldown
                     and not _v8_state.get("in_trade")
-                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                    and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
             if (not _v8_state.get("in_trade")
                     and D.is_trading_window(now)
                     and _locked_tokens
                     and not _v8_in_force_cooldown
-                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                    and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 try:
                     from VRL_ENGINE import check_entry_v8
@@ -2489,9 +2491,11 @@ def _strategy_loop(kite):
                     ]:
                         if not _v8_token:
                             continue
+                        _opt_ltp = D.get_ltp(_v8_token)
                         _v8_res = check_entry_v8(
                             token=_v8_token, option_type=_v8_dir,
                             spot_ltp=spot_ltp,
+                            tick_price=_opt_ltp,
                             silent=False,
                             state=_v8_state, other_token=_v8_other)
                         if not _v8_res.get("fired"):
