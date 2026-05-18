@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v18 (Vishal Clean V7+V9)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V9 (LIVE):   3-min  | 5-gate (green, close>ema9l, BW 12-16, other<=mid, RSI 50-65 rising)
+#  V9 (LIVE):   3-min  | 3-gate (close>ema9l, BW 12-16, RSI 50-65)
 #  V9 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
@@ -1287,17 +1287,14 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v18\n"
         "V7 SHADOW : 15-min | 2-gate | signals only\n"
-        "V9 LIVE   : 3-min  | 5-gate | PAPER trading\n"
+        "V9 LIVE   : 3-min  | 3-gate | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V9 GATES</b>\n"
-        "G1) Green candle (close > open)\n"
         "G2) Close > EMA9_low\n"
-        "G2B) EMA9_low slope >= 0 (rising)\n"
         "G3) Band width 12-16 pts\n"
-        "G4) Other side <= band midpoint\n"
-        "G5) 50 < RSI < 65 AND rising\n"
+        "G5) 50 < RSI < 65\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V9 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
@@ -2622,20 +2619,14 @@ def _strategy_loop(kite):
 
                         # ── 3-min alignment check on completed candle ──
                         _sh_close  = float(_sh_comp["close"])
-                        _sh_open   = float(_sh_comp["open"])
                         _sh_ema9h  = float(_sh_comp.get("ema9_high", 0))
                         _sh_ema9l  = float(_sh_comp.get("ema9_low", 0))
                         _sh_bw     = round(_sh_ema9h - _sh_ema9l, 2)
-                        _sh_prev_l = float(_sh_3m.iloc[-3].get("ema9_low", 0))
                         _sh_rsi    = float(_sh_comp.get("RSI", 0) or 0)
-                        _sh_rsi_p  = float(_sh_3m.iloc[-3].get("RSI", 0) or 0)
                         _sh_aligned = (
-                            _sh_close > _sh_open and
                             _sh_close > _sh_ema9l and
-                            _sh_ema9l >= _sh_prev_l and
-                            _sh_bw >= 12 and _sh_bw <= 16 and
-                            45 < _sh_rsi < 75 and
-                            _sh_rsi > _sh_rsi_p
+                            12 <= _sh_bw <= 16 and
+                            50 < _sh_rsi < 65
                         )
                         if not _sh_aligned:
                             continue

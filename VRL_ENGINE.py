@@ -263,15 +263,12 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                    silent: bool = False, state: dict = None,
                    other_token: int = 0) -> dict:
-    """V8 — 3-min entry on live forming candle (5-gate).
+    """V9 — 3-min entry on live forming candle (3-gate).
 
     Gates:
-      G1.  GREEN candle (close > open)
       G2.  Close > EMA9_low (broke above support band)
-      G2B. EMA9_low slope >= 0 (support band flat or rising — blocks fake breakouts)
       G3.  12 <= band_width <= 16 (momentum sweet spot)
-      G4.  other_close <= other_band_mid (other side falling = directional)
-      G5.  50 < RSI < 65 AND rising vs previous closed candle
+      G5.  50 < RSI < 65
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -350,31 +347,12 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 1: green candle ──
-        if not _is_green:
-            result["reject_reason"] = "red_candle"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate1_red_candle "
-                            f"close={round(close,1)} open={round(open_,1)}")
-            return result
-
         # ── GATE 2: close above EMA9_low (broke above support band) ──
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate2_below_band "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)}")
-            return result
-
-        # ── GATE 2B: EMA9_low slope must be flat or rising ──
-        # Falling support band = fake breakout. Blocks doji-on-declining-EMA entries.
-        _prev_ema9l = float(opt_3m.iloc[-2].get("ema9_low", 0))
-        _ema9l_slope = round(ema9_low - _prev_ema9l, 2)
-        if _prev_ema9l > 0 and _ema9l_slope < 0:
-            result["reject_reason"] = f"gate2b_ema9l_falling_{_ema9l_slope}"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate2b_ema9l_falling "
-                            f"ema9l={round(ema9_low,2)} prev={round(_prev_ema9l,2)} slope={_ema9l_slope}")
             return result
 
         # ── GATE 3: band width 12-16 (momentum sweet spot, not choppy or overextended) ──
@@ -393,36 +371,9 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"width={_bw} (need 12-16)")
             return result
 
-        # ── GATE 4: other side must be falling (below its own band midpoint) ──
-        _opt3m_other = None
-        if other_token:
-            try:
-                _opt3m_other = D.add_indicators(
-                    D.get_historical_data(other_token, "3minute", 10))
-                if _opt3m_other is not None and len(_opt3m_other) >= 2:
-                    _o_last  = _opt3m_other.iloc[-1]   # live candle of other side
-                    _o_close = float(_o_last["close"])
-                    _o_ema9h = float(_o_last.get("ema9_high", 0))
-                    _o_ema9l = float(_o_last.get("ema9_low", 0))
-                    _o_mid   = round((_o_ema9h + _o_ema9l) / 2, 2) if _o_ema9h > 0 else 0
-                    result["xleg_other_close"] = round(_o_close, 2)
-                    result["xleg_other_ema9l"] = round(_o_ema9l, 2)
-                    result["xleg_other_dying"] = (_o_ema9l > 0 and _o_close < _o_ema9l - 0.5)
-                    if _o_mid > 0 and _o_close > _o_mid:
-                        result["reject_reason"] = f"other_not_falling_mid={_o_mid}"
-                        if not silent:
-                            logger.info(f"[REJECT-V8] {option_type} gate4_other_not_falling "
-                                        f"other={round(_o_close,1)} > other_mid={_o_mid} "
-                                        f"(sideways — other side not falling)")
-                        return result
-            except Exception as _g4e:
-                logger.warning(f"[ENGINE-V8] Gate4 data error for {option_type} other_token={other_token}: {_g4e} — gate4 skipped")
-
-        # ── GATE 5: 50 < RSI < 65 and rising (tight momentum zone, not overextended) ──
+        # ── GATE 5: 50 < RSI < 65 (momentum zone) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
-        _rsi_prev = float(opt_3m.iloc[-2].get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
-        result["rsi_prev"] = round(_rsi_prev, 1)
         if _rsi_now <= 50:
             result["reject_reason"] = f"rsi_below_50_{round(_rsi_now,1)}"
             if not silent:
@@ -435,20 +386,14 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 logger.info(f"[REJECT-V8] {option_type} gate5_rsi_overextended "
                             f"rsi={round(_rsi_now,1)} (cap=65)")
             return result
-        if _rsi_now <= _rsi_prev:
-            result["reject_reason"] = f"rsi_not_rising_{round(_rsi_now,1)}_prev={round(_rsi_prev,1)}"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_not_rising "
-                            f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
-            return result
 
         result["fired"] = True
         result["entry_mode"] = "CLOSE_FILL"
         if not silent:
-            logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
+            logger.info(f"[ENGINE-V9] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
                         f"bw={_bw} rsi={round(_rsi_now,1)} "
-                        f"(5-gate V8, 3-min)")
+                        f"(3-gate V9, 3-min)")
 
         # ── GATE 6 (SHADOW): StochRSI(5) oversold cross ──
         # Does NOT block entry — logs only. Collect data for 2 weeks then decide.
