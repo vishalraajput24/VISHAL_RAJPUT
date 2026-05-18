@@ -19,17 +19,26 @@ print("Loading 3-min data to resample to 15-min...", flush=True)
 # Check if option_15min table exists
 tables = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", con)['name'].tolist()
 
+use_resample = True
 if 'option_15min' in tables:
-    print("Using option_15min table directly.")
-    df = pd.read_sql("""
-        SELECT timestamp, strike, type, open, high, low, close,
-               rsi, ema9_high, ema9_low, fwd_3c
-        FROM option_15min
-        WHERE time(timestamp) >= '09:30:00' AND time(timestamp) < '15:00:00'
-        ORDER BY strike, type, timestamp
-    """, con, parse_dates=['timestamp'])
-else:
-    print("No option_15min table — resampling from option_3min...")
+    cols_info = pd.read_sql("PRAGMA table_info(option_15min)", con)
+    available = cols_info['name'].tolist()
+    print(f"option_15min columns: {available}")
+    if 'ema9_high' in available and 'ema9_low' in available:
+        print("Using option_15min table directly.")
+        df = pd.read_sql("""
+            SELECT timestamp, strike, type, open, high, low, close,
+                   rsi, ema9_high, ema9_low, fwd_3c
+            FROM option_15min
+            WHERE time(timestamp) >= '09:30:00' AND time(timestamp) < '15:00:00'
+            ORDER BY strike, type, timestamp
+        """, con, parse_dates=['timestamp'])
+        use_resample = False
+    else:
+        print("option_15min lacks EMA columns — resampling from 3-min instead")
+
+if use_resample:
+    print("Resampling from option_3min...")
     df3 = pd.read_sql("""
         SELECT timestamp, strike, type, open, high, low, close, volume,
                rsi, ema9_high, ema9_low
