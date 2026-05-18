@@ -42,6 +42,14 @@ df['bw']          = df['ema9_high'] - df['ema9_low']
 g                 = df.groupby(['strike','type'])
 df['ema9l_slope'] = g['ema9_low'].transform(lambda x: x.diff())
 df['rsi_prev']    = g['rsi'].transform(lambda x: x.shift(1))
+# compute all prev_ features BEFORE dropna so groupby index stays valid
+df['prev_bw']          = g['bw'].transform(lambda x: x.shift(1))
+df['prev_rsi']         = g['rsi'].transform(lambda x: x.shift(1))
+df['prev_rsi_prev']    = g['rsi'].transform(lambda x: x.shift(2))
+df['prev_ema9l_slope'] = g['ema9_low'].transform(lambda x: x.diff().shift(1))
+df['prev_close']       = g['close'].transform(lambda x: x.shift(1))
+df['prev_open']        = g['open'].transform(lambda x: x.shift(1))
+df['prev_ema9l']       = g['ema9_low'].transform(lambda x: x.shift(1))
 v = df[df['fwd_3c'].notna() & (df['close']>0)].iloc[0]
 if abs(float(v['fwd_3c'])) > float(v['close'])*0.5:
     df['ret_3c'] = df['fwd_3c'] - df['close']
@@ -51,6 +59,11 @@ else:
 df.dropna(subset=['ret_3c','ema9l_slope','rsi','rsi_prev'], inplace=True)
 df['rsi_rising'] = df['rsi'] > df['rsi_prev']
 df['body']       = df['close'] - df['open']
+df['prev_rsi_rising']  = (df['prev_rsi'] > df['prev_rsi_prev']).astype(int)
+df['prev_green']       = (df['prev_close'] > df['prev_open']).astype(int)
+df['prev_above_ema9l'] = (df['prev_close'] > df['prev_ema9l']).astype(int)
+df['prev_slope_ok']    = (df['prev_ema9l_slope'] >= 0).astype(int)
+df['ret_from_open']    = df['ret_3c'] + df['body']
 
 DAYS = df['timestamp'].dt.date.nunique()
 
@@ -58,23 +71,6 @@ DAYS = df['timestamp'].dt.date.nunique()
 base  = ((df['close']>df['open']) & (df['close']>df['ema9_low']) & (df['ema9l_slope']>=0))
 tight = base & (df['bw']>=13) & (df['bw']<=17) & (df['rsi']>50) & (df['rsi']<65) & df['rsi_rising']
 df['is_tight'] = tight.astype(int)
-
-# ── Previous candle features ──────────────────────────────────────
-df['prev_bw']          = g['bw'].transform(lambda x: x.shift(1))
-df['prev_rsi']         = g['rsi'].transform(lambda x: x.shift(1))
-df['prev_rsi_prev']    = g['rsi'].transform(lambda x: x.shift(2))
-df['prev_ema9l_slope'] = g['ema9_low'].transform(lambda x: x.diff().shift(1))
-df['prev_close']       = g['close'].transform(lambda x: x.shift(1))
-df['prev_open']        = g['open'].transform(lambda x: x.shift(1))
-df['prev_ema9l']       = g['ema9_low'].transform(lambda x: x.shift(1))
-df['prev_bw2']         = g['bw'].transform(lambda x: x.shift(2))  # 2 candles back
-df['prev_rsi_rising']  = (df['prev_rsi'] > df['prev_rsi_prev']).astype(int)
-df['prev_green']       = (df['prev_close'] > df['prev_open']).astype(int)
-df['prev_above_ema9l'] = (df['prev_close'] > df['prev_ema9l']).astype(int)
-df['prev_slope_ok']    = (df['prev_ema9l_slope'] >= 0).astype(int)
-# Ret-open: if we enter at THIS candle's open and hold 9 min (3 candles at 3min)
-# = forward return from open = ret_3c + body
-df['ret_from_open']    = df['ret_3c'] + df['body']
 
 df2 = df.dropna(subset=['prev_bw','prev_rsi','prev_ema9l_slope']).copy()
 print(f"Candles for prediction analysis: {len(df2)} | Tight signals: {df2['is_tight'].sum()} | Days: {DAYS}")
