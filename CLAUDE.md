@@ -3,10 +3,10 @@
 ## Project Overview
 Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
-- **V8**: 3-min candle strategy — **LIVE paper trading** (active)
+- **V9**: 3-min candle strategy — **LIVE paper trading** (active)
 
-**Current version**: `v17` (merged to main 2026-05-14 via PR #7)
-**Next**: re-entry disabled (fresh-setup-only), pending merge
+**Current version**: `v18` (V9 gates: BW 13-17 + RSI 50-65, deployed 2026-05-18)
+**Previous**: v17 — V8 gates: BW>=11, RSI 45-75
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
@@ -30,7 +30,7 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 
 ---
 
-## V8 Architecture
+## V9 Architecture
 
 ### Entry Gates (check_entry_v8 in VRL_ENGINE.py)
 | Gate | Check |
@@ -38,15 +38,15 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
 | G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
-| G3 | `band_width = ema9_high - ema9_low >= 11` (real momentum, not choppy) |
+| G3 | `13 <= band_width <= 17` (momentum sweet spot — not choppy, not overextended) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | RSI > 45 AND RSI rising vs previous candle |
+| G5 | `50 < RSI < 65` AND rising vs previous candle |
 
-**Data basis** (9 days, 1404 candles):
-- Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
-- G3 (bw>=11) alone: filters sub-11 noise (band 8-10 = -3.0 avg return BAD). Band 12-16 = +18.1 avg (BEST).
-- G5 RSI>45 (vs >50): +42% more signals, same quality — picks up early-momentum entries.
-- Band width 8-10 = -3.0 avg return (BAD). Band 12-16 = +18.1 avg (BEST).
+**Data basis** (22 days, backtest_bw_rsi_filter.py):
+- V8 gates (BW>=11, RSI 45-75): score +8.4, n=590 signals
+- V9 gates (BW 13-17, RSI 50-65): score +21.1, n=88 signals, avg +16.4 pts
+- BW > 17 = overextended, bad returns. BW < 13 = choppy, bad returns.
+- RSI cap at 65 (vs 75): blocks overextended entries that reverse quickly.
 - G4 ensures directional divergence — both sides rising = sideways = skip.
 
 ### Exit Ladder (_v8_compute_trail_sl)

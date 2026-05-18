@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v17 (V7 shadow + V8 live)
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v18 (V7 shadow + V9 live)
 #  Timeframe: 15-minute option candles (current single-strategy)
 #  Entry: 2 gates (option-side only).
 #    1. 15-min candle close > EMA9_low (option)

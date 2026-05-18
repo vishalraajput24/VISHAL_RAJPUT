@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v17 (Vishal Clean V7+V8)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v18 (Vishal Clean V7+V9)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V8 (LIVE):   3-min  | 5-gate (green, close>ema9l, bw>=10, other<=mid, RSI>50 rising)
-#  V8 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_10(@18) → LOCK_12(@24) →
+#  V9 (LIVE):   3-min  | 5-gate (green, close>ema9l, BW 13-17, other<=mid, RSI 50-65 rising)
+#  V9 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
 
