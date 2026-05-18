@@ -198,6 +198,8 @@ _v8_state = {
     # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
     "_sl_cooldown_skip_next": False,
     "_force_exit_ts"        : 0.0,
+    # Exit candle guard: block re-entry on same 3-min candle we just exited from
+    "_last_exit_candle_ts"  : "",
     # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
     "_v8_both_rejected_ts": 0.0,
     # Date of last trade — used to detect new day and reset daily counters on restart
@@ -345,6 +347,12 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_other_token"]        = other_tok
         _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
         _v8_state["_last_trade_date"]            = date.today().isoformat()
+        # Exit candle guard: record the 3-min bucket we're exiting in
+        _now_exit = datetime.now()
+        _exit_bucket_min = (_now_exit.minute // 3) * 3
+        _v8_state["_last_exit_candle_ts"] = str(
+            _now_exit.replace(minute=_exit_bucket_min, second=0, microsecond=0)
+        )
 
     # --- Lock released: safe to read captured locals for logging ---
     pnl_pts = round(exit_price - entry_price, 2)

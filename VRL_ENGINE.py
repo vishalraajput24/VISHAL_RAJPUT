@@ -299,6 +299,14 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 logger.info(f"[REJECT-V8] {option_type} same_candle_guard ts={fired_ts}")
             return result
 
+        # ── Exit candle guard: block re-entry on same candle we just exited ──
+        if state.get("_last_exit_candle_ts", "") == fired_ts:
+            result["reject_reason"] = "exit_candle_guard"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} exit_candle_guard — "
+                            f"same 3-min candle as last exit (ts={fired_ts})")
+            return result
+
         # ── EMERGENCY_SL 1-candle cooldown ──
         if state.get("_sl_cooldown_skip_next"):
             state["_sl_cooldown_skip_next"] = False
