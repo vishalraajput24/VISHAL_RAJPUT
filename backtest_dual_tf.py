@@ -48,17 +48,19 @@ df1['ema9_low_1m']  = df1.groupby(['strike','type'])['low'].transform(
 # ── 3-min: add slope + forward return ─────────────────────────────
 df3 = df3.sort_values(['strike','type','timestamp'])
 df3['ema9l_slope'] = df3.groupby(['strike','type'])['ema9_low'].diff()
-df3['ret_3c']      = df3['fwd_3c']   # fwd_3c already stores the forward close price delta
 
-# Check if fwd_3c is absolute price or return
-# Use first non-null pair to decide
+# fwd_3c may be stored as string — cast to float, empty string → NaN
+df3['fwd_3c'] = pd.to_numeric(df3['fwd_3c'], errors='coerce')
+
+# Detect absolute price vs return using first valid pair
 valid = df3[df3['fwd_3c'].notna() & (df3['close'] > 0)].iloc[0]
-sample_close, sample_fwd = valid['close'], valid['fwd_3c']
+sample_close, sample_fwd = float(valid['close']), float(valid['fwd_3c'])
 if abs(sample_fwd) > sample_close * 0.5:
     df3['ret_3c'] = df3['fwd_3c'] - df3['close']
     print("fwd_3c is absolute price — computing return as fwd_3c - close")
 else:
-    print("fwd_3c appears to be a return already")
+    df3['ret_3c'] = df3['fwd_3c']
+    print("fwd_3c is already a return")
 
 # ── Time filter ────────────────────────────────────────────────────
 t3 = df3['timestamp']
