@@ -40,7 +40,7 @@ df3 = pd.read_sql("""
 
 # ── Load 1-min data for intra-candle entry ────────────────────────
 df1 = pd.read_sql("""
-    SELECT timestamp, strike, type, open, high, low, close, rsi, ema9_low
+    SELECT timestamp, strike, type, open, high, low, close, rsi
     FROM option_1min
     WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
     ORDER BY strike, type, timestamp
