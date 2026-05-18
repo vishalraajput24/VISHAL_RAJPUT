@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v17 (Vishal Clean V7+V8)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v18 (Vishal Clean V7+V9)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V8 (LIVE):   3-min  | 5-gate (green, close>ema9l, bw>=10, other<=mid, RSI>50 rising)
-#  V8 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_10(@18) → LOCK_12(@24) →
+#  V9 (LIVE):   3-min  | 5-gate (green, close>ema9l, BW 13-17, other<=mid, RSI 50-65 rising)
+#  V9 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
 
@@ -198,6 +198,8 @@ _v8_state = {
     # 1-candle cooldown after EMERGENCY_SL (owned here, not in V7 state)
     "_sl_cooldown_skip_next": False,
     "_force_exit_ts"        : 0.0,
+    # Exit candle guard: block re-entry on same 3-min candle we just exited from
+    "_last_exit_candle_ts"  : "",
     # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
     "_v8_both_rejected_ts": 0.0,
     # Date of last trade — used to detect new day and reset daily counters on restart
@@ -345,6 +347,12 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_other_token"]        = other_tok
         _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
         _v8_state["_last_trade_date"]            = date.today().isoformat()
+        # Exit candle guard: record the 3-min bucket we're exiting in
+        _now_exit = datetime.now()
+        _exit_bucket_min = (_now_exit.minute // 3) * 3
+        _v8_state["_last_exit_candle_ts"] = str(
+            _now_exit.replace(minute=_exit_bucket_min, second=0, microsecond=0)
+        )
 
     # --- Lock released: safe to read captured locals for logging ---
     pnl_pts = round(exit_price - entry_price, 2)
@@ -497,7 +505,19 @@ _locked_at_spot   = None
 _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
-_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 10s
+_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
+# Shadow: dual-TF early entry tracking (1 week data collection before going live)
+_v8_shadow_dt = {
+    "active": False,       # shadow signal fired in current 3-min bucket
+    "direction": "",       # CE or PE
+    "bucket_ts": "",       # completed 3-min candle timestamp (alignment source)
+    "entry_price": 0.0,    # option price when 1-min trigger fired
+    "entry_time": "",      # HH:MM:SS when fired
+    "peak_price": 0.0,     # max option price seen since shadow entry
+    "peak_pts": 0.0,       # max_pts above entry
+    "live_entry": 0.0,     # 3-min live entry price (for comparison)
+    "last_scan_ts": 0.0,   # throttle shadow scan
+}
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
@@ -1260,23 +1280,23 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v17\n"
+        "<b>STRATEGY</b>  Vishal Clean v18\n"
         "V7 SHADOW : 15-min | 2-gate | signals only\n"
-        "V8 LIVE   : 3-min  | 5-gate | PAPER trading\n"
+        "V9 LIVE   : 3-min  | 5-gate | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V8 GATES</b>\n"
+        "<b>V9 GATES</b>\n"
         "G1) Green candle (close > open)\n"
         "G2) Close > EMA9_low\n"
-        "G3) Band width >= 10 pts\n"
+        "G2B) EMA9_low slope >= 0 (rising)\n"
+        "G3) Band width 13-17 pts\n"
         "G4) Other side <= band midpoint\n"
-        "G5) RSI > 50 AND rising\n"
+        "G5) 50 < RSI < 65 AND rising\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V8 SL LADDER</b>\n"
+        "<b>V9 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
         "peak >= 12 → LOCK_4   entry + 4\n"
-        "peak >= 18 → LOCK_10  entry + 10\n"
         "peak >= 24 → LOCK_12  entry + 12\n"
         "peak >= 30 → LOCK_20  entry + 20\n"
         "peak >= 36 → LOCK_30  entry + 30\n"
@@ -2464,14 +2484,14 @@ def _strategy_loop(kite):
             _v8_in_force_cooldown = (_v8_force_exit_age < 180 and float(_v8_state.get("_force_exit_ts", 0) or 0) > 0)
             if (_v8_in_force_cooldown
                     and not _v8_state.get("in_trade")
-                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                    and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
             if (not _v8_state.get("in_trade")
                     and D.is_trading_window(now)
                     and _locked_tokens
                     and not _v8_in_force_cooldown
-                    and time.time() - _v8_last_entry_scan_ts >= 10):
+                    and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 try:
                     from VRL_ENGINE import check_entry_v8
@@ -2542,6 +2562,123 @@ def _strategy_loop(kite):
                 except Exception as _v8e:
                     import traceback as _v8tb
                     logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
+
+            # ── SHADOW: Dual-TF early entry tracker (data collection, NO live trades) ──
+            # 3-min alignment (completed candle) + 1-min tick > EMA9_high + 1-min RSI rising
+            # Runs 1 week in shadow to find: early entry pts saved, peak distribution,
+            # expiry behaviour — then "magic number" for first gate when going live.
+            global _v8_shadow_dt
+            if (not _v8_state.get("in_trade")
+                    and D.is_trading_window(now)
+                    and _locked_tokens
+                    and time.time() - _v8_shadow_dt["last_scan_ts"] >= 3):
+                _v8_shadow_dt["last_scan_ts"] = time.time()
+                try:
+                    for _sh_dir, _sh_info in [("CE", (_locked_tokens or {}).get("CE", {})),
+                                               ("PE", (_locked_tokens or {}).get("PE", {}))]:
+                        _sh_tok = int(_sh_info.get("token", 0) or 0)
+                        if not _sh_tok:
+                            continue
+                        _sh_3m = D.add_indicators(D.get_historical_data(_sh_tok, "3minute", 20))
+                        if _sh_3m is None or len(_sh_3m) < 5:
+                            continue
+                        _sh_comp  = _sh_3m.iloc[-2]   # last COMPLETED candle
+                        _sh_bk_ts = str(_sh_comp.name)
+
+                        # Detect bucket change — log previous shadow summary
+                        if _v8_shadow_dt["bucket_ts"] != _sh_bk_ts:
+                            if _v8_shadow_dt["active"]:
+                                _cmp = ""
+                                if _v8_shadow_dt["live_entry"] > 0:
+                                    _saved = round(_v8_shadow_dt["live_entry"] - _v8_shadow_dt["entry_price"], 1)
+                                    _cmp = f" vs live={_v8_shadow_dt['live_entry']} saved={_saved:+.1f}pts"
+                                logger.info(
+                                    f"[SHADOW-DTF] {_v8_shadow_dt['direction']} BUCKET-END "
+                                    f"entry={_v8_shadow_dt['entry_price']} "
+                                    f"peak={_v8_shadow_dt['peak_price']} "
+                                    f"peak_pts={_v8_shadow_dt['peak_pts']:+.1f}{_cmp}"
+                                )
+                            _v8_shadow_dt.update({
+                                "active": False, "direction": "", "bucket_ts": _sh_bk_ts,
+                                "entry_price": 0.0, "entry_time": "", "peak_price": 0.0,
+                                "peak_pts": 0.0, "live_entry": 0.0,
+                            })
+
+                        # If already fired in this bucket — just update peak
+                        if _v8_shadow_dt["active"] and _v8_shadow_dt["direction"] == _sh_dir:
+                            _sh_ltp_pk = D.get_ltp(_sh_tok)
+                            if _sh_ltp_pk > _v8_shadow_dt["peak_price"]:
+                                _v8_shadow_dt["peak_price"] = _sh_ltp_pk
+                                _v8_shadow_dt["peak_pts"]   = round(_sh_ltp_pk - _v8_shadow_dt["entry_price"], 1)
+                            break
+
+                        if _v8_shadow_dt["active"]:
+                            break   # already fired for another dir this bucket
+
+                        # ── 3-min alignment check on completed candle ──
+                        _sh_close  = float(_sh_comp["close"])
+                        _sh_open   = float(_sh_comp["open"])
+                        _sh_ema9h  = float(_sh_comp.get("ema9_high", 0))
+                        _sh_ema9l  = float(_sh_comp.get("ema9_low", 0))
+                        _sh_bw     = round(_sh_ema9h - _sh_ema9l, 2)
+                        _sh_prev_l = float(_sh_3m.iloc[-3].get("ema9_low", 0))
+                        _sh_rsi    = float(_sh_comp.get("RSI", 0) or 0)
+                        _sh_rsi_p  = float(_sh_3m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_aligned = (
+                            _sh_close > _sh_open and
+                            _sh_close > _sh_ema9l and
+                            _sh_ema9l >= _sh_prev_l and
+                            _sh_bw >= 11 and
+                            45 < _sh_rsi < 75 and
+                            _sh_rsi > _sh_rsi_p
+                        )
+                        if not _sh_aligned:
+                            continue
+
+                        # ── 1-min tick trigger check ──
+                        _sh_1m = D.get_option_1min(_sh_tok, 15)
+                        if _sh_1m is None or len(_sh_1m) < 3:
+                            continue
+                        _sh_ema9h_1m   = float(_sh_1m.iloc[-2].get("ema9_high", 0))
+                        _sh_rsi_1m     = float(_sh_1m.iloc[-2].get("RSI", 0) or 0)
+                        _sh_rsi_1m_p   = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_ltp        = D.get_ltp(_sh_tok)
+                        if (_sh_ema9h_1m > 0 and _sh_ltp > _sh_ema9h_1m
+                                and _sh_rsi_1m > _sh_rsi_1m_p):
+                            _v8_shadow_dt.update({
+                                "active": True, "direction": _sh_dir,
+                                "bucket_ts": _sh_bk_ts,
+                                "entry_price": _sh_ltp, "entry_time": now.strftime("%H:%M:%S"),
+                                "peak_price": _sh_ltp, "peak_pts": 0.0,
+                            })
+                            logger.info(
+                                f"[SHADOW-DTF] {_sh_dir} SIGNAL "
+                                f"tick={_sh_ltp} ema9h_1m={_sh_ema9h_1m} "
+                                f"rsi_1m={_sh_rsi_1m:.1f}↑ bw_3m={_sh_bw} rsi_3m={_sh_rsi:.1f}"
+                            )
+                            _tg_send(
+                                f"🔵 <b>SHADOW DUAL-TF</b> {_sh_dir}\n"
+                                f"Tick {_sh_ltp:.1f} &gt; EMA9H_1m {_sh_ema9h_1m:.1f}\n"
+                                f"RSI_1m {_sh_rsi_1m:.1f}↑  BW_3m {_sh_bw}  RSI_3m {_sh_rsi:.1f}\n"
+                                f"<i>shadow only — tracking peak...</i>"
+                            )
+                            break
+                except Exception as _she:
+                    logger.warning(f"[SHADOW-DTF] error: {_she}")
+
+            # Capture live entry price into shadow for comparison
+            # (called from _v8_execute_paper_entry — attached via state key)
+            if (_v8_shadow_dt["active"]
+                    and _v8_shadow_dt["live_entry"] == 0
+                    and _v8_state.get("in_trade")
+                    and _v8_state.get("direction") == _v8_shadow_dt["direction"]):
+                _v8_shadow_dt["live_entry"] = float(_v8_state.get("entry_price", 0))
+                _saved = round(_v8_shadow_dt["live_entry"] - _v8_shadow_dt["entry_price"], 1)
+                logger.info(
+                    f"[SHADOW-DTF] LIVE ENTRY fired "
+                    f"shadow={_v8_shadow_dt['entry_price']} live={_v8_shadow_dt['live_entry']} "
+                    f"saved={_saved:+.1f}pts ({'EARLIER ✓' if _saved > 0 else 'LATER or same'})"
+                )
 
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
@@ -2649,15 +2786,6 @@ def _strategy_loop(kite):
                     _generate_eod_report()
                 except Exception as e:
                     logger.error("[MAIN] EOD report error: " + str(e))
-                def _run_collector():
-                    try:
-                        import VRL_COLLECTOR as _col
-                        _col.collect()
-                        logger.info("[COLLECTOR] EOD data snapshot complete")
-                    except Exception as _ce:
-                        logger.warning("[COLLECTOR] Error: " + str(_ce))
-                threading.Thread(target=_run_collector, daemon=True,
-                                 name="vrl-collector").start()
             try:
                 if now.hour == 15 and now.minute >= 45:
                     _today_iso = date.today().isoformat()
@@ -3584,10 +3712,9 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>V8 SL LADDER (Em -12 TICK)</b>\n"
+            "<b>V9 SL LADDER (Em -12 TICK)</b>\n"
             "INITIAL  (peak <12)  entry-12\n"
             "LOCK_4   (peak >=12) entry+4\n"
-            "LOCK_10  (peak >=18) entry+10\n"
             "LOCK_12  (peak >=24) entry+12\n"
             "LOCK_20  (peak >=30) entry+20\n"
             "LOCK_30  (peak >=36) entry+30\n"
@@ -3617,7 +3744,6 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DIAGNOSTIC</b>\n"
         "/pulse     — 🩺 full health check (one-shot)\n"
-        "/gates     — ⚙️ live V8 gate status for CE &amp; PE\n"
         "/xleg      — 📊 cross-leg divergence accuracy (7-day)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
@@ -3636,7 +3762,7 @@ def _cmd_help(args):
         "/deploy     — git pull main + restart\n"
         "/restart    — restart bot (no pull)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v17 — V8 live 3-min / V7 shadow 15-min, "
+        "VISHAL RAJPUT TRADE v18 — V9 live 3-min / V7 shadow 15-min, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -3990,107 +4116,6 @@ def _cmd_xleg(args):
         _tg_send("📊 X-LEG error: " + str(e))
 
 
-def _cmd_gates(args):
-    """/gates — show live V8 gate status for CE and PE right now."""
-    try:
-        from VRL_ENGINE import check_entry_v8 as _cev8
-        _spot = D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0
-
-        _ce_info = (_locked_tokens or {}).get("CE", {})
-        _pe_info = (_locked_tokens or {}).get("PE", {})
-        _ce_tok  = int(_ce_info.get("token", 0) or 0)
-        _pe_tok  = int(_pe_info.get("token", 0) or 0)
-
-        if not _ce_tok and not _pe_tok:
-            _tg_send("⚙️ /gates — strikes not locked yet, try after 9:20")
-            return
-
-        # cooldown status
-        _fe_ts   = float(_v8_state.get("_force_exit_ts", 0) or 0)
-        _fe_age  = int(time.time() - _fe_ts) if _fe_ts > 0 else 999
-        _fe_on   = _fe_age < 180 and _fe_ts > 0
-        _br_ts   = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
-        _br_age  = int(time.time() - _br_ts) if _br_ts > 0 else 999
-        _br_on   = _br_age < 60 and _br_ts > 0
-
-        _GATE_MAP = {
-            "red_candle":            "G1 ❌ Red candle",
-            "close_below_ema9_low":  "G2 ❌ Close < EMA9_low",
-            "gate2b_ema9l_falling":  "G2B ❌ EMA9_low slope falling",
-            "band_too_narrow":       "G3 ❌ Band < 10 pts",
-            "other_not_falling_mid": "G4 ❌ Other side too high",
-            "rsi_below_50":          "G5 ❌ RSI < 50",
-            "rsi_not_rising":        "G5 ❌ RSI not rising ≥2",
-            "insufficient_3m_data":  "⏳ Insufficient candles",
-            "same_candle_already_fired": "🔒 Same-candle guard",
-            "sl_cooldown_skip":      "⏸ SL cooldown skip",
-            "before_":               "⏳ Warmup not done",
-            "after_":                "🕐 Past entry cutoff",
-        }
-
-        def _gate_line(direction, tok, other_tok, info):
-            if not tok:
-                return direction + ": no token\n"
-            res = _cev8(token=tok, option_type=direction, spot_ltp=_spot,
-                        silent=True, state=_v8_state, other_token=other_tok)
-            ltp = D.get_ltp(tok) or 0
-            bw  = res.get("band_width", 0)
-            rsi = res.get("rsi", 0)
-            rsi_prev = res.get("rsi_prev", 0)
-            close = res.get("close", 0)
-            ema9l = res.get("ema9_low", 0)
-            _g6 = res.get("g6_stochrsi_os_cross")
-            _g6_str = (" G6 ✅" if _g6 else (" G6 ❌" if _g6 is False else ""))
-
-            if res.get("fired"):
-                gate_str = "✅ ALL GATES PASS" + _g6_str
-            else:
-                rr = res.get("reject_reason", "unknown")
-                gate_str = next(
-                    (v for k, v in _GATE_MAP.items() if rr.startswith(k)),
-                    "❌ " + rr
-                )
-            _strike = info.get("strike", "?")
-            _emj = "🟢" if direction == "CE" else "🔴"
-            return (
-                _emj + " <b>" + direction + " " + str(_strike) + "</b>  Rs" + str(round(ltp, 1)) + "\n"
-                + "   Close " + str(round(close, 1))
-                + " EMA9L " + str(round(ema9l, 1))
-                + " BW " + str(round(bw, 1))
-                + " RSI " + str(rsi) + "→" + str(round(rsi + (rsi - rsi_prev), 1)) + "\n"
-                + "   " + gate_str + "\n"
-            )
-
-        _in_trade = _v8_state.get("in_trade", False)
-        _trade_line = ""
-        if _in_trade:
-            _trade_line = ("🔴 IN TRADE — " + str(_v8_state.get("direction",""))
-                           + " " + str(_v8_state.get("strike","")) + "\n")
-
-        _cd_lines = ""
-        if _fe_on:
-            _cd_lines += "⏱ force_exit cooldown " + str(180 - _fe_age) + "s remaining\n"
-        if _br_on:
-            _cd_lines += "⏱ both_sides cooldown " + str(60 - _br_age) + "s remaining\n"
-
-        ce_block = _gate_line("CE", _ce_tok, _pe_tok, _ce_info)
-        pe_block = _gate_line("PE", _pe_tok, _ce_tok, _pe_info)
-
-        _tg_send(
-            "⚙️ <b>V8 GATE STATUS</b>  Spot " + str(round(_spot, 1)) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            + _trade_line
-            + _cd_lines
-            + ce_block
-            + pe_block
-            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            + ("<i>In trade — entry scan paused</i>" if _in_trade else "<i>Entry scan active every 10s</i>")
-        )
-    except Exception as _ge:
-        import traceback as _gtr
-        _tg_send("⚙️ /gates error: " + str(_ge) + "\n" + _gtr.format_exc()[:300])
-
-
 _DISPATCH = {
     "/help"      : _cmd_help,
     "/pulse"     : _cmd_pulse,
@@ -4105,7 +4130,6 @@ _DISPATCH = {
     "/livecheck" : _cmd_livecheck,
     "/download"  : _cmd_download,
     "/xleg"      : _cmd_xleg,
-    "/gates"     : _cmd_gates,
 }
 
 

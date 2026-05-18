@@ -3,10 +3,10 @@
 ## Project Overview
 Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
-- **V8**: 3-min candle strategy — **LIVE paper trading** (active)
+- **V9**: 3-min candle strategy — **LIVE paper trading** (active)
 
-**Current version**: `v17` (merged to main 2026-05-14 via PR #7)
-**Last PRs (2026-05-15)**: #19 restart msg · #20 force-exit cooldown + ESL fix · #21 /gates command
+**Current version**: `v18` (V9 gates: BW 13-17 + RSI 50-65, deployed 2026-05-18)
+**Previous**: v17 — V8 gates: BW>=11, RSI 45-75
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
@@ -14,10 +14,8 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 **V8 State**: `VISHAL_RAJPUT/state/vrl_v8_state.json`
 
 ### Deploy after any main merge
-Send `/deploy` on Telegram — bot handles fetch+reset+restart automatically.
-Manual fallback:
 ```bash
-cd ~/VISHAL_RAJPUT && git fetch origin main && git reset --hard origin/main && sudo systemctl restart vrl-main.service
+cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vrl-main.service
 ```
 
 ---
@@ -32,7 +30,7 @@ cd ~/VISHAL_RAJPUT && git fetch origin main && git reset --hard origin/main && s
 
 ---
 
-## V8 Architecture
+## V9 Architecture
 
 ### Entry Gates (check_entry_v8 in VRL_ENGINE.py)
 | Gate | Check |
@@ -40,15 +38,15 @@ cd ~/VISHAL_RAJPUT && git fetch origin main && git reset --hard origin/main && s
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
 | G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
-| G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
+| G3 | `13 <= band_width <= 17` (momentum sweet spot — not choppy, not overextended) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | RSI > 50 AND RSI rising ≥ 2 pts vs previous candle |
-| G6 | StochRSI_OsCross(5) — smooth_%K crossed up from ≤20 prev candle **[SHADOW — log only]** |
+| G5 | `50 < RSI < 65` AND rising vs previous candle |
 
-**Data basis** (9 days, 1404 candles):
-- Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
-- G3 (bw>=10) alone: avg_fwd = +16.3 pts, win% = 41.7%
-- Band width 8-10 = -3.0 avg return (BAD). Band 12-16 = +18.1 avg (BEST).
+**Data basis** (22 days, backtest_bw_rsi_filter.py):
+- V8 gates (BW>=11, RSI 45-75): score +8.4, n=590 signals
+- V9 gates (BW 13-17, RSI 50-65): score +21.1, n=88 signals, avg +16.4 pts
+- BW > 17 = overextended, bad returns. BW < 13 = choppy, bad returns.
+- RSI cap at 65 (vs 75): blocks overextended entries that reverse quickly.
 - G4 ensures directional divergence — both sides rising = sideways = skip.
 
 ### Exit Ladder (_v8_compute_trail_sl)
@@ -235,57 +233,18 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 
 ---
 
-### BUG-16: V8 entry scan ran only once per minute at :35s (late entries)
-**Symptom**: Candle turned green at :40s into the minute; bot missed it until next minute.
-**Root cause**: V8 entry block was inside the `_is_new_1min_candle()` gate.
-**Fix**: Moved V8 entry scan outside the 1-min gate. Throttled to every 10s via `_v8_last_entry_scan_ts`. `same_candle_guard` prevents double-entry on same candle.
-**Location**: VRL_MAIN.py, outside `_is_new_1min_candle` block.
-**Confirmed**: Next trade fired at 14:27:42 (42s into minute — would have missed before fix).
-
----
-
-### BUG-17: Immediate re-entry after manual /force_exit
-**Symptom**: PE 23700 force-exited +27.1pts at 14:47:37; PE 23650 entered 1 second later at 14:47:38. G6 showed SKIP on that trade (+0.5pts gross, net loss after charges).
-**Root cause**: No cooldown after manual exit — next 10s scan immediately re-entered.
-**Fix**: `_force_exit_ts` recorded on FORCE_EXIT. Entry scan blocked for 180s after. Logs `[REJECT-V8] force_exit_cooldown age=Xs` every 10s while active. Persisted in `_V8_PERSIST_FIELDS`.
-**Location**: VRL_MAIN.py `_v8_execute_paper_exit` and 10s entry scan gate.
-
----
-
-## Telegram Commands
-| Command | Purpose |
-|---------|---------|
-| `/pulse` | Full health check — uptime, spot, V8 position, P&L, SL, tier |
-| `/gates` | Live V8 gate status for CE & PE — shows exactly which gate is blocking |
-| `/status` | V7 trade status + PNL |
-| `/trades` | Today's trade list |
-| `/xleg` | Cross-leg divergence accuracy (7-day) |
-| `/livecheck` | Last 50 log lines |
-| `/download` | Full day zip |
-| `/pause` / `/resume` | Block / re-enable new entries |
-| `/forceexit` | Emergency exit all lots (arms 3-min cooldown) |
-| `/deploy` | git fetch+reset main + restart |
-| `/restart` | Restart bot (no pull) |
-
----
-
 ## Design Decisions (Locked)
 - **Re-entry disabled** (2026-05-15): After analyzing 11:32 losing re-entry (price reversed 5.5 pts below exit within 33s), decided re-entry adds risk without edge. `_v8_execute_paper_exit` always sets `_reentry_armed = False`. Fresh setup only after every exit.
-- **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction. Arms only when cooldown is NOT already active (prevents infinite renewal).
+- **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction.
 - **Gate 2B** (2026-05-15): EMA9_low slope must be ≥ 0 for last 2 candles. Blocks fake breakouts on falling support.
-- **Force-exit cooldown = 3 min** (2026-05-15): After any manual /force_exit, no new entries for 180s. Prevents immediate re-chasing after manual intervention.
-- **G6 StochRSI_OsCross(5) = shadow only** (2026-05-15): Backtest showed 76.7% win rate vs 62.1% baseline. Logging PASS/SKIP on every entry. Collect 2 weeks live data before promoting to hard gate.
-- **10s entry scan** (2026-05-15): V8 checks every 10s (not once/min). `same_candle_guard` prevents double-entry.
 
 ## Pending / Collect Data
-- **Both-sides cooldown improvement**: Currently 1-min flat block. Issue: blocks clean directional signals (PE RSI=75.7 blocked for 60s on 2026-05-15). Consider: lift immediately when one side passes cleanly while other fails G1/G2.
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
 - xLeg dying leg: require dying leg's own EMA also falling 2+ candles
 - Max trades/day limit (suggest: 10)
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
 - Daily loss limit (suggest: -50 pts → stop entries)
 - Time blackout windows (11:00–11:30, 13:00–14:30) — collect data first
-- G6 promotion: after 2 weeks of `[G6-SHADOW]` PASS/SKIP data, analyze if PASS correlates with wins → make hard gate
 - EOD data collector `VRL_COLLECTOR.py` (cron 15:35): ATM±300 strikes, NIFTY spot 1-min, VIX — save as Parquet
 - Trade enrichment tool `VRL_ANALYSIS.py`: `--date`, `--esl`, `--gates`, `--deep` flags
 
