@@ -269,7 +269,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
       G1.  GREEN candle (close > open)
       G2.  Close > EMA9_low (broke above support band)
       G2B. EMA9_low slope >= 0 (support band flat or rising — blocks fake breakouts)
-      G3.  13 <= band_width <= 17 (momentum sweet spot)
+      G3.  12 <= band_width <= 16 (momentum sweet spot)
       G4.  other_close <= other_band_mid (other side falling = directional)
       G5.  50 < RSI < 65 AND rising vs previous closed candle
     Same-candle guard prevents same-candle re-fires (state-driven).
@@ -377,20 +377,20 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"ema9l={round(ema9_low,2)} prev={round(_prev_ema9l,2)} slope={_ema9l_slope}")
             return result
 
-        # ── GATE 3: band width 13-17 (momentum sweet spot, not choppy or overextended) ──
+        # ── GATE 3: band width 12-16 (momentum sweet spot, not choppy or overextended) ──
         _bw = round(ema9_high - ema9_low, 2)
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
-        if _bw < 13:
+        if _bw < 12:
             result["reject_reason"] = f"band_too_narrow_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_narrow "
-                            f"width={_bw} (need 13-17)")
+                            f"width={_bw} (need 12-16)")
             return result
-        if _bw > 17:
+        if _bw > 16:
             result["reject_reason"] = f"band_too_wide_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_wide "
-                            f"width={_bw} (need 13-17)")
+                            f"width={_bw} (need 12-16)")
             return result
 
         # ── GATE 4: other side must be falling (below its own band midpoint) ──
