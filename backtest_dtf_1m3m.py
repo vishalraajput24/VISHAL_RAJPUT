@@ -108,10 +108,6 @@ df3['close_2c']      = g3['close'].transform(lambda x: x.shift(-2))
 df3['close_3c']      = g3['close'].transform(lambda x: x.shift(-3))
 
 df3 = df3.dropna(subset=['close_prev','ema9_low_prev','rsi_prev','fwd_3c'])
-df3['ret'] = df3['fwd_3c'] - df3['close']
-
-fresh_3m = (df3['close'] > df3['ema9_low']) & (df3['close_prev'] <= df3['ema9_low_prev'])
-rsi_ok   = (df3['rsi'] > 50) & (df3['rsi'] < 65)
 
 # ── Join 1-min EMA9_high into 3-min at matching timestamps ────────
 print("Joining 1-min EMA9_high to 3-min signals...", flush=True)
@@ -120,7 +116,12 @@ df3 = df3.merge(
               'open_1m','high_1m','low_1m']],
     on=['timestamp','strike','type','expiry'],
     how='left'
-)
+).reset_index(drop=True)
+
+# Compute all masks AFTER merge so index is consistent
+df3['ret']   = df3['fwd_3c'] - df3['close']
+fresh_3m     = (df3['close'] > df3['ema9_low']) & (df3['close_prev'] <= df3['ema9_low_prev'])
+rsi_ok       = (df3['rsi'] > 50) & (df3['rsi'] < 65)
 
 above_ema9h_1m = df3['close_1m'] > df3['ema9_high_1m']
 
