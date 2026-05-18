@@ -1,26 +1,10 @@
 Loading 1-min option data...
+Loading 3-min option data...
+1-min: 40892 rows | 21 days
+3-min: 43333 rows | 21 days
+Computing 1-min EMA9 bands...
 Traceback (most recent call last):
-  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2664, in execute
-    cur.execute(sql, *args)
-sqlite3.OperationalError: no such column: token
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/home/vishalraajput24/VISHAL_RAJPUT/backtest_dual_tf.py", line 20, in <module>
-    df1 = pd.read_sql("""
-          ^^^^^^^^^^^^^^^
-  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 708, in read_sql
-    return pandas_sql.read_query(
-           ^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2728, in read_query
-    cursor = self.execute(sql, params)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2676, in execute
-    raise ex from exc
-pandas.errors.DatabaseError: Execution failed on sql '
-    SELECT timestamp, token, strike, type, open, high, low, close, volume
-    FROM option_1min
-    WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
-    ORDER BY timestamp
-': no such column: token
+  File "/home/vishalraajput24/VISHAL_RAJPUT/backtest_dual_tf.py", line 58, in <module>
+    if abs(sample_fwd) > sample_close * 0.5:
+       ^^^^^^^^^^^^^^^
+TypeError: bad operand type for abs(): 'NoneType'
