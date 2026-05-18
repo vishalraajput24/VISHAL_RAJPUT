@@ -1,1 +1,26 @@
-/home/vishalraajput24/kite_env/bin/python3: can't open file '/home/vishalraajput24/VISHAL_RAJPUT/backtest_dual_tf.py': [Errno 2] No such file or directory
+Loading 1-min option data...
+Traceback (most recent call last):
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2664, in execute
+    cur.execute(sql, *args)
+sqlite3.OperationalError: no such column: token
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/vishalraajput24/VISHAL_RAJPUT/backtest_dual_tf.py", line 20, in <module>
+    df1 = pd.read_sql("""
+          ^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 708, in read_sql
+    return pandas_sql.read_query(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2728, in read_query
+    cursor = self.execute(sql, params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/io/sql.py", line 2676, in execute
+    raise ex from exc
+pandas.errors.DatabaseError: Execution failed on sql '
+    SELECT timestamp, token, strike, type, open, high, low, close, volume
+    FROM option_1min
+    WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
+    ORDER BY timestamp
+': no such column: token
