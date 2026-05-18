@@ -18,6 +18,7 @@ cd "$REPO"
 # Find the Python that has pandas (same env the bot uses)
 PYTHON=""
 for candidate in \
+    "$HOME/kite_env/bin/python3" \
     "$HOME/venv/bin/python3" \
     "$HOME/env/bin/python3" \
     "$HOME/.venv/bin/python3" \
