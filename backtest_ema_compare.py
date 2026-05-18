@@ -53,9 +53,9 @@ con.close()
 
 if not _has_expiry:
     print("Warning: no expiry column — computing inline (run fix_db_expiry.py once)")
-    def _next_thu(d):
-        return d + timedelta(days=(3 - d.weekday()) % 7)
-    df['expiry'] = df['timestamp'].dt.date.apply(_next_thu).astype(str)
+    def _next_tue(d):
+        return d + timedelta(days=(1 - d.weekday()) % 7)
+    df['expiry'] = df['timestamp'].dt.date.apply(_next_tue).astype(str)
 
 df = df.sort_values(['strike','type','expiry','timestamp']).copy()
 print(f"Rows: {len(df)} | Expiry-aware: {_has_expiry}", flush=True)

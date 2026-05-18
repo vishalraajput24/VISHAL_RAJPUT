@@ -1,7 +1,8 @@
 """
 One-time DB migration: add expiry column to option_3min.
-expiry = next Thursday (inclusive) from each row's date.
-NIFTY50 weekly options expire every Thursday.
+expiry = next Tuesday (inclusive) from each row's date.
+NIFTY50 weekly options expire every Tuesday (changed from Thursday,
+effective September 2025 per NSE circular).
 
 Run once:
     ~/kite_env/bin/python3 ~/VISHAL_RAJPUT/fix_db_expiry.py
@@ -17,26 +18,21 @@ cur.execute("PRAGMA table_info(option_3min)")
 cols = [r[1] for r in cur.fetchall()]
 
 if 'expiry' in cols:
-    print("expiry column already exists — checking population...")
-    cur.execute("SELECT COUNT(*) FROM option_3min WHERE expiry IS NULL")
-    nulls = cur.fetchone()[0]
-    if nulls == 0:
-        print("All rows already have expiry. Nothing to do.")
-        con.close()
-        exit(0)
-    print(f"{nulls} rows still NULL — populating...")
+    print("expiry column exists — resetting to recompute with Tuesday expiry...")
+    con.execute("UPDATE option_3min SET expiry = NULL")
+    con.commit()
 else:
     print("Adding expiry column...")
     con.execute("ALTER TABLE option_3min ADD COLUMN expiry TEXT")
 
 # SQLite strftime: %w = 0(Sun) 1(Mon) 2(Tue) 3(Wed) 4(Thu) 5(Fri) 6(Sat)
-# Next Thursday inclusive = timestamp_date + ((4 - weekday + 7) % 7) days
-print("Populating expiry dates (next Thursday for each row)...")
+# Next Tuesday inclusive = timestamp_date + ((2 - weekday + 7) % 7) days
+print("Populating expiry dates (next Tuesday for each row)...")
 con.execute("""
     UPDATE option_3min
     SET expiry = date(
         timestamp,
-        '+' || ((4 - cast(strftime('%w', timestamp) as integer) + 7) % 7) || ' days'
+        '+' || ((2 - cast(strftime('%w', timestamp) as integer) + 7) % 7) || ' days'
     )
     WHERE expiry IS NULL
 """)

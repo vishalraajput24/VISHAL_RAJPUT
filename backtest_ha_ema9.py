@@ -54,10 +54,10 @@ con.close()
 # Compute expiry inline if not in DB
 if not _has_expiry:
     print("Warning: no expiry column in DB — computing from timestamp (run fix_db_expiry.py)")
-    def _next_thursday(d):
-        days = (3 - d.weekday()) % 7   # Mon=0 Thu=3
+    def _next_tuesday(d):
+        days = (1 - d.weekday()) % 7   # Mon=0 Tue=1
         return d + timedelta(days=days)
-    df['expiry'] = df['timestamp'].dt.date.apply(_next_thursday).astype(str)
+    df['expiry'] = df['timestamp'].dt.date.apply(_next_tuesday).astype(str)
 
 df = df.sort_values(['strike','type','expiry','timestamp']).reset_index(drop=True)
 print(f"Rows: {len(df)} | Expiry-aware: {_has_expiry}", flush=True)
