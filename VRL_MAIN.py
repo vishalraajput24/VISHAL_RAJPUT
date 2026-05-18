@@ -2,7 +2,7 @@
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v17 (Vishal Clean V7+V8)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
 #  V8 (LIVE):   3-min  | 5-gate (green, close>ema9l, bw>=10, other<=mid, RSI>50 rising)
-#  V8 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
+#  V8 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_10(@18) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
 
@@ -207,7 +207,7 @@ _v8_lock = threading.Lock()
 
 
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
-    """V8 SL ladder (3-min): LOCK_4 at +12, then custom tiers up to LOCK_50."""
+    """V8 SL ladder (3-min): LOCK_4 at +12, LOCK_10 at +18, then custom tiers up to LOCK_50."""
     if peak_pnl < 12:
         return round(entry_price - 12, 2), "INITIAL"
     if peak_pnl >= 50:
@@ -220,6 +220,8 @@ def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
         lock, tier = 20, "LOCK_20"
     elif peak_pnl >= 24:
         lock, tier = 12, "LOCK_12"
+    elif peak_pnl >= 18:
+        lock, tier = 10, "LOCK_10"
     else:
         lock, tier = 4, "LOCK_4"
     return round(entry_price + lock, 2), tier
@@ -288,7 +290,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STOP</b>\n"
         "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
-        "Trail: peak ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n",
+        "Trail: peak ≥12→+4 | ≥18→+10 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n",
         priority="critical"
     )
     _save_v8_state()
@@ -1274,6 +1276,7 @@ def _alert_bot_started():
         "<b>V8 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
         "peak >= 12 → LOCK_4   entry + 4\n"
+        "peak >= 18 → LOCK_10  entry + 10\n"
         "peak >= 24 → LOCK_12  entry + 12\n"
         "peak >= 30 → LOCK_20  entry + 20\n"
         "peak >= 36 → LOCK_30  entry + 30\n"
@@ -3575,6 +3578,7 @@ def _cmd_pulse(args):
             "<b>V8 SL LADDER (Em -12 TICK)</b>\n"
             "INITIAL  (peak <12)  entry-12\n"
             "LOCK_4   (peak >=12) entry+4\n"
+            "LOCK_10  (peak >=18) entry+10\n"
             "LOCK_12  (peak >=24) entry+12\n"
             "LOCK_20  (peak >=30) entry+20\n"
             "LOCK_30  (peak >=36) entry+30\n"
