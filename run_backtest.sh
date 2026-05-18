@@ -14,11 +14,29 @@ REPO="$HOME/VISHAL_RAJPUT"
 OUT="/tmp/${NAME}_result.txt"
 
 cd "$REPO"
+
+# Find the Python that has pandas (same env the bot uses)
+PYTHON=""
+for candidate in \
+    "$HOME/venv/bin/python3" \
+    "$HOME/env/bin/python3" \
+    "$HOME/.venv/bin/python3" \
+    "$(which python3 2>/dev/null)"; do
+    if [ -x "$candidate" ] && "$candidate" -c "import pandas" 2>/dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "ERROR: no Python with pandas found. Install it: pip3 install pandas numpy"
+    exit 1
+fi
+
 echo "==> Fetching latest $SCRIPT from $BRANCH..."
 git fetch origin "$BRANCH" -q
 git checkout "origin/$BRANCH" -- "$SCRIPT"
-echo "==> Running $SCRIPT (output → $OUT)"
+echo "==> Running $SCRIPT with $PYTHON (output → $OUT)"
 echo ""
-python3 "$REPO/$SCRIPT" 2>&1 | tee "$OUT"
+"$PYTHON" "$REPO/$SCRIPT" 2>&1 | tee "$OUT"
 echo ""
 echo "==> Saved: $OUT"
