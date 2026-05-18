@@ -11,9 +11,13 @@ Compares:
   - Exit ladder P&L simulation
   - Day-by-day cumulative
 
+Expiry-aware: groupby(['strike','type','expiry']) so EMA resets
+correctly at each weekly contract rollover (NIFTY expires Thursdays).
+
 Run: bash ~/VISHAL_RAJPUT/run_backtest.sh ema_compare
 """
 import sqlite3, os, sys
+from datetime import timedelta
 import pandas as pd
 import numpy as np
 
@@ -23,40 +27,51 @@ if not os.path.exists(DB):
 
 con = sqlite3.connect(DB)
 print("Loading data...", flush=True)
-df = pd.read_sql("""
-    SELECT timestamp, strike, type, open, high, low, close, rsi,
-           ema9_low
-    FROM option_3min
-    WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
-    ORDER BY strike, type, timestamp
-""", con, parse_dates=['timestamp'])
+
+_cur = con.cursor()
+_cur.execute("PRAGMA table_info(option_3min)")
+_has_expiry = any(r[1] == 'expiry' for r in _cur.fetchall())
+
+if _has_expiry:
+    _sql = """
+        SELECT timestamp, strike, type, open, high, low, close, rsi,
+               ema9_low, expiry
+        FROM option_3min
+        WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
+        ORDER BY strike, type, expiry, timestamp
+    """
+else:
+    _sql = """
+        SELECT timestamp, strike, type, open, high, low, close, rsi, ema9_low
+        FROM option_3min
+        WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
+        ORDER BY strike, type, timestamp
+    """
+
+df = pd.read_sql(_sql, con, parse_dates=['timestamp'])
 con.close()
 
-df = df.sort_values(['strike','type','timestamp']).copy()
-print(f"Rows: {len(df)}", flush=True)
+if not _has_expiry:
+    print("Warning: no expiry column — computing inline (run fix_db_expiry.py once)")
+    def _next_thu(d):
+        return d + timedelta(days=(3 - d.weekday()) % 7)
+    df['expiry'] = df['timestamp'].dt.date.apply(_next_thu).astype(str)
 
-# ── Compute EMA of lows for each period ──────────────────────────
+df = df.sort_values(['strike','type','expiry','timestamp']).copy()
+print(f"Rows: {len(df)} | Expiry-aware: {_has_expiry}", flush=True)
+
+# ── Compute EMA of lows per contract (resets at expiry boundary) ──
 print("Computing EMAs...", flush=True)
 
 EMA_PERIODS = [9, 21, 51, 200]
 
-def compute_ema_low(group, period):
-    return group['low'].ewm(span=period, adjust=False).mean()
-
 for p in EMA_PERIODS:
     col = f'ema{p}_low'
-    if col == 'ema9_low':
-        continue  # already in DB
-    df[col] = df.groupby(['strike','type'])['low'].transform(
+    df[col] = df.groupby(['strike','type','expiry'])['low'].transform(
         lambda x: x.ewm(span=p, adjust=False).mean()
     )
 
-# Also compute EMA9_low fresh (verify against DB column)
-df['ema9_low_calc'] = df.groupby(['strike','type'])['low'].transform(
-    lambda x: x.ewm(span=9, adjust=False).mean()
-)
-
-g = df.groupby(['strike','type'])
+g = df.groupby(['strike','type','expiry'])
 df['rsi_prev']  = g['rsi'].transform(lambda x: x.shift(1))
 df['close_prev']= g['close'].transform(lambda x: x.shift(1))
 

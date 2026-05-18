@@ -6,13 +6,17 @@ Computes HA candles from raw OHLC, then tests:
   - RSI 50-65 (raw RSI from DB)
   - Time window 09:45-13:45
 
-Compares vs raw OHLC fresh break (baseline ₹+26,676).
+Compares vs raw OHLC fresh break (baseline).
 Exit: ladder SL simulated on raw OHLC (real execution prices).
 LOT = 65
+
+Expiry-aware: groupby(['strike','type','expiry']) so EMA resets
+correctly at each weekly contract rollover (NIFTY expires Thursdays).
 
 Run: bash ~/VISHAL_RAJPUT/run_backtest.sh ha_ema9
 """
 import sqlite3, os, sys
+from datetime import timedelta
 import pandas as pd
 import numpy as np
 
@@ -22,18 +26,43 @@ if not os.path.exists(DB):
 
 con = sqlite3.connect(DB)
 print("Loading data...", flush=True)
-df = pd.read_sql("""
-    SELECT timestamp, strike, type, open, high, low, close, rsi, ema9_low
-    FROM option_3min
-    WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
-    ORDER BY strike, type, timestamp
-""", con, parse_dates=['timestamp'])
+
+# Use DB expiry column if available, else compute inline
+import sqlite3 as _sq
+_cur = con.cursor()
+_cur.execute("PRAGMA table_info(option_3min)")
+_has_expiry = any(r[1] == 'expiry' for r in _cur.fetchall())
+
+if _has_expiry:
+    _sql = """
+        SELECT timestamp, strike, type, open, high, low, close, rsi, ema9_low, expiry
+        FROM option_3min
+        WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
+        ORDER BY strike, type, expiry, timestamp
+    """
+else:
+    _sql = """
+        SELECT timestamp, strike, type, open, high, low, close, rsi, ema9_low
+        FROM option_3min
+        WHERE time(timestamp) >= '09:15:00' AND time(timestamp) < '15:30:00'
+        ORDER BY strike, type, timestamp
+    """
+
+df = pd.read_sql(_sql, con, parse_dates=['timestamp'])
 con.close()
 
-df = df.sort_values(['strike','type','timestamp']).reset_index(drop=True)
-print(f"Rows: {len(df)}", flush=True)
+# Compute expiry inline if not in DB
+if not _has_expiry:
+    print("Warning: no expiry column in DB — computing from timestamp (run fix_db_expiry.py)")
+    def _next_thursday(d):
+        days = (3 - d.weekday()) % 7   # Mon=0 Thu=3
+        return d + timedelta(days=days)
+    df['expiry'] = df['timestamp'].dt.date.apply(_next_thursday).astype(str)
 
-# ── Compute Heikin Ashi candles per symbol ─────────────────────────
+df = df.sort_values(['strike','type','expiry','timestamp']).reset_index(drop=True)
+print(f"Rows: {len(df)} | Expiry-aware: {_has_expiry}", flush=True)
+
+# ── Compute Heikin Ashi candles per contract ───────────────────────
 print("Computing Heikin Ashi candles...", flush=True)
 
 def compute_ha(group):
@@ -54,7 +83,7 @@ def compute_ha(group):
     )
 
 ha_parts = []
-for _, grp in df.groupby(['strike','type'], sort=False):
+for _, grp in df.groupby(['strike','type','expiry'], sort=False):
     ha_parts.append(compute_ha(grp))
 
 ha_df = pd.concat(ha_parts).sort_index()
@@ -63,13 +92,13 @@ df['ha_high']  = ha_df['ha_high']
 df['ha_low']   = ha_df['ha_low']
 df['ha_close'] = ha_df['ha_close']
 
-# ── EMA9 of HA_low ─────────────────────────────────────────────────
+# ── EMA9 of HA_low — per contract, not across rollover ────────────
 print("Computing EMA9 of HA_low...", flush=True)
-df['ema9_ha_low'] = df.groupby(['strike','type'])['ha_low'].transform(
+df['ema9_ha_low'] = df.groupby(['strike','type','expiry'])['ha_low'].transform(
     lambda x: x.ewm(span=9, adjust=False).mean()
 )
 
-g = df.groupby(['strike','type'])
+g = df.groupby(['strike','type','expiry'])
 
 df['ha_close_prev']    = g['ha_close'].transform(lambda x: x.shift(1))
 df['ema9_ha_low_prev'] = g['ema9_ha_low'].transform(lambda x: x.shift(1))
