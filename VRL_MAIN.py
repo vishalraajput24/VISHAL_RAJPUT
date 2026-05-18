@@ -518,6 +518,11 @@ _v8_shadow_dt = {
     "live_entry": 0.0,     # 3-min live entry price (for comparison)
     "last_scan_ts": 0.0,   # throttle shadow scan
 }
+# Shadow: fresh EMA9_low break tracker (strategy under evaluation, no trades)
+_fresh_shadow = {
+    "last_scan_ts": 0.0,    # throttle scan to every 3s
+    "fired_buckets": {},    # dir -> bucket_ts, prevents re-firing same 3-min candle
+}
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
     """Lock ATM strikes and subscribe tokens.
@@ -2679,6 +2684,53 @@ def _strategy_loop(kite):
                     f"shadow={_v8_shadow_dt['entry_price']} live={_v8_shadow_dt['live_entry']} "
                     f"saved={_saved:+.1f}pts ({'EARLIER ✓' if _saved > 0 else 'LATER or same'})"
                 )
+
+            # ── FRESH-SHADOW: EMA9_low fresh break (shadow, no trades) ──
+            # Strategy: prev_close <= EMA9_low AND curr_close > EMA9_low
+            # Filters:  RSI 50-65, time window 09:45–13:45
+            global _fresh_shadow
+            if (D.is_trading_window(now)
+                    and _locked_tokens
+                    and time.time() - _fresh_shadow["last_scan_ts"] >= 3):
+                _fresh_shadow["last_scan_ts"] = time.time()
+                _fs_hhmm = now.hour * 60 + now.minute
+                if (9 * 60 + 45) <= _fs_hhmm < (13 * 60 + 45):
+                    try:
+                        for _fs_dir, _fs_info in [
+                                ("CE", (_locked_tokens or {}).get("CE", {})),
+                                ("PE", (_locked_tokens or {}).get("PE", {}))]:
+                            _fs_tok = int(_fs_info.get("token", 0) or 0)
+                            if not _fs_tok:
+                                continue
+                            _fs_3m = D.add_indicators(D.get_historical_data(_fs_tok, "3minute", 20))
+                            if _fs_3m is None or len(_fs_3m) < 4:
+                                continue
+                            _fs_curr  = _fs_3m.iloc[-2]   # last completed 3-min candle
+                            _fs_prev  = _fs_3m.iloc[-3]   # candle before that
+                            _fs_bk_ts = str(_fs_curr.name)
+                            if _fresh_shadow["fired_buckets"].get(_fs_dir) == _fs_bk_ts:
+                                continue  # already logged this candle
+                            _fs_close      = float(_fs_curr["close"])
+                            _fs_ema9l      = float(_fs_curr.get("ema9_low", 0))
+                            _fs_prev_close = float(_fs_prev["close"])
+                            _fs_prev_ema9l = float(_fs_prev.get("ema9_low", 0))
+                            _fs_rsi        = float(_fs_curr.get("RSI", 0) or 0)
+                            _fs_strike     = _fs_info.get(
+                                "strike", _locked_ce_strike or _locked_pe_strike or 0)
+                            if (_fs_ema9l > 0 and _fs_prev_ema9l > 0
+                                    and _fs_close > _fs_ema9l
+                                    and _fs_prev_close <= _fs_prev_ema9l
+                                    and 50 < _fs_rsi < 65):
+                                _fresh_shadow["fired_buckets"][_fs_dir] = _fs_bk_ts
+                                logger.info(
+                                    f"[FRESH-SHADOW] {_fs_dir} {_fs_strike} "
+                                    f"close={_fs_close:.1f} rsi={_fs_rsi:.1f} "
+                                    f"ema9l={_fs_ema9l:.1f} "
+                                    f"prev_close={_fs_prev_close:.1f} "
+                                    f"prev_ema9l={_fs_prev_ema9l:.1f}"
+                                )
+                    except Exception as _fse:
+                        logger.warning(f"[FRESH-SHADOW] error: {_fse}")
 
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
