@@ -185,23 +185,17 @@ for name, m1 in configs_1m:
     print(f"  {'':48} retain={retain:.0f}%  sav={sav:+.1f}pts  cheap={sav_pct:.0f}%  9m={r9avg}")
 
 # Compare: what does the NEXT 3-min candle give if it passes tight gates?
-mask3_consec = mask3_tight.copy()
-df3_tight_nb['next_tight'] = False
-# Mark consecutive: check if next_ts also passes tight filter
-consec_join = df3_tight[['strike','type','timestamp']].copy()
-consec_join['is_tight'] = True
-merged_c = df3_tight_nb.merge(
-    consec_join.rename(columns={'timestamp':'next_bkt','is_tight':'nxt_is_tight'}),
-    on=['strike','type','next_bkt'], how='left')
-has_next_tight = merged_c['nxt_is_tight'].fillna(False)
+# Build fast lookup set for tight timestamps
+tight_ts_set = set(zip(df3_tight['strike'], df3_tight['type'],
+                       df3_tight['timestamp'].astype(str)))
 
-# Forward return of the NEXT 3-min candle (ret_3c)
-# Use shift(-1) next candle's return for this analysis via df3 join
+# Forward return of the NEXT 3-min candle
 df3_next = df3[['strike','type','timestamp','ret_3c','open','close']].copy()
 df3_next = df3_next.rename(columns={'timestamp':'next_bkt','ret_3c':'next_ret3c',
                                      'open':'next_open2','close':'next_close2'})
 df3_tight_nb2 = df3_tight_nb.merge(df3_next, on=['strike','type','next_bkt'], how='left')
-df3_tight_nb2['next_passes_tight'] = has_next_tight.values[:len(df3_tight_nb2)]
+df3_tight_nb2['next_passes_tight'] = df3_tight_nb2.apply(
+    lambda r: (r['strike'], r['type'], str(r['next_bkt'])) in tight_ts_set, axis=1)
 
 print(f"\n  Reference: what if you just wait for the NEXT 3-min candle (regardless of gates)?")
 next_ret = sts(df3_tight_nb2['next_ret3c'])
