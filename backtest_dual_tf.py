@@ -51,12 +51,10 @@ df3['ema9l_slope'] = df3.groupby(['strike','type'])['ema9_low'].diff()
 df3['ret_3c']      = df3['fwd_3c']   # fwd_3c already stores the forward close price delta
 
 # Check if fwd_3c is absolute price or return
-# Sample check
-sample_close = df3['close'].iloc[100]
-sample_fwd   = df3['fwd_3c'].iloc[100]
-# If fwd_3c >> close, it's absolute price; if small, it's already a return
+# Use first non-null pair to decide
+valid = df3[df3['fwd_3c'].notna() & (df3['close'] > 0)].iloc[0]
+sample_close, sample_fwd = valid['close'], valid['fwd_3c']
 if abs(sample_fwd) > sample_close * 0.5:
-    # Absolute price — convert to return
     df3['ret_3c'] = df3['fwd_3c'] - df3['close']
     print("fwd_3c is absolute price — computing return as fwd_3c - close")
 else:

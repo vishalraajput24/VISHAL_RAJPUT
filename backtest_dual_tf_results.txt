@@ -1,10 +1,45 @@
 Loading 1-min option data...
 Loading 3-min option data...
-1-min: 40892 rows | 21 days
-3-min: 43333 rows | 21 days
+1-min: 40896 rows | 21 days
+3-min: 44087 rows | 21 days
 Computing 1-min EMA9 bands...
 Traceback (most recent call last):
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 218, in _na_arithmetic_op
+    result = func(left, right)
+             ^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/computation/expressions.py", line 242, in evaluate
+    return _evaluate(op, op_str, a, b)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/computation/expressions.py", line 73, in _evaluate_standard
+    return op(a, b)
+           ^^^^^^^^
+TypeError: unsupported operand type(s) for -: 'NoneType' and 'float'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
   File "/home/vishalraajput24/VISHAL_RAJPUT/backtest_dual_tf.py", line 58, in <module>
-    if abs(sample_fwd) > sample_close * 0.5:
-       ^^^^^^^^^^^^^^^
-TypeError: bad operand type for abs(): 'NoneType'
+    df3['ret_3c'] = df3['fwd_3c'] - df3['close']
+                    ~~~~~~~~~~~~~~^~~~~~~~~~~~~~
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/arraylike.py", line 194, in __sub__
+    return self._arith_method(other, operator.sub)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/series.py", line 6154, in _arith_method
+    return base.IndexOpsMixin._arith_method(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/base.py", line 1391, in _arith_method
+    result = ops.arithmetic_op(lvalues, rvalues, op)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 283, in arithmetic_op
+    res_values = _na_arithmetic_op(left, right, op)  # type: ignore[arg-type]
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 227, in _na_arithmetic_op
+    result = _masked_arith_op(left, right, op)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vishalraajput24/kite_env/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 163, in _masked_arith_op
+    result[mask] = op(xrav[mask], yrav[mask])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported operand type(s) for -: 'str' and 'float'
