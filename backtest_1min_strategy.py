@@ -45,18 +45,32 @@ df['rsi_prev']    = grp['rsi'].transform(lambda x: x.shift(1))
 for col in ['fwd_1c','fwd_3c','fwd_5c']:
     df[col] = pd.to_numeric(df[col], errors='coerce')
 
-# Detect if absolute price or return
-valid = df[df['fwd_3c'].notna() & (df['close'] > 0)].iloc[0]
-is_abs = abs(float(valid['fwd_3c'])) > float(valid['close']) * 0.5
-if is_abs:
-    df['ret_1c'] = df['fwd_1c'] - df['close']
-    df['ret_3c'] = df['fwd_3c'] - df['close']
-    df['ret_5c'] = df['fwd_5c'] - df['close']
-    print("fwd is absolute price — converted to return")
+# Check if fwd columns have any valid data
+valid_df = df[df['fwd_3c'].notna() & (df['close'] > 0)]
+if len(valid_df) > 0:
+    valid = valid_df.iloc[0]
+    is_abs = abs(float(valid['fwd_3c'])) > float(valid['close']) * 0.5
+    if is_abs:
+        df['ret_1c'] = df['fwd_1c'] - df['close']
+        df['ret_3c'] = df['fwd_3c'] - df['close']
+        df['ret_5c'] = df['fwd_5c'] - df['close']
+        print("fwd is absolute price — converted to return")
+    else:
+        df['ret_1c'] = df['fwd_1c']
+        df['ret_3c'] = df['fwd_3c']
+        df['ret_5c'] = df['fwd_5c']
 else:
-    df['ret_1c'] = df['fwd_1c']
-    df['ret_3c'] = df['fwd_3c']
-    df['ret_5c'] = df['fwd_5c']
+    # fwd columns are all NULL — compute from close prices directly
+    print("fwd_3c all NULL — computing forward returns from shifted close prices")
+    grp = df.groupby(['strike','type'])
+    df['ret_1c'] = grp['close'].shift(-1) - df['close']
+    df['ret_3c'] = grp['close'].shift(-3) - df['close']
+    df['ret_5c'] = grp['close'].shift(-5) - df['close']
+    # Ensure no cross-day leakage: null out if next candle is not same day
+    df['_next3_ts']  = grp['timestamp'].shift(-3)
+    cross_day = df['_next3_ts'].dt.date != df['timestamp'].dt.date
+    df.loc[cross_day, 'ret_3c'] = np.nan
+    df.drop(columns=['_next3_ts'], inplace=True)
 
 # ── Time filter: 09:45 – 15:00 ────────────────────────────────────
 t = df['timestamp']
