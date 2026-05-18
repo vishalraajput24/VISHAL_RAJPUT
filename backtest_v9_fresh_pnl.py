@@ -205,7 +205,7 @@ print("\n  Running simulations...", flush=True)
 tr_fresh = run_pnl(fresh_rsi, "Fresh+RSI50-65")
 tr_v9    = run_pnl(v9_full,   "V9 full")
 
-LOT = 50  # NIFTY lot size
+LOT = 65  # NIFTY lot size
 
 def print_pnl(tr, label):
     if tr.empty: return
