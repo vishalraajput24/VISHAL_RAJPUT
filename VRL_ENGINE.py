@@ -271,7 +271,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
       G2B. EMA9_low slope >= 0 (support band flat or rising — blocks fake breakouts)
       G3.  band_width >= 11 (real momentum, not choppy)
       G4.  other_close <= other_band_mid (other side falling = directional)
-      G5.  RSI > 45 AND rising vs previous closed candle
+      G5.  45 < RSI < 75 AND rising vs previous closed candle
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -404,7 +404,7 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             except Exception as _g4e:
                 logger.warning(f"[ENGINE-V8] Gate4 data error for {option_type} other_token={other_token}: {_g4e} — gate4 skipped")
 
-        # ── GATE 5: RSI > 45 and rising (momentum confirmed) ──
+        # ── GATE 5: 45 < RSI < 75 and rising (momentum confirmed, not overextended) ──
         _rsi_now  = float(last.get("RSI", 0) or 0)
         _rsi_prev = float(opt_3m.iloc[-2].get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
@@ -414,6 +414,12 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_45 "
                             f"rsi={round(_rsi_now,1)}")
+            return result
+        if _rsi_now >= 75:
+            result["reject_reason"] = f"rsi_overextended_{round(_rsi_now,1)}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_overextended "
+                            f"rsi={round(_rsi_now,1)} (cap=75)")
             return result
         if _rsi_now <= _rsi_prev:
             result["reject_reason"] = f"rsi_not_rising_{round(_rsi_now,1)}_prev={round(_rsi_prev,1)}"
