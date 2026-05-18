@@ -4445,7 +4445,15 @@ def _shutdown(signum, frame):
 def main():
     global _kite
     logger.info("[MAIN] ═══ VISHAL RAJPUT TRADE " + D.VERSION + " STARTING ═══")
-    logger.info("[MAIN] Mode: " + ("PAPER" if D.PAPER_MODE else "LIVE"))
+    _mode_str = "PAPER" if D.PAPER_MODE else "LIVE"
+    logger.info("[MAIN] Mode: " + _mode_str)
+    _tg_send(
+        ("🟡 <b>Bot starting in PAPER mode</b>" if D.PAPER_MODE else "🟢 <b>Bot starting in LIVE mode</b>")
+        + "\nVersion: " + D.VERSION
+        + "\nMode: <b>" + _mode_str + "</b>"
+        + ("\n⚠️ Real orders will be placed!" if not D.PAPER_MODE else ""),
+        priority="critical"
+    )
     logger.info("[MAIN] Scalps: DISABLED (data-backed decision)")
 
     _write_pid()
