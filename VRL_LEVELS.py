@@ -13,23 +13,54 @@ Levels computed:
   Yesterday opt : opt_PDH, opt_PDL, opt_PDC (per strike + opt_type)
 
 Shadow filters (proposed):
-  G7  : DTE != 0           (avoid expiry day theta trap)
-  G8  : Pivot alignment    (CE > pivot, PE < pivot)
-  G9  : CPR width <= 70    (skip chop days)
-  G10 : NOT Mon 9:45-10:30 (worst hour-of-week)
+  G7  : DTE != 0                    (avoid expiry day theta trap)
+  G8  : Pivot alignment             (CE > pivot, PE < pivot)
+  G9  : CPR width <= 70             (skip chop days)
+  G10 : NOT Mon 9:45-10:30          (worst hour-of-week)
+  G11 : VWAP alignment on 15-min    (CE: fut > VWAP+25, PE: fut < VWAP-25)
 """
 
-import os, csv, threading
+import os, csv, threading, requests
 from datetime import datetime, date, time as _dtime, timedelta
 import logging
 
 logger = logging.getLogger("vrl_live")
+
+# ── Telegram (imported lazily to avoid circular import) ──
+_TG_BASE = "https://api.telegram.org/bot"
+
+
+def _tg_send_levels(text: str):
+    """Best-effort TG alert — never raises."""
+    try:
+        import VRL_DATA as _D
+        token = _D.TELEGRAM_TOKEN
+        chat  = _D.TELEGRAM_CHAT_ID
+        if not token or not chat:
+            return
+        requests.post(
+            _TG_BASE + token + "/sendMessage",
+            json={"chat_id": chat, "text": text, "parse_mode": "HTML"},
+            timeout=5,
+        )
+    except Exception as _e:
+        logger.debug(f"[LEVELS] TG send error: {_e}")
 
 # ── Module-level cache (computed once per day at startup) ──
 _levels_lock      = threading.Lock()
 _daily_levels     = {}   # {'PDH', 'PDL', 'PDC', 'Pivot', 'TC', 'BC', 'CPR_W', 'ORH', 'ORL'}
 _opt_levels       = {}   # {(strike, 'CE'/'PE'): {'opt_PDH','opt_PDL','opt_PDC'}}
 _last_compute_day = None
+
+# ── VWAP state (refreshed every 15-min candle) ──
+_vwap_state = {
+    "fut_close"   : 0.0,    # latest 15-min futures close
+    "vwap"        : 0.0,    # latest 15-min VWAP value
+    "gap"         : 0.0,    # fut_close - vwap
+    "last_update" : None,   # datetime of last refresh
+}
+_VWAP_FUT_TOKEN = 16914178  # NIFTY near-month future — update when rolling
+_VWAP_BUFFER    = 25        # pts — CE needs gap > +25, PE needs gap < -25
 
 # ── Output CSV ──
 LAB_DIR  = os.path.join(os.path.expanduser("~"), "lab_data")
@@ -40,6 +71,7 @@ CSV_HEADERS = [
     "ORH", "ORL", "opt_PDC",
     "above_pivot", "in_cpr",
     "g7_dte_ok", "g8_pivot_ok", "g9_cpr_ok", "g10_time_ok",
+    "g11_vwap_ok", "vwap_fut_close", "vwap_value", "vwap_gap",
     "all_pass", "dte", "dow",
 ]
 
@@ -156,6 +188,67 @@ def refresh_opening_range(D) -> dict:
     return _daily_levels
 
 
+def update_vwap(kite) -> dict:
+    """
+    Fetch latest 15-min NIFTY futures bars, compute today's running VWAP.
+    Call at startup and every 15-min candle boundary in main loop.
+    Returns current _vwap_state dict.
+    NEVER raises — silent on failure.
+    """
+    global _vwap_state
+    try:
+        import numpy as np
+        from_dt = datetime.now() - timedelta(hours=7)
+        data    = kite.historical_data(_VWAP_FUT_TOKEN, from_dt, datetime.now(), "15minute")
+        if not data:
+            return _vwap_state
+
+        import pandas as pd
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+
+        today_d = date.today()
+        df = df[df.index.date == today_d]
+        df = df.between_time("09:15", "15:30")
+        if df.empty:
+            return _vwap_state
+
+        # Running VWAP from 9:15
+        df["typical"] = (df["high"] + df["low"] + df["close"]) / 3.0
+        df["tv"]      = df["typical"] * df["volume"]
+        cum_tv  = df["tv"].cumsum()
+        cum_vol = df["volume"].cumsum()
+        df["vwap"] = cum_tv / cum_vol.replace(0, np.nan)
+
+        last = df.iloc[-1]
+        fut_close = round(float(last["close"]), 2)
+        vwap_val  = round(float(last["vwap"]), 2)
+        gap       = round(fut_close - vwap_val, 2)
+
+        with _levels_lock:
+            _vwap_state["fut_close"]   = fut_close
+            _vwap_state["vwap"]        = vwap_val
+            _vwap_state["gap"]         = gap
+            _vwap_state["last_update"] = datetime.now()
+
+        logger.info(
+            f"[VWAP] fut={fut_close}  vwap={vwap_val}  "
+            f"gap={gap:+.1f}  "
+            f"({'BULL' if gap > 0 else 'BEAR'} bias)"
+        )
+    except Exception as e:
+        logger.debug(f"[VWAP] update error: {e}")
+    return _vwap_state
+
+
+def get_vwap_state() -> dict:
+    """Return current VWAP state (for dashboard etc)."""
+    return dict(_vwap_state)
+
+
 def compute_opt_pdc(D, strike: int, opt_type: str, token: int) -> dict:
     """
     Yesterday's option PDC for a single strike+opt_type. Cached.
@@ -228,12 +321,25 @@ def evaluate_filters(direction: str, spot_px: float, entry_time_dt: datetime,
     in_morn = _dtime(9, 45) <= entry_time_dt.time() <= _dtime(10, 30)
     g10 = not (is_mon and in_morn)
 
+    # G11: VWAP alignment — CE: fut > VWAP+25, PE: fut < VWAP-25
+    gap = _vwap_state.get("gap", 0.0)
+    vwap_ready = _vwap_state.get("vwap", 0.0) > 0
+    if not vwap_ready:
+        g11 = None   # VWAP not yet computed — unknown
+    elif direction == "CE":
+        g11 = gap > _VWAP_BUFFER
+    elif direction == "PE":
+        g11 = gap < -_VWAP_BUFFER
+    else:
+        g11 = False
+
     return {
-        "g7_dte_ok": g7,
+        "g7_dte_ok"  : g7,
         "g8_pivot_ok": g8,
-        "g9_cpr_ok": g9,
+        "g9_cpr_ok"  : g9,
         "g10_time_ok": g10,
-        "all_pass": g7 and g8 and g9 and g10,
+        "g11_vwap_ok": g11,
+        "all_pass"   : g7 and g8 and g9 and g10 and (g11 is not False),
     }
 
 
@@ -263,6 +369,10 @@ def log_entry(direction: str, strike: int, entry_price: float, spot_px: float,
             above_pivot, in_cpr,
             f.get("g7_dte_ok"), f.get("g8_pivot_ok"),
             f.get("g9_cpr_ok"), f.get("g10_time_ok"),
+            f.get("g11_vwap_ok"),
+            round(_vwap_state.get("fut_close", 0), 2),
+            round(_vwap_state.get("vwap", 0), 2),
+            round(_vwap_state.get("gap", 0), 2),
             f.get("all_pass"), dte, entry_time_dt.strftime("%A"),
         ]
         with open(CSV_PATH, "a", newline="") as fh:
@@ -275,9 +385,55 @@ def log_entry(direction: str, strike: int, entry_price: float, spot_px: float,
             f"G7={marks(f.get('g7_dte_ok'))}(dte={dte}) "
             f"G8={marks(f.get('g8_pivot_ok'))}(pivot={pivot}) "
             f"G9={marks(f.get('g9_cpr_ok'))}(cpr_w={L.get('CPR_W',0)}) "
-            f"G10={marks(f.get('g10_time_ok'))} → "
+            f"G10={marks(f.get('g10_time_ok'))} "
+            f"G11={marks(f.get('g11_vwap_ok'))}(gap={_vwap_state.get('gap',0):+.1f}) → "
             f"all={marks(f.get('all_pass'))}"
         )
+
+        # ── Telegram shadow-levels alert ──────────────────────────
+        def _tick(b):
+            return "✅" if b is True else "❌" if b is False else "❓"
+
+        g7v  = f.get('g7_dte_ok');  g8v  = f.get('g8_pivot_ok')
+        g9v  = f.get('g9_cpr_ok');  g10v = f.get('g10_time_ok')
+        g11v = f.get('g11_vwap_ok')
+        allv = f.get('all_pass')
+        cpr_w     = L.get('CPR_W', 0)
+        bc_v      = L.get('BC', 0);  tc_v = L.get('TC', 0)
+        vwap_val  = _vwap_state.get('vwap', 0)
+        fut_close = _vwap_state.get('fut_close', 0)
+        vwap_gap  = _vwap_state.get('gap', 0)
+
+        # Pivot alignment note
+        if direction == "CE":
+            g8_note  = f"spot({round(spot_px)}) &gt; pivot({round(pivot)}) ← CE needs above"
+            g11_note = f"fut({fut_close}) &gt; VWAP({vwap_val})+25 | gap={vwap_gap:+.1f}"
+        else:
+            g8_note  = f"spot({round(spot_px)}) &lt; pivot({round(pivot)}) ← PE needs below"
+            g11_note = f"fut({fut_close}) &lt; VWAP({vwap_val})-25 | gap={vwap_gap:+.1f}"
+
+        all_gates = [g7v, g8v, g9v, g10v, g11v]
+        pass_count = sum(1 for x in all_gates if x is True)
+
+        tg_text = (
+            f"📊 <b>SHADOW LEVELS — {direction} {strike}</b>\n"
+            f"Entry: <b>{round(entry_price,1)}</b> | Spot: {round(spot_px)}\n"
+            f"────────────────────\n"
+            f"PDH: {L.get('PDH',0)}  PDL: {L.get('PDL',0)}  PDC: {L.get('PDC',0)}\n"
+            f"Pivot: <b>{round(pivot,1)}</b>  |  CPR: {bc_v}–{tc_v} (w={round(cpr_w,1)})\n"
+            f"ORH: {L.get('ORH',0)}  ORL: {L.get('ORL',0)}\n"
+            f"opt_PDC: {round(opt_pdc,1)}\n"
+            f"────────────────────\n"
+            f"{_tick(g7v)} G7  DTE≠0      DTE={dte}\n"
+            f"{_tick(g8v)} G8  Pivot      {g8_note}\n"
+            f"{_tick(g9v)} G9  CPR≤70     width={round(cpr_w,1)}\n"
+            f"{_tick(g10v)} G10 Mon morn  {'BLOCKED' if not g10v else 'OK'}\n"
+            f"{_tick(g11v)} G11 VWAP      {g11_note}\n"
+            f"────────────────────\n"
+            f"{'✅ ALL PASS' if allv else '❌ FILTERS FAILED'} ({pass_count}/5 pass)\n"
+            f"<i>⚠️ SHADOW ONLY — trade taken regardless</i>"
+        )
+        _tg_send_levels(tg_text)
     except Exception as e:
         logger.warning(f"[SHADOW-LVL] log_entry error: {e}")
 

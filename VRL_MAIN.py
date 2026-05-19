@@ -875,6 +875,15 @@ def _reset_daily(today_str: str):
         LEVELS.compute_today(D, _kite, None)
     except Exception as _le:
         logger.debug(f"[LEVELS] daily recompute error: {_le}")
+
+    # Reset VWAP for new day
+    try:
+        LEVELS._vwap_state = {"fut_close": 0.0, "vwap": 0.0,
+                              "gap": 0.0, "last_update": None}
+        state["_last_vwap_15m_slot"] = -1
+        LEVELS.update_vwap(_kite)
+    except Exception as _ve:
+        logger.debug(f"[VWAP] daily reset error: {_ve}")
     _save_state()
     # Fetch 5 days of 3-min + 1-min candles for ATM±100 so GARCH is warm.
     try:
@@ -2824,6 +2833,15 @@ def _strategy_loop(kite):
                         and not state.get("_or_refreshed_today")):
                     LEVELS.refresh_opening_range(D)
                     state["_or_refreshed_today"] = True
+            except Exception:
+                pass
+
+            # ── Refresh VWAP every 15-min candle boundary ──
+            try:
+                _cur_15m = now.hour * 4 + now.minute // 15
+                if _cur_15m != state.get("_last_vwap_15m_slot", -1):
+                    LEVELS.update_vwap(kite)
+                    state["_last_vwap_15m_slot"] = _cur_15m
             except Exception:
                 pass
 
@@ -4777,6 +4795,12 @@ def main():
         LEVELS.compute_today(D, kite, None)
     except Exception as _le:
         logger.warning(f"[LEVELS] startup compute failed: {_le}")
+
+    # ── VWAP startup compute ──────────────────────────────────────
+    try:
+        LEVELS.update_vwap(kite)
+    except Exception as _ve:
+        logger.warning(f"[VWAP] startup compute failed: {_ve}")
 
     logger.info("[MAIN] All systems ready. Strategy loop starting.")
     _strategy_loop(kite)
