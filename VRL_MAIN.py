@@ -2121,9 +2121,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _g1 = _green
             _g2 = (_close > _el) if (_el > 0 and _close > 0) else False
             _g2b = (_slope >= 0)
-            _g3 = (12 <= _bw <= 16) if _bw > 0 else False
+            _g3 = (13 <= _bw <= 16) if _bw > 0 else False
             _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))
-            _g5 = (50 < _rsi < 65 and _rsi > _rsi_prev) if _rsi > 0 else False
+            _g5 = (48 < _rsi < 70 and _rsi > _rsi_prev) if _rsi > 0 else False
 
             if _fired:
                 verdict = "✅ ALL GATES PASSED"
@@ -2694,7 +2694,7 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"1m_close_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
-                        elif not (45 < _sh_rsi_1m < 75):
+                        elif not (48 < _sh_rsi_1m < 70):
                             _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}"
                         if _sh_1m_reject:
                             if now.second % 15 == 0:
@@ -2718,7 +2718,7 @@ def _strategy_loop(kite):
                             _sh_3m_reject = f"3m_close_below_ema9l close={_sh_3m_close} ema9l={_sh_3m_ema9l} gap={_sh_3m_gap}"
                         elif not (_sh_rsi_3m > _sh_rsi_3m_p):
                             _sh_3m_reject = f"3m_rsi_falling rsi={_sh_rsi_3m:.1f} prev={_sh_rsi_3m_p:.1f}"
-                        elif not (45 < _sh_rsi_3m < 75):
+                        elif not (48 < _sh_rsi_3m < 70):
                             _sh_3m_reject = f"3m_rsi_outofrange rsi={_sh_rsi_3m:.1f}"
                         if _sh_3m_reject:
                             logger.info(f"[SHADOW-DTF] REJECT {_sh_dir} 1m_ok but {_sh_3m_reject}")
