@@ -390,48 +390,16 @@ def log_entry(direction: str, strike: int, entry_price: float, spot_px: float,
             f"all={marks(f.get('all_pass'))}"
         )
 
-        # ── Telegram shadow-levels alert ──────────────────────────
-        def _tick(b):
-            return "✅" if b is True else "❌" if b is False else "❓"
-
-        g7v  = f.get('g7_dte_ok');  g8v  = f.get('g8_pivot_ok')
-        g9v  = f.get('g9_cpr_ok');  g10v = f.get('g10_time_ok')
-        g11v = f.get('g11_vwap_ok')
-        allv = f.get('all_pass')
-        cpr_w     = L.get('CPR_W', 0)
-        bc_v      = L.get('BC', 0);  tc_v = L.get('TC', 0)
-        vwap_val  = _vwap_state.get('vwap', 0)
-        fut_close = _vwap_state.get('fut_close', 0)
+        # ── Telegram alert — clean and focused ───────────────────
+        g11v      = f.get('g11_vwap_ok')
         vwap_gap  = _vwap_state.get('gap', 0)
-
-        # Pivot alignment note
-        if direction == "CE":
-            g8_note  = f"spot({round(spot_px)}) &gt; pivot({round(pivot)}) ← CE needs above"
-            g11_note = f"fut({fut_close}) &gt; VWAP({vwap_val})+25 | gap={vwap_gap:+.1f}"
-        else:
-            g8_note  = f"spot({round(spot_px)}) &lt; pivot({round(pivot)}) ← PE needs below"
-            g11_note = f"fut({fut_close}) &lt; VWAP({vwap_val})-25 | gap={vwap_gap:+.1f}"
-
-        all_gates = [g7v, g8v, g9v, g10v, g11v]
-        pass_count = sum(1 for x in all_gates if x is True)
+        sl_price  = round(entry_price - 12, 1)
+        vwap_icon = "✅" if g11v is True else "❌" if g11v is False else "❓"
 
         tg_text = (
-            f"📊 <b>SHADOW LEVELS — {direction} {strike}</b>\n"
-            f"Entry: <b>{round(entry_price,1)}</b> | Spot: {round(spot_px)}\n"
-            f"────────────────────\n"
-            f"PDH: {L.get('PDH',0)}  PDL: {L.get('PDL',0)}  PDC: {L.get('PDC',0)}\n"
-            f"Pivot: <b>{round(pivot,1)}</b>  |  CPR: {bc_v}–{tc_v} (w={round(cpr_w,1)})\n"
-            f"ORH: {L.get('ORH',0)}  ORL: {L.get('ORL',0)}\n"
-            f"opt_PDC: {round(opt_pdc,1)}\n"
-            f"────────────────────\n"
-            f"{_tick(g7v)} G7  DTE≠0      DTE={dte}\n"
-            f"{_tick(g8v)} G8  Pivot      {g8_note}\n"
-            f"{_tick(g9v)} G9  CPR≤70     width={round(cpr_w,1)}\n"
-            f"{_tick(g10v)} G10 Mon morn  {'BLOCKED' if not g10v else 'OK'}\n"
-            f"{_tick(g11v)} G11 VWAP      {g11_note}\n"
-            f"────────────────────\n"
-            f"{'✅ ALL PASS' if allv else '❌ FILTERS FAILED'} ({pass_count}/5 pass)\n"
-            f"<i>⚠️ SHADOW ONLY — trade taken regardless</i>"
+            f"<b>{direction} {strike}</b>\n"
+            f"Entry: <b>{round(entry_price, 1)}</b>  |  SL: {sl_price}\n"
+            f"{vwap_icon} VWAP gap: {vwap_gap:+.1f} pts"
         )
         _tg_send_levels(tg_text)
     except Exception as e:
