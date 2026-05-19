@@ -2648,14 +2648,18 @@ def _strategy_loop(kite):
                                 "entry_price": _sh_ltp, "entry_time": now.strftime("%H:%M:%S"),
                                 "peak_price": _sh_ltp, "peak_pts": 0.0,
                             })
+                            _sh_strike = int(_sh_info.get("strike", 0) or 0)
+                            _sh_sl     = round(_sh_ltp - 12, 1)
                             logger.info(
-                                f"[SHADOW-DTF] {_sh_dir} SIGNAL "
-                                f"tick={_sh_ltp} ema9h_1m={_sh_ema9h_1m} "
+                                f"[SHADOW-DTF] {_sh_dir} {_sh_strike} SIGNAL "
+                                f"entry={_sh_ltp} sl={_sh_sl} "
+                                f"ema9h_1m={_sh_ema9h_1m} "
                                 f"rsi_1m={_sh_rsi_1m:.1f}↑ bw_3m={_sh_bw} rsi_3m={_sh_rsi:.1f}"
                             )
                             _tg_send(
-                                f"🔵 <b>SHADOW DUAL-TF</b> {_sh_dir}\n"
-                                f"Tick {_sh_ltp:.1f} &gt; EMA9H_1m {_sh_ema9h_1m:.1f}\n"
+                                f"🔵 <b>SHADOW DUAL-TF</b> {_sh_dir} {_sh_strike}\n"
+                                f"Entry: {_sh_ltp:.1f}  SL: {_sh_sl:.1f} (-12)\n"
+                                f"Ladder: +12→lock+4 | +18→lock+10 | +24→lock+12\n"
                                 f"RSI_1m {_sh_rsi_1m:.1f}↑  BW_3m {_sh_bw}  RSI_3m {_sh_rsi:.1f}\n"
                                 f"<i>shadow only — tracking peak...</i>"
                             )
