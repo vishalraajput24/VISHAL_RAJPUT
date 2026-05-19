@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
-VRL_COLLECTOR.py — EOD options data snapshot
-Fetches full-day 3-min OHLC for ATM±300 strikes (CE+PE),
-NIFTY spot 1-min, and VIX. Saves as Parquet for backtesting.
+VRL_COLLECTOR.py — EOD options data snapshot (v2 — weekly expiry structure)
 
-Cron (add via: crontab -e):
-    35 15 * * 1-5 cd ~/VISHAL_RAJPUT && python VRL_COLLECTOR.py >> ~/logs/collector.log 2>&1
+Saves per weekly Tuesday expiry:
+  lab_data/collector/expiry_YYYYMMDD/
+    3min/YYYY-MM-DD.parquet   ← ATM±300 strikes, all day
+    1min/YYYY-MM-DD.parquet   ← ATM±5 strikes only (Shadow-DTF backtest)
+  lab_data/collector/spot/YYYY-MM-DD.parquet
+  lab_data/collector/meta/YYYY-MM-DD.json
+
+Cron (runs at 15:35 every weekday):
+    35 15 * * 1-5 cd ~/VISHAL_RAJPUT && /home/vishalraajput24/kite_env/bin/python3 VRL_COLLECTOR.py >> ~/logs/collector.log 2>&1
 """
 
 import json
@@ -21,15 +26,16 @@ import pandas as pd
 import VRL_CONFIG as CFG
 import VRL_DATA as D
 
-STRIKE_RANGE = 300   # ATM ± this many points
-STRIKE_STEP  = 50    # NIFTY strike spacing
+STRIKE_RANGE     = 300  # ATM ± this for 3-min full capture
+STRIKE_STEP      = 50   # NIFTY strike spacing
+SHADOW_STEPS     = 5    # ATM ± this for 1-min Shadow-DTF capture (11 strikes)
+
 
 def _log(msg):
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " | " + msg, flush=True)
 
 
 def _last_trading_date(df: pd.DataFrame):
-    """Return the most recent date present in df index (handles after-midnight runs)."""
     try:
         return df.index.date.max()
     except Exception:
@@ -37,7 +43,6 @@ def _last_trading_date(df: pd.DataFrame):
 
 
 def _get_session_df(df: pd.DataFrame, trading_date) -> pd.DataFrame:
-    """Filter dataframe to a specific trading date."""
     if df.empty:
         return df
     try:
@@ -46,10 +51,16 @@ def _get_session_df(df: pd.DataFrame, trading_date) -> pd.DataFrame:
         return df
 
 
-def collect():
-    _log("=== VRL_COLLECTOR start ===")
+def _next_tuesday(from_date: date) -> date:
+    """Return the nearest upcoming Tuesday (or today if today is Tuesday)."""
+    days_ahead = (1 - from_date.weekday()) % 7  # Tuesday = weekday 1
+    return from_date + timedelta(days=days_ahead)
 
-    # ── Authenticate ────────────────────────────────────────────
+
+def collect():
+    _log("=== VRL_COLLECTOR v2 start ===")
+
+    # ── Authenticate ─────────────────────────────────────────────
     try:
         kite = CFG.get_kite()
         D.init(kite)
@@ -58,13 +69,13 @@ def collect():
         _log("AUTH FAILED: " + str(e))
         sys.exit(1)
 
-    # ── Spot price — determine trading date from historical data ─
+    # ── Spot — determine trading date ────────────────────────────
     try:
-        spot_df_raw = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 400)
-        trading_date = _last_trading_date(spot_df_raw)
-        spot_df_session = _get_session_df(spot_df_raw, trading_date)
-        spot = float(spot_df_session["close"].iloc[-1]) if not spot_df_session.empty else 0
-        atm  = int(round(spot / STRIKE_STEP) * STRIKE_STEP)
+        spot_df_raw      = D.get_historical_data(D.NIFTY_SPOT_TOKEN, "minute", 400)
+        trading_date     = _last_trading_date(spot_df_raw)
+        spot_df_session  = _get_session_df(spot_df_raw, trading_date)
+        spot             = float(spot_df_session["close"].iloc[-1]) if not spot_df_session.empty else 0
+        atm              = int(round(spot / STRIKE_STEP) * STRIKE_STEP)
         _log(f"Trading date: {trading_date}  Spot={spot:.1f}  ATM={atm}")
     except Exception as e:
         _log("Spot fetch error: " + str(e))
@@ -72,71 +83,129 @@ def collect():
         spot, atm = 0, 23500
 
     today_str = trading_date.isoformat()
-    save_dir  = os.path.join(D.LAB_DIR, "collector", today_str)
-    os.makedirs(save_dir, exist_ok=True)
 
-    # ── Nearest expiry ───────────────────────────────────────────
+    # ── Nearest Tuesday expiry ───────────────────────────────────
     try:
         expiry = D.get_nearest_expiry(kite)
-        _log("Expiry: " + str(expiry))
+        # Confirm it's a Tuesday; if not, find next Tuesday
+        if expiry.weekday() != 1:
+            expiry = _next_tuesday(expiry)
+            _log(f"Expiry adjusted to nearest Tuesday: {expiry}")
+        else:
+            _log(f"Expiry: {expiry} (Tuesday ✓)")
     except Exception as e:
         _log("Expiry error: " + str(e))
         sys.exit(1)
 
-    # ── Strike range ─────────────────────────────────────────────
-    n_steps = STRIKE_RANGE // STRIKE_STEP
-    strikes = [atm + i * STRIKE_STEP for i in range(-n_steps, n_steps + 1)]
-    _log(f"Strikes: {strikes[0]} → {strikes[-1]} ({len(strikes)} strikes)")
+    expiry_str = str(expiry).replace("-", "")
 
-    # ── Collect options 3-min OHLC ───────────────────────────────
-    option_rows = []
-    failed = []
-    for strike in strikes:
+    # ── Directory structure ───────────────────────────────────────
+    # Per-expiry week: expiry_YYYYMMDD/3min/ and expiry_YYYYMMDD/1min/
+    collector_dir  = os.path.join(D.LAB_DIR, "collector")
+    expiry_dir     = os.path.join(collector_dir, "expiry_" + expiry_str)
+    dir_3min       = os.path.join(expiry_dir, "3min")
+    dir_1min       = os.path.join(expiry_dir, "1min")
+    spot_dir       = os.path.join(collector_dir, "spot")
+    meta_dir       = os.path.join(collector_dir, "meta")
+    for d in (dir_3min, dir_1min, spot_dir, meta_dir):
+        os.makedirs(d, exist_ok=True)
+
+    # ── Strike ranges ─────────────────────────────────────────────
+    n_steps_full   = STRIKE_RANGE // STRIKE_STEP
+    strikes_full   = [atm + i * STRIKE_STEP for i in range(-n_steps_full, n_steps_full + 1)]
+    strikes_shadow = [atm + i * STRIKE_STEP for i in range(-SHADOW_STEPS, SHADOW_STEPS + 1)]
+    _log(f"3-min strikes: {strikes_full[0]}→{strikes_full[-1]} ({len(strikes_full)} strikes)")
+    _log(f"1-min strikes: {strikes_shadow[0]}→{strikes_shadow[-1]} ({len(strikes_shadow)} strikes, Shadow-DTF)")
+
+    # ── Helper: fetch + filter + indicator one series ─────────────
+    def _fetch(token, interval, candles=120):
+        df = D.get_historical_data(token, interval, candles)
+        df = _get_session_df(df, trading_date)
+        if not df.empty:
+            df = D.add_indicators(df)
+        return df
+
+    # ── 3-min: ATM±300 (full strike range) ───────────────────────
+    _log("Fetching 3-min data...")
+    rows_3m = []
+    failed_3m = []
+    for strike in strikes_full:
         try:
             tokens = D.get_option_tokens(kite, strike, expiry)
         except Exception as e:
-            _log(f"  token lookup failed strike={strike}: {e}")
-            failed.append(strike)
+            failed_3m.append(strike)
             continue
-
         for opt_type in ("CE", "PE"):
             if opt_type not in tokens:
-                failed.append((strike, opt_type))
+                failed_3m.append((strike, opt_type))
                 continue
-            token  = tokens[opt_type]["token"]
-            symbol = tokens[opt_type]["symbol"]
+            tok = tokens[opt_type]["token"]
+            sym = tokens[opt_type]["symbol"]
             try:
-                df = D.get_historical_data(token, "3minute", 120)
-                df = _get_session_df(df, trading_date)
+                df = _fetch(tok, "3minute", 120)
                 if df.empty:
-                    _log(f"  {opt_type} {strike}: empty")
                     continue
-                df = D.add_indicators(df)
                 df["strike"]   = strike
                 df["opt_type"] = opt_type
-                df["symbol"]   = symbol
-                df["token"]    = token
-                option_rows.append(df)
-                time.sleep(0.05)   # ~20 req/s — well under Kite limit
+                df["symbol"]   = sym
+                df["token"]    = tok
+                rows_3m.append(df)
+                time.sleep(0.05)
             except Exception as e:
-                _log(f"  {opt_type} {strike} error: {e}")
-                failed.append((strike, opt_type))
+                failed_3m.append((strike, opt_type))
 
-    if option_rows:
-        options_df = pd.concat(option_rows).sort_index()
-        out_path = os.path.join(save_dir, "options_3min.parquet")
-        options_df.to_parquet(out_path)
-        _log(f"options_3min.parquet: {len(options_df)} rows, {len(option_rows)} series → {out_path}")
+    if rows_3m:
+        df_3m = pd.concat(rows_3m).sort_index()
+        path_3m = os.path.join(dir_3min, today_str + ".parquet")
+        df_3m.to_parquet(path_3m)
+        _log(f"3-min saved: {len(df_3m)} rows, {len(rows_3m)} series → {path_3m}")
     else:
-        _log("WARNING: no options data collected")
+        _log("WARNING: no 3-min data collected")
+        df_3m = pd.DataFrame()
 
-    # ── NIFTY spot 1-min ─────────────────────────────────────────
+    # ── 1-min: ATM±5 only (Shadow-DTF) ───────────────────────────
+    _log("Fetching 1-min data (Shadow-DTF strikes)...")
+    rows_1m = []
+    failed_1m = []
+    for strike in strikes_shadow:
+        try:
+            tokens = D.get_option_tokens(kite, strike, expiry)
+        except Exception as e:
+            failed_1m.append(strike)
+            continue
+        for opt_type in ("CE", "PE"):
+            if opt_type not in tokens:
+                failed_1m.append((strike, opt_type))
+                continue
+            tok = tokens[opt_type]["token"]
+            sym = tokens[opt_type]["symbol"]
+            try:
+                df = _fetch(tok, "minute", 400)
+                if df.empty:
+                    continue
+                df["strike"]   = strike
+                df["opt_type"] = opt_type
+                df["symbol"]   = sym
+                df["token"]    = tok
+                rows_1m.append(df)
+                time.sleep(0.05)
+            except Exception as e:
+                failed_1m.append((strike, opt_type))
+
+    if rows_1m:
+        df_1m = pd.concat(rows_1m).sort_index()
+        path_1m = os.path.join(dir_1min, today_str + ".parquet")
+        df_1m.to_parquet(path_1m)
+        _log(f"1-min saved: {len(df_1m)} rows, {len(rows_1m)} series → {path_1m}")
+    else:
+        _log("WARNING: no 1-min data collected")
+
+    # ── Spot 1-min → master spot folder ──────────────────────────
     try:
-        spot_out = spot_df_session
-        if not spot_out.empty:
-            spot_path = os.path.join(save_dir, "spot_1min.parquet")
-            spot_out.to_parquet(spot_path)
-            _log(f"spot_1min.parquet: {len(spot_out)} rows → {spot_path}")
+        if not spot_df_session.empty:
+            spot_path = os.path.join(spot_dir, today_str + ".parquet")
+            spot_df_session.to_parquet(spot_path)
+            _log(f"spot saved: {len(spot_df_session)} rows → {spot_path}")
         else:
             _log("WARNING: no spot data for today")
     except Exception as e:
@@ -152,23 +221,29 @@ def collect():
 
     # ── Meta ─────────────────────────────────────────────────────
     meta = {
-        "date"        : today_str,
-        "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "atm"         : atm,
-        "spot"        : round(spot, 2),
-        "vix"         : round(vix, 2),
-        "expiry"      : str(expiry),
-        "strikes"     : strikes,
-        "series_ok"   : len(option_rows),
-        "series_failed": len(failed),
+        "date"            : today_str,
+        "collected_at"    : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "expiry"          : str(expiry),
+        "expiry_weekday"  : expiry.strftime("%A"),
+        "atm"             : atm,
+        "spot"            : round(spot, 2),
+        "vix"             : round(vix, 2),
+        "strikes_3min"    : strikes_full,
+        "strikes_1min"    : strikes_shadow,
+        "series_3min_ok"  : len(rows_3m),
+        "series_1min_ok"  : len(rows_1m),
+        "failed_3min"     : len(failed_3m),
+        "failed_1min"     : len(failed_1m),
     }
-    meta_path = os.path.join(save_dir, "meta.json")
+    meta_path = os.path.join(meta_dir, today_str + ".json")
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
-    _log("meta.json written")
+    _log("meta written → " + meta_path)
 
-    if failed:
-        _log("Failed series: " + str(failed))
+    if failed_3m:
+        _log(f"3-min failed ({len(failed_3m)}): {failed_3m[:5]}{'...' if len(failed_3m)>5 else ''}")
+    if failed_1m:
+        _log(f"1-min failed ({len(failed_1m)}): {failed_1m}")
 
     _log("=== VRL_COLLECTOR done ===")
     return meta
