@@ -498,6 +498,7 @@ _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 _v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
+_v9_last_results: dict = {"CE": None, "PE": None}  # last V9 gate results for dashboard
 # Shadow: dual-TF early entry tracking (1 week data collection before going live)
 _v8_shadow_dt = {
     "active": False,       # CE shadow signal active
@@ -2082,57 +2083,92 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         straddle_captured = getattr(D, "_straddle_captured", False)
 
         def _build_signal(opt_type, result):
+            _ltp_fallback = 0
+            try:
+                _tk = (dir_strikes or {}).get(opt_type, atm_strike)
+                _ltp_fallback = D.get_ltp((_locked_tokens or {}).get(opt_type, {}).get("token", 0)) or 0
+            except Exception:
+                pass
             if not result:
                 return {
                     "close": 0, "ema9_high": 0, "ema9_low": 0,
-                    "band_position": "", "body_pct": 0,
+                    "band_width": 0, "body_pct": 0,
                     "candle_green": False, "fired": False,
-                    "verdict": "NO DATA", "ltp": 0, "entry_mode": "",
+                    "verdict": "MARKET CLOSED" if not D.is_market_open() else "WARMING UP",
+                    "ltp": round(_ltp_fallback, 2), "entry_mode": "",
                     "strike": dir_strikes.get(opt_type, atm_strike),
+                    # V9 gate fields
+                    "g1_green": False, "g2_close_above_ema9l": False,
+                    "g2b_slope_ok": False, "g3_bw_ok": False,
+                    "g4_other_falling": False, "g5_rsi_ok": False,
+                    "rsi": 0, "rsi_prev": 0,
+                    "ema9_low_slope": 0, "reject_reason": "",
                 }
             _fired = result.get("fired", False)
             _mode = result.get("entry_mode", "")
             _close = float(result.get("close", result.get("entry_price", 0)))
             _eh = float(result.get("ema9_high", 0))
             _el = float(result.get("ema9_low", 0))
+            _bw = round(_eh - _el, 1)
             _body = float(result.get("body_pct", 0))
-            _green = result.get("candle_green", False)
-            _pos = result.get("band_position", "")
+            _green = bool(result.get("candle_green", False))
             _reject = result.get("reject_reason", "")
-            _width = float(result.get("band_width", 0))
+            _rsi = round(float(result.get("rsi", 0) or 0), 1)
+            _rsi_prev = round(float(result.get("rsi_prev", 0) or 0), 1)
+            _slope = round(float(result.get("ema9_low_slope", 0) or 0), 2)
+
+            # V9 gate pass/fail flags
+            _g1 = _green
+            _g2 = (_close > _el) if (_el > 0 and _close > 0) else False
+            _g2b = (_slope >= 0)
+            _g3 = (12 <= _bw <= 16) if _bw > 0 else False
+            _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))
+            _g5 = (50 < _rsi < 65 and _rsi > _rsi_prev) if _rsi > 0 else False
+
             if _fired:
-                verdict = "READY TO FIRE"
+                verdict = "✅ ALL GATES PASSED"
             elif _reject:
                 verdict = _reject
-            elif _width > 0 and _width < 8:
-                verdict = "narrow_band " + str(round(_width, 1)) + "pts (chop)"
-            elif _pos == "ABOVE" and _green and _body >= 40:
-                verdict = "READY"
-            elif _pos == "ABOVE":
-                verdict = "above band, waiting body/green"
-            elif _pos == "IN":
-                verdict = "inside band"
             else:
-                verdict = "below band"
+                _fails = []
+                if not _g1: _fails.append("G1:red_candle")
+                if not _g2: _fails.append(f"G2:close({round(_close,1)})<ema9l({round(_el,1)})")
+                if not _g2b: _fails.append(f"G2B:slope_falling({_slope:+.2f})")
+                if not _g3: _fails.append(f"G3:BW={_bw}(need12-16)")
+                if not _g4: _fails.append("G4:other_side_not_falling")
+                if not _g5: _fails.append(f"G5:RSI={_rsi}(need50-65↑)")
+                verdict = _fails[0] if _fails else "scanning"
+
+            _ltp_out = round(result.get("entry_price", 0) or _ltp_fallback, 2)
+            if _ltp_out == 0: _ltp_out = round(_ltp_fallback, 2)
 
             return {
                 "close": round(_close, 2),
                 "ema9_high": round(_eh, 2),
                 "ema9_low": round(_el, 2),
-                "band_width": round(_eh - _el, 2),
-                "gap_from_ema9h": round(_close - _eh, 2),
-                "band_position": _pos,
+                "band_width": _bw,
                 "body_pct": round(_body, 1),
                 "candle_green": _green,
                 "reject_reason": _reject,
                 "fired": _fired,
                 "verdict": verdict,
                 "entry_mode": _mode,
-                "ltp": round(result.get("entry_price", 0), 2),
+                "ltp": _ltp_out,
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
-                "ema9_low_slope": round(float(result.get("ema9_low_slope", 0) or 0), 2),
-                "xleg_signal":        result.get("xleg_signal", ""),
-                "xleg_other_margin":  round(float(result.get("xleg_other_margin", 0) or 0), 2),
+                "rsi": _rsi,
+                "rsi_prev": _rsi_prev,
+                "ema9_low_slope": _slope,
+                # V9 gate flags for dashboard
+                "g1_green": _g1,
+                "g2_close_above_ema9l": _g2,
+                "g2b_slope_ok": _g2b,
+                "g3_bw_ok": _g3,
+                "g4_other_falling": _g4,
+                "g5_rsi_ok": _g5,
+                "xleg_signal":       result.get("xleg_signal", ""),
+                "xleg_other_margin": round(float(result.get("xleg_other_margin", 0) or 0), 2),
+                "g6_stochrsi": result.get("g6_stochrsi_os_cross"),
+                "g6_k": result.get("g6_k_now", 0),
             }
 
         _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
@@ -2527,6 +2563,10 @@ def _strategy_loop(kite):
                             spot_ltp=spot_ltp,
                             silent=False,
                             state=_v8_state, other_token=_v8_other)
+                        # Store for dashboard display
+                        _v8_res["_strike"] = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
+                            "strike", _locked_ce_strike or _locked_pe_strike or 0)
+                        _v9_last_results[_v8_dir] = _v8_res
                         if not _v8_res.get("fired"):
                             if _v8_dir == "CE": _v8_ce_gate_rejected = True
                             else: _v8_pe_gate_rejected = True
@@ -3110,7 +3150,8 @@ def _strategy_loop(kite):
                         time.sleep(2)
                         continue
 
-                all_results = {}
+                # Seed dashboard with last V9 scan results (updated every 3s by V9 entry loop)
+                all_results = {k: v for k, v in _v9_last_results.items() if v is not None}
                 best_result = None
                 best_type = None
                 best_opt_info = None

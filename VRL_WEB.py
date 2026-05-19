@@ -512,40 +512,58 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('position-area').innerHTML=ph;
 
   // ── SIGNAL TAB ──
-  function sigVerdict(sig, label, cd){
-    // Cooldown overrides everything
-    if(cd && cd.remaining > 0){
-      return {txt:'\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked', clr:'var(--am)'};}
-    var reasons=[];
-    if(!sig.ema_ok) reasons.push('EMA '+(sig.ema_gap>0?'+':'')+sig.ema_gap+' not aligned');
-    if(!sig.rsi_ok) reasons.push('RSI '+sig.rsi+' not rising');
-    if(!sig.candle_green) reasons.push('candle red');
-    if(!sig.gap_widening) reasons.push('gap shrinking');
-    if(reasons.length===0){
-      if(sig.verdict==='FIRED') return {txt:'FIRED \u2705',clr:'var(--gn)'};
-      return {txt:'EMA +'+(sig.ema_gap||0)+' RSI '+(sig.rsi||0)+' \u2014 READY',clr:'var(--cy)'};
-    }
-    return {txt:reasons[0].charAt(0).toUpperCase()+reasons[0].slice(1),clr:'var(--am)'};
+  // \u2500\u2500 V9 Signal Block \u2014 shows G1-G5 gate status \u2500\u2500
+  function gateRow(label, pass, detail){
+    var clr=pass?'var(--gn)':'var(--rd)';
+    var ic=pass?'\u2705':'\u274C';
+    return '<div class="row"><div class="k">'+label+'</div><div class="v" style="color:'+clr+'">'+ic+' '+esc(detail||'')+'</div></div>';
   }
 
   function signalBlock(label, sig){
     var strike=sig.strike||mk.atm;
-    var ltp=sig.ltp||0;
-    var emaClr=sig.ema_ok?'var(--gn)':'var(--rd)';
-    var rsiClr=sig.rsi_ok?'var(--gn)':'var(--rd)';
+    var ltp=(sig.ltp||0).toFixed(2);
     var cd=d.cooldown&&d.cooldown[label]?d.cooldown[label]:(d.cooldown&&d.cooldown.remaining?d.cooldown:null);
-    var vd=sigVerdict(sig,label,cd);
-    var h='<div class="sect"><div class="sh">'+label+' '+strike+' \xB7 &#x20B9;'+ltp+'</div>';
-    h+='<div class="row"><div class="k">EMA9</div><div class="v">'+(sig.ema9||0)+'</div></div>';
-    h+='<div class="row"><div class="k">EMA21</div><div class="v">'+(sig.ema21||0)+'</div></div>';
-    h+='<div class="row"><div class="k">EMA GAP</div><div class="v" style="color:'+emaClr+'">'+(sig.ema_gap>0?'+':'')+sig.ema_gap+(sig.ema_ok?' \u2705':' \u274C')+'</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+sig.rsi+(sig.rsi_ok?' \u2191 \u2705':' \u274C')+'</div></div>';
-    var gcClr=sig.candle_green?'var(--gn)':'var(--rd)';
-    h+='<div class="row"><div class="k">CANDLE</div><div class="v" style="color:'+gcClr+'">'+(sig.candle_green?'GREEN \u2705':'RED \u274C')+'</div></div>';
-    var gwClr=sig.gap_widening?'var(--gn)':'var(--rd)';
-    h+='<div class="row"><div class="k">GAP TREND</div><div class="v" style="color:'+gwClr+'">'+(sig.gap_widening?'WIDENING \u2705':'SHRINKING \u274C')+'</div></div>';
-    h+='<div class="verdict" style="color:'+vd.clr+'">'+esc(vd.txt)+'</div></div>';
-    return h;}
+
+    // Verdict colour
+    var verdict=sig.verdict||'\u2014';
+    var vclr='var(--am)';
+    if(sig.fired||verdict.indexOf('ALL GATES')>=0){vclr='var(--gn)';verdict='\u2705 ALL GATES \u2014 READY TO TRADE';}
+    else if(verdict==='MARKET CLOSED'||verdict==='WARMING UP'){vclr='#888';}
+    else if(verdict==='NO DATA'){vclr='#888';}
+    if(cd&&cd.remaining>0){vclr='var(--am)';verdict='\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked';}
+
+    var bw=sig.band_width||0;
+    var bwClr=(bw>=12&&bw<=16)?'var(--gn)':'var(--rd)';
+    var rsi=sig.rsi||0;
+    var rsiPrev=sig.rsi_prev||0;
+    var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
+    var slopeClr=sig.g2b_slope_ok?'var(--gn)':'var(--rd)';
+
+    var h='<div class="sect">';
+    h+='<div class="sh">'+label+' '+strike+' &nbsp;\u00B7&nbsp; &#x20B9;'+ltp+'</div>';
+    // Raw values
+    h+='<div class="row"><div class="k">CLOSE</div><div class="v">'+(sig.close||0)+'</div></div>';
+    h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
+    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 12-16)</div></div>';
+    h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
+    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsi+' (prev '+rsiPrev+')</div></div>';
+    h+='<div class="row"><div class="k">EMA9L SLOPE</div><div class="v" style="color:'+slopeClr+'">'+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope+'</div></div>';
+    // Gate rows
+    h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
+    h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
+    h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
+    h+=gateRow('G2B SLOPE\u22650',  sig.g2b_slope_ok,      'slope '+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope);
+    h+=gateRow('G3 BW 12-16',  sig.g3_bw_ok,          'bw='+bw);
+    h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
+    h+=gateRow('G5 RSI 50-65\u2191',sig.g5_rsi_ok,         'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'));
+    if(sig.g6_stochrsi!=null){
+      var g6c=sig.g6_stochrsi?'var(--gn)':'#888';
+      h+='<div class="row"><div class="k">G6 STOCHRSI</div><div class="v" style="color:'+g6c+'">'+(sig.g6_stochrsi?'CROSS \u2705':'skip')+' k='+(sig.g6_k||0)+'</div></div>';
+    }
+    h+='<div class="verdict" style="color:'+vclr+'">'+esc(verdict)+'</div>';
+    h+='</div>';
+    return h;
+  }
 
   document.getElementById('p-sig').innerHTML=
     '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
