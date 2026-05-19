@@ -153,15 +153,7 @@ DEFAULT_STATE = {
 state   = deepcopy(DEFAULT_STATE)
 _running = True
 
-# ═══════════════════════════════════════════════════════════════
-#  V8 SHADOW STATE (parallel 3-min strategy, evaluation only)
-# ═══════════════════════════════════════════════════════════════
-# Phase 1 (today): V8 fires Telegram alerts but does NOT execute trades.
-# This lets us watch V8 signal quality without risking V7 stability.
-# Phase 2 (after market close): flip V8_SHADOW_MODE = False to enable
-# real V8 trades alongside V7.
-V8_SHADOW_MODE = False  # PAPER mode — V8 takes real (paper) trades alongside V7.
-V7_SHADOW_MODE = True   # V7 shadow: signals logged silently, no trades, no Telegram alerts.
+V8_SHADOW_MODE = False
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
     "_signals_today": 0,             # count for /pulse
@@ -1269,6 +1261,27 @@ def _tg_answer_callback(callback_query_id: str, text: str = ""):
 # ═══════════════════════════════════════════════════════════════
 
 def _alert_bot_started():
+    # ── Startup spam suppression — skip TG alert if restarted within 10 min ──
+    _ts_file = os.path.join(os.path.expanduser("~"), "logs", "live", ".last_bot_start_ts")
+    _now_ts = time.time()
+    try:
+        if os.path.exists(_ts_file):
+            with open(_ts_file) as _tf:
+                _last_ts = float(_tf.read().strip())
+            if _now_ts - _last_ts < 600:  # 10 min cooldown
+                logger.info(f"[MAIN] Startup TG alert suppressed — last restart {int(_now_ts - _last_ts)}s ago")
+                with open(_ts_file, "w") as _tf:
+                    _tf.write(str(_now_ts))
+                return
+    except Exception:
+        pass
+    try:
+        os.makedirs(os.path.dirname(_ts_file), exist_ok=True)
+        with open(_ts_file, "w") as _tf:
+            _tf.write(str(_now_ts))
+    except Exception:
+        pass
+
     _web_url = "http://" + _WEB_IP + ":8080" if _WEB_IP and _WEB_IP != "unknown" else "http://localhost:8080"
     _acct = D.get_account_info()
     _acct_line = ""
@@ -1284,7 +1297,7 @@ def _alert_bot_started():
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v18\n"
-        "V7 SHADOW : 15-min | 2-gate | signals only\n"
+        ""
         "V9 LIVE   : 3-min  | 3-gate | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
@@ -1601,7 +1614,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
 
     _tg_send(
-        "🕐 <b>V7 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
+        "🕐 <b>V9 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
         + _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
         + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1857,7 +1870,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             pass
 
         _tg_send(
-            _dir_emoji + " <b>V7 EXIT " + _sym_exit + "</b>\n"
+            _dir_emoji + " <b>V9 EXIT " + _sym_exit + "</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>" + reason + "</b>    " + _sign_pnl + "{:.1f}".format(pnl) + " pts\n"
             + _reason_line +
@@ -2563,6 +2576,7 @@ def _strategy_loop(kite):
                     import traceback as _v8tb
                     logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
 
+
             # ── SHADOW: Dual-TF early entry tracker (data collection, NO live trades) ──
             # PRIMARY: 1-min candle CLOSE > EMA9_high + RSI_1m rising  (fires DURING 3-min candle)
             # FILTER:  3-min last completed candle alignment (BW, RSI, slope, green)
@@ -2634,7 +2648,7 @@ def _strategy_loop(kite):
                             continue
 
                         # ── 1-min PRIMARY: close > EMA9_high + RSI filter ──
-                        _sh_1m_gap    = round(_sh_1m_close - _sh_ema9h_1m, 2)  # +ve = above
+                        _sh_1m_gap    = round(_sh_1m_close - _sh_ema9h_1m, 2)
                         _sh_1m_reject = None
                         if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
                             _sh_1m_reject = f"1m_close_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
@@ -2657,7 +2671,7 @@ def _strategy_loop(kite):
                         _sh_rsi_3m    = float(_sh_comp.get("RSI", 0) or 0)
                         _sh_rsi_3m_p  = float(_sh_3m.iloc[-3].get("RSI", 0) or 0)
                         _sh_3m_close  = float(_sh_comp["close"])
-                        _sh_3m_gap    = round(_sh_3m_close - _sh_3m_ema9l, 2)  # +ve = above
+                        _sh_3m_gap    = round(_sh_3m_close - _sh_3m_ema9l, 2)
 
                         _sh_3m_reject = None
                         if not (_sh_3m_close > _sh_3m_ema9l):
@@ -2925,7 +2939,7 @@ def _strategy_loop(kite):
                             _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
                                            if _prev_sl > 0 else "entry-10")
                             _tg_send(
-                                _icon + " <b>V7 SL UPGRADED → " + _new_tier + "</b>\n"
+                                _icon + " <b>V9 SL UPGRADED → " + _new_tier + "</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                 + _r_emoji + " " + _r_sym + "   Peak +"
                                 + "{:.1f}".format(_r_peak) + "\n"
@@ -2966,7 +2980,7 @@ def _strategy_loop(kite):
                                 _lock_str = (("+" if _lock >= 0 else "")
                                              + "{:.1f}".format(_lock))
                                 _tg_send(
-                                    _ms_icon + " <b>V7 Peak +" + str(_m)
+                                    _ms_icon + " <b>V9 Peak +" + str(_m)
                                     + " pts</b>   " + _r_tier + "\n"
                                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                     "Peak  +" + "{:.1f}".format(_peak) + "\n"
@@ -3116,7 +3130,7 @@ def _strategy_loop(kite):
 
                 # ── RE-ENTRY WATCHER (V7: 2-candle window) ──
                 _re_armed = bool(state.get("_reentry_armed", False))
-                if _re_armed and not state.get("in_trade") and not V7_SHADOW_MODE:
+                if _re_armed and not state.get("in_trade"):
                     _re_dir   = str(state.get("_reentry_direction", "") or "")
                     _re_token = int(state.get("_reentry_token", 0) or 0)
                     _re_strike = int(state.get("_reentry_strike", 0) or 0)
@@ -3151,7 +3165,7 @@ def _strategy_loop(kite):
                                             _passed = False
                                             _re_result["fired"] = False
                                             _re_result["reject_reason"] = f"reentry_weak_body_{_re_body}pct"
-                                            logger.info(f"[REENTRY-V7] {_re_dir} body={_re_body}% < 20% — rejected")
+                                            logger.info(f"[REENTRY-V9] {_re_dir} body={_re_body}% < 20% — rejected")
                                     if not _passed:
                                         _why = _re_result.get("reject_reason", "?")
                                         if _re_attempts >= 2:
@@ -3242,7 +3256,7 @@ def _strategy_loop(kite):
                                             continue
                                         _re_close = float(_re_result.get("close", 0) or 0)
                                         _tg_send(
-                                            "🔄 <b>V7 RE-ENTRY CONFIRMED " + _re_dir + " "
+                                            "🔄 <b>V9 RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
                                             "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
@@ -3272,111 +3286,8 @@ def _strategy_loop(kite):
                             logger.error("[REENTRY] check error: " + str(_ree)
                                          + "\n" + _tb_re.format_exc())
 
-                _ce_info_v15 = _locked_tokens.get("CE") if _locked_tokens else None
-                _pe_info_v15 = _locked_tokens.get("PE") if _locked_tokens else None
-                _ce_tok_v15 = _ce_info_v15.get("token", 0) if _ce_info_v15 else 0
-                _pe_tok_v15 = _pe_info_v15.get("token", 0) if _pe_info_v15 else 0
-
-                _candidates = []
-                for opt_type in ("CE", "PE"):
-                    _other_tok = _pe_tok_v15 if opt_type == "CE" else _ce_tok_v15
-                    _atm_info = dir_tokens.get(opt_type)
-                    _atm_strike_v = dir_strikes.get(opt_type, atm_strike)
-                    _multi = bool(CFG.entry_ema9_band("multi_candidate_enabled", False))
-                    _iter = [("ATM", _atm_info, _atm_strike_v)]
-                    if _multi:
-                        _up_info = _locked_tokens.get(opt_type + "_UP")
-                        _dn_info = _locked_tokens.get(opt_type + "_DN")
-                        if _up_info:
-                            _iter.append(("UP", _up_info, _atm_strike_v + 50))
-                        if _dn_info:
-                            _iter.append(("DN", _dn_info, _atm_strike_v - 50))
-                    for _label, _oi, _strike_val in _iter:
-                        if not _oi or not _strike_val:
-                            continue
-                        _sym_chk = str(_oi.get("symbol", ""))
-                        if _sym_chk and str(_strike_val) not in _sym_chk:
-                            logger.warning("[MAIN] Strike/symbol mismatch skipped: "
-                                           + _label + " " + opt_type + " strike="
-                                           + str(_strike_val) + " sym=" + _sym_chk)
-                            continue
-                        result = check_entry(
-                            token=_oi["token"],
-                            option_type=opt_type,
-                            spot_ltp=spot_ltp,
-                            dte=dte,
-                            expiry_date=expiry,
-                            kite=kite,
-                            other_token=_other_tok,
-                            state=state,
-                        )
-                        result["_strike"] = _strike_val
-                        result["_strike_label"] = _label
-                        result["_symbol"] = _oi.get("symbol", "")
-                        all_results[opt_type + "_" + _label] = result
-                        if not result["fired"]:
-                            continue
-                        _body = float(result.get("body_pct", 0) or 0)
-                        _gap = float(result.get("close", 0) or 0) - float(result.get("ema9_low", 0) or 0)
-                        _score = round(_body * max(_gap, 0.1), 2)
-                        _candidates.append({
-                            "type": opt_type, "label": _label,
-                            "info": _oi, "result": result,
-                            "score": _score, "strike": _strike_val,
-                        })
-
-                if _candidates:
-                    _candidates.sort(key=lambda c: c["score"], reverse=True)
-                    _winner = _candidates[0]
-                    opt_type = _winner["type"]
-                    opt_info = _winner["info"]
-                    result = _winner["result"]
-                    _win_label = _winner["label"]
-                    _win_score = _winner["score"]
-                    result["_strike"] = _winner["strike"]
-                    result["_strike_label"] = _win_label
-                    result["_entry_score"] = _win_score
-                    logger.info("[MAIN] BEST CANDIDATE: " + opt_type + " " + _win_label
-                                + " strike=" + str(_winner["strike"])
-                                + " score=" + str(_win_score)
-                                + " (of " + str(len(_candidates)) + " fired)")
-
-                    option_ltp_now = D.get_ltp(opt_info["token"])
-                    if option_ltp_now <= 0:
-                        try:
-                            q = kite.ltp(["NFO:" + opt_info["symbol"]])
-                            option_ltp_now = float(list(q.values())[0]["last_price"])
-                        except Exception:
-                            pass
-                    ok, reason = pre_entry_checks(
-                        kite, opt_info["token"], state,
-                        option_ltp_now, profile, session,
-                        direction=opt_type)
-                    if ok:
-                        if V7_SHADOW_MODE:
-                            # Shadow: stamp candle guard, log signal, skip trade
-                            with _state_lock:
-                                state["_last_fired_candle_ts"] = str(result.get("fired_candle_ts", ""))
-                            logger.info("[V7-SHADOW] " + opt_type + " " + str(result.get("_strike", ""))
-                                        + " close=" + str(result.get("close", ""))
-                                        + " rsi=" + str(result.get("rsi", ""))
-                                        + " body=" + str(result.get("body_pct", "")) + "%"
-                                        + " xleg_dying=" + str(result.get("xleg_other_dying", "")))
-                        else:
-                            best_result = result
-                            best_type = opt_type
-                            best_opt_info = opt_info
-                    else:
-                        logger.info("[MAIN] Entry blocked (" + opt_type
-                                    + " " + _win_label + "): " + reason)
-
-                for _k, _v in list(all_results.items()):
-                    if _k.startswith("CE_ATM"):
-                        all_results["CE"] = _v
-                    elif _k.startswith("PE_ATM"):
-                        all_results["PE"] = _v
-
-                # V8 entry handled above in the 10-second scan (outside 1-min gate)
+                # V7 15-min check_entry scan removed — V9 (check_entry_v8) handles all entries
+                # V9 entry is handled above in the 10-second scan (outside 1-min gate)
 
                 try:
                     vix_ltp = D.get_vix()
@@ -3751,7 +3662,7 @@ def _cmd_pulse(args):
             + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>TODAY</b>\n"
-            + "🕐 V7: " + str(len(_trades_today)) + " trades · "
+            + "🕐 V9: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
             + ("👻 V8 (shadow): " if V8_SHADOW_MODE else "⚡ V8 (live): ")
@@ -4674,16 +4585,13 @@ def main():
 
             wins   = [t for t in trades_today if _get_pnl(t) > 0]
             losses = [t for t in trades_today if _get_pnl(t) < 0]
-            # state["daily_pnl"] is V7-only — exclude V8 trades to match CHECK 19
-            v7_trades = [t for t in trades_today
-                         if not str(t.get("entry_mode", "")).startswith("V8_")]
-            pnl    = sum(_get_pnl(t) for t in v7_trades)
+            pnl    = sum(_get_pnl(t) for t in trades_today)
 
             with _state_lock:
-                state["daily_pnl"]          = round(pnl, 2)
+                state["daily_pnl"] = round(pnl, 2)
 
             logger.info("[MAIN] Restored: " + str(len(trades_today))
-                        + " trades | " + str(len(losses)) + " losses | pnl="
+                        + " trades | " + str(len(wins)) + "W / " + str(len(losses)) + "L | pnl="
                         + str(round(pnl,1)) + "pts")
         else:
             logger.info("[MAIN] No trades found for today — starting fresh")

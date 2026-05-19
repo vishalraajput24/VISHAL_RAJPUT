@@ -29,6 +29,9 @@ import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
 
+# G6-SHADOW throttle: log at most once per 3-min candle per option_type
+_g6_last_log: dict = {}  # key: option_type → last candle timestamp str
+
 
 def get_margin_available(kite) -> float:
     try:
@@ -348,27 +351,30 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 return result
 
         # ── GATE 2: close above EMA9_low (broke above support band) ──
+        _bw = round(ema9_high - ema9_low, 2)
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate2_below_band "
-                            f"close={round(close,1)} ema9l={round(ema9_low,1)}")
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} bw={_bw}")
             return result
 
         # ── GATE 3: band width 12-16 (momentum sweet spot, not choppy or overextended) ──
-        _bw = round(ema9_high - ema9_low, 2)
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
         if _bw < 12:
             result["reject_reason"] = f"band_too_narrow_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_narrow "
-                            f"width={_bw} (need 12-16)")
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 12-16)")
             return result
         if _bw > 16:
             result["reject_reason"] = f"band_too_wide_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_wide "
-                            f"width={_bw} (need 12-16)")
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 12-16)")
             return result
 
         # ── GATE 5: 50 < RSI < 65 (momentum zone) ──
@@ -411,9 +417,13 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 result["g6_k_now"]  = _g6_k_now
                 result["g6_k_prev"] = _g6_k_prev
                 if not silent:
-                    logger.info(f"[G6-SHADOW] {option_type} StochRSI_OsCross(5) "
-                                f"{'PASS' if _g6_pass else 'SKIP'} "
-                                f"k={_g6_k_now} prev={_g6_k_prev}")
+                    # Throttle: log only once per 3-min candle (not every 3s)
+                    _g6_candle_ts = str(opt_3m.index[-1]) if hasattr(opt_3m.index, '__getitem__') else ""
+                    if _g6_last_log.get(option_type) != _g6_candle_ts:
+                        _g6_last_log[option_type] = _g6_candle_ts
+                        logger.info(f"[G6-SHADOW] {option_type} StochRSI_OsCross(5) "
+                                    f"{'PASS' if _g6_pass else 'SKIP'} "
+                                    f"k={_g6_k_now} prev={_g6_k_prev}")
             else:
                 result["g6_stochrsi_os_cross"] = None
         except Exception as _g6e:
