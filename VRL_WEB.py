@@ -544,7 +544,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // Raw values
     h+='<div class="row"><div class="k">CLOSE</div><div class="v">'+(sig.close||0)+'</div></div>';
     h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
-    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 12-16)</div></div>';
+    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 13-16)</div></div>';
     h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsi+' (prev '+rsiPrev+')</div></div>';
     h+='<div class="row"><div class="k">EMA9L SLOPE</div><div class="v" style="color:'+slopeClr+'">'+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope+'</div></div>';

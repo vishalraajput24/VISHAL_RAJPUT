@@ -5,8 +5,9 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
 - **V9**: 3-min candle strategy — **LIVE paper trading** (active)
 
-**Current version**: `v18` (V9 gates: BW 13-17 + RSI 50-65, deployed 2026-05-18)
-**Previous**: v17 — V8 gates: BW>=11, RSI 45-75
+**Current version**: `v19` (V9 gates: BW 13-16 + RSI 48-70, deployed 2026-05-19)
+**Previous**: v18 — BW 12-16, RSI 50-65 (sweep showed -252pts over 10d)
+**v17**: V8 gates: BW>=11, RSI 45-75
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
@@ -38,9 +39,9 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
 | G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
-| G3 | `13 <= band_width <= 17` (momentum sweet spot — not choppy, not overextended) |
+| G3 | `13 <= band_width <= 16` (momentum sweet spot — not choppy, not overextended) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | `50 < RSI < 65` AND rising vs previous candle |
+| G5 | `48 < RSI < 70` AND rising vs previous candle |
 
 **Data basis** (22 days, backtest_bw_rsi_filter.py):
 - V8 gates (BW>=11, RSI 45-75): score +8.4, n=590 signals

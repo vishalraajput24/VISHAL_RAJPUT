@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v18 (Vishal Clean V7+V9)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v19 (Vishal Clean V7+V9)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V9 (LIVE):   3-min  | 3-gate (close>ema9l, BW 12-16, RSI 50-65)
+#  V9 (LIVE):   3-min  | 3-gate (close>ema9l, BW 13-16, RSI 48-70)
 #  V9 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
@@ -1297,7 +1297,7 @@ def _alert_bot_started():
         + _acct_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v18\n"
+        "<b>STRATEGY</b>  Vishal Clean v19\n"
         ""
         "V9 LIVE   : 3-min  | 3-gate | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
@@ -1305,8 +1305,8 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V9 GATES</b>\n"
         "G2) Close > EMA9_low\n"
-        "G3) Band width 12-16 pts\n"
-        "G5) 50 < RSI < 65\n"
+        "G3) Band width 13-16 pts\n"
+        "G5) 48 < RSI < 70\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V9 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
@@ -2134,9 +2134,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 if not _g1: _fails.append("G1:red_candle")
                 if not _g2: _fails.append(f"G2:close({round(_close,1)})<ema9l({round(_el,1)})")
                 if not _g2b: _fails.append(f"G2B:slope_falling({_slope:+.2f})")
-                if not _g3: _fails.append(f"G3:BW={_bw}(need12-16)")
+                if not _g3: _fails.append(f"G3:BW={_bw}(need13-16)")
                 if not _g4: _fails.append("G4:other_side_not_falling")
-                if not _g5: _fails.append(f"G5:RSI={_rsi}(need50-65↑)")
+                if not _g5: _fails.append(f"G5:RSI={_rsi}(need48-70↑)")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0) or _ltp_fallback, 2)
@@ -3800,7 +3800,7 @@ def _cmd_help(args):
         "/deploy     — git pull main + restart\n"
         "/restart    — restart bot (no pull)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v18 — V9 live 3-min / V7 shadow 15-min, "
+        "VISHAL RAJPUT TRADE v19 — V9 live 3-min, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

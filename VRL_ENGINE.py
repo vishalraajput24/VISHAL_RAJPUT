@@ -360,37 +360,39 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"ema9h={round(ema9_high,1)} bw={_bw}")
             return result
 
-        # ── GATE 3: band width 12-16 (momentum sweet spot, not choppy or overextended) ──
+        # ── GATE 3: band width 13-16 (momentum sweet spot — v19 update from sweep) ──
+        # v18: 12-16 | v19: 13-16 — BW=12 was adding choppy entries, sweep -140pts better
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
-        if _bw < 12:
+        if _bw < 13:
             result["reject_reason"] = f"band_too_narrow_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_narrow "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)} "
-                            f"ema9h={round(ema9_high,1)} width={_bw} (need 12-16)")
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
             return result
         if _bw > 16:
             result["reject_reason"] = f"band_too_wide_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_wide "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)} "
-                            f"ema9h={round(ema9_high,1)} width={_bw} (need 12-16)")
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
             return result
 
-        # ── GATE 5: 50 < RSI < 65 (momentum zone) ──
+        # ── GATE 5: 48 < RSI < 70 (momentum zone — v19 update from sweep) ──
+        # v18: 50-65 | v19: 48-70 — wider RSI captures more valid momentum, sweep -140pts better
         _rsi_now  = float(last.get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
-        if _rsi_now <= 50:
-            result["reject_reason"] = f"rsi_below_50_{round(_rsi_now,1)}"
+        if _rsi_now <= 48:
+            result["reject_reason"] = f"rsi_below_48_{round(_rsi_now,1)}"
             if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_50 "
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_48 "
                             f"rsi={round(_rsi_now,1)}")
             return result
-        if _rsi_now >= 65:
+        if _rsi_now >= 70:
             result["reject_reason"] = f"rsi_overextended_{round(_rsi_now,1)}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate5_rsi_overextended "
-                            f"rsi={round(_rsi_now,1)} (cap=65)")
+                            f"rsi={round(_rsi_now,1)} (cap=70)")
             return result
 
         result["fired"] = True
