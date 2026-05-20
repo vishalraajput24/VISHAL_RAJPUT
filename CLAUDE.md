@@ -255,3 +255,18 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 - **main** is protected — direct push blocked, PRs required
 - Keep only 1 open PR at a time
 - After merge: `git checkout main && git pull` locally to stay in sync
+
+## ⚠️ MANDATORY: Every Code Change Goes to GitHub
+Every session where code is changed — no exceptions:
+1. `git checkout -b fix/<short-description>`
+2. `git add <changed files>` — only tracked production files, NOT backtest scripts
+3. `git commit -m "type: short reason + detail of what and why"`
+4. `git push origin <branch>`
+5. `gh pr create ...` — title + bullet summary + test plan
+6. `gh pr merge --squash --delete-branch`
+7. `git checkout main && git pull`
+
+**`gh` CLI**: installed at `~/bin/gh`, authenticated as vishalraajput24.
+PATH must include `~/bin` — run `export PATH="$HOME/bin:$PATH"` if gh not found.
+
+Do NOT leave changes uncommitted at end of session. SSH and GitHub must always be identical.
