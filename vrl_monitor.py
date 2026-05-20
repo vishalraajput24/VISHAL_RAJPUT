@@ -3,13 +3,14 @@
 
 import os, re, requests
 from datetime import datetime, date
-from collections import Counter, defaultdict
+from collections import Counter
 
 TG_TOKEN  = os.getenv("TG_TOKEN", "")
 TG_CHATID = os.getenv("TG_GROUP_ID", "")
 LOG_LIVE  = os.path.expanduser("~/logs/live/vrl_live.log")
 TRADE_CSV = os.path.expanduser("~/lab_data/vrl_trade_log.csv")
 ERROR_LOG = os.path.expanduser(f"~/logs/errors/{date.today().isoformat()}.log")
+STATE_FILE = os.path.expanduser("~/state/vrl_live_state.json")
 
 def send(text):
     if not TG_TOKEN or not TG_CHATID:
@@ -28,6 +29,13 @@ def tail(path, n=300):
     except:
         return []
 
+def read_all(path):
+    try:
+        with open(path) as f:
+            return f.readlines()
+    except:
+        return []
+
 def check_bot_running():
     import subprocess
     try:
@@ -37,8 +45,18 @@ def check_bot_running():
         return False
 
 def get_mode():
-    lines = tail(LOG_LIVE, 500)
-    for line in reversed(lines):
+    # First try state file (always up to date)
+    try:
+        import json
+        with open(STATE_FILE) as f:
+            s = json.load(f)
+        mode = s.get("mode", "")
+        if mode:
+            return mode
+    except:
+        pass
+    # Fallback: scan full log
+    for line in reversed(read_all(LOG_LIVE)):
         if "[MAIN] Mode:" in line:
             return "LIVE" if "LIVE" in line else "PAPER"
     return "UNKNOWN"
@@ -83,13 +101,27 @@ def get_last_trade_info():
         return None
     return {"symbol": p[3], "pnl": p[8], "exit": p[13], "time": p[2]}
 
+# Human-readable labels for gate reject reasons
+REJECT_LABELS = {
+    "gate2_below_band":    "Price below band (CE/PE too weak)",
+    "gate3_band_narrow":   "Band too narrow (market flat)",
+    "gate3_band_wide":     "Band too wide (overextended)",
+    "gate5_rsi_below_50":  "RSI below 50 (no momentum)",
+    "gate5_rsi_overextended": "RSI above 65 (overbought)",
+    "gate1_close_below_band": "Candle closed below band",
+    "gate2_rsi_not_rising":"RSI falling (momentum lost)",
+    "same_candle_guard":   "Same candle guard (already fired)",
+    "both_sides_cooldown": "Both sides cooling down",
+    "cooldown_skip":       "Cooldown active",
+    "slope":               "EMA slope falling",
+}
+
 def get_rejections(minutes=15):
-    lines = tail(LOG_LIVE, 500)
+    lines = tail(LOG_LIVE, 600)
     now = datetime.now()
     rejects = Counter()
     last_signal_time = None
     for line in lines:
-        # parse timestamp
         m = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
         if not m:
             continue
@@ -97,15 +129,13 @@ def get_rejections(minutes=15):
             ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
         except:
             continue
-        age_min = (now - ts).total_seconds() / 60
-        if age_min > minutes:
+        if (now - ts).total_seconds() / 60 > minutes:
             continue
-        if "[REJECT" in line or "reject_reason" in line:
-            # extract reason
-            rm = re.search(r"(band_too_\w+|rsi_\w+|same_candle\w*|exit_candle\w*|both_sides\w*|force_exit\w*|cooldown\w*|candle_not_green\w*|close_below\w*|slope\w*|gate\w*)", line)
+        if "[REJECT" in line:
+            rm = re.search(r"(gate\d\w*|band_too_\w+|rsi_\w+|same_candle\w*|both_sides\w*|cooldown\w*|slope\w*)", line)
             reason = rm.group(1) if rm else "unknown"
             rejects[reason] += 1
-        if "[SIGNAL]" in line or "gate=PASS" in line.lower() or "fired=True" in line:
+        if "[ENGINE-V9]" in line and "FIRED" in line:
             last_signal_time = ts
     return rejects, last_signal_time
 
@@ -113,6 +143,7 @@ def get_recent_errors(minutes=15):
     lines = tail(ERROR_LOG, 100) + tail(LOG_LIVE, 300)
     now = datetime.now()
     errors = []
+    seen = set()
     for line in lines:
         if "ERROR" not in line and "WARNING" not in line:
             continue
@@ -124,15 +155,20 @@ def get_recent_errors(minutes=15):
         except:
             continue
         if (now - ts).total_seconds() / 60 <= minutes:
-            errors.append(line.strip()[-120:])
-    return errors[-5:]  # max 5
+            msg = line.strip()[-120:]
+            if msg not in seen:
+                seen.add(msg)
+                errors.append(msg)
+    return errors[-5:]
 
 def get_ws_status():
-    lines = tail(LOG_LIVE, 100)
-    for line in reversed(lines):
-        if "[WS]" in line:
-            if "Connected" in line: return "Connected"
-            if "Disconnected" in line or "error" in line.lower(): return "Disconnected"
+    for line in reversed(read_all(LOG_LIVE)):
+        if "[WS]" not in line:
+            continue
+        if "Connected" in line or "Subscribed" in line:
+            return "Connected"
+        if "Disconnected" in line or "error" in line.lower() or "Closed" in line:
+            return "Disconnected"
     return "Unknown"
 
 def main():
@@ -145,43 +181,56 @@ def main():
     ws      = get_ws_status()
     last_trade = get_last_trade_info()
 
-    mode_icon = "🟢" if mode == "LIVE" else "🟡"
-    bot_icon  = "✅" if running else "❌"
-    ws_icon   = "✅" if ws == "Connected" else "⚠️"
-    pnl_icon  = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
+    bot_icon = "✅" if running else "❌"
+    ws_icon  = "✅" if ws == "Connected" else "⚠️"
+    pnl_icon = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
+    mode_icon = "🔴" if mode == "LIVE" else "🟡"
 
-    msg = f"<b>📊 VRL Monitor — {now.strftime('%H:%M')}</b>\n"
-    msg += f"{'─'*28}\n"
-    msg += f"Bot: {bot_icon} {'Running' if running else 'STOPPED'}  |  Mode: {mode_icon} {mode}\n"
-    msg += f"WebSocket: {ws_icon} {ws}\n"
-    msg += f"{'─'*28}\n"
-    msg += f"<b>Today's Trades</b>\n"
-    msg += f"Total: {trades}  |  W: {wins}  L: {losses}\n"
-    msg += f"PnL: {pnl_icon} {pnl:+.1f} pts\n"
+    msg = f"<b>📊 VRL — {now.strftime('%H:%M')}</b>\n"
+    msg += f"{'─'*26}\n"
 
+    # Bot status line
+    status = "Running" if running else "STOPPED 🚨"
+    msg += f"Bot: {bot_icon} {status}  |  {mode_icon} {mode} mode\n"
+    msg += f"Feed: {ws_icon} {ws}\n"
+    msg += f"{'─'*26}\n"
+
+    # PnL summary
+    msg += f"<b>Today</b>: {trades} trades  ({wins}W / {losses}L)\n"
+    msg += f"<b>PnL</b>: {pnl_icon} {pnl:+.1f} pts\n"
     if last_trade:
-        msg += f"Last: {last_trade['symbol']} | {last_trade['pnl']} pts | {last_trade['exit']} @ {last_trade['time']}\n"
+        side = "CE" if "CE" in last_trade['symbol'] else "PE"
+        exit_reason = last_trade['exit'].replace("_", " ").title()
+        msg += f"Last trade: {side} {last_trade['pnl']} pts — {exit_reason} @ {last_trade['time'][:5]}\n"
 
-    msg += f"{'─'*28}\n"
-    msg += f"<b>Gate Rejections (last 15 min)</b>\n"
+    msg += f"{'─'*26}\n"
+
+    # Why no trade (top 3 unique reasons, human readable)
     if rejects:
-        for reason, count in rejects.most_common(5):
-            msg += f"  • {reason}: {count}x\n"
+        msg += f"<b>Why no trade (last 15 min):</b>\n"
+        shown = 0
+        for reason, count in rejects.most_common():
+            label = REJECT_LABELS.get(reason, reason.replace("_", " "))
+            msg += f"  • {label}\n"
+            shown += 1
+            if shown >= 3:
+                break
     else:
-        msg += "  No rejections\n"
+        msg += "No rejections in last 15 min\n"
 
+    # Last signal
     if last_signal:
         age = int((now - last_signal).total_seconds() / 60)
-        msg += f"Last signal: {age} min ago\n"
+        msg += f"Last V9 signal: {age} min ago\n"
+    else:
+        msg += f"Last V9 signal: none today\n"
 
+    # Errors
     if errors:
-        msg += f"{'─'*28}\n"
-        msg += f"<b>⚠️ Recent Errors</b>\n"
+        msg += f"{'─'*26}\n"
+        msg += f"<b>⚠️ Errors:</b>\n"
         for e in errors:
             msg += f"  • {e[-100:]}\n"
-
-    if not running:
-        msg += f"\n🚨 <b>BOT IS NOT RUNNING!</b>"
 
     send(msg)
     print(msg)
