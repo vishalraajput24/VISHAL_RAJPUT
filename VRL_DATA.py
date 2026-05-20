@@ -71,9 +71,10 @@ SESSIONS_DIR     = os.path.join(LAB_DIR, "sessions")
 LIVE_LOG_FILE    = os.path.join(LIVE_LOG_DIR, "vrl_live.log")
 LAB_LOG_FILE     = os.path.join(LAB_LOG_DIR,  "vrl_lab.log")
 TRADE_LOG_PATH   = os.path.join(LAB_DIR,      "vrl_trade_log.csv")
-STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_live_state.json")
-V8_STATE_FILE_PATH  = os.path.join(STATE_DIR, "vrl_v8_state.json")
-PID_FILE_PATH       = os.path.join(STATE_DIR, "vrl_live.pid")
+STATE_FILE_PATH        = os.path.join(STATE_DIR, "vrl_live_state.json")
+V8_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v8_state.json")
+SHADOW_STATE_FILE_PATH = os.path.join(STATE_DIR, "vrl_shadow_state.json")
+PID_FILE_PATH          = os.path.join(STATE_DIR, "vrl_live.pid")
 TOKEN_FILE_PATH     = os.path.join(STATE_DIR, "access_token.json")
 
 # ── All constants now read from config.yaml via VRL_CONFIG ──
