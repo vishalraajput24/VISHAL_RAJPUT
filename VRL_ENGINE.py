@@ -308,13 +308,17 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
             return result
 
         # ── EMERGENCY_SL 1-candle cooldown ──
+        # Only blocks the SAME direction that had the SL — not the opposite side.
         if state.get("_sl_cooldown_skip_next"):
-            state["_sl_cooldown_skip_next"] = False
-            result["reject_reason"] = "sl_cooldown_skip"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} sl_cooldown_skip — "
-                            f"skipping first candle after EMERGENCY_SL")
-            return result
+            _sl_dir = state.get("_sl_cooldown_direction", "")
+            if not _sl_dir or _sl_dir == option_type:
+                state["_sl_cooldown_skip_next"] = False
+                state["_sl_cooldown_direction"] = ""
+                result["reject_reason"] = "sl_cooldown_skip"
+                if not silent:
+                    logger.info(f"[REJECT-V8] {option_type} sl_cooldown_skip — "
+                                f"skipping first candle after EMERGENCY_SL")
+                return result
 
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
@@ -397,6 +401,10 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
         result["fired"] = True
         result["entry_mode"] = "CLOSE_FILL"
+        # Stamp candle as used immediately — prevents same candle re-firing
+        # every 3 seconds when entry is blocked by cooldown (BUG-16 fix)
+        if state is not None:
+            state["_last_fired_candle_ts"] = fired_ts
         if not silent:
             logger.info(f"[ENGINE-V9] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
