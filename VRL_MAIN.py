@@ -597,7 +597,8 @@ _shadow_analysis = {
 
 def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
                          vwap_gap, other_vwap_gap, spot_adx, last_peaks,
-                         ema9h_gap=0.0, xleg_buf=None, dte=0):
+                         ema9h_gap=0.0, xleg_buf=None, dte=0,
+                         fut_vwap_gap=0.0, spot_ema9=0.0, spot_ema21=0.0):
     """Log all analysis flags at signal fire — no trade impact."""
     flags = []
 
@@ -637,15 +638,29 @@ def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
         elif _rejected < _total // 2:
             flags.append(f"XLEG_AMBIGUOUS({_other} only {_rejected}/{_total} below_ema9h)")
 
+    # 7. Futures VWAP bias vs signal direction (data collection — no trade impact)
+    if fut_vwap_gap != 0.0:
+        _fv_bias = "BULL" if fut_vwap_gap > 0 else "BEAR"
+        if (direction == "CE" and fut_vwap_gap < -15) or (direction == "PE" and fut_vwap_gap > 15):
+            flags.append(f"FUT_VWAP_MISMATCH({_fv_bias} gap={fut_vwap_gap:+.0f})")
+
+    # 8. Spot EMA9 vs EMA21 alignment — always shown as context tag
+    _ema_note = ""
+    if spot_ema9 > 0 and spot_ema21 > 0:
+        _ema_align = "BULL" if spot_ema9 > spot_ema21 else "BEAR"
+        _ema_note = f"SPOT_EMA_{_ema_align}(ema9={spot_ema9:.0f} ema21={spot_ema21:.0f})"
+
     _dte_tag = f"DTE={dte}"
     if flags:
         logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
                     f"FLAGS: {' | '.join(flags)}"
-                    + (f" | {_xleg_note}" if _xleg_note else ""))
+                    + (f" | {_xleg_note}" if _xleg_note else "")
+                    + (f" | {_ema_note}" if _ema_note else ""))
     else:
         logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
                     f"clean (no flags)"
-                    + (f" | {_xleg_note}" if _xleg_note else ""))
+                    + (f" | {_xleg_note}" if _xleg_note else "")
+                    + (f" | {_ema_note}" if _ema_note else ""))
 
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
@@ -3108,6 +3123,9 @@ def _strategy_loop(kite):
                             ema9h_gap=_sh_1m_gap,
                             xleg_buf=_shadow_analysis[_xleg_sh_dir]["cross_buf"],
                             dte=dte,
+                            fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
+                            spot_ema9=float(spot_3m.get("ema9", 0)),
+                            spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
@@ -3321,6 +3339,9 @@ def _strategy_loop(kite):
                             ema9h_gap=_s2_ema9h_gap,
                             xleg_buf=_shadow_analysis[_xleg_s2_dir]["cross_buf"],
                             dte=dte,
+                            fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
+                            spot_ema9=float(spot_3m.get("ema9", 0)),
+                            spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
