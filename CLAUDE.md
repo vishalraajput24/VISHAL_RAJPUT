@@ -239,15 +239,51 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 - **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction.
 - **Gate 2B** (2026-05-15): EMA9_low slope must be ≥ 0 for last 2 candles. Blocks fake breakouts on falling support.
 
+## Shadow-Specific Bugs Fixed (2026-05-21)
+
+### BUG-A: sl_cooldown not blocking re-entry (PR #36)
+**Root cause**: Early-exit safety block fired SL-HIT but never set `sl_ts`. Main scan read `sl_ts=0` → cooldown age = billions → never triggered.
+**Fix**: `sl_ts=time.time()` added to early-exit update dict when `reason=SL-HIT` and `label=P1`.
+
+### BUG-B: spot_3m undefined — ANALYSIS flags never fired (PR #36)
+**Root cause**: `spot_3m` was local to `_write_dashboard()`. Shadow section in `_strategy_loop()` → NameError on every signal fire.
+**Fix**: Module-level `spot_3m: dict = {}` + `global spot_3m` in `_write_dashboard()`.
+
+### BUG-C: P2 had no relock cooldown gate (PR #37)
+**Root cause**: P1 had 2-min relock cooldown, P2 didn't. P2 fired on brand-new strike EMA9H data (1s after relock).
+**Fix**: Added identical 2-min relock check to P2 FIRE path using same `_v8_shadow_dt.relock_ts`.
+
+---
+
+## Shadow ANALYSIS Flags
+Logged after every signal fire — no trade impact, data collection only:
+- `EXTENDED_GAP(X)` — ema9h_gap > 5. **Caution, NOT a kill signal** — strong trend can override (S16: gap=11.10 → +36)
+- `WEAK_ADX(X)` — spot 3-min ADX low. Low directional conviction.
+- `XLEG_CONFIRMED` — cross-leg dead all 5 last candles. Strong directional confirmation. ✅
+- `XLEG_AMBIGUOUS` — cross-leg not consistently below EMA9H. **Confirmed loss predictor** (S13, 2026-05-21).
+- `TINY_GAP` — ema9h_gap < 0.8 (pending — not yet coded). Low conviction, peak capped.
+
+**Confirmed patterns (2026-05-21, 17 shadow signals):**
+- Sweet zone gap (0.8–2.5) + XLEG_CONFIRMED = best trades
+- XLEG_AMBIGUOUS → loss (confirmed S13: 0/5 CE below EMA9H → -12)
+- EXTENDED_GAP alone ≠ loss when strong trend (S16: gap=11.10 → +36 best trade)
+- TINY_GAP (0.67) → peak capped, -12 (S15)
+- VWAP gap > 25 on P1 → overextended, move already done (S17: gap=38.73 → -12)
+- P2 EXTENDED_GAP (>6) = consistent loser (S12: 11.71→-12, S14: 6.35→-12)
+
+---
+
 ## Pending / Collect Data
+- **P2 max ema9h_gap gate**: Gaps 9.02, 11.71, 6.35 all lost on P2. Suggest hard cap ≤ 5.
+- **XLEG_AMBIGUOUS soft-block**: 1 confirmed loss. Collect 5 more → decide hard block.
+- **TINY_GAP ANALYSIS flag**: Add flag for gap < 0.8.
+- **VWAP overextension flag**: gap > 25 = VWAP_OVEREXTENDED.
+- **P2 minimum VWAP gap**: Require `below_vwap < -5` for genuine buildup (at-VWAP fires are noise).
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
-- xLeg dying leg: require dying leg's own EMA also falling 2+ candles
 - Max trades/day limit (suggest: 10)
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
 - Daily loss limit (suggest: -50 pts → stop entries)
-- Time blackout windows (11:00–11:30, 13:00–14:30) — collect data first
 - EOD data collector `VRL_COLLECTOR.py` (cron 15:35): ATM±300 strikes, NIFTY spot 1-min, VIX — save as Parquet
-- Trade enrichment tool `VRL_ANALYSIS.py`: `--date`, `--esl`, `--gates`, `--deep` flags
 
 ---
 
