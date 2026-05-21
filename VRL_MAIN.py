@@ -579,6 +579,8 @@ _v8_shadow_p2 = {
            "exit_ts": 0.0},
 }
 
+_bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
+
 def _shadow_trail_sl(entry: float, peak_pts: float):
     """Return (sl_price, level_name) for shadow signal trail ladder."""
     if   peak_pts >= 50: return round(entry + 50, 1), "LOCK+50"
@@ -2854,6 +2856,50 @@ def _strategy_loop(kite):
                     import traceback as _v8tb
                     logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
 
+
+            # ── BW-SCAN: log EMA9 band data every new 1-min candle ──
+            # Fires once per minute (second >= 35). Shows 1m + 3m band for CE + PE.
+            # Positions: ABOVE (close > ema9h) | INSIDE (ema9l <= close <= ema9h) | BELOW (close < ema9l)
+            global _bw_scan_last_bucket
+            _bw_now_key = now.strftime("%Y%m%d%H%M")
+            if (D.is_trading_window(now) and _locked_tokens
+                    and _bw_scan_last_bucket != _bw_now_key and now.second >= 35):
+                _bw_scan_last_bucket = _bw_now_key
+                try:
+                    _bw_parts = []
+                    for _bw_dir, _bw_info in [("CE", (_locked_tokens or {}).get("CE", {})),
+                                               ("PE", (_locked_tokens or {}).get("PE", {}))]:
+                        _bw_tok = int(_bw_info.get("token", 0) or 0)
+                        if not _bw_tok:
+                            continue
+                        _bw_1m = D.get_option_1min(_bw_tok, 10)
+                        _bw_3m = D.get_option_3min(_bw_tok, lookback=5)
+                        _1m_str = _3m_str = "n/a"
+                        if _bw_1m is not None and len(_bw_1m) >= 2:
+                            _bwr = _bw_1m.iloc[-2]
+                            _bwc  = float(_bwr["close"])
+                            _bwel = float(_bwr.get("ema9_low", 0))
+                            _bweh = float(_bwr.get("ema9_high", 0))
+                            _bwbw = round(_bweh - _bwel, 1) if _bweh and _bwel else 0
+                            _bwgp = round(_bwc - _bweh, 1) if _bweh else 0
+                            _bwpos = "ABOVE" if _bwc > _bweh else ("INSIDE" if _bwc >= _bwel else "BELOW")
+                            _1m_str = (f"c={_bwc:.1f} el={_bwel:.1f} eh={_bweh:.1f} "
+                                       f"bw={_bwbw:.1f} gap={_bwgp:+.1f} [{_bwpos}]")
+                        if _bw_3m is not None and len(_bw_3m) >= 2:
+                            _bwr3 = _bw_3m.iloc[-2]
+                            _bwc3  = float(_bwr3["close"])
+                            _bwel3 = float(_bwr3.get("ema9_low", 0))
+                            _bweh3 = float(_bwr3.get("ema9_high", 0))
+                            _bwbw3 = round(_bweh3 - _bwel3, 1) if _bweh3 and _bwel3 else 0
+                            _bwgp3 = round(_bwc3 - _bweh3, 1) if _bweh3 else 0
+                            _bwpos3 = "ABOVE" if _bwc3 > _bweh3 else ("INSIDE" if _bwc3 >= _bwel3 else "BELOW")
+                            _3m_str = (f"c={_bwc3:.1f} el={_bwel3:.1f} eh={_bweh3:.1f} "
+                                       f"bw={_bwbw3:.1f} gap={_bwgp3:+.1f} [{_bwpos3}]")
+                        _bw_parts.append(f"  {_bw_dir}  1m: {_1m_str}  ||  3m: {_3m_str}")
+                    if _bw_parts:
+                        logger.info(f"[BW-SCAN] {now.strftime('%H:%M')}\n" + "\n".join(_bw_parts))
+                except Exception as _bwe:
+                    logger.debug(f"[BW-SCAN] error: {_bwe}")
 
             # ── SHADOW: 1-min entry tracker (data collection, NO live trades) ──
             # Signal: 1-min close > EMA9_high + RSI 48-70 rising + close > 1-min VWAP
