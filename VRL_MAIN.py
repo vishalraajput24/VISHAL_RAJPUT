@@ -3431,6 +3431,8 @@ def _strategy_loop(kite):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
+                        elif not (_s2_vwap_gap <= -5):
+                            _s2_reject = f"at_vwap below_by={_s2_vwap_gap:.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
                             _s2_reject = f"rsi_falling rsi={_s2_rsi:.1f} prev={_s2_rsi_p:.1f}"
                         elif not (_s2_rsi > 55):
