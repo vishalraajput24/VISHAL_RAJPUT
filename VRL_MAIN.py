@@ -536,6 +536,7 @@ _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 _v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
 _v9_last_results: dict = {"CE": None, "PE": None}  # last V9 gate results for dashboard
+spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
 # Shadow: dual-TF early entry tracking (1 week data collection before going live)
 _v8_shadow_dt = {
     "active": False,       # CE shadow signal active
@@ -2268,6 +2269,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
     """Write everything the dashboard needs to a single JSON file."""
+    global spot_3m  # BUG-B fix: update module-level cache so strategy loop can read it
     if dir_strikes is None:
         dir_strikes = {}
     try:
@@ -2875,11 +2877,15 @@ def _strategy_loop(kite):
                                 f"Trail reached: {_slvl_e}\n"
                                 f"<i>⚠️ Shadow only</i>"
                             )
-                            _sds_e.update({
+                            _upd_e = {
                                 "active": False, "entry_price": 0.0, "entry_time": "",
                                 "peak_price": 0.0, "peak_pts": 0.0,
                                 "shadow_sl": 0.0, "shadow_level": "INITIAL",
-                            })
+                            }
+                            # BUG-A fix: set sl_ts on P1 SL-HIT so cooldown blocks re-entry 60s
+                            if _reason_e == "SL-HIT" and _sd_label_e == "P1":
+                                _upd_e["sl_ts"] = time.time()
+                            _sds_e.update(_upd_e)
                             _save_shadow_state()
 
             if (not _v8_state.get("in_trade")
