@@ -579,6 +579,22 @@ _v8_shadow_p2 = {
            "exit_ts": 0.0},
 }
 
+# ── V2 shadow trackers (A/B test: same entry, new exit logic) ──
+# P1-V2: dynamic trail every 5s (LTP-8) after peak≥15, hard exit at +40
+# P2-V2: hard exit at +20, standard trail below that
+_v8_shadow_dt_v2 = {
+    "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+    "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+}
+_v8_shadow_p2_v2 = {
+    "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+    "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+}
+
 _bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
 
 def _shadow_trail_sl(entry: float, peak_pts: float):
@@ -900,6 +916,14 @@ def _save_shadow_state():
                 "CE": dict(_v8_shadow_p2["CE"]),
                 "PE": dict(_v8_shadow_p2["PE"]),
             },
+            "p1_v2": {
+                "CE": dict(_v8_shadow_dt_v2["CE"]),
+                "PE": dict(_v8_shadow_dt_v2["PE"]),
+            },
+            "p2_v2": {
+                "CE": dict(_v8_shadow_p2_v2["CE"]),
+                "PE": dict(_v8_shadow_p2_v2["PE"]),
+            },
             "saved_date": date.today().isoformat(),
         }
         tmp = D.SHADOW_STATE_FILE_PATH + ".tmp"
@@ -912,7 +936,7 @@ def _save_shadow_state():
 
 def _load_shadow_state():
     """Restore shadow signal state from disk on startup."""
-    global _v8_shadow_dt, _v8_shadow_p2
+    global _v8_shadow_dt, _v8_shadow_p2, _v8_shadow_dt_v2, _v8_shadow_p2_v2
     if not os.path.isfile(D.SHADOW_STATE_FILE_PATH):
         return
     try:
@@ -927,6 +951,10 @@ def _load_shadow_state():
                 _v8_shadow_dt[_dir].update(saved["p1"][_dir])
             if _dir in saved.get("p2", {}):
                 _v8_shadow_p2[_dir].update(saved["p2"][_dir])
+            if _dir in saved.get("p1_v2", {}):
+                _v8_shadow_dt_v2[_dir].update(saved["p1_v2"][_dir])
+            if _dir in saved.get("p2_v2", {}):
+                _v8_shadow_p2_v2[_dir].update(saved["p2_v2"][_dir])
         _p1_ce = _v8_shadow_dt["CE"].get("active", False)
         _p1_pe = _v8_shadow_dt["PE"].get("active", False)
         _p2_ce = _v8_shadow_p2["CE"].get("active", False)
@@ -2857,6 +2885,94 @@ def _strategy_loop(kite):
                     logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
 
 
+            # ── V2 EXIT + DYNAMIC TRAIL (A/B comparison — no real trades) ──
+            # P1-V2: ladder below peak 15, then dynamic SL=LTP-8 every 5s, hard exit +40
+            # P2-V2: ladder below peak 20, hard exit at +20
+            global _v8_shadow_dt_v2, _v8_shadow_p2_v2
+            if D.is_trading_window(now):
+                # P1 V2
+                for _v2_dir in ("CE", "PE"):
+                    _v2d = _v8_shadow_dt_v2[_v2_dir]
+                    if not _v2d.get("active"):
+                        continue
+                    _v2_tok   = int(_v2d.get("entry_tok", 0) or 0)
+                    _v2_entry = float(_v2d.get("entry_price", 0))
+                    _v2_sl    = float(_v2d.get("shadow_sl", round(_v2_entry - 12, 1)))
+                    _v2_ltp   = D.get_ltp(_v2_tok) if _v2_tok else 0
+                    if not _v2_ltp:
+                        continue
+                    # Update peak
+                    _v2_pk_px  = max(float(_v2d.get("peak_price", _v2_entry)), _v2_ltp)
+                    _v2_pk_pts = round(_v2_pk_px - _v2_entry, 1)
+                    _v2d["peak_price"] = _v2_pk_px
+                    _v2d["peak_pts"]   = _v2_pk_pts
+                    # Check exits
+                    _v2_reason = _v2_exit_px = None
+                    if _v2_ltp >= _v2_entry + 40:
+                        _v2_reason, _v2_exit_px = "TARGET+40", round(_v2_entry + 40, 1)
+                    elif now.time() >= dtime(15, 15):
+                        _v2_reason, _v2_exit_px = "EOD", (_v2_ltp if _v2_ltp > 0 else _v2_entry)
+                    elif _v2_ltp <= _v2_sl:
+                        _v2_reason, _v2_exit_px = "SL-HIT", _v2_sl
+                    if _v2_reason:
+                        _v2_pnl = round(_v2_exit_px - _v2_entry, 1)
+                        logger.info(f"[SHADOW-P1-V2] {_v2_dir} {_v2_reason} "
+                                    f"entry={_v2_entry} exit={_v2_exit_px:.1f} "
+                                    f"pnl={_v2_pnl:+.1f} peak=+{_v2_pk_pts:.1f}")
+                        _v2d.update({"active": False, "entry_price": 0.0, "entry_time": "",
+                                     "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0})
+                        _save_shadow_state()
+                        continue
+                    # Trail: dynamic after peak ≥ 15 (every 5s), standard below
+                    if _v2_pk_pts >= 15 and now.second % 5 == 0:
+                        _v2_new_sl = max(_v2_sl, round(_v2_ltp - 8, 1))
+                        if _v2_new_sl > _v2_sl:
+                            _v2d["shadow_sl"] = _v2_new_sl
+                            logger.info(f"[SHADOW-P1-V2] {_v2_dir} dyn_trail "
+                                        f"sl={_v2_new_sl:.1f} ltp={_v2_ltp:.1f} "
+                                        f"peak=+{_v2_pk_pts:.1f}")
+                    elif _v2_pk_pts < 15:
+                        _v2_std_sl, _ = _shadow_trail_sl(_v2_entry, _v2_pk_pts)
+                        if _v2_std_sl > _v2_sl:
+                            _v2d["shadow_sl"] = _v2_std_sl
+                # P2 V2
+                for _v2p2_dir in ("CE", "PE"):
+                    _v2p2d = _v8_shadow_p2_v2[_v2p2_dir]
+                    if not _v2p2d.get("active"):
+                        continue
+                    _v2p2_tok   = int(_v2p2d.get("entry_tok", 0) or 0)
+                    _v2p2_entry = float(_v2p2d.get("entry_price", 0))
+                    _v2p2_sl    = float(_v2p2d.get("shadow_sl", round(_v2p2_entry - 12, 1)))
+                    _v2p2_ltp   = D.get_ltp(_v2p2_tok) if _v2p2_tok else 0
+                    if not _v2p2_ltp:
+                        continue
+                    # Update peak
+                    _v2p2_pk_px  = max(float(_v2p2d.get("peak_price", _v2p2_entry)), _v2p2_ltp)
+                    _v2p2_pk_pts = round(_v2p2_pk_px - _v2p2_entry, 1)
+                    _v2p2d["peak_price"] = _v2p2_pk_px
+                    _v2p2d["peak_pts"]   = _v2p2_pk_pts
+                    # Check exits
+                    _v2p2_reason = _v2p2_exit_px = None
+                    if _v2p2_ltp >= _v2p2_entry + 20:
+                        _v2p2_reason, _v2p2_exit_px = "TARGET+20", round(_v2p2_entry + 20, 1)
+                    elif now.time() >= dtime(15, 15):
+                        _v2p2_reason, _v2p2_exit_px = "EOD", (_v2p2_ltp if _v2p2_ltp > 0 else _v2p2_entry)
+                    elif _v2p2_ltp <= _v2p2_sl:
+                        _v2p2_reason, _v2p2_exit_px = "SL-HIT", _v2p2_sl
+                    if _v2p2_reason:
+                        _v2p2_pnl = round(_v2p2_exit_px - _v2p2_entry, 1)
+                        logger.info(f"[SHADOW-P2-V2] {_v2p2_dir} {_v2p2_reason} "
+                                    f"entry={_v2p2_entry} exit={_v2p2_exit_px:.1f} "
+                                    f"pnl={_v2p2_pnl:+.1f} peak=+{_v2p2_pk_pts:.1f}")
+                        _v2p2d.update({"active": False, "entry_price": 0.0, "entry_time": "",
+                                       "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0})
+                        _save_shadow_state()
+                        continue
+                    # Standard trail for P2 V2 (up to +20 hard exit)
+                    _v2p2_std_sl, _ = _shadow_trail_sl(_v2p2_entry, _v2p2_pk_pts)
+                    if _v2p2_std_sl > _v2p2_sl:
+                        _v2p2d["shadow_sl"] = _v2p2_std_sl
+
             # ── BW-SCAN: log EMA9 band data every new 1-min candle ──
             # Fires once per minute (second >= 35). Shows 1m + 3m band for CE + PE.
             # Positions: ABOVE (close > ema9h) | INSIDE (ema9l <= close <= ema9h) | BELOW (close < ema9l)
@@ -3118,6 +3234,13 @@ def _strategy_loop(kite):
                             "today_entry": _sh_ltp, "today_date": str(now.date()),
                             "entry_tok": _sh_tok, "entry_strike": _sh_strike,
                         })
+                        # V2 tracker: same entry, new exit (dynamic trail + hard exit +40)
+                        _v8_shadow_dt_v2[_sh_dir].update({
+                            "active": True, "entry_price": _sh_ltp,
+                            "entry_time": now.strftime("%H:%M:%S"),
+                            "peak_price": _sh_ltp, "peak_pts": 0.0,
+                            "shadow_sl": round(_sh_ltp - 12, 1), "entry_tok": _sh_tok,
+                        })
                         # Check if Part 2 fired earlier today → compute saved pts
                         _p2_ds      = _v8_shadow_p2[_sh_dir]
                         _p2_today   = _p2_ds.get("today_entry", 0.0)
@@ -3347,6 +3470,13 @@ def _strategy_loop(kite):
                             "today_entry": _s2_ltp, "today_date": str(now.date()),
                             "p1_entry": 0.0,
                             "entry_tok": _s2_tok, "entry_strike": _s2_strike,
+                        })
+                        # V2 tracker: same entry, hard exit at +20
+                        _v8_shadow_p2_v2[_s2_dir].update({
+                            "active": True, "entry_price": _s2_ltp,
+                            "entry_time": now.strftime("%H:%M:%S"),
+                            "peak_price": _s2_ltp, "peak_pts": 0.0,
+                            "shadow_sl": _s2_sl_px, "entry_tok": _s2_tok,
                         })
                         # Check if P1 already fired today (rare — price jumped above VWAP directly)
                         _s2_p1_today = _v8_shadow_dt[_s2_dir].get("today_entry", 0.0)
