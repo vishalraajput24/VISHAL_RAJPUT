@@ -569,12 +569,14 @@ _v8_shadow_p2 = {
            "peak_price": 0.0, "peak_pts": 0.0,
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
-           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0},
+           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
+           "exit_ts": 0.0},
     "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
            "peak_price": 0.0, "peak_pts": 0.0,
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
-           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0},
+           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
+           "exit_ts": 0.0},
 }
 
 def _shadow_trail_sl(entry: float, peak_pts: float):
@@ -2900,6 +2902,10 @@ def _strategy_loop(kite):
                             # BUG-A fix: set sl_ts on P1 SL-HIT so cooldown blocks re-entry 60s
                             if _reason_e == "SL-HIT" and _sd_label_e == "P1":
                                 _upd_e["sl_ts"] = time.time()
+                            # P2 exit cooldown: set exit_ts on ANY P2 exit (SL-HIT, trail, EOD)
+                            # Blocks P2 re-entry in same direction for 120s
+                            if _sd_label_e == "P2":
+                                _upd_e["exit_ts"] = time.time()
                             _sds_e.update(_upd_e)
                             _save_shadow_state()
 
@@ -3274,6 +3280,13 @@ def _strategy_loop(kite):
                         if 0 < _s2_relock_age < 120:
                             if now.second % 15 == 0:
                                 logger.info(f"[SHADOW-P2] REJECT {_s2_dir} relock_cooldown age={int(_s2_relock_age)}s")
+                            continue
+
+                        # ── Exit cooldown: block P2 re-entry for 120s after any exit ──
+                        _s2_exit_age = time.time() - _s2_ds.get("exit_ts", 0)
+                        if 0 < _s2_exit_age < 120:
+                            if now.second % 15 == 0:
+                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} exit_cooldown age={int(_s2_exit_age)}s")
                             continue
 
                         # ── FIRE Part 2 ──
