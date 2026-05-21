@@ -3251,6 +3251,13 @@ def _strategy_loop(kite):
                                 logger.info(f"[SHADOW-P2] REJECT {_s2_dir} {_s2_reject}")
                             continue
 
+                        # ── Relock cooldown: EMA9H of new strike not settled yet (same as P1) ──
+                        _s2_relock_age = time.time() - _v8_shadow_dt.get("relock_ts", 0)
+                        if 0 < _s2_relock_age < 120:
+                            if now.second % 15 == 0:
+                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} relock_cooldown age={int(_s2_relock_age)}s")
+                            continue
+
                         # ── FIRE Part 2 ──
                         _s2_ltp    = D.get_ltp(_s2_tok)
                         _s2_strike = int(_s2_info.get("strike", 0) or 0)
