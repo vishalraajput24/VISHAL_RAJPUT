@@ -2888,8 +2888,9 @@ def _strategy_loop(kite):
             # ── V2 EXIT + DYNAMIC TRAIL (A/B comparison — no real trades) ──
             # P1-V2: ladder below peak 15, then dynamic SL=LTP-8 every 5s, hard exit +40
             # P2-V2: ladder below peak 20, hard exit at +20
+            # NOTE: uses is_market_open() so EOD exits at 15:15 fire correctly
             global _v8_shadow_dt_v2, _v8_shadow_p2_v2
-            if D.is_trading_window(now):
+            if D.is_market_open():
                 # P1 V2
                 for _v2_dir in ("CE", "PE"):
                     _v2d = _v8_shadow_dt_v2[_v2_dir]
@@ -3024,7 +3025,8 @@ def _strategy_loop(kite):
 
             # ── EOD/SL safety: close active signals even if _locked_tokens not yet set ──
             # Handles late restart case where strike lock hasn't happened yet
-            if D.is_trading_window(now):
+            # NOTE: uses is_market_open() (not is_trading_window) so EOD exit at 15:15 fires
+            if D.is_market_open():
                 for _sd_early, _sd_label_e in [(_v8_shadow_dt, "P1"), (_v8_shadow_p2, "P2")]:
                     for _sdir_e in ("CE", "PE"):
                         _sds_e = _sd_early[_sdir_e]
