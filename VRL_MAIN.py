@@ -3329,6 +3329,8 @@ def _strategy_loop(kite):
                         _s2_close    = float(_s2_comp["close"])
                         _s2_open     = float(_s2_comp["open"])
                         _s2_ema9h    = float(_s2_comp.get("ema9_high", 0))
+                        _s2_ema9l    = float(_s2_comp.get("ema9_low", 0))
+                        _s2_bw       = round(_s2_ema9h - _s2_ema9l, 2) if _s2_ema9h > 0 and _s2_ema9l > 0 else 0.0
                         _s2_rsi      = float(_s2_comp.get("RSI", 0) or 0)
                         _s2_rsi_p    = float(_s2_1m.iloc[-3].get("RSI", 0) or 0)
 
@@ -3492,7 +3494,7 @@ def _strategy_loop(kite):
                         logger.info(
                             f"[SHADOW-P2] {_s2_dir} {_s2_strike} SIGNAL "
                             f"entry={_s2_ltp} sl={_s2_sl_px} "
-                            f"ema9h_gap={_s2_ema9h_gap:+.2f} "
+                            f"ema9h_gap={_s2_ema9h_gap:+.2f} bw={_s2_bw:.1f} "
                             f"vwap={_s2_vwap:.1f} below_by={_s2_vwap_gap:.1f} rsi={_s2_rsi:.1f}↑"
                         )
                         _tg_send(
