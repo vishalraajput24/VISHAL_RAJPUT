@@ -584,9 +584,11 @@ _v8_shadow_p2 = {
 # P2-V2: hard exit at +20, standard trail below that
 _v8_shadow_dt_v2 = {
     "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
+           "dyn_trail_ts": 0.0},
     "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
+           "dyn_trail_ts": 0.0},
 }
 _v8_shadow_p2_v2 = {
     "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
@@ -2924,8 +2926,10 @@ def _strategy_loop(kite):
                                      "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0})
                         _save_shadow_state()
                         continue
-                    # Trail: dynamic after peak ≥ 15 (every 5s), standard below
-                    if _v2_pk_pts >= 15 and now.second % 5 == 0:
+                    # Trail: dynamic after peak ≥ 15 (every 5s elapsed), standard below
+                    # FIX: use time.time() elapsed, not now.second % 5 (loop skips clock seconds)
+                    if _v2_pk_pts >= 15 and time.time() - _v2d.get("dyn_trail_ts", 0) >= 5:
+                        _v2d["dyn_trail_ts"] = time.time()
                         _v2_new_sl = max(_v2_sl, round(_v2_ltp - 8, 1))
                         if _v2_new_sl > _v2_sl:
                             _v2d["shadow_sl"] = _v2_new_sl
