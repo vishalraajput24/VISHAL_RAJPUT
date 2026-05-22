@@ -3485,6 +3485,15 @@ def _strategy_loop(kite):
 
                         # ── FIRE Part 2 ──
                         _s2_ltp    = D.get_ltp(_s2_tok)
+                        # Gate: LTP must still be ≥5 below VWAP at fire time
+                        # Candle close may have been below VWAP but LTP can bounce above by signal time
+                        if _s2_ltp and _s2_ltp > _s2_vwap - 5:
+                            logger.info(
+                                f"[SHADOW-P2] REJECT {_s2_dir} ltp_slipped_above_vwap "
+                                f"ltp={_s2_ltp:.1f} vwap={_s2_vwap:.1f} "
+                                f"gap={round(_s2_ltp - _s2_vwap, 1)}"
+                            )
+                            continue
                         _s2_strike = int(_s2_info.get("strike", 0) or 0)
                         _s2_sl_px  = round(_s2_ltp - 12, 1)
                         _s2_ds.update({
