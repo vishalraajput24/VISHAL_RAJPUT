@@ -599,6 +599,10 @@ _v8_shadow_p2_v2 = {
 
 _bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
 
+# DELAY-ANALYSIS: snapshot LTP at +5s/+10s/+30s/+60s after each P1/P2 signal
+# Pure research — shadow only, no TG, no trade impact
+_delay_jobs: list = []   # list of pending snapshot dicts
+
 def _shadow_trail_sl(entry: float, peak_pts: float):
     """Return (sl_price, level_name) for shadow signal trail ladder."""
     if   peak_pts >= 50: return round(entry + 50, 1), "LOCK+50"
@@ -3282,6 +3286,13 @@ def _strategy_loop(kite):
                             f"ema9h_gap={_sh_1m_gap:+.2f} "
                             f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} rsi={_sh_rsi_1m:.1f}↑"
                         )
+                        # DELAY-ANALYSIS: track LTP at +5s/+10s/+30s/+60s
+                        _delay_jobs.append({
+                            "label": f"P1-{_sh_dir}", "strike": _sh_strike,
+                            "base": _sh_ltp, "tok": _sh_tok,
+                            "fire_ts": time.time(),
+                            "snaps": {5: None, 10: None, 30: None, 60: None},
+                        })
                         _tg_send(
                             f"🔵 <b>SHADOW P1 — {_sh_dir} {_sh_strike}</b>\n"
                             f"Entry: {_sh_ltp:.1f}  SL: {_sh_sl:.1f}\n"
@@ -3525,6 +3536,13 @@ def _strategy_loop(kite):
                             f"ema9h_gap={_s2_ema9h_gap:+.2f} bw={_s2_bw:.1f} "
                             f"vwap={_s2_vwap:.1f} below_by={_s2_vwap_gap:.1f} rsi={_s2_rsi:.1f}↑"
                         )
+                        # DELAY-ANALYSIS: track LTP at +5s/+10s/+30s/+60s
+                        _delay_jobs.append({
+                            "label": f"P2-{_s2_dir}", "strike": _s2_strike,
+                            "base": _s2_ltp, "tok": _s2_tok,
+                            "fire_ts": time.time(),
+                            "snaps": {5: None, 10: None, 30: None, 60: None},
+                        })
                         _tg_send(
                             f"🟡 <b>SHADOW P2 — {_s2_dir} {_s2_strike}</b> (buildup)\n"
                             f"Entry: {_s2_ltp:.1f}  SL: {_s2_sl_px:.1f}\n"
@@ -4314,6 +4332,36 @@ def _strategy_loop(kite):
             _tb_str = _tb.format_exc()
             logger.error("[MAIN] Loop error: " + str(e) + "\n" + _tb_str)
             time.sleep(2)
+
+        # ── DELAY-ANALYSIS: snapshot LTP at +5s/+10s/+30s/+60s after P1/P2 signals ──
+        try:
+            _done_jobs = []
+            for _dj in _delay_jobs:
+                _elapsed = time.time() - _dj["fire_ts"]
+                _tok     = _dj["tok"]
+                for _delay in (5, 10, 30, 60):
+                    if _dj["snaps"][_delay] is None and _elapsed >= _delay:
+                        _snap_ltp = D.get_ltp(_tok)
+                        _dj["snaps"][_delay] = _snap_ltp if _snap_ltp else 0.0
+                if all(v is not None for v in _dj["snaps"].values()):
+                    _b   = _dj["base"]
+                    _s5  = _dj["snaps"][5]
+                    _s10 = _dj["snaps"][10]
+                    _s30 = _dj["snaps"][30]
+                    _s60 = _dj["snaps"][60]
+                    logger.info(
+                        f"[DELAY-ANALYSIS] {_dj['label']} {_dj['strike']} "
+                        f"base={_b:.1f} "
+                        f"+5s={_s5:.1f}({_s5-_b:+.1f}) "
+                        f"+10s={_s10:.1f}({_s10-_b:+.1f}) "
+                        f"+30s={_s30:.1f}({_s30-_b:+.1f}) "
+                        f"+60s={_s60:.1f}({_s60-_b:+.1f})"
+                    )
+                    _done_jobs.append(_dj)
+            for _dj in _done_jobs:
+                _delay_jobs.remove(_dj)
+        except Exception as _dae:
+            logger.debug("[DELAY-ANALYSIS] error: " + str(_dae))
 
         time.sleep(1)
 
