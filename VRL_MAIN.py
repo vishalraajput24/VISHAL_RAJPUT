@@ -1465,6 +1465,8 @@ def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
             }, timeout=10)
             if not resp.ok:
                 logger.warning("[TG] Send failed: " + resp.text[:200])
+            else:
+                logger.debug("[TG] sent ok — " + text[:60].replace("\n", " "))
         except Exception as e:
             logger.error("[TG] send error: " + type(e).__name__)
 
