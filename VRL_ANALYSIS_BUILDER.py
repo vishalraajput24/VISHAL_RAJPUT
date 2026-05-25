@@ -102,6 +102,54 @@ def get_spot_vwap_gap(trade_time, vwap_timeline):
     return best
 
 
+def parse_bwscan_timeline(log_file, today):
+    """Parse [BW-SCAN] blocks → dict keyed by HH:MM with CE/PE 3m close, gap, position.
+    CE/PE continuation lines have no date prefix — read them after the header line."""
+    timeline = {}
+    current_time = None
+    in_bwscan = False
+    with open(log_file) as fh:
+        lines = fh.readlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        # Only look for BW-SCAN headers on today's lines
+        if today in raw and '[BW-SCAN]' in raw:
+            m = re.search(r'\[BW-SCAN\] (\d{2}:\d{2})', raw)
+            if m:
+                current_time = m.group(1)
+                timeline[current_time] = {}
+                # Read next 2 lines for CE and PE (no date prefix)
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    subline = lines[j].strip()
+                    for side in ('CE', 'PE'):
+                        if subline.startswith(side):
+                            m3 = re.search(
+                                r'\|\|\s+3m:\s+c=([\d.]+).*?gap=([+\-\d.]+)\s+\[(\w+)\]',
+                                subline)
+                            if m3:
+                                timeline[current_time][side] = {
+                                    'close3m': float(m3.group(1)),
+                                    'gap3m':   float(m3.group(2)),
+                                    'pos3m':   m3.group(3),
+                                }
+        i += 1
+    return timeline  # {'HH:MM': {'CE': {...}, 'PE': {...}}}
+
+
+def get_bwscan(trade_time, bwscan_timeline):
+    """Return closest BW-SCAN entry at or before trade_time."""
+    if not bwscan_timeline:
+        return None
+    best_t = None
+    for t in sorted(bwscan_timeline.keys()):
+        if t <= trade_time:
+            best_t = t
+        else:
+            break
+    return bwscan_timeline.get(best_t) if best_t else None
+
+
 def parse_log():
     trades  = []
     live    = {}   # key=(strategy,dir) → current open trade dict
@@ -517,7 +565,7 @@ def delay_str(delay):
 
 # ── Writer ────────────────────────────────────────────────────────────────────
 
-def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_trades=None, vwap_timeline=None):
+def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_trades=None, vwap_timeline=None, bwscan_timeline=None):
     now_str   = datetime.now().strftime("%H:%M")
     closed    = [tr for tr in trades if not tr.get('open')]
     open_tr   = [tr for tr in trades if tr.get('open')]
@@ -996,15 +1044,16 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
     # Score each P2 trade against S11 benchmark
     p2_all = [tr for tr in trades if tr.get('strategy') == 'P2']
     if p2_all:
-        a("**P2 trades scored against S11 benchmark (5 factors):**")
+        a("**P2 trades scored against S11 benchmark (7 factors):**")
         a()
-        a("| # | Time | Dir | gap_vwap | XLEG | RSI↑ | Spot VWAP | Before 13 | PnL | Score | vs S11 |")
-        a("|---|------|-----|----------|------|------|-----------|-----------|-----|-------|--------|")
+        a("| # | Time | Dir | gap_vwap | XLEG | RSI | SpotVWAP | Band | Spike | Before13 | PnL | Score | vs S11 |")
+        a("|---|------|-----|----------|------|-----|----------|------|-------|----------|-----|-------|--------|")
         for tr in sorted(p2_all, key=lambda x: x['num']):
             sc = 0
-            # Factor 1: gap_vwap in sweet zone -2 to -10
-            gv     = tr.get('gap_vwap', 0)
-            gv_ok  = -10 <= gv <= -2
+
+            # Factor 1: gap_vwap sweet zone -2 to -10
+            gv    = tr.get('gap_vwap', 0)
+            gv_ok = -10 <= gv <= -2
             if gv_ok: sc += 1
 
             # Factor 2: XLEG_CONFIRMED
@@ -1016,43 +1065,63 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
             if rsi_ok: sc += 1
 
             # Factor 4: Spot VWAP gap aligned with direction
-            # CE needs spot VWAP gap > +10 (spot bullish = CE fuel)
-            # PE needs spot VWAP gap < -10 (spot bearish = PE fuel)
             svg = get_spot_vwap_gap(tr['time'], vwap_timeline)
             if svg is not None:
-                if tr['dir'] == 'CE':
-                    svgap_ok = svg > 10
-                else:  # PE
-                    svgap_ok = svg < -10
+                svgap_ok = svg > 10 if tr['dir'] == 'CE' else svg < -10
             else:
-                svgap_ok = None  # no data
-
+                svgap_ok = None
             if svgap_ok: sc += 1
 
             # Factor 5: Before 13:00
             try:
-                tr_hour = int(tr['time'].split(':')[0])
-                time_ok = tr_hour < 13
+                time_ok = int(tr['time'].split(':')[0]) < 13
             except Exception:
                 time_ok = False
             if time_ok: sc += 1
 
-            pnl_str  = f"{tr['pnl_v1']:+.0f}" if tr['pnl_v1'] is not None else "🟢"
-            gv_str   = f"{gv:+.1f} {'✅' if gv_ok else '❌'}"
-            xleg_str = "✅" if xleg_ok else "❌"
-            rsi_str  = f"{tr['rsi']:.0f} {'✅' if rsi_ok else '❌'}"
-            if svg is not None:
-                svg_str = f"{svg:+.0f} {'✅' if svgap_ok else '❌'}"
+            # Factor 6: Fired leg ABOVE its 3m EMA band at entry
+            bws = get_bwscan(tr['time'], bwscan_timeline)
+            if bws and tr['dir'] in bws:
+                band_pos  = bws[tr['dir']]['pos3m']    # ABOVE / INSIDE / BELOW
+                bws_close = bws[tr['dir']]['close3m']
+                band_ok   = band_pos == 'ABOVE'
             else:
-                svg_str = "— (no data)"
-            time_str = "✅" if time_ok else "❌"
-            bar      = "█" * sc + "░" * (5 - sc)
-            match    = "🔥 IDEAL" if sc == 5 else ("✅ GOOD" if sc >= 4 else ("⚠️ WEAK" if sc == 3 else "❌ POOR"))
+                band_pos  = None
+                bws_close = None
+                band_ok   = None
+            if band_ok: sc += 1
+
+            # Factor 7: Entry NOT a spike (entry within 3 pts of BW-SCAN close)
+            if bws_close is not None:
+                spike_jump = tr['entry'] - bws_close
+                spike_ok   = abs(spike_jump) <= 3.0
+            else:
+                spike_jump = None
+                spike_ok   = None
+            if spike_ok: sc += 1
+
+            # Format output
+            pnl_str   = f"{tr['pnl_v1']:+.0f}" if tr['pnl_v1'] is not None else "🟢"
+            gv_str    = f"{gv:+.1f}{'✅' if gv_ok else '❌'}"
+            xleg_str  = "✅" if xleg_ok else "❌"
+            rsi_str   = f"{tr['rsi']:.0f}{'✅' if rsi_ok else '❌'}"
+            svg_str   = (f"{svg:+.0f}{'✅' if svgap_ok else '❌'}" if svg is not None else "—")
+            band_str  = (f"{band_pos}{'✅' if band_ok else '❌'}" if band_pos else "—")
+            if spike_jump is not None:
+                spike_str = f"{spike_jump:+.1f}{'✅' if spike_ok else '❌'}"
+            else:
+                spike_str = "—"
+            time_str  = "✅" if time_ok else "❌"
+            bar       = "█" * sc + "░" * (7 - sc)
+            match     = ("🔥 IDEAL" if sc == 7 else
+                         "✅ GOOD"  if sc >= 5 else
+                         "⚠️ WEAK"  if sc >= 3 else "❌ POOR")
             a(f"| S{tr['num']} | {tr['time']} | {tr['dir']} | {gv_str} | {xleg_str} "
-              f"| {rsi_str} | {svg_str} | {time_str} | {pnl_str} | {bar} {sc}/5 | {match} |")
+              f"| {rsi_str} | {svg_str} | {band_str} | {spike_str} | {time_str} "
+              f"| {pnl_str} | {bar} {sc}/7 | {match} |")
         a()
-        a("> **Score guide**: 5/5 🔥 IDEAL · 4/5 ✅ GOOD · 3/5 ⚠️ WEAK · ≤2/5 ❌ POOR")
-        a("> **Factors**: gap_vwap -2→-10 · XLEG_CONFIRMED · RSI ≥ 55 · Spot VWAP gap aligned (CE>+10 / PE<-10) · Before 13:00")
+        a("> **Score guide**: 7/7 🔥 IDEAL · 5-6/7 ✅ GOOD · 3-4/7 ⚠️ WEAK · ≤2/7 ❌ POOR")
+        a("> **Factors**: ①gap_vwap -2→-10 ②XLEG_CONFIRMED ③RSI≥55 ④SpotVWAP aligned ⑤Before13:00 ⑥Fired leg ABOVE 3m band ⑦Entry≤BW-SCAN+3 (no spike)")
         a()
 
     a("---")
@@ -1073,7 +1142,8 @@ if __name__ == '__main__':
     levels        = parse_levels(LOG_FILE, TODAY)
     rsi_blocks    = parse_rsi_blocks(LOG_FILE, TODAY)
     cross_trades  = parse_cross_trades(LOG_FILE, TODAY)
-    vwap_timeline = parse_vwap_timeline(LOG_FILE, TODAY)
+    vwap_timeline   = parse_vwap_timeline(LOG_FILE, TODAY)
+    bwscan_timeline = parse_bwscan_timeline(LOG_FILE, TODAY)
     if levels:
         print(f"Levels: PDH={levels['PDH']:.0f} PDL={levels['PDL']:.0f} CPR={levels['CPR_L']:.0f}-{levels['CPR_H']:.0f} ORH={levels['ORH']:.0f} ORL={levels['ORL']:.0f}")
     else:
@@ -1081,6 +1151,7 @@ if __name__ == '__main__':
     print(f"RSI-blocked: {len(rsi_blocks)} signals")
     print(f"Cross-trades: {len(cross_trades)}")
     print(f"VWAP snapshots: {len(vwap_timeline)}")
-    n, pnl1, pnl2 = write_analysis(trades, relocks, market, levels, rsi_blocks, cross_trades, vwap_timeline)
+    print(f"BW-SCAN entries: {len(bwscan_timeline)}")
+    n, pnl1, pnl2 = write_analysis(trades, relocks, market, levels, rsi_blocks, cross_trades, vwap_timeline, bwscan_timeline)
     print(f"Signals: {n}  |  V1: {pnl1:+.0f} pts  |  V2: {pnl2:+.0f} pts")
     print(f"Written: {OUT_FILE}")
