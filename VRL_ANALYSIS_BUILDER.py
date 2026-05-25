@@ -75,6 +75,33 @@ def spot_zone(spot, lvl):
         return f"↓ BELOW PDL({lvl['PDL']:.0f})"
 
 
+def parse_vwap_timeline(log_file, today):
+    """Parse [VWAP] lines → list of (HH:MM, gap_float) sorted by time."""
+    entries = []
+    with open(log_file) as fh:
+        for raw in fh:
+            if today not in raw or '[VWAP]' not in raw:
+                continue
+            t = _ts(raw)
+            m = re.search(r'gap=([+\-\d.]+)', raw)
+            if m and t:
+                entries.append((t, float(m.group(1))))
+    return entries  # [(HH:MM, gap), ...]
+
+
+def get_spot_vwap_gap(trade_time, vwap_timeline):
+    """Return spot VWAP gap closest to (but not after) trade_time. None if no data."""
+    if not vwap_timeline:
+        return None
+    best = None
+    for (vt, gap) in vwap_timeline:
+        if vt <= trade_time:
+            best = gap
+        else:
+            break
+    return best
+
+
 def parse_log():
     trades  = []
     live    = {}   # key=(strategy,dir) → current open trade dict
@@ -490,7 +517,7 @@ def delay_str(delay):
 
 # ── Writer ────────────────────────────────────────────────────────────────────
 
-def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_trades=None):
+def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_trades=None, vwap_timeline=None):
     now_str   = datetime.now().strftime("%H:%M")
     closed    = [tr for tr in trades if not tr.get('open')]
     open_tr   = [tr for tr in trades if tr.get('open')]
@@ -969,27 +996,43 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
     # Score each P2 trade against S11 benchmark
     p2_all = [tr for tr in trades if tr.get('strategy') == 'P2']
     if p2_all:
-        a("**P2 trades scored against S11 benchmark (4 factors):**")
+        a("**P2 trades scored against S11 benchmark (5 factors):**")
         a()
-        a("| # | Time | Dir | gap_vwap | XLEG | RSI↑ | PnL | Score | vs S11 |")
-        a("|---|------|-----|----------|------|------|-----|-------|--------|")
+        a("| # | Time | Dir | gap_vwap | XLEG | RSI↑ | Spot VWAP | Before 13 | PnL | Score | vs S11 |")
+        a("|---|------|-----|----------|------|------|-----------|-----------|-----|-------|--------|")
         for tr in sorted(p2_all, key=lambda x: x['num']):
             sc = 0
             # Factor 1: gap_vwap in sweet zone -2 to -10
-            gv = tr.get('gap_vwap', 0)
-            gv_ok = -10 <= gv <= -2
+            gv     = tr.get('gap_vwap', 0)
+            gv_ok  = -10 <= gv <= -2
             if gv_ok: sc += 1
+
             # Factor 2: XLEG_CONFIRMED
             xleg_ok = 'XLEG_CONFIRMED' in tr.get('flags_raw', '')
             if xleg_ok: sc += 1
-            # Factor 3: RSI rising (≥ 55 as proxy for momentum)
+
+            # Factor 3: RSI ≥ 55
             rsi_ok = tr.get('rsi', 0) >= 55
             if rsi_ok: sc += 1
-            # Factor 4: Not in dead window (before 13:00)
+
+            # Factor 4: Spot VWAP gap aligned with direction
+            # CE needs spot VWAP gap > +10 (spot bullish = CE fuel)
+            # PE needs spot VWAP gap < -10 (spot bearish = PE fuel)
+            svg = get_spot_vwap_gap(tr['time'], vwap_timeline)
+            if svg is not None:
+                if tr['dir'] == 'CE':
+                    svgap_ok = svg > 10
+                else:  # PE
+                    svgap_ok = svg < -10
+            else:
+                svgap_ok = None  # no data
+
+            if svgap_ok: sc += 1
+
+            # Factor 5: Before 13:00
             try:
                 tr_hour = int(tr['time'].split(':')[0])
-                tr_min  = int(tr['time'].split(':')[1])
-                time_ok = tr_hour < 13 or (tr_hour == 13 and tr_min == 0)
+                time_ok = tr_hour < 13
             except Exception:
                 time_ok = False
             if time_ok: sc += 1
@@ -998,13 +1041,18 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
             gv_str   = f"{gv:+.1f} {'✅' if gv_ok else '❌'}"
             xleg_str = "✅" if xleg_ok else "❌"
             rsi_str  = f"{tr['rsi']:.0f} {'✅' if rsi_ok else '❌'}"
-            bar      = "█" * sc + "░" * (4 - sc)
-            match    = "🔥 IDEAL" if sc == 4 else ("✅ GOOD" if sc == 3 else ("⚠️ WEAK" if sc == 2 else "❌ POOR"))
-            a(f"| S{tr['num']} | {tr['time']} | {tr['dir']} | {gv_str} | {xleg_str} | {rsi_str} "
-              f"| {pnl_str} | {bar} {sc}/4 | {match} |")
+            if svg is not None:
+                svg_str = f"{svg:+.0f} {'✅' if svgap_ok else '❌'}"
+            else:
+                svg_str = "— (no data)"
+            time_str = "✅" if time_ok else "❌"
+            bar      = "█" * sc + "░" * (5 - sc)
+            match    = "🔥 IDEAL" if sc == 5 else ("✅ GOOD" if sc >= 4 else ("⚠️ WEAK" if sc == 3 else "❌ POOR"))
+            a(f"| S{tr['num']} | {tr['time']} | {tr['dir']} | {gv_str} | {xleg_str} "
+              f"| {rsi_str} | {svg_str} | {time_str} | {pnl_str} | {bar} {sc}/5 | {match} |")
         a()
-        a("> **Score guide**: 4/4 🔥 IDEAL · 3/4 ✅ GOOD · 2/4 ⚠️ WEAK · 1/4 or 0/4 ❌ POOR")
-        a("> **Factors**: gap_vwap -2→-10 · XLEG_CONFIRMED · RSI ≥ 55 · Before 13:00")
+        a("> **Score guide**: 5/5 🔥 IDEAL · 4/5 ✅ GOOD · 3/5 ⚠️ WEAK · ≤2/5 ❌ POOR")
+        a("> **Factors**: gap_vwap -2→-10 · XLEG_CONFIRMED · RSI ≥ 55 · Spot VWAP gap aligned (CE>+10 / PE<-10) · Before 13:00")
         a()
 
     a("---")
@@ -1022,15 +1070,17 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
 if __name__ == '__main__':
     print(f"Parsing {TODAY}...")
     trades, relocks, market = parse_log()
-    levels     = parse_levels(LOG_FILE, TODAY)
-    rsi_blocks   = parse_rsi_blocks(LOG_FILE, TODAY)
-    cross_trades = parse_cross_trades(LOG_FILE, TODAY)
+    levels        = parse_levels(LOG_FILE, TODAY)
+    rsi_blocks    = parse_rsi_blocks(LOG_FILE, TODAY)
+    cross_trades  = parse_cross_trades(LOG_FILE, TODAY)
+    vwap_timeline = parse_vwap_timeline(LOG_FILE, TODAY)
     if levels:
         print(f"Levels: PDH={levels['PDH']:.0f} PDL={levels['PDL']:.0f} CPR={levels['CPR_L']:.0f}-{levels['CPR_H']:.0f} ORH={levels['ORH']:.0f} ORL={levels['ORL']:.0f}")
     else:
         print("Levels: not found in log (LEVELS line missing)")
     print(f"RSI-blocked: {len(rsi_blocks)} signals")
     print(f"Cross-trades: {len(cross_trades)}")
-    n, pnl1, pnl2 = write_analysis(trades, relocks, market, levels, rsi_blocks, cross_trades)
+    print(f"VWAP snapshots: {len(vwap_timeline)}")
+    n, pnl1, pnl2 = write_analysis(trades, relocks, market, levels, rsi_blocks, cross_trades, vwap_timeline)
     print(f"Signals: {n}  |  V1: {pnl1:+.0f} pts  |  V2: {pnl2:+.0f} pts")
     print(f"Written: {OUT_FILE}")
