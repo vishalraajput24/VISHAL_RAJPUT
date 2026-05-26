@@ -581,7 +581,7 @@ _v8_shadow_p2 = {
 
 # ── V2 shadow trackers (A/B test: same entry, new exit logic) ──
 # P1-V2: dynamic trail every 5s (LTP-8) after peak≥15, hard exit at +40
-# P2-V2: hard exit at +20, standard trail below that
+# P2-V2: same ratchet ladder as P1-V2 (peak<15 standard, peak≥15 entry+15 then +1/5s), hard exit +40
 _v8_shadow_dt_v2 = {
     "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
            "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
@@ -592,9 +592,11 @@ _v8_shadow_dt_v2 = {
 }
 _v8_shadow_p2_v2 = {
     "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
+           "dyn_trail_ts": 0.0},
     "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0},
+           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
+           "dyn_trail_ts": 0.0},
 }
 
 _bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
@@ -2894,8 +2896,8 @@ def _strategy_loop(kite):
 
 
             # ── V2 EXIT + DYNAMIC TRAIL (A/B comparison — no real trades) ──
-            # P1-V2: ladder below peak 15, then dynamic SL=LTP-8 every 5s, hard exit +40
-            # P2-V2: ladder below peak 20, hard exit at +20
+            # P1-V2: standard ladder below peak 15, then entry+15→+1/5s ratchet, hard exit +40
+            # P2-V2: same ratchet as P1-V2 — standard ladder below peak 15, entry+15→+1/5s, hard exit +40
             # NOTE: uses is_market_open() so EOD exits at 15:15 fire correctly
             global _v8_shadow_dt_v2, _v8_shadow_p2_v2
             if D.is_market_open():
@@ -2950,7 +2952,8 @@ def _strategy_loop(kite):
                         _v2_std_sl, _ = _shadow_trail_sl(_v2_entry, _v2_pk_pts)
                         if _v2_std_sl > _v2_sl:
                             _v2d["shadow_sl"] = _v2_std_sl
-                # P2 V2
+                # P2 V2 — same ratchet as P1-V2: standard ladder below peak 15,
+                # then entry+15 on first tick, +1 every 5s after. Hard exit TARGET+40.
                 for _v2p2_dir in ("CE", "PE"):
                     _v2p2d = _v8_shadow_p2_v2[_v2p2_dir]
                     if not _v2p2d.get("active"):
@@ -2968,8 +2971,8 @@ def _strategy_loop(kite):
                     _v2p2d["peak_pts"]   = _v2p2_pk_pts
                     # Check exits
                     _v2p2_reason = _v2p2_exit_px = None
-                    if _v2p2_ltp >= _v2p2_entry + 20:
-                        _v2p2_reason, _v2p2_exit_px = "TARGET+20", round(_v2p2_entry + 20, 1)
+                    if _v2p2_ltp >= _v2p2_entry + 40:
+                        _v2p2_reason, _v2p2_exit_px = "TARGET+40", round(_v2p2_entry + 40, 1)
                     elif now.time() >= dtime(15, 15):
                         _v2p2_reason, _v2p2_exit_px = "EOD", (_v2p2_ltp if _v2p2_ltp > 0 else _v2p2_entry)
                     elif _v2p2_ltp <= _v2p2_sl:
@@ -2980,13 +2983,26 @@ def _strategy_loop(kite):
                                     f"entry={_v2p2_entry} exit={_v2p2_exit_px:.1f} "
                                     f"pnl={_v2p2_pnl:+.1f} peak=+{_v2p2_pk_pts:.1f}")
                         _v2p2d.update({"active": False, "entry_price": 0.0, "entry_time": "",
-                                       "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0})
+                                       "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0,
+                                       "dyn_trail_ts": 0.0})
                         _save_shadow_state()
                         continue
-                    # Standard trail for P2 V2 (up to +20 hard exit)
-                    _v2p2_std_sl, _ = _shadow_trail_sl(_v2p2_entry, _v2p2_pk_pts)
-                    if _v2p2_std_sl > _v2p2_sl:
-                        _v2p2d["shadow_sl"] = _v2p2_std_sl
+                    # Ratchet: peak ≥ 15 → first tick locks entry+15, then +1 every 5s
+                    if _v2p2_pk_pts >= 15 and time.time() - _v2p2d.get("dyn_trail_ts", 0) >= 5:
+                        _v2p2d["dyn_trail_ts"] = time.time()
+                        if _v2p2_sl < _v2p2_entry + 15:
+                            _v2p2_new_sl = round(_v2p2_entry + 15, 1)
+                        else:
+                            _v2p2_new_sl = round(_v2p2_sl + 1, 1)
+                        if _v2p2_new_sl > _v2p2_sl:
+                            _v2p2d["shadow_sl"] = _v2p2_new_sl
+                            logger.info(f"[SHADOW-P2-V2] {_v2p2_dir} dyn_trail "
+                                        f"sl={_v2p2_new_sl:.1f} ltp={_v2p2_ltp:.1f} "
+                                        f"peak=+{_v2p2_pk_pts:.1f}")
+                    elif _v2p2_pk_pts < 15:
+                        _v2p2_std_sl, _ = _shadow_trail_sl(_v2p2_entry, _v2p2_pk_pts)
+                        if _v2p2_std_sl > _v2p2_sl:
+                            _v2p2d["shadow_sl"] = _v2p2_std_sl
 
             # ── BW-SCAN: log EMA9 band data every new 1-min candle ──
             # Fires once per minute (second >= 35). Shows 1m + 3m band for CE + PE.
@@ -3222,6 +3238,17 @@ def _strategy_loop(kite):
                         if _sh_1m_reject:
                             if now.second % 15 == 0:
                                 logger.info(f"[SHADOW-DTF] REJECT {_sh_dir} {_sh_1m_reject}")
+                            # Detailed RSI-block log — once per candle bucket
+                            if 'rsi' in _sh_1m_reject and _sh_ds.get("_rsi_block_ts") != _sh_1m_bk_ts:
+                                _sh_ds["_rsi_block_ts"] = _sh_1m_bk_ts
+                                _sh_bw_rb   = round(_sh_ema9h_1m - _sh_ema9l_1m, 1)
+                                _sh_str_rb  = int(_sh_info.get("strike", 0) or 0)
+                                logger.info(
+                                    f"[RSI-SHADOW] {_sh_dir} {_sh_str_rb} BLOCKED "
+                                    f"entry={_sh_1m_close:.1f} ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw_rb} "
+                                    f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} "
+                                    f"rsi={_sh_rsi_1m:.1f} reason={_sh_1m_reject.split()[0]}"
+                                )
                             continue
 
                         # ── Cooldown gates (no trade impact — reject only) ──
@@ -3239,6 +3266,17 @@ def _strategy_loop(kite):
                             continue
 
                         # ── FIRE ──
+                        # Gate: XLEG_CONFIRMED — cross-leg must be below EMA9H all last 5 scans
+                        _xleg_g_dir  = "PE" if _sh_dir == "CE" else "CE"
+                        _xleg_g_buf  = _shadow_analysis[_xleg_g_dir].get("cross_buf", [])
+                        _xleg_g_buf5 = _xleg_g_buf[-5:]
+                        _xleg_g_ok   = len(_xleg_g_buf5) >= 3 and all(not v for v in _xleg_g_buf5)
+                        if not _xleg_g_ok:
+                            logger.info(
+                                f"[SHADOW-P1] REJECT {_sh_dir} xleg_not_confirmed "
+                                f"{_xleg_g_dir} buf={_xleg_g_buf5} n={len(_xleg_g_buf5)}"
+                            )
+                            continue
                         _sh_ltp    = D.get_ltp(_sh_tok)
                         # Gate: LTP must still be above VWAP at fire time
                         # Candle close may have been above VWAP but LTP can slip below by signal time
@@ -3280,18 +3318,30 @@ def _strategy_loop(kite):
                                 f"[SHADOW-P1] {_sh_dir} P2 was at {_p2_today} "
                                 f"P1 now {_sh_ltp} saved={_p2_saved:+.1f}pts"
                             )
+                        _sh_bw = round(_sh_ema9h_1m - _sh_ema9l_1m, 1)
                         logger.info(
                             f"[SHADOW-P1] {_sh_dir} {_sh_strike} SIGNAL "
                             f"entry={_sh_ltp} sl={_sh_sl} "
-                            f"ema9h_gap={_sh_1m_gap:+.2f} "
+                            f"ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw} "
                             f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} rsi={_sh_rsi_1m:.1f}↑"
                         )
-                        # DELAY-ANALYSIS: track LTP at +5s/+10s/+30s/+60s
+                        # CROSS-TRADE: check if P2 is open in opposite direction
+                        _cross_opp = "PE" if _sh_dir == "CE" else "CE"
+                        _cross_p2  = _v8_shadow_p2[_cross_opp]
+                        if _cross_p2.get("active") and _cross_p2.get("today_date") == str(now.date()):
+                            logger.info(
+                                f"[CROSS-TRADE] P1-{_sh_dir} just fired vs P2-{_cross_opp} already open "
+                                f"p1_entry={_sh_ltp} p2_entry={_cross_p2['entry_price']:.1f} "
+                                f"p2_peak={_cross_p2.get('peak_pts',0):.1f} strike={_sh_strike}"
+                            )
+                        # DELAY-ANALYSIS: track LTP + spot at +5s/+10s/+30s/+60s
                         _delay_jobs.append({
                             "label": f"P1-{_sh_dir}", "strike": _sh_strike,
                             "base": _sh_ltp, "tok": _sh_tok,
+                            "spot_base": D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0.0,
                             "fire_ts": time.time(),
-                            "snaps": {5: None, 10: None, 30: None, 60: None},
+                            "snaps":       {5: None, 10: None, 30: None, 60: None},
+                            "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
                         })
                         _tg_send(
                             f"🔵 <b>SHADOW P1 — {_sh_dir} {_sh_strike}</b>\n"
@@ -3463,8 +3513,6 @@ def _strategy_loop(kite):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
-                        elif not (_s2_vwap_gap <= -5):
-                            _s2_reject = f"at_vwap below_by={_s2_vwap_gap:.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
                             _s2_reject = f"rsi_falling rsi={_s2_rsi:.1f} prev={_s2_rsi_p:.1f}"
                         elif not (_s2_rsi > 55):
@@ -3495,10 +3543,20 @@ def _strategy_loop(kite):
                             continue
 
                         # ── FIRE Part 2 ──
+                        # Gate: XLEG_CONFIRMED — cross-leg must be below EMA9H all last 5 scans
+                        _xleg_g2_dir  = "PE" if _s2_dir == "CE" else "CE"
+                        _xleg_g2_buf  = _shadow_analysis[_xleg_g2_dir].get("cross_buf", [])
+                        _xleg_g2_buf5 = _xleg_g2_buf[-5:]
+                        _xleg_g2_ok   = len(_xleg_g2_buf5) >= 3 and all(not v for v in _xleg_g2_buf5)
+                        if not _xleg_g2_ok:
+                            logger.info(
+                                f"[SHADOW-P2] REJECT {_s2_dir} xleg_not_confirmed "
+                                f"{_xleg_g2_dir} buf={_xleg_g2_buf5} n={len(_xleg_g2_buf5)}"
+                            )
+                            continue
                         _s2_ltp    = D.get_ltp(_s2_tok)
-                        # Gate: LTP must still be ≥5 below VWAP at fire time
-                        # Candle close may have been below VWAP but LTP can bounce above by signal time
-                        if _s2_ltp and _s2_ltp > _s2_vwap - 5:
+                        # Gate: LTP must still be below VWAP at fire time
+                        if _s2_ltp and _s2_ltp > _s2_vwap:
                             logger.info(
                                 f"[SHADOW-P2] REJECT {_s2_dir} ltp_slipped_above_vwap "
                                 f"ltp={_s2_ltp:.1f} vwap={_s2_vwap:.1f} "
@@ -3536,12 +3594,23 @@ def _strategy_loop(kite):
                             f"ema9h_gap={_s2_ema9h_gap:+.2f} bw={_s2_bw:.1f} "
                             f"vwap={_s2_vwap:.1f} below_by={_s2_vwap_gap:.1f} rsi={_s2_rsi:.1f}↑"
                         )
-                        # DELAY-ANALYSIS: track LTP at +5s/+10s/+30s/+60s
+                        # CROSS-TRADE: check if P1 is open in opposite direction
+                        _cross_opp2 = "PE" if _s2_dir == "CE" else "CE"
+                        _cross_p1   = _v8_shadow_dt[_cross_opp2]
+                        if _cross_p1.get("active") and _cross_p1.get("today_date","") == str(now.date()):
+                            logger.info(
+                                f"[CROSS-TRADE] P2-{_s2_dir} just fired vs P1-{_cross_opp2} already open "
+                                f"p2_entry={_s2_ltp} p1_entry={_cross_p1.get('entry_price',0):.1f} "
+                                f"p1_peak={_cross_p1.get('peak_pts',0):.1f} strike={_s2_strike}"
+                            )
+                        # DELAY-ANALYSIS: track LTP + spot at +5s/+10s/+30s/+60s
                         _delay_jobs.append({
                             "label": f"P2-{_s2_dir}", "strike": _s2_strike,
                             "base": _s2_ltp, "tok": _s2_tok,
+                            "spot_base": D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0.0,
                             "fire_ts": time.time(),
-                            "snaps": {5: None, 10: None, 30: None, 60: None},
+                            "snaps":       {5: None, 10: None, 30: None, 60: None},
+                            "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
                         })
                         _tg_send(
                             f"🟡 <b>SHADOW P2 — {_s2_dir} {_s2_strike}</b> (buildup)\n"
@@ -4341,21 +4410,24 @@ def _strategy_loop(kite):
                 _tok     = _dj["tok"]
                 for _delay in (5, 10, 30, 60):
                     if _dj["snaps"][_delay] is None and _elapsed >= _delay:
-                        _snap_ltp = D.get_ltp(_tok)
-                        _dj["snaps"][_delay] = _snap_ltp if _snap_ltp else 0.0
+                        _snap_ltp  = D.get_ltp(_tok)
+                        _snap_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                        _dj["snaps"][_delay]      = _snap_ltp  if _snap_ltp  else 0.0
+                        _dj["spot_snaps"][_delay] = _snap_spot if _snap_spot else 0.0
                 if all(v is not None for v in _dj["snaps"].values()):
                     _b   = _dj["base"]
-                    _s5  = _dj["snaps"][5]
-                    _s10 = _dj["snaps"][10]
-                    _s30 = _dj["snaps"][30]
-                    _s60 = _dj["snaps"][60]
+                    _sb  = _dj.get("spot_base", 0.0)
+                    _s5  = _dj["snaps"][5];  _sp5  = _dj["spot_snaps"][5]
+                    _s10 = _dj["snaps"][10]; _sp10 = _dj["spot_snaps"][10]
+                    _s30 = _dj["snaps"][30]; _sp30 = _dj["spot_snaps"][30]
+                    _s60 = _dj["snaps"][60]; _sp60 = _dj["spot_snaps"][60]
                     logger.info(
                         f"[DELAY-ANALYSIS] {_dj['label']} {_dj['strike']} "
-                        f"base={_b:.1f} "
-                        f"+5s={_s5:.1f}({_s5-_b:+.1f}) "
-                        f"+10s={_s10:.1f}({_s10-_b:+.1f}) "
-                        f"+30s={_s30:.1f}({_s30-_b:+.1f}) "
-                        f"+60s={_s60:.1f}({_s60-_b:+.1f})"
+                        f"base={_b:.1f} spot_base={_sb:.0f} "
+                        f"+5s=opt{_s5:.1f}({_s5-_b:+.1f})spot{_sp5:.0f}({_sp5-_sb:+.0f}) "
+                        f"+10s=opt{_s10:.1f}({_s10-_b:+.1f})spot{_sp10:.0f}({_sp10-_sb:+.0f}) "
+                        f"+30s=opt{_s30:.1f}({_s30-_b:+.1f})spot{_sp30:.0f}({_sp30-_sb:+.0f}) "
+                        f"+60s=opt{_s60:.1f}({_s60-_b:+.1f})spot{_sp60:.0f}({_sp60-_sb:+.0f})"
                     )
                     _done_jobs.append(_dj)
             for _dj in _done_jobs:
@@ -4968,35 +5040,115 @@ def _cmd_livecheck(args):
         _tg_send("Log error: " + str(e))
 
 
+def _read_today_shadow_trades() -> list:
+    """Parse shadow trade entries+exits from today's log file."""
+    import re as _re
+    today_str = date.today().strftime("%Y-%m-%d")
+    log_path  = D.LIVE_LOG_FILE if hasattr(D, 'LIVE_LOG_FILE') else os.path.expanduser("~/logs/live/vrl_live.log")
+    signals   = {}   # key=(strat,dir,entry) → dict
+    results   = []
+    try:
+        with open(log_path) as fh:
+            for raw in fh:
+                if today_str not in raw:
+                    continue
+                t_match = _re.match(r'\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})', raw)
+                t_str   = t_match.group(1) if t_match else ''
+                # SIGNAL lines
+                m = _re.search(
+                    r'\[(SHADOW-P[12])\] (\w+) \d+ SIGNAL entry=([\d.]+)', raw)
+                if m:
+                    strat, dir_, entry = m.group(1), m.group(2), float(m.group(3))
+                    key = (strat, dir_, entry)
+                    signals[key] = {'strat': strat, 'dir': dir_, 'entry': entry,
+                                    'entry_time': t_str, 'exit': None, 'exit_time': None,
+                                    'pnl': None, 'peak': None, 'reason': None}
+                    continue
+                # EXIT lines (V1 only — no 'V2' in line)
+                if 'V2' not in raw:
+                    m = _re.search(
+                        r'\[(SHADOW-P[12])\] (\w+) (SL-HIT|PROFIT|TARGET\+\d+|EOD) '
+                        r'entry=([\d.]+) exit=([\d.]+) pnl=([+\-\d.]+) peak=\+?([\d.]+)', raw)
+                    if m:
+                        strat, dir_, reason = m.group(1), m.group(2), m.group(3)
+                        entry, exit_, pnl, peak = (float(m.group(4)), float(m.group(5)),
+                                                   float(m.group(6)), float(m.group(7)))
+                        key = (strat, dir_, entry)
+                        if key in signals:
+                            signals[key].update(exit=exit_, exit_time=t_str,
+                                                pnl=pnl, peak=peak, reason=reason)
+                            results.append(signals.pop(key))
+    except Exception as e:
+        logger.error("[CTRL] Shadow trades parse error: " + str(e))
+    # Append still-open signals
+    for key, sig in signals.items():
+        results.append(sig)
+    results.sort(key=lambda x: x['entry_time'])
+    return results
+
+
 def _cmd_trades(args):
-    trades = _read_today_trades()
-    if not trades:
+    live_trades   = _read_today_trades()
+    shadow_trades = _read_today_shadow_trades()
+
+    if not live_trades and not shadow_trades:
         _tg_send("📒 No trades today.")
         return
+
     lines = ""
     total = 0.0
-    for i, t in enumerate(trades, 1):
-        pts = float(t.get("pnl_pts", 0))
+    idx   = 1
+
+    # Live/paper V9 trades from CSV
+    for t in live_trades:
+        pts  = float(t.get("pnl_pts", 0))
         total += pts
         sign = "+" if pts >= 0 else ""
         icon = "✅" if pts >= 0 else "❌"
         peak = float(t.get("peak_pnl", 0))
         captured = round(pts / peak * 100) if peak > 0 else 0
         lines += (
-            icon + " <b>Trade " + str(i) + "</b>  " + t.get("direction", "") + "\n"
+            icon + " <b>V9 Trade " + str(idx) + "</b>  " + t.get("direction", "") + "\n"
             "  " + t.get("entry_time", "") + " → " + t.get("exit_time", "") + "\n"
             "  Entry: ₹" + str(t.get("entry_price", "")) + " → Exit: ₹" + str(t.get("exit_price", "")) + "\n"
-            "  PNL: " + sign + str(round(pts, 1)) + "pts  " + _rs(pts) + "\n"
+            "  PNL: " + sign + str(round(pts, 1)) + "pts\n"
             "  Peak: +" + str(round(peak, 1)) + "pts  Captured: " + str(captured) + "%\n"
             "  Reason: " + t.get("exit_reason", "") + "\n"
         )
+        idx += 1
+
+    # Shadow trades from log
+    shadow_total = 0.0
+    for t in shadow_trades:
+        pnl  = t.get('pnl')
+        peak = t.get('peak') or 0.0
+        is_open = pnl is None
+        if not is_open:
+            shadow_total += pnl
+        icon = "🟢" if is_open else ("✅" if pnl > 0 else "❌")
+        strat_label = t['strat'].replace('SHADOW-', '')
+        exit_t = t.get('exit_time') or '—'
+        pnl_str = ("🟢 open" if is_open else
+                   ("+" if pnl >= 0 else "") + str(round(pnl, 1)) + "pts")
+        peak_str = ("+?" if is_open else "+" + str(round(peak, 1))) + "pts"
+        lines += (
+            icon + " <b>" + strat_label + " S" + str(idx) + "</b>  " + t['dir'] + "\n"
+            "  " + t['entry_time'] + " → " + exit_t + "\n"
+            "  Entry: " + str(t['entry']) + "  Exit: " + (str(t.get('exit') or '—') + "\n"
+            "  PNL: " + pnl_str + "  Peak: " + peak_str + "\n"
+            "  Reason: " + (t.get('reason') or 'open') + "\n")
+        )
+        idx += 1
+
+    total += shadow_total
     sign = "+" if total >= 0 else ""
     _tg_send(
         "📒 <b>TODAY'S TRADES</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + lines
         + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Net: " + sign + str(round(total, 1)) + "pts  " + _rs(total)
+        "Shadow Net: " + ("+" if shadow_total >= 0 else "") + str(round(shadow_total, 1)) + "pts  "
+        "| Total: " + sign + str(round(total, 1)) + "pts"
     )
 
 
