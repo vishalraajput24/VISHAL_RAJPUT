@@ -330,14 +330,47 @@ def _read_trades():
     except Exception: pass
     return trades
 
+def _read_fno():
+    fno_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener", "fno_tracker.csv")
+    if not os.path.isfile(fno_path): return []
+    rows = []
+    try:
+        with open(fno_path) as f:
+            for r in csv.DictReader(f):
+                if str(r.get("status","")).startswith("OPEN"):
+                    try:
+                        rows.append({
+                            "symbol":         r.get("symbol",""),
+                            "direction":      r.get("direction",""),
+                            "option_symbol":  r.get("option_symbol",""),
+                            "strike":         r.get("strike",""),
+                            "expiry":         r.get("expiry",""),
+                            "lot_size":       int(r.get("lot_size",0) or 0),
+                            "entry_premium":  float(r.get("entry_premium",0) or 0),
+                            "sl_premium":     float(r.get("sl_premium",0) or 0),
+                            "t1_premium":     float(r.get("t1_premium",0) or 0),
+                            "t2_premium":     float(r.get("t2_premium",0) or 0),
+                            "current_premium":float(r.get("current_premium",0) or 0),
+                            "investment":     float(r.get("investment",0) or 0),
+                            "pnl_rs":         float(r.get("pnl_rs",0) or 0),
+                            "score":          int(r.get("score",0) or 0),
+                            "status":         r.get("status",""),
+                            "last_checked":   r.get("last_checked",""),
+                            "date_added":     r.get("date_added",""),
+                        })
+                    except Exception: pass
+    except Exception: pass
+    return rows
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VRL War Room</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#080810;--c1:#0f0f1a;--c2:#161625;--bd:#1e1e30;--tx:#e4e4e7;--dm:#666;--bl:#3b82f6;--gn:#10b981;--rd:#ef4444;--am:#f59e0b;--pr:#a855f7;--cy:#06b6d4}
-body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;font-size:12px;max-width:500px;margin:0 auto}
+:root{--bg:#05050f;--c1:#0d0d1a;--c2:#131320;--bd:#1c1c2e;--tx:#e2e2e8;--dm:#555;--bl:#4f8ef7;--gn:#10b981;--rd:#f04a4a;--am:#f59e0b;--pr:#a855f7;--cy:#06b6d4;--gold:#f5c542}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;min-height:100vh}
+@media(min-width:900px){body{display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:1fr;max-width:1200px;margin:0 auto}}
 .hd{background:var(--c1);border-bottom:1px solid var(--bd);padding:10px 12px;position:sticky;top:0;z-index:10}
 .hd h1{font-size:13px;font-weight:700;letter-spacing:.5px}.hd b{color:var(--bl)}
 .tags{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
@@ -387,21 +420,26 @@ body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;
 </style></head><body>
 
 <div class="hd">
-  <h1><b>VISHAL RAJPUT</b> TRADE <span style="color:#444;font-size:9px" id="ver"></span></h1>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <h1><b>VRL</b> WAR ROOM <span style="color:#444;font-size:9px" id="ver"></span></h1>
+    <div style="text-align:right;line-height:1.1"><div style="font-size:9px;color:#555;letter-spacing:.5px;text-transform:uppercase">Nifty</div><div id="hd-spot" style="font-size:22px;font-weight:700;color:var(--bl);letter-spacing:-1px">—</div></div>
+  </div>
   <div class="tags" id="tags"></div>
 </div>
 
 <div id="position-area"></div>
 
 <div class="tabs">
-  <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIGNALS</div>
-  <div class="tab" data-t="mkt" onclick="st('mkt')">📊 MARKET</div>
-  <div class="tab" data-t="trd" onclick="st('trd')">📒 TRADES</div>
-  <div class="tab" data-t="fil" onclick="window.location.href='/files'">📁 FILES</div>
+  <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIG</div>
+  <div class="tab" data-t="mkt" onclick="st('mkt')">📈 MKT</div>
+  <div class="tab" data-t="fno" onclick="st('fno')">📊 F&amp;O</div>
+  <div class="tab" data-t="trd" onclick="st('trd')">📒 TRD</div>
+  <div class="tab" data-t="fil" onclick="st('fil')">📁 FILES</div>
 </div>
 
 <div id="p-sig"></div>
 <div id="p-mkt" class="H"></div>
+<div id="p-fno" class="H"></div>
 <div id="p-trd" class="H"></div>
 <div id="p-fil" class="H"></div>
 
@@ -409,7 +447,7 @@ body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;
 
 
 <script>
-function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','trd','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t))}
+function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='fil')loadFiles('');}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -439,6 +477,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'">'+esc(mk.regime)+'</span>';}
   if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
+  document.getElementById('hd-spot').textContent=mk.spot||'—';
 
   // ── POSITION CARD ──
   var ph='';
@@ -475,8 +514,19 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry+' \u2192 &#x20B9;'+ltp+'</span></div>';
     // RSI progress bar
     ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
-    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:4px">';
+    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
     ph+='<span>RSI '+rsi.toFixed(0)+' (cap 75)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
+    // 3-box status grid: SL / TIER / HELD
+    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:var(--am)">'+(pos.active_ratchet_tier||'—')+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
+    ph+='</div>';
+    // Peak-captured progress bar
+    var peakPct2=peak>0?Math.min(100,Math.max(0,(pnl/peak)*100)):0;
+    var peakBarClr=peakPct2>=80?'var(--gn)':peakPct2>=50?'var(--am)':'var(--rd)';
+    ph+='<div class="bar-label" style="margin-bottom:3px"><span>PEAK CAPTURED</span><span style="color:'+peakBarClr+'">'+peakPct2.toFixed(0)+'%  +'+peak.toFixed(1)+'pts</span></div>';
+    ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
     // Lot status
     if(!split){
       ph+='<div class="pos-lot">LOT1: '+(lot1?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
@@ -505,6 +555,9 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   ph+='<div class="day-box"><div class="dk">TRADES</div>';
   ph+='<div class="dv">'+(td.trades||0)+'</div>';
   ph+='<div class="ds">'+wins+'W '+losses+'L &nbsp; WR '+wr+'%'+(td.streak>=2?' \uD83D\uDD34'+td.streak:'')+'</div></div>';
+  ph+='<div class="day-box"><div class="dk">VIX</div>';
+  ph+='<div class="dv" style="color:'+(mk.vix>22?'var(--rd)':mk.vix>18?'var(--am)':'var(--gn)')+'">'+mk.vix+'</div>';
+  ph+='<div class="ds">'+(mk.vix>22?'HIGH':mk.vix>18?'ELEV':'NORM')+'</div></div>';
   ph+='<div class="day-box"><div class="dk">STATUS</div>';
   ph+='<div class="dv">'+(td.paused?'\u23F8':'\u26A1')+'</div>';
   ph+='<div class="ds">'+(td.paused?'PAUSED':mk.market_open?'SCANNING':'CLOSED')+'</div></div>';
@@ -694,6 +747,52 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('p-trd').innerHTML=th;
   document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN')}
 
+async function renderFno(){
+  try{
+    const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
+    const el=document.getElementById('p-fno');
+    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:#555;padding:30px">No open F&O positions</div>';return;}
+    var totalPnl=0;
+    var cards=fno.map(function(p){
+      var ltp=parseFloat(p.ltp||p.current_premium||p.entry_premium||0);
+      var entry=parseFloat(p.entry_premium||0);
+      var sl=parseFloat(p.sl_premium||0);
+      var t1=parseFloat(p.t1_premium||0);
+      var lot=parseInt(p.lot_size||1);
+      var pnlPts=ltp-entry;
+      var pnlPct=(entry>0?pnlPts/entry*100:0);
+      var pnlRs=Math.round(pnlPts*lot);
+      totalPnl+=pnlRs;
+      var w=pnlPts>=0;
+      var clr=w?'var(--gn)':'var(--rd)';
+      var range=t1-sl;
+      var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
+      var barClr=pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
+      var dirClr=(p.direction||'').includes('CALL')?'var(--bl)':'var(--rd)';
+      var sign=w?'+':'';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">'+
+        '<div><span style="font-weight:700;font-size:13px">'+esc(p.symbol||'')+'</span> <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(79,142,247,.12);color:'+dirClr+'">'+esc(p.direction||'')+'</span></div>'+
+        '<div><span style="font-weight:700;font-size:15px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</span> <span style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(pnlRs).toLocaleString('en-IN')+'</span></div></div>'+
+        '<div style="font-size:10px;color:#888;margin-bottom:6px">'+esc(p.option_symbol||'')+' &nbsp;·&nbsp; Entry &#x20B9;'+entry.toFixed(2)+' → LTP &#x20B9;'+ltp.toFixed(2)+'</div>'+
+        '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
+        '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
+        '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px"></div>'+
+        '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px"></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:#555">'+
+        '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span style="color:#888">'+pct.toFixed(0)+'% of range</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span></div>'+
+        '</div>';
+    }).join('');
+    var totSign=totalPnl>=0?'+':'';
+    var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
+    el.innerHTML=
+      '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+      '<div><div style="font-size:9px;color:#555;margin-bottom:2px">TOTAL F&amp;O P&amp;L</div><div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(totalPnl).toLocaleString('en-IN')+'</div></div>'+
+      '<div style="font-size:10px;color:#555">'+fno.length+' open positions</div></div>'+cards;
+  }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:#555;padding:16px">Error loading F&O data</div>';console.error(e);}
+}
+
 async function loadFiles(folder){
   const d=await fetch('/api/files'+(folder?'?folder='+folder:'')).then(r=>r.json()).catch(e=>null);
   const el=document.getElementById('p-fil');
@@ -715,8 +814,6 @@ async function go(){
   }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
-// Load files tab when clicked
-document.querySelector('[data-t="fil"]').addEventListener('click',function(){loadFiles('')});
 </script></body></html>"""
 
 class H(BaseHTTPRequestHandler):
@@ -1164,6 +1261,7 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
+        elif p=="/api/fno":self._j(_read_fno())
         elif p.startswith("/static/"):
             # Serve any whitelisted asset under static/ (bg image, css, etc.)
             # Whitelist file extensions to prevent directory traversal.
