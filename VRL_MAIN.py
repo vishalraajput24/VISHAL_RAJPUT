@@ -4746,6 +4746,7 @@ def _cmd_help(args):
         "/status    — trade status + PNL\n"
         "/trades    — today's trade list\n"
         "/account   — balance + margin info\n"
+        "/vishal_stock_fno — F&O positions live P&L\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DATA</b>\n"
         "/download  — full day zip (or /download YYYY-MM-DD)\n"
