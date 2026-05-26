@@ -29,6 +29,7 @@ from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     compute_entry_sl,
     get_option_ema_spread,
+    check_entry_v8,
 )
 # VRL_TRADE handles both paper and live mode
 import VRL_CONFIG as CFG
@@ -842,7 +843,7 @@ _V8_PERSIST_FIELDS = [
     "candles_held", "_other_token",
     "_sl_cooldown_skip_next", "_force_exit_ts",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
-    "_v8_both_rejected_ts", "_last_trade_date",
+    "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
 ]
 
 def _save_v8_state():
@@ -2815,13 +2816,13 @@ def _strategy_loop(kite):
                 _v8_last_entry_scan_ts = time.time()
                 logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
             if (not _v8_state.get("in_trade")
+                    and not state.get("paused")
                     and D.is_trading_window(now)
                     and _locked_tokens
                     and not _v8_in_force_cooldown
                     and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 try:
-                    from VRL_ENGINE import check_entry_v8
                     _v8_ce_info = (_locked_tokens or {}).get("CE", {})
                     _v8_pe_info = (_locked_tokens or {}).get("PE", {})
                     _v8_ce_tok  = int(_v8_ce_info.get("token", 0) or 0)
@@ -4849,6 +4850,7 @@ def _cmd_status(args):
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
+        "Ladder : @+12→LOCK_4  @+18→LOCK_10  @+24→LOCK_12\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
         "Day PNL: " + str(round(st.get("daily_pnl", 0), 1)) + "pts"
@@ -4925,6 +4927,7 @@ def _cmd_forceexit(args):
             v8_open = True
             _v8_tok = int(_v8_state.get("token", 0) or 0)
             _v8_entry_px = float(_v8_state.get("entry_price", 0) or 0)
+            _v8_state["_force_exit_ts"] = time.time()  # BUG-C fix: arm 3-min re-entry cooldown
 
     # Close any active shadow P1/P2 signals
     _shadow_closed = []
