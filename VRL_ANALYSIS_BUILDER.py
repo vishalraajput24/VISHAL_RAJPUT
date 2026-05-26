@@ -103,7 +103,7 @@ def get_spot_vwap_gap(trade_time, vwap_timeline):
 
 
 def parse_bwscan_timeline(log_file, today):
-    """Parse [BW-SCAN] blocks → dict keyed by HH:MM with CE/PE 3m close, gap, position.
+    """Parse [BW-SCAN] blocks → dict keyed by HH:MM with CE/PE 1m+3m close, gap, position.
     CE/PE continuation lines have no date prefix — read them after the header line."""
     timeline = {}
     current_time = None
@@ -124,17 +124,28 @@ def parse_bwscan_timeline(log_file, today):
                     subline = lines[j].strip()
                     for side in ('CE', 'PE'):
                         if subline.startswith(side):
+                            entry = {}
+                            # 1m data
+                            m1 = re.search(
+                                r'1m:\s+c=([\d.]+)\s+el=[\d.]+\s+eh=[\d.]+\s+bw=([\d.]+)\s+gap=([+\-\d.]+)\s+\[(\w+)\]',
+                                subline)
+                            if m1:
+                                entry['close1m'] = float(m1.group(1))
+                                entry['bw1m']    = float(m1.group(2))
+                                entry['gap1m']   = float(m1.group(3))
+                                entry['pos1m']   = m1.group(4)
+                            # 3m data
                             m3 = re.search(
                                 r'\|\|\s+3m:\s+c=([\d.]+).*?gap=([+\-\d.]+)\s+\[(\w+)\]',
                                 subline)
                             if m3:
-                                timeline[current_time][side] = {
-                                    'close3m': float(m3.group(1)),
-                                    'gap3m':   float(m3.group(2)),
-                                    'pos3m':   m3.group(3),
-                                }
+                                entry['close3m'] = float(m3.group(1))
+                                entry['gap3m']   = float(m3.group(2))
+                                entry['pos3m']   = m3.group(3)
+                            if entry:
+                                timeline[current_time][side] = entry
         i += 1
-    return timeline  # {'HH:MM': {'CE': {...}, 'PE': {...}}}
+    return timeline  # {'HH:MM': {'CE': {close1m,bw1m,gap1m,pos1m,close3m,gap3m,pos3m}, 'PE': {...}}}
 
 
 def get_bwscan(trade_time, bwscan_timeline):
@@ -914,6 +925,77 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
     a(f"| P2 VWAP_COMPRESSED + BW < 8 → DANGER | {len(p2_danger_w)} | {len(p2_danger_l)} | Skip — guaranteed chop |")
     a(f"| P2 SWEET SPOT (XLEG + BW≥10 + gap -2→-10) | {len(p2_sweet_w)} | {len(p2_sweet_l)} | High probability setup ✅ |")
     a()
+
+    # 5d. Dual Timeframe Quality
+    a("---")
+    a("## 5d. Dual Timeframe Quality (1m vs 3m band position at entry)")
+    a()
+    a("> **Finding**: 1m ABOVE = EMA9H breakout fired. 3m ABOVE = sustained move across longer candle.")
+    a("> HIGH ✅ = both agree → confirmed breakout. MEDIUM ⚠️ = 1m only → may be 60s spike. LOW ❌ = counter-trend on 3m.")
+    a()
+
+    def dual_tf_quality(pos1m, pos3m):
+        if pos1m == 'ABOVE' and pos3m == 'ABOVE':
+            return 'HIGH ✅'
+        elif pos1m == 'ABOVE' and pos3m == 'INSIDE':
+            return 'MEDIUM ⚠️'
+        elif pos1m == 'ABOVE' and pos3m == 'BELOW':
+            return 'LOW ❌'
+        else:
+            return f'{pos1m}/{pos3m}'
+
+    if bwscan_timeline and trades:
+        a("| # | Strat | Dir | 1m pos | 1m BW | 1m gap | 3m pos | 3m gap | TF Quality | PnL |")
+        a("|---|-------|-----|--------|-------|--------|--------|--------|------------|-----|")
+        for tr in sorted(trades, key=lambda x: x['num']):
+            bws = get_bwscan(tr['time'], bwscan_timeline)
+            side = tr['dir']
+            if bws and side in bws:
+                entry = bws[side]
+                pos1m   = entry.get('pos1m',  '—')
+                bw1m    = f"{entry['bw1m']:.1f}"  if 'bw1m'  in entry else '—'
+                gap1m   = f"{entry['gap1m']:+.1f}" if 'gap1m' in entry else '—'
+                pos3m   = entry.get('pos3m',  '—')
+                gap3m   = f"{entry['gap3m']:+.1f}" if 'gap3m' in entry else '—'
+                if pos1m != '—' and pos3m != '—':
+                    quality = dual_tf_quality(pos1m, pos3m)
+                else:
+                    quality = '—'
+            else:
+                pos1m = bw1m = gap1m = pos3m = gap3m = quality = '—'
+            pnl_str = f"{tr['pnl_v1']:+.0f}" if tr['pnl_v1'] is not None else "🟢open"
+            a(f"| S{tr['num']} | {tr['strategy']} | {side} | {pos1m} | {bw1m} | {gap1m} | {pos3m} | {gap3m} | {quality} | {pnl_str} |")
+        a()
+
+        # Summary stats by quality tier
+        tf_results = {'HIGH ✅': [0,0], 'MEDIUM ⚠️': [0,0], 'LOW ❌': [0,0]}
+        for tr in [t for t in trades if not t.get('open') and t.get('pnl_v1') is not None]:
+            bws  = get_bwscan(tr['time'], bwscan_timeline)
+            side = tr['dir']
+            if bws and side in bws:
+                entry = bws[side]
+                p1 = entry.get('pos1m')
+                p3 = entry.get('pos3m')
+                if p1 and p3:
+                    q = dual_tf_quality(p1, p3)
+                    if q in tf_results:
+                        if tr['pnl_v1'] > 0:
+                            tf_results[q][0] += 1
+                        else:
+                            tf_results[q][1] += 1
+        a("**Win rate by timeframe quality (closed trades):**")
+        a("| TF Quality | W | L | Win% |")
+        a("|------------|---|---|------|")
+        for q, (w, l) in tf_results.items():
+            total = w + l
+            pct   = f"{w/total*100:.0f}%" if total > 0 else "—"
+            a(f"| {q} | {w} | {l} | {pct} |")
+        a()
+        a("> **Guideline**: Prefer HIGH ✅ (both timeframes agree). MEDIUM ⚠️ needs strong XLEG+P2 confirmation. LOW ❌ skip.")
+        a()
+    else:
+        a("_No BW-SCAN data available for dual timeframe analysis._")
+        a()
 
     # V2 vs V1
     both = [tr for tr in closed if tr['pnl_v1'] is not None and tr['pnl_v2'] is not None]
