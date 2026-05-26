@@ -5225,20 +5225,89 @@ def _cmd_xleg(args):
         _tg_send("📊 X-LEG error: " + str(e))
 
 
+def _cmd_vishal_stock_fno(args):
+    try:
+        import csv as _csv
+        _tracker = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "screener", "fno_tracker.csv"
+        )
+        if not os.path.isfile(_tracker):
+            _tg_send("📭 F&O tracker not found.")
+            return
+
+        with open(_tracker) as _f:
+            rows = list(_csv.DictReader(_f))
+
+        open_rows = [r for r in rows if str(r.get("status", "")).startswith("OPEN")]
+        if not open_rows:
+            _tg_send("📭 No open F&O positions.")
+            return
+
+        # Fetch live LTP for all option symbols in one call
+        _symbols = ["NFO:" + r["option_symbol"] for r in open_rows]
+        _ltp_map = {}
+        try:
+            if _kite:
+                _q = _kite.ltp(_symbols)
+                for sym in _symbols:
+                    _ltp_map[sym.replace("NFO:", "")] = float(_q[sym]["last_price"])
+        except Exception as _e:
+            logger.warning("[FNO_CMD] LTP fetch error: " + str(_e))
+
+        lines = ""
+        total_pnl = 0.0
+        for r in open_rows:
+            sym      = r["option_symbol"]
+            ltp      = _ltp_map.get(sym, float(r.get("current_premium") or r["entry_premium"]))
+            entry    = float(r["entry_premium"])
+            sl       = float(r["sl_premium"])
+            t1       = float(r["t1_premium"])
+            lot      = int(r["lot_size"])
+            pnl_pts  = round(ltp - entry, 2)
+            pnl_pct  = round(pnl_pts / entry * 100, 1)
+            pnl_rs   = round(pnl_pts * lot, 0)
+            total_pnl += pnl_rs
+            icon     = "✅" if pnl_pts >= 0 else "⚠️"
+            sign     = "+" if pnl_pts >= 0 else ""
+            dist_sl  = round(ltp - sl, 2)
+            dist_t1  = round(t1 - ltp, 2)
+            lines += (
+                icon + " <b>" + r["symbol"] + " " + r["direction"] + "</b>\n"
+                "  Entry: ₹" + str(entry) + " → LTP: ₹" + str(round(ltp, 2)) + "\n"
+                "  P&L: " + sign + str(pnl_pct) + "%  " + sign + "₹" + str(int(pnl_rs)) + "\n"
+                "  SL: ₹" + str(sl) + " (" + str(dist_sl) + " away)  "
+                "T1: ₹" + str(t1) + " (" + str(dist_t1) + " away)\n"
+            )
+
+        total_sign = "+" if total_pnl >= 0 else ""
+        _tg_send(
+            "📊 <b>F&O POSITIONS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + lines +
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Total P&L: " + total_sign + "₹" + str(int(total_pnl)) + "\n"
+            "Time: " + _now_str()
+        )
+    except Exception as e:
+        _tg_send("📊 F&O error: " + str(e))
+        logger.error("[FNO_CMD] " + str(e))
+
+
 _DISPATCH = {
-    "/help"      : _cmd_help,
-    "/pulse"     : _cmd_pulse,
-    "/status"    : _cmd_status,
-    "/trades"    : _cmd_trades,
-    "/account"   : _cmd_account,
-    "/pause"     : _cmd_pause,
-    "/resume"    : _cmd_resume,
-    "/forceexit" : _cmd_forceexit,
-    "/deploy"    : _cmd_deploy,
-    "/restart"   : _cmd_restart,
-    "/livecheck" : _cmd_livecheck,
-    "/download"  : _cmd_download,
-    "/xleg"      : _cmd_xleg,
+    "/help"               : _cmd_help,
+    "/pulse"              : _cmd_pulse,
+    "/status"             : _cmd_status,
+    "/trades"             : _cmd_trades,
+    "/account"            : _cmd_account,
+    "/pause"              : _cmd_pause,
+    "/resume"             : _cmd_resume,
+    "/forceexit"          : _cmd_forceexit,
+    "/deploy"             : _cmd_deploy,
+    "/restart"            : _cmd_restart,
+    "/livecheck"          : _cmd_livecheck,
+    "/download"           : _cmd_download,
+    "/xleg"               : _cmd_xleg,
+    "/vishal_stock_fno"   : _cmd_vishal_stock_fno,
 }
 
 
