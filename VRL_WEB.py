@@ -362,13 +362,44 @@ def _read_fno():
     except Exception: pass
     return rows
 
+def _read_weekly():
+    rows = []
+    try:
+        import csv as _csv
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener", "weekly_tracker.csv")
+        if os.path.isfile(path):
+            with open(path) as f:
+                for r in _csv.DictReader(f):
+                    try:
+                        rows.append({
+                            "date_added":    r.get("date_added",""),
+                            "rank":          int(r.get("rank",0) or 0),
+                            "symbol":        r.get("symbol",""),
+                            "name":          r.get("name",""),
+                            "entry_price":   float(r.get("entry_price",0) or 0),
+                            "sl":            float(r.get("sl",0) or 0),
+                            "target_1y":     float(r.get("target_1y",0) or 0),
+                            "target_3y":     float(r.get("target_3y",0) or 0),
+                            "t3_upside_pct": float(r.get("t3_upside_pct",0) or 0),
+                            "roe":           float(r.get("roe",0) or 0),
+                            "roce":          float(r.get("roce",0) or 0),
+                            "score":         int(r.get("score",0) or 0),
+                            "grade":         r.get("grade",""),
+                            "status":        r.get("status",""),
+                            "exit_price":    float(r.get("exit_price",0) or 0),
+                            "actual_return": float(r.get("actual_return",0) or 0),
+                        })
+                    except Exception: pass
+    except Exception: pass
+    return rows
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VRL War Room</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#05050f;--c1:#0d0d1a;--c2:#131320;--bd:#1c1c2e;--tx:#e2e2e8;--dm:#555;--bl:#4f8ef7;--gn:#10b981;--rd:#f04a4a;--am:#f59e0b;--pr:#a855f7;--cy:#06b6d4;--gold:#f5c542}
+:root{--bg:#fdf6ec;--c1:#fffaf4;--c2:#f5ebe0;--bd:#e0ccb0;--tx:#2c1f0e;--dm:#8a7055;--bl:#1a6bbf;--gn:#0a7a50;--rd:#c0392b;--am:#b06a00;--pr:#7c3aed;--cy:#0e7490;--gold:#b45309}
 body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;min-height:100vh}
 @media(min-width:900px){body{display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:1fr;max-width:1200px;margin:0 auto}}
 .hd{background:var(--c1);border-bottom:1px solid var(--bd);padding:10px 12px;position:sticky;top:0;z-index:10}
@@ -403,7 +434,7 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 .tc.w{background:rgba(16,185,129,.04);border-color:rgba(16,185,129,.15)}
 .tc.l{background:rgba(239,68,68,.04);border-color:rgba(239,68,68,.15)}
 .H{display:none}
-.ft{text-align:center;padding:6px;font-size:8px;color:#444;border-top:1px solid var(--bd)}
+.ft{text-align:center;padding:6px;font-size:8px;color:#a08060;border-top:1px solid var(--bd)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:0}
 .two>.sect{margin:0;border-radius:0;border-right:none}.two>.sect:last-child{border-right:1px solid var(--bd)}
 .ctx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
@@ -434,6 +465,7 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
   <div class="tab" data-t="mkt" onclick="st('mkt')">📈 MKT</div>
   <div class="tab" data-t="fno" onclick="st('fno')">📊 F&amp;O</div>
   <div class="tab" data-t="trd" onclick="st('trd')">📒 TRD</div>
+  <div class="tab" data-t="wkly" onclick="st('wkly')">📅 WEEKLY</div>
   <div class="tab" data-t="fil" onclick="st('fil')">📁 FILES</div>
 </div>
 
@@ -441,13 +473,14 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 <div id="p-mkt" class="H"></div>
 <div id="p-fno" class="H"></div>
 <div id="p-trd" class="H"></div>
+<div id="p-wkly" class="H"></div>
 <div id="p-fil" class="H"></div>
 
 <div class="ft">Auto-refresh 10s · <span id="ts"></span></div>
 
 
 <script>
-function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='fil')loadFiles('');}
+function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -746,6 +779,55 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   }
   document.getElementById('p-trd').innerHTML=th;
   document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN')}
+
+async function renderWeekly(){
+  try{
+    const data=await fetch('/api/weekly').then(r=>r.json()).catch(e=>[]);
+    const el=document.getElementById('p-wkly');
+    if(!data||!data.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No weekly picks yet — runs every Sunday</div>';return;}
+    const open=data.filter(d=>d.status==='OPEN'||d.status.includes('OPEN'));
+    const closed=data.filter(d=>!d.status.includes('OPEN'));
+    const lastDate=data[0].date_added||'';
+    var gradeClr=function(g){return g.includes('STRONG')?'var(--rd)':g.includes('BUY')?'var(--gn)':'var(--am)';}
+    var cards=open.map(function(p){
+      var up3=parseFloat(p.t3_upside_pct||0);
+      var score=parseInt(p.score||0);
+      var scorePct=Math.min(100,(score/15)*100);
+      var scoreClr=score>=12?'var(--rd)':score>=10?'var(--am)':'var(--gn)';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
+        '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
+        '<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+gradeClr(p.grade)+'">'+esc(p.grade)+'</span>'+
+        '<div style="font-size:10px;color:var(--dm);margin-top:2px">'+esc(p.name)+'</div></div>'+
+        '<div style="text-align:right"><div style="font-size:9px;color:var(--dm)">3Y UPSIDE</div>'+
+        '<div style="font-size:18px;font-weight:700;color:var(--gn)">+'+up3.toFixed(0)+'%</div></div></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:6px 0">'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">ENTRY</div><div style="font-size:12px;font-weight:700">&#x20B9;'+p.entry_price.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+p.sl.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">T1 (1Y)</div><div style="font-size:12px;font-weight:700;color:var(--gn)">&#x20B9;'+p.target_1y.toFixed(0)+'</div></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dm);margin-bottom:4px"><span>ROE '+p.roe+'%</span><span>ROCE '+p.roce+'%</span><span>Score '+p.score+'/15</span><span>#'+p.rank+'</span></div>'+
+        '<div style="height:4px;background:var(--c2);border-radius:2px"><div style="height:100%;width:'+scorePct.toFixed(0)+'%;background:'+scoreClr+';border-radius:2px"></div></div>'+
+        '</div>';
+    }).join('');
+    var closedHtml='';
+    if(closed.length){
+      closedHtml='<div style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px">Closed Positions</div>'+
+      closed.map(function(p){
+        var ret=parseFloat(p.actual_return||0);
+        var w=ret>=0;
+        return '<div style="margin:3px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center">'+
+          '<div><span style="font-weight:700">'+esc(p.symbol)+'</span> <span style="font-size:9px;color:var(--dm)">'+esc(p.grade)+'</span></div>'+
+          '<span style="font-weight:700;color:'+(w?'var(--gn)':'var(--rd)')+'">'+(w?'+':'')+ret.toFixed(1)+'%</span></div>';
+      }).join('');
+    }
+    el.innerHTML=
+      '<div style="margin:8px;padding:8px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+      '<div><div style="font-size:9px;color:var(--dm)">WEEKLY SCREENER</div><div style="font-weight:700;font-size:13px">'+open.length+' Open · '+closed.length+' Closed</div></div>'+
+      '<div style="font-size:9px;color:var(--dm)">Updated '+esc(lastDate)+'</div></div>'+
+      cards+closedHtml;
+  }catch(e){document.getElementById('p-wkly').innerHTML='<div style="color:var(--dm);padding:16px">Error loading weekly data</div>';console.error(e);}
+}
 
 async function renderFno(){
   try{
@@ -1262,6 +1344,7 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
         elif p=="/api/fno":self._j(_read_fno())
+        elif p=="/api/weekly":self._j(_read_weekly())
         elif p.startswith("/static/"):
             # Serve any whitelisted asset under static/ (bg image, css, etc.)
             # Whitelist file extensions to prevent directory traversal.
