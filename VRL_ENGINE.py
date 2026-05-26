@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v17 (V7 shadow + V8 live)
+#  VRL_ENGINE.py — VISHAL RAJPUT TRADE v18 (V7 shadow + V9 live)
 #  Timeframe: 15-minute option candles (current single-strategy)
 #  Entry: 2 gates (option-side only).
 #    1. 15-min candle close > EMA9_low (option)
@@ -28,6 +28,9 @@ import VRL_DATA as D
 import VRL_CONFIG as CFG
 
 logger = logging.getLogger("vrl_live")
+
+# G6-SHADOW throttle: log at most once per 3-min candle per option_type
+_g6_last_log: dict = {}  # key: option_type → last candle timestamp str
 
 
 def get_margin_available(kite) -> float:
@@ -263,14 +266,12 @@ def check_entry(token: int, option_type: str, spot_ltp: float = 0, dte: int = 99
 def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                    silent: bool = False, state: dict = None,
                    other_token: int = 0) -> dict:
-    """V8 — 3-min entry on live forming candle (5-gate).
+    """V9 — 3-min entry on live forming candle (3-gate).
 
     Gates:
-      G1. GREEN candle (close > open)
-      G2. Close > EMA9_low (broke above support band)
-      G3. band_width >= 10 (real momentum, not choppy)
-      G4. other_close <= other_band_mid (other side falling = directional)
-      G5. RSI > 50 AND rising vs previous closed candle
+      G2.  Close > EMA9_low (broke above support band)
+      G3.  12 <= band_width <= 16 (momentum sweet spot)
+      G5.  50 < RSI < 65
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -298,14 +299,26 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 logger.info(f"[REJECT-V8] {option_type} same_candle_guard ts={fired_ts}")
             return result
 
-        # ── EMERGENCY_SL 1-candle cooldown ──
-        if state.get("_sl_cooldown_skip_next"):
-            state["_sl_cooldown_skip_next"] = False
-            result["reject_reason"] = "sl_cooldown_skip"
+        # ── Exit candle guard: block re-entry on same candle we just exited ──
+        if state.get("_last_exit_candle_ts", "") == fired_ts:
+            result["reject_reason"] = "exit_candle_guard"
             if not silent:
-                logger.info(f"[REJECT-V8] {option_type} sl_cooldown_skip — "
-                            f"skipping first candle after EMERGENCY_SL")
+                logger.info(f"[REJECT-V8] {option_type} exit_candle_guard — "
+                            f"same 3-min candle as last exit (ts={fired_ts})")
             return result
+
+        # ── EMERGENCY_SL 1-candle cooldown ──
+        # Only blocks the SAME direction that had the SL — not the opposite side.
+        if state.get("_sl_cooldown_skip_next"):
+            _sl_dir = state.get("_sl_cooldown_direction", "")
+            if not _sl_dir or _sl_dir == option_type:
+                state["_sl_cooldown_skip_next"] = False
+                state["_sl_cooldown_direction"] = ""
+                result["reject_reason"] = "sl_cooldown_skip"
+                if not silent:
+                    logger.info(f"[REJECT-V8] {option_type} sl_cooldown_skip — "
+                                f"skipping first candle after EMERGENCY_SL")
+                return result
 
         close = float(last["close"]); open_ = float(last["open"])
         high = float(last["high"]); low = float(last["low"])
@@ -341,82 +354,92 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                 result["reject_reason"] = "after_" + cutoff_after
                 return result
 
-        # ── GATE 1: green candle ──
-        if not _is_green:
-            result["reject_reason"] = "red_candle"
-            if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate1_red_candle "
-                            f"close={round(close,1)} open={round(open_,1)}")
-            return result
-
         # ── GATE 2: close above EMA9_low (broke above support band) ──
+        _bw = round(ema9_high - ema9_low, 2)
         if close <= ema9_low:
             result["reject_reason"] = "close_below_ema9_low"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate2_below_band "
-                            f"close={round(close,1)} ema9l={round(ema9_low,1)}")
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} bw={_bw}")
             return result
 
-        # ── GATE 3: band width >= 10 (real momentum, not choppy) ──
-        _bw = round(ema9_high - ema9_low, 2)
+        # ── GATE 3: band width 13-16 (momentum sweet spot — v19 update from sweep) ──
+        # v18: 12-16 | v19: 13-16 — BW=12 was adding choppy entries, sweep -140pts better
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
-        if _bw < 10:
+        if _bw < 13:
             result["reject_reason"] = f"band_too_narrow_{_bw}"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_narrow "
-                            f"width={_bw} (need >=10)")
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
+            return result
+        if _bw > 16:
+            result["reject_reason"] = f"band_too_wide_{_bw}"
+            if not silent:
+                logger.info(f"[REJECT-V8] {option_type} gate3_band_wide "
+                            f"close={round(close,1)} ema9l={round(ema9_low,1)} "
+                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
             return result
 
-        # ── GATE 4: other side must be falling (below its own band midpoint) ──
-        _opt3m_other = None
-        if other_token:
-            try:
-                _opt3m_other = D.add_indicators(
-                    D.get_historical_data(other_token, "3minute", 10))
-                if _opt3m_other is not None and len(_opt3m_other) >= 2:
-                    _o_last  = _opt3m_other.iloc[-1]   # live candle of other side
-                    _o_close = float(_o_last["close"])
-                    _o_ema9h = float(_o_last.get("ema9_high", 0))
-                    _o_ema9l = float(_o_last.get("ema9_low", 0))
-                    _o_mid   = round((_o_ema9h + _o_ema9l) / 2, 2) if _o_ema9h > 0 else 0
-                    result["xleg_other_close"] = round(_o_close, 2)
-                    result["xleg_other_ema9l"] = round(_o_ema9l, 2)
-                    result["xleg_other_dying"] = (_o_ema9l > 0 and _o_close < _o_ema9l - 0.5)
-                    if _o_mid > 0 and _o_close > _o_mid:
-                        result["reject_reason"] = f"other_not_falling_mid={_o_mid}"
-                        if not silent:
-                            logger.info(f"[REJECT-V8] {option_type} gate4_other_not_falling "
-                                        f"other={round(_o_close,1)} > other_mid={_o_mid} "
-                                        f"(sideways — other side not falling)")
-                        return result
-            except Exception as _g4e:
-                logger.warning(f"[ENGINE-V8] Gate4 data error for {option_type} other_token={other_token}: {_g4e} — gate4 skipped")
-
-        # ── GATE 5: RSI > 50 and rising (momentum confirmed) ──
+        # ── GATE 5: 48 < RSI < 70 (momentum zone — v19 update from sweep) ──
+        # v18: 50-65 | v19: 48-70 — wider RSI captures more valid momentum, sweep -140pts better
         _rsi_now  = float(last.get("RSI", 0) or 0)
-        _rsi_prev = float(opt_3m.iloc[-2].get("RSI", 0) or 0)
         result["rsi"] = round(_rsi_now, 1)
-        result["rsi_prev"] = round(_rsi_prev, 1)
-        if _rsi_now <= 50:
-            result["reject_reason"] = f"rsi_below_50_{round(_rsi_now,1)}"
+        if _rsi_now <= 48:
+            result["reject_reason"] = f"rsi_below_48_{round(_rsi_now,1)}"
             if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_50 "
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_below_48 "
                             f"rsi={round(_rsi_now,1)}")
             return result
-        if _rsi_now <= _rsi_prev:
-            result["reject_reason"] = f"rsi_not_rising_{round(_rsi_now,1)}_prev={round(_rsi_prev,1)}"
+        if _rsi_now >= 70:
+            result["reject_reason"] = f"rsi_overextended_{round(_rsi_now,1)}"
             if not silent:
-                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_not_rising "
-                            f"rsi={round(_rsi_now,1)} prev={round(_rsi_prev,1)}")
+                logger.info(f"[REJECT-V8] {option_type} gate5_rsi_overextended "
+                            f"rsi={round(_rsi_now,1)} (cap=70)")
             return result
 
         result["fired"] = True
         result["entry_mode"] = "CLOSE_FILL"
+        # Stamp candle as used immediately — prevents same candle re-firing
+        # every 3 seconds when entry is blocked by cooldown (BUG-16 fix)
+        if state is not None:
+            state["_last_fired_candle_ts"] = fired_ts
         if not silent:
-            logger.info(f"[ENGINE-V8] {option_type} FIRED close={round(close,1)} "
+            logger.info(f"[ENGINE-V9] {option_type} FIRED close={round(close,1)} "
                         f"ema9l={round(ema9_low,1)} ema9h={round(ema9_high,1)} "
                         f"bw={_bw} rsi={round(_rsi_now,1)} "
-                        f"(5-gate V8, 3-min)")
+                        f"(3-gate V9, 3-min)")
+
+        # ── GATE 6 (SHADOW): StochRSI(5) oversold cross ──
+        # Does NOT block entry — logs only. Collect data for 2 weeks then decide.
+        # Condition: smooth_%K crossed up from <=20 (oversold) previous candle.
+        try:
+            _rsi_s = opt_3m["RSI"].astype(float)
+            if len(_rsi_s) >= 9:
+                _srsi_range = _rsi_s.rolling(5).max() - _rsi_s.rolling(5).min()
+                _srsi_k     = (_rsi_s - _rsi_s.rolling(5).min()) / _srsi_range.replace(0, 1) * 100
+                _srsi_smooth = _srsi_k.rolling(3).mean()
+                _g6_k_now   = round(float(_srsi_smooth.iloc[-1]), 1)
+                _g6_k_prev  = round(float(_srsi_smooth.iloc[-2]), 1)
+                _g6_pass    = (_g6_k_prev <= 20 and _g6_k_now > _g6_k_prev)
+                result["g6_stochrsi_os_cross"] = _g6_pass
+                result["g6_k_now"]  = _g6_k_now
+                result["g6_k_prev"] = _g6_k_prev
+                if not silent:
+                    # Throttle: log only once per 3-min candle (not every 3s)
+                    _g6_candle_ts = str(opt_3m.index[-1]) if hasattr(opt_3m.index, '__getitem__') else ""
+                    if _g6_last_log.get(option_type) != _g6_candle_ts:
+                        _g6_last_log[option_type] = _g6_candle_ts
+                        logger.info(f"[G6-SHADOW] {option_type} StochRSI_OsCross(5) "
+                                    f"{'PASS' if _g6_pass else 'SKIP'} "
+                                    f"k={_g6_k_now} prev={_g6_k_prev}")
+            else:
+                result["g6_stochrsi_os_cross"] = None
+        except Exception as _g6e:
+            logger.warning(f"[G6-SHADOW] {option_type} error: {_g6e}")
+            result["g6_stochrsi_os_cross"] = None
+
         return result
 
     except Exception as e:

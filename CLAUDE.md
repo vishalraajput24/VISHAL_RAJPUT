@@ -3,7 +3,11 @@
 ## Project Overview
 Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
-- **V8**: 3-min candle strategy — **LIVE paper trading** (active)
+- **V9**: 3-min candle strategy — **LIVE paper trading** (active)
+
+**Current version**: `v19` (V9 gates: BW 13-16 + RSI 48-70, deployed 2026-05-19)
+**Previous**: v18 — BW 12-16, RSI 50-65 (sweep showed -252pts over 10d)
+**v17**: V8 gates: BW>=11, RSI 45-75
 
 **Current version**: `v17` (merged to main 2026-05-14 via PR #7)
 
@@ -29,21 +33,23 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 
 ---
 
-## V8 Architecture
+## V9 Architecture
 
 ### Entry Gates (check_entry_v8 in VRL_ENGINE.py)
 | Gate | Check |
 |------|-------|
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
-| G3 | `band_width = ema9_high - ema9_low >= 10` (real momentum, not choppy) |
+| G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
+| G3 | `13 <= band_width <= 16` (momentum sweet spot — not choppy, not overextended) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
-| G5 | RSI > 50 AND RSI rising (above midpoint and building momentum) |
+| G5 | `48 < RSI < 70` AND rising vs previous candle |
 
-**Data basis** (9 days, 1404 candles):
-- Baseline (close > ema9_low only): avg_fwd = +9.2 pts, win% = 39.8%, n=910
-- G3 (bw>=10) alone: avg_fwd = +16.3 pts, win% = 41.7%
-- Band width 8-10 = -3.0 avg return (BAD). Band 12-16 = +18.1 avg (BEST).
+**Data basis** (22 days, backtest_bw_rsi_filter.py):
+- V8 gates (BW>=11, RSI 45-75): score +8.4, n=590 signals
+- V9 gates (BW 13-17, RSI 50-65): score +21.1, n=88 signals, avg +16.4 pts
+- BW > 17 = overextended, bad returns. BW < 13 = choppy, bad returns.
+- RSI cap at 65 (vs 75): blocks overextended entries that reverse quickly.
 - G4 ensures directional divergence — both sides rising = sideways = skip.
 
 ### Exit Ladder (_v8_compute_trail_sl)
@@ -156,7 +162,7 @@ Any new state key that must survive restarts MUST be added to both:
 Normal for V7 (15-min candles). After firing on candle C, blocks until candle C+1 closes (up to 15 min). NOT a bug.
 
 ### Both-sides cooldown armed at market open
-Normal. Opening 1-2 minutes often have both CE+PE failing gates (insufficient candles, choppy open). Cooldown blocks for 3 min, then clears.
+Normal. Opening 1-2 minutes often have both CE+PE failing gates (insufficient candles, choppy open). Cooldown blocks for **1 min** (was 3 min), then clears.
 
 ### EMERGENCY_SL cluster (3+ in a row)
 Sign of choppy market or wrong direction bias. No automatic protection yet — consider adding: "3 consecutive EMERGENCY_SL → pause 30 min."
@@ -230,13 +236,58 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 
 ---
 
+## Design Decisions (Locked)
+- **Re-entry disabled** (2026-05-15): After analyzing 11:32 losing re-entry (price reversed 5.5 pts below exit within 33s), decided re-entry adds risk without edge. `_v8_execute_paper_exit` always sets `_reentry_armed = False`. Fresh setup only after every exit.
+- **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction.
+- **Gate 2B** (2026-05-15): EMA9_low slope must be ≥ 0 for last 2 candles. Blocks fake breakouts on falling support.
+
+## Shadow-Specific Bugs Fixed (2026-05-21)
+
+### BUG-A: sl_cooldown not blocking re-entry (PR #36)
+**Root cause**: Early-exit safety block fired SL-HIT but never set `sl_ts`. Main scan read `sl_ts=0` → cooldown age = billions → never triggered.
+**Fix**: `sl_ts=time.time()` added to early-exit update dict when `reason=SL-HIT` and `label=P1`.
+
+### BUG-B: spot_3m undefined — ANALYSIS flags never fired (PR #36)
+**Root cause**: `spot_3m` was local to `_write_dashboard()`. Shadow section in `_strategy_loop()` → NameError on every signal fire.
+**Fix**: Module-level `spot_3m: dict = {}` + `global spot_3m` in `_write_dashboard()`.
+
+### BUG-C: P2 had no relock cooldown gate (PR #37)
+**Root cause**: P1 had 2-min relock cooldown, P2 didn't. P2 fired on brand-new strike EMA9H data (1s after relock).
+**Fix**: Added identical 2-min relock check to P2 FIRE path using same `_v8_shadow_dt.relock_ts`.
+
+---
+
+## Shadow ANALYSIS Flags
+Logged after every signal fire — no trade impact, data collection only:
+- `EXTENDED_GAP(X)` — ema9h_gap > 5. **Caution, NOT a kill signal** — strong trend can override (S16: gap=11.10 → +36)
+- `WEAK_ADX(X)` — spot 3-min ADX low. Low directional conviction.
+- `XLEG_CONFIRMED` — cross-leg dead all 5 last candles. Strong directional confirmation. ✅
+- `XLEG_AMBIGUOUS` — cross-leg not consistently below EMA9H. **Confirmed loss predictor** (S13, 2026-05-21).
+- `TINY_GAP` — ema9h_gap < 0.8 (pending — not yet coded). Low conviction, peak capped.
+
+**Confirmed patterns (2026-05-21, 17 shadow signals):**
+- Sweet zone gap (0.8–2.5) + XLEG_CONFIRMED = best trades
+- XLEG_AMBIGUOUS → loss (confirmed S13: 0/5 CE below EMA9H → -12)
+- EXTENDED_GAP alone ≠ loss when strong trend (S16: gap=11.10 → +36 best trade)
+- TINY_GAP (0.67) → peak capped, -12 (S15)
+- VWAP gap > 25 on P1 → overextended, move already done (S17: gap=38.73 → -12)
+- P2 EXTENDED_GAP (>6) = consistent loser (S12: 11.71→-12, S14: 6.35→-12)
+
+---
+
+
 ## Pending / Collect Data
+- **P2 max ema9h_gap gate**: Gaps 9.02, 11.71, 6.35 all lost on P2. Suggest hard cap ≤ 5.
+- **XLEG_AMBIGUOUS soft-block**: 1 confirmed loss. Collect 5 more → decide hard block.
+- **TINY_GAP ANALYSIS flag**: Add flag for gap < 0.8.
+- **VWAP overextension flag**: gap > 25 = VWAP_OVEREXTENDED.
+- **P2 minimum VWAP gap**: Require `below_vwap < -5` for genuine buildup (at-VWAP fires are noise).
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
-- xLeg dying leg: require dying leg's own EMA also falling 2+ candles
 - Max trades/day limit (suggest: 10)
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
 - Daily loss limit (suggest: -50 pts → stop entries)
 - Time blackout windows (11:00–11:30, 13:00–14:30) — collect data first
+- EOD data collector `VRL_COLLECTOR.py` (cron 15:35): ATM±300 strikes, NIFTY spot 1-min, VIX — save as Parquet
 
 ---
 
@@ -244,3 +295,18 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 - **main** is protected — direct push blocked, PRs required
 - Keep only 1 open PR at a time
 - After merge: `git checkout main && git pull` locally to stay in sync
+
+## ⚠️ MANDATORY: Every Code Change Goes to GitHub
+Every session where code is changed — no exceptions:
+1. `git checkout -b fix/<short-description>`
+2. `git add <changed files>` — only tracked production files, NOT backtest scripts
+3. `git commit -m "type: short reason + detail of what and why"`
+4. `git push origin <branch>`
+5. `gh pr create ...` — title + bullet summary + test plan
+6. `gh pr merge --squash --delete-branch`
+7. `git checkout main && git pull`
+
+**`gh` CLI**: installed at `~/bin/gh`, authenticated as vishalraajput24.
+PATH must include `~/bin` — run `export PATH="$HOME/bin:$PATH"` if gh not found.
+
+Do NOT leave changes uncommitted at end of session. SSH and GitHub must always be identical.
