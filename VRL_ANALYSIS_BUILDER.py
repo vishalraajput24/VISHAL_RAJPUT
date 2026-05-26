@@ -76,17 +76,24 @@ def spot_zone(spot, lvl):
 
 
 def parse_vwap_timeline(log_file, today):
-    """Parse [VWAP] lines → list of (HH:MM, gap_float) sorted by time."""
+    """Parse [VWAP] lines → list of (HH:MM, gap_float, fut_float, bias_str) sorted by time."""
     entries = []
     with open(log_file) as fh:
         for raw in fh:
             if today not in raw or '[VWAP]' not in raw:
                 continue
             t = _ts(raw)
-            m = re.search(r'gap=([+\-\d.]+)', raw)
-            if m and t:
-                entries.append((t, float(m.group(1))))
-    return entries  # [(HH:MM, gap), ...]
+            mg = re.search(r'gap=([+\-\d.]+)', raw)
+            mf = re.search(r'fut=([\d.]+)', raw)
+            mb = re.search(r'\((BULL|BEAR)[^)]*\)', raw)
+            if mg and t:
+                entries.append((
+                    t,
+                    float(mg.group(1)),
+                    float(mf.group(1)) if mf else None,
+                    mb.group(1) if mb else None,
+                ))
+    return entries  # [(HH:MM, gap, fut, bias), ...]
 
 
 def get_spot_vwap_gap(trade_time, vwap_timeline):
@@ -94,12 +101,28 @@ def get_spot_vwap_gap(trade_time, vwap_timeline):
     if not vwap_timeline:
         return None
     best = None
-    for (vt, gap) in vwap_timeline:
+    for entry in vwap_timeline:
+        vt, gap = entry[0], entry[1]
         if vt <= trade_time:
             best = gap
         else:
             break
     return best
+
+
+def get_fut_vwap_velocity(trade_time, vwap_timeline):
+    """Return last 2 FUT_VWAP snapshots before trade_time as (prev, curr) dicts. None if <2."""
+    if not vwap_timeline:
+        return None, None
+    prev = curr = None
+    for entry in vwap_timeline:
+        vt, gap, fut, bias = entry[0], entry[1], entry[2], entry[3]
+        if vt <= trade_time:
+            prev = curr
+            curr = {'time': vt, 'gap': gap, 'fut': fut, 'bias': bias}
+        else:
+            break
+    return prev, curr
 
 
 def parse_bwscan_timeline(log_file, today):
@@ -1244,6 +1267,104 @@ def write_analysis(trades, relocks, market, levels=None, rsi_blocks=None, cross_
         a()
         a("> **Score guide**: 7/7 🔥 IDEAL · 5-6/7 ✅ GOOD · 3-4/7 ⚠️ WEAK · ≤2/7 ❌ POOR")
         a("> **Factors**: ①gap_vwap -2→-10 ②XLEG_CONFIRMED ③RSI≥55 ④SpotVWAP aligned ⑤Before13:00 ⑥Fired leg ABOVE 3m band ⑦Entry≤BW-SCAN+3 (no spike)")
+        a()
+
+    # 9. FUT_VWAP Velocity Strategy (Shadow Analysis)
+    a("---")
+    a("## 9. FUT_VWAP Velocity Strategy — Shadow Filter")
+    a()
+    a("> **My strategy (out-of-box)**: Enter only when 3 rules ALL pass:")
+    a("> ① FUT_VWAP gap ≥ 20 pts in trade direction AND deepening (two consecutive readings)")
+    a("> ② gap_vwap < 15 — option not overextended (DTE=0 note: strict <0 conflicts with Rule 1)")
+    a("> ③ XLEG_CONFIRMED — cross-leg dead all 5 candles")
+    a("> Goal: fewer signals, higher quality, works on DTE=0/1 (no BW dependency)")
+    a()
+
+    if trades and vwap_timeline:
+        a("| # | Strat | Dir | FUT_VWAP prev | FUT_VWAP curr | Accel? | gap_vwap | XLEG | Decision | PnL |")
+        a("|---|-------|-----|---------------|---------------|--------|----------|------|----------|-----|")
+
+        fvs_results = {'TRADE': [0, 0], 'SKIP': [0, 0]}  # [wins, losses]
+        fvs_trades  = []   # signals that passed all 3 rules
+
+        for tr in sorted(trades, key=lambda x: x['num']):
+            prev, curr = get_fut_vwap_velocity(tr['time'], vwap_timeline)
+
+            # Rule 1: FUT_VWAP ≥ 20 in direction AND deepening
+            if curr is not None:
+                gap_curr = curr['gap']
+                gap_prev = prev['gap'] if prev else None
+                if tr['dir'] == 'PE':
+                    r1_strength = gap_curr <= -20
+                    r1_accel    = (gap_prev is not None and gap_curr < gap_prev)
+                else:  # CE
+                    r1_strength = gap_curr >= 20
+                    r1_accel    = (gap_prev is not None and gap_curr > gap_prev)
+                r1_ok = r1_strength and r1_accel
+                prev_str = f"{gap_prev:+.1f}" if gap_prev is not None else "—"
+                curr_str = f"{gap_curr:+.1f}"
+                if r1_accel and gap_prev is not None:
+                    arrow = "↑" if gap_curr > gap_prev else "↓"
+                    accel_str = f"{arrow}{'✅' if r1_ok else '❌'}"
+                else:
+                    accel_str = f"flat❌"
+            else:
+                r1_ok = False
+                prev_str = curr_str = "—"
+                accel_str = "no data❌"
+
+            # Rule 2: Option not overextended (gap_vwap < 15)
+            # Note: strict < 0 is incompatible with DTE=0 (when FUT_VWAP confirms direction,
+            # option has already moved above VWAP). Threshold 15 allows late entries with
+            # strong FUT_VWAP momentum while blocking truly overextended entries.
+            gv = tr.get('gap_vwap', 0)
+            r2_ok = gv < 15
+
+            # Rule 3: XLEG_CONFIRMED
+            r3_ok = 'XLEG_CONFIRMED' in tr.get('flags_raw', '')
+
+            all_pass = r1_ok and r2_ok and r3_ok
+            decision = "✅ TRADE" if all_pass else "⛔ SKIP"
+
+            pnl_str = f"{tr['pnl_v1']:+.0f}" if tr.get('pnl_v1') is not None else "🟢open"
+            gv_str  = f"{gv:+.1f}{'✅' if r2_ok else '❌'}"
+            xleg_str = "✅" if r3_ok else "❌"
+
+            a(f"| S{tr['num']} | {tr['strategy']} | {tr['dir']} | {prev_str} | {curr_str} "
+              f"| {accel_str} | {gv_str} | {xleg_str} | {decision} | {pnl_str} |")
+
+            if tr.get('pnl_v1') is not None:
+                bucket = 'TRADE' if all_pass else 'SKIP'
+                if tr['pnl_v1'] > 0:
+                    fvs_results[bucket][0] += 1
+                else:
+                    fvs_results[bucket][1] += 1
+            if all_pass:
+                fvs_trades.append(tr)
+
+        a()
+
+        # What-if P&L
+        fvs_pnl  = sum(tr['pnl_v1'] for tr in fvs_trades if tr.get('pnl_v1') is not None)
+        all_pnl  = sum(tr['pnl_v1'] for tr in closed if tr.get('pnl_v1') is not None)
+        skip_pnl = all_pnl - fvs_pnl
+        saved    = fvs_pnl - all_pnl
+
+        a("**What-if P&L (closed trades):**")
+        a(f"| | Signals | W | L | P&L |")
+        a(f"|--|---------|---|---|-----|")
+        w_t = fvs_results['TRADE'][0]; l_t = fvs_results['TRADE'][1]
+        w_s = fvs_results['SKIP'][0];  l_s = fvs_results['SKIP'][1]
+        a(f"| ✅ TRADE (all 3 rules pass) | {w_t+l_t} | {w_t} | {l_t} | {fvs_pnl:+.0f} pts |")
+        a(f"| ⛔ SKIP (1+ rule fails) | {w_s+l_s} | {w_s} | {l_s} | {skip_pnl:+.0f} pts |")
+        a(f"| Actual (no filter) | {len(closed)} | {len(wins)} | {len(losses)} | {all_pnl:+.0f} pts |")
+        a(f"| **FVS improvement** | | | | **{saved:+.0f} pts** |")
+        a()
+        a("> **Rules**: ①FUT_VWAP ≥20 in direction + deepening  ②gap_vwap<15 (not overextended)  ③XLEG_CONFIRMED")
+        a("> **No BW dependency** — designed to work on DTE=0/1 and normal days alike.")
+        a()
+    else:
+        a("_No FUT_VWAP data available for strategy simulation._")
         a()
 
     a("---")
