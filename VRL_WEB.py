@@ -361,6 +361,11 @@ def _read_fno():
                         "investment":          float(r.get("investment",0) or 0),
                         "pnl_rs":              float(r.get("pnl_rs",0) or 0),
                         "score":               int(r.get("score",0) or 0),
+                        "rank":                int(r.get("rank",0) or 0),
+                        "stock_price":         float(r.get("stock_price",0) or 0),
+                        "stock_sl":            float(r.get("stock_sl",0) or 0),
+                        "pcr":                 float(r.get("pcr",0) or 0),
+                        "max_pain":            float(r.get("max_pain",0) or 0),
                         "status":              st,
                         "last_checked":        r.get("last_checked",""),
                         "date_added":          r.get("date_added",""),
@@ -956,60 +961,87 @@ async function renderFno(){
     const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
     const el=document.getElementById('p-fno');
     if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No F&O positions</div>';return;}
-    // Split into open vs closed, sort each by P&L descending (best profit first)
-    var byPnl=function(a,b){return parseFloat(b.pnl_rs||0)-parseFloat(a.pnl_rs||0);}
-    var openPos=fno.filter(function(p){return (p.status||'').startsWith('OPEN');}).sort(byPnl);
+    // Split today vs prev days; open sorted by score desc (all pnl=0 initially); closed by pnl
+    var today=new Date().toISOString().slice(0,10);
+    var byScore=function(a,b){return (b.score||0)-(a.score||0)||((b.rank||99)-(a.rank||99))*-1;};
+    var byPnl=function(a,b){return parseFloat(b.pnl_rs||0)-parseFloat(a.pnl_rs||0);};
+    var openToday=fno.filter(function(p){return (p.status||'').startsWith('OPEN')&&p.date_added===today;}).sort(byScore);
+    var openPrev=fno.filter(function(p){return (p.status||'').startsWith('OPEN')&&p.date_added!==today;}).sort(byScore);
     var closedPos=fno.filter(function(p){return !(p.status||'').startsWith('OPEN');}).sort(byPnl);
-    var allPos=openPos.concat(closedPos);
+    var openPos=openToday.concat(openPrev);
     var totalPnl=0;var openCount=openPos.length;
-    function makeCard(p,isClosedSection){
-      // Use pre-calculated values from CSV (correct lot_size × lots formula)
+    function makeCard(p){
       var ltp=parseFloat(p.current_premium||p.entry_premium||0);
       var entry=parseFloat(p.entry_premium||0);
       var sl=parseFloat(p.sl_premium||0);
       var t1=parseFloat(p.t1_premium||0);
+      var t2=parseFloat(p.t2_premium||0);
       var pnlPct=parseFloat(p.current_return_pct||0);
       var pnlRs=parseFloat(p.pnl_rs||0);
+      var score=p.score||0;
+      var rank=p.rank||0;
+      var stockPx=parseFloat(p.stock_price||0);
+      var stockSl=parseFloat(p.stock_sl||0);
+      var pcr=parseFloat(p.pcr||0);
       var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
       var st=p.status||'';
       var isOpen=st.startsWith('OPEN');
-      var isT1=st.includes('T1-HIT')||st.includes('T3-HIT');
-      var isSl=st.includes('SL-HIT');
+      var isT1=st.includes('T1-HIT');var isSl=st.includes('SL-HIT');
       var cardBorder=isT1?'rgba(52,211,153,.4)':isSl?'rgba(248,113,113,.4)':'var(--bd)';
       var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
       var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
       var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
+      // Score badge colour
+      var scoreClr=score>=9?'var(--gn)':score>=7?'var(--am)':'#888';
+      // Progress bar: SL → T1 range
       var range=t1-sl;
       var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
       var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
+      // T2 marker position on bar
+      var t2Pct=range>0?Math.max(0,Math.min(100,((t2-sl)/range)*100)):0;
+      // Expiry short format
+      var expShort=p.expiry?p.expiry.slice(5):'';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-radius:8px;padding:10px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
+        // Header row: symbol + direction + score + rank
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px">'+
         '<div>'+
           '<span style="font-weight:700;font-size:13px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
           '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+dirClr+'">'+esc(p.direction)+'</span>'+
-          '<div style="font-size:9px;color:var(--dm);margin-top:1px">'+esc(p.option_symbol)+' · Lot '+p.lot_size+'\xd7'+p.lots+'</div>'+
+          (rank?'<span style="font-size:9px;color:var(--dm);margin-left:5px">#'+rank+'</span>':'')+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">'+esc(p.option_symbol)+' · exp '+expShort+'</div>'+
         '</div>'+
         '<div style="text-align:right">'+
           '<div style="font-weight:700;font-size:16px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</div>'+
           '<div style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div>'+
-          '<div style="font-size:8px;padding:1px 5px;border-radius:3px;margin-top:2px;background:'+badgeBg+';color:'+badgeClr+'">'+esc(st)+'</div>'+
+          '<div style="display:flex;gap:4px;justify-content:flex-end;margin-top:2px">'+
+            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:700;background:rgba(0,0,0,.06);color:'+scoreClr+'">★ '+score+'</span>'+
+            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:'+badgeBg+';color:'+badgeClr+'">'+esc(st)+'</span>'+
+          '</div>'+
         '</div></div>'+
-        '<div style="font-size:10px;color:var(--dm);margin-bottom:5px">Entry &#x20B9;'+entry.toFixed(2)+' → Now &#x20B9;'+ltp.toFixed(2)+'</div>'+
+        // Stock price row
+        (stockPx>0?'<div style="font-size:9px;color:var(--dm);margin-bottom:3px">Stock &#x20B9;'+stockPx.toFixed(1)+(stockSl>0?' · SL &#x20B9;'+stockSl.toFixed(1):'')+' · PCR '+pcr+'</div>':'')+
+        // Option entry row
+        '<div style="font-size:10px;color:var(--dm);margin-bottom:5px">Option: entry &#x20B9;'+entry.toFixed(2)+' → now &#x20B9;'+ltp.toFixed(2)+'</div>'+
+        // Progress bar SL→T1 with T2 marker
         '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
           '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
-          '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px"></div>'+
-          '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px"></div>'+
+          '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL"></div>'+
+          (t2Pct>0&&t2Pct<100?'<div style="position:absolute;top:-3px;left:'+t2Pct.toFixed(0)+'%;width:2px;height:14px;background:var(--cy);border-radius:1px" title="T2"></div>':'')+
+          '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px" title="T1"></div>'+
         '</div>'+
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
-          '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>'+pct.toFixed(0)+'% of range</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
+          '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>T2 &#x20B9;'+t2.toFixed(2)+'</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
         '</div>'+
-        (p.last_checked?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_checked)+'</div>':'')+
+        '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
         '</div>';
     }
-    // Render: open section sorted by P&L desc, then closed section sorted by P&L desc
     allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
-    var openCards=openPos.map(makeCard).join('');
+    var allPos=openPos.concat(closedPos);
+    var todayCards=openToday.map(makeCard).join('');
+    var prevCards=openPrev.map(makeCard).join('');
     var closedCards=closedPos.map(makeCard).join('');
+    var prevSection=openPrev.length?
+      '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Previous Days Open ('+openPrev.length+')</div>'+prevCards:'';
     var closedSection=closedPos.length?
       '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Closed / Target Hit ('+closedPos.length+')</div>'+closedCards:'';
     var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
@@ -1019,8 +1051,8 @@ async function renderFno(){
         '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
         '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed</div>'+
       '</div>'+
-      (openPos.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px">Open Positions ('+openPos.length+') — sorted by P&L</div>':'')+
-      openCards+closedSection;
+      (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s Picks ('+openToday.length+') — sorted by score</div>':'')+
+      todayCards+prevSection+closedSection;
   }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
 }
 
