@@ -397,6 +397,33 @@ def _read_weekly():
     except Exception: pass
     return rows
 
+def _read_shadow():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "vrl_shadow_state.json")
+        if not os.path.isfile(path): return {}
+        with open(path) as f:
+            d = json.load(f)
+        def _sig(d, key, side):
+            s = d.get(key, {}).get(side, {})
+            return {
+                "active":       bool(s.get("active", False)),
+                "entry_price":  float(s.get("entry_price", 0) or 0),
+                "entry_time":   s.get("entry_time", ""),
+                "peak_price":   float(s.get("peak_price", 0) or 0),
+                "peak_pts":     float(s.get("peak_pts", 0) or 0),
+                "shadow_sl":    float(s.get("shadow_sl", 0) or 0),
+                "shadow_level": s.get("shadow_level", ""),
+                "entry_strike": int(s.get("entry_strike", 0) or 0),
+                "today_entry":  float(s.get("today_entry", 0) or 0),
+                "bucket_ts":    str(s.get("bucket_ts", "")),
+            }
+        return {
+            "saved_date": d.get("saved_date", ""),
+            "p1": {"CE": _sig(d,"p1","CE"), "PE": _sig(d,"p1","PE")},
+            "p2": {"CE": _sig(d,"p2","CE"), "PE": _sig(d,"p2","PE")},
+        }
+    except Exception: return {}
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -657,7 +684,45 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
 
   document.getElementById('p-sig').innerHTML=
     '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
-    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>';
+    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>'+
+    renderShadow(window._shadow||{});
+
+  function renderShadow(sh){
+    if(!sh||!sh.p1)return'';
+    function sCard(type,label,sig){
+      if(!sig)return'';
+      var act=sig.active;
+      var bclr=act?'var(--gn)':'#bbb';
+      var btxt=act?'● LIVE':'○ idle';
+      var pclr=(sig.peak_pts||0)>=0?'var(--gn)':'var(--rd)';
+      var h='<div class="sect" style="padding:8px 10px;opacity:'+(act?1:0.55)+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+      h+='<span style="font-weight:700;font-size:11px;color:var(--tx)">'+type+' '+label+'</span>';
+      h+='<span style="font-size:9px;font-weight:700;color:'+bclr+'">'+btxt+'</span></div>';
+      if(act){
+        if(sig.entry_strike)h+='<div class="row"><div class="k">STRIKE</div><div class="v">'+sig.entry_strike+'</div></div>';
+        h+='<div class="row"><div class="k">ENTRY</div><div class="v">₹'+sig.entry_price.toFixed(1)+(sig.entry_time?' @ '+sig.entry_time:'')+'</div></div>';
+        h+='<div class="row"><div class="k">PEAK</div><div class="v" style="color:'+pclr+'">'+(sig.peak_pts>=0?'+':'')+sig.peak_pts.toFixed(1)+' pts  (₹'+sig.peak_price.toFixed(1)+')</div></div>';
+        h+='<div class="row"><div class="k">SL</div><div class="v">₹'+sig.shadow_sl.toFixed(1)+'  •  '+esc(sig.shadow_level||'—')+'</div></div>';
+        if(sig.today_entry)h+='<div class="row"><div class="k">TODAY FIRST</div><div class="v">₹'+sig.today_entry.toFixed(1)+'</div></div>';
+      } else {
+        if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+'</div></div>';
+        else h+='<div style="font-size:10px;color:#aaa;padding:2px 0">No signal today</div>';
+      }
+      h+='</div>';
+      return h;
+    }
+    var p1=sh.p1||{};var p2=sh.p2||{};
+    var hasAny=(p1.CE&&p1.CE.active)||(p1.PE&&p1.PE.active)||(p2.CE&&p2.CE.active)||(p2.PE&&p2.PE.active);
+    var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
+    var html='<div style="margin:8px 8px 0">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'👤 SHADOW TRADES'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+    html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
+    html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
+    html+='</div></div>';
+    return html;
+  }
 
   // ── MARKET TAB ──
   let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
@@ -936,7 +1001,8 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t,z,mtf]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]}))]);
+    const[d,t,z,mtf,sh]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]})),fetch('/api/shadow').then(r=>r.json()).catch(e=>({}))]);
+    window._shadow=sh||{};
     render(d||{},t||[],z||{zones:[]},mtf||{})
   }catch(e){console.error(e)}
 }
@@ -1383,6 +1449,7 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.send_response(200)
                 self.send_header("Content-Type","text/html")
+                self.send_header("Cache-Control","no-cache, no-store, must-revalidate")
                 self.end_headers()
                 self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
@@ -1390,6 +1457,7 @@ class H(BaseHTTPRequestHandler):
         elif p=="/api/multitf":self._j(_read_multitf())
         elif p=="/api/fno":self._j(_read_fno())
         elif p=="/api/weekly":self._j(_read_weekly())
+        elif p=="/api/shadow":self._j(_read_shadow())
         elif p.startswith("/static/"):
             # Serve any whitelisted asset under static/ (bg image, css, etc.)
             # Whitelist file extensions to prevent directory traversal.

@@ -2293,6 +2293,7 @@ def _update_dashboard_ltp():
                     l2["pnl"] = running
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dash.setdefault("market", {})["market_open"] = D.is_market_open()
 
         tmp = dash_path + ".tmp"
         with open(tmp, "w") as f:
@@ -3128,6 +3129,7 @@ def _strategy_loop(kite):
                         _sh_ema9l_1m  = float(_sh_1m_comp.get("ema9_low", 0))
                         _sh_rsi_1m    = float(_sh_1m_comp.get("RSI", 0) or 0)
                         _sh_rsi_1m_p  = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_ema9l_1m_prev = float(_sh_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP (cumulative from 9:15, resets daily)
                         _sh_1m_day = _sh_1m[_sh_1m.index.date == now.date()].copy()
@@ -3230,6 +3232,10 @@ def _strategy_loop(kite):
                         _sh_1m_reject  = None
                         if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
                             _sh_1m_reject = f"1m_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
+                        elif _sh_1m_gap < 2.0:
+                            _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>=2.0)"
+                        elif _sh_ema9l_1m_prev > 0 and _sh_ema9l_1m <= _sh_ema9l_1m_prev:
+                            _sh_1m_reject = f"1m_ema9l_slope_flat ema9l={_sh_ema9l_1m:.2f} prev={_sh_ema9l_1m_prev:.2f}"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
                         elif not (48 < _sh_rsi_1m < 70):
@@ -3397,6 +3403,31 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_sh_e:
                             logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P1",
+                                "dte": dte,
+                                "atm_strike": int(_sh_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _sh_dir,
+                                "entry_price": float(_sh_ltp),
+                                "ema9_high": float(_sh_ema9h_1m),
+                                "ema9_low": float(_sh_ema9l_1m),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_sh_1m_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P1 DB insert error: {_sc_e}")
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
 
@@ -3426,6 +3457,7 @@ def _strategy_loop(kite):
                         _s2_bw       = round(_s2_ema9h - _s2_ema9l, 2) if _s2_ema9h > 0 and _s2_ema9l > 0 else 0.0
                         _s2_rsi      = float(_s2_comp.get("RSI", 0) or 0)
                         _s2_rsi_p    = float(_s2_1m.iloc[-3].get("RSI", 0) or 0)
+                        _s2_ema9l_prev = float(_s2_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP
                         _s2_day = _s2_1m[_s2_1m.index.date == now.date()].copy()
@@ -3524,6 +3556,10 @@ def _strategy_loop(kite):
                         _s2_reject     = None
                         if not (_s2_ema9h > 0 and _s2_close > _s2_ema9h):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
+                        elif _s2_ema9h_gap < 2.0:
+                            _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>=2.0)"
+                        elif _s2_ema9l_prev > 0 and _s2_ema9l <= _s2_ema9l_prev:
+                            _s2_reject = f"ema9l_slope_flat ema9l={_s2_ema9l:.2f} prev={_s2_ema9l_prev:.2f}"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
@@ -3678,6 +3714,31 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_s2_e:
                             logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P2",
+                                "dte": dte,
+                                "atm_strike": int(_s2_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _s2_dir,
+                                "entry_price": float(_s2_ltp),
+                                "ema9_high": float(_s2_ema9h),
+                                "ema9_low": float(_s2_ema9l),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_s2_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P2 DB insert error: {_sc_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
 
