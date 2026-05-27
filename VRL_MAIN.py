@@ -2293,6 +2293,7 @@ def _update_dashboard_ltp():
                     l2["pnl"] = running
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dash.setdefault("market", {})["market_open"] = D.is_market_open()
 
         tmp = dash_path + ".tmp"
         with open(tmp, "w") as f:
@@ -3397,6 +3398,31 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_sh_e:
                             logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P1",
+                                "dte": dte,
+                                "atm_strike": int(_sh_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _sh_dir,
+                                "entry_price": float(_sh_ltp),
+                                "ema9_high": float(_sh_ema9h_1m),
+                                "ema9_low": float(_sh_ema9l_1m),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_sh_1m_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P1 DB insert error: {_sc_e}")
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
 
@@ -3678,6 +3704,31 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_s2_e:
                             logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P2",
+                                "dte": dte,
+                                "atm_strike": int(_s2_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _s2_dir,
+                                "entry_price": float(_s2_ltp),
+                                "ema9_high": float(_s2_ema9h),
+                                "ema9_low": float(_s2_ema9l),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_s2_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P2 DB insert error: {_sc_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
 
