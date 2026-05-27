@@ -5239,55 +5239,54 @@ def _cmd_vishal_stock_fno(args):
         with open(_tracker) as _f:
             rows = list(_csv.DictReader(_f))
 
-        open_rows = [r for r in rows if str(r.get("status", "")).startswith("OPEN")]
-        if not open_rows:
-            _tg_send("📭 No open F&O positions.")
+        # Show OPEN + T1-HIT + SL-HIT rows (all active positions)
+        active_rows = [r for r in rows if
+                       str(r.get("status","")).startswith("OPEN") or
+                       "HIT" in str(r.get("status",""))]
+        if not active_rows:
+            _tg_send("📭 No F&O positions.")
             return
-
-        # Fetch live LTP for all option symbols in one call
-        _symbols = ["NFO:" + r["option_symbol"] for r in open_rows]
-        _ltp_map = {}
-        try:
-            if _kite:
-                _q = _kite.ltp(_symbols)
-                for sym in _symbols:
-                    _ltp_map[sym.replace("NFO:", "")] = float(_q[sym]["last_price"])
-        except Exception as _e:
-            logger.warning("[FNO_CMD] LTP fetch error: " + str(_e))
 
         lines = ""
         total_pnl = 0.0
-        for r in open_rows:
-            sym      = r["option_symbol"]
-            ltp      = _ltp_map.get(sym, float(r.get("current_premium") or r["entry_premium"]))
-            entry    = float(r["entry_premium"])
-            sl       = float(r["sl_premium"])
-            t1       = float(r["t1_premium"])
-            lot      = int(r["lot_size"])
-            pnl_pts  = round(ltp - entry, 2)
-            pnl_pct  = round(pnl_pts / entry * 100, 1)
-            pnl_rs   = round(pnl_pts * lot, 0)
+        open_count = 0
+        for r in active_rows:
+            st       = str(r.get("status",""))
+            is_open  = st.startswith("OPEN")
+            is_t1    = "T1-HIT" in st or "T3-HIT" in st
+            is_sl    = "SL-HIT" in st
+            if is_open: open_count += 1
+            # Use pre-calculated CSV values — correct for any lot count
+            ltp      = float(r.get("current_premium") or r.get("entry_premium") or 0)
+            entry    = float(r.get("entry_premium") or 0)
+            sl       = float(r.get("sl_premium") or 0)
+            t1       = float(r.get("t1_premium") or 0)
+            pnl_pct  = float(r.get("current_return_pct") or 0)
+            pnl_rs   = float(r.get("pnl_rs") or 0)
             total_pnl += pnl_rs
-            icon     = "✅" if pnl_pts >= 0 else "⚠️"
-            sign     = "+" if pnl_pts >= 0 else ""
+            sign     = "+" if pnl_rs >= 0 else ""
             dist_sl  = round(ltp - sl, 2)
             dist_t1  = round(t1 - ltp, 2)
+            if is_t1:   icon = "🎯"
+            elif is_sl: icon = "❌"
+            elif pnl_rs >= 0: icon = "✅"
+            else: icon = "⚠️"
             lines += (
-                icon + " <b>" + r["symbol"] + " " + r["direction"] + "</b>\n"
-                "  Entry: ₹" + str(entry) + " → LTP: ₹" + str(round(ltp, 2)) + "\n"
-                "  P&L: " + sign + str(pnl_pct) + "%  " + sign + "₹" + str(int(pnl_rs)) + "\n"
-                "  SL: ₹" + str(sl) + " (" + str(dist_sl) + " away)  "
-                "T1: ₹" + str(t1) + " (" + str(dist_t1) + " away)\n"
+                icon + " <b>" + r["symbol"] + " " + r["direction"] + "</b>"
+                + (" <i>" + st + "</i>" if not is_open else "") + "\n"
+                "  Entry ₹" + str(round(entry,2)) + " → Now ₹" + str(round(ltp,2)) + "\n"
+                "  P&L: " + sign + str(round(pnl_pct,1)) + "%  " + sign + "₹" + str(int(pnl_rs)) + "\n"
+                + ("  SL ₹" + str(sl) + " (" + str(dist_sl) + " away)  T1 ₹" + str(t1) + " (" + str(dist_t1) + " away)\n" if is_open else "")
             )
 
         total_sign = "+" if total_pnl >= 0 else ""
         _tg_send(
-            "📊 <b>F&O POSITIONS</b>\n"
+            "📊 <b>F&O POSITIONS</b> · " + str(open_count) + " open\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + lines +
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Total P&L: " + total_sign + "₹" + str(int(total_pnl)) + "\n"
-            "Time: " + _now_str()
+            "Updated: " + _now_str()
         )
     except Exception as e:
         _tg_send("📊 F&O error: " + str(e))

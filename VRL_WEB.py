@@ -337,28 +337,32 @@ def _read_fno():
     try:
         with open(fno_path) as f:
             for r in csv.DictReader(f):
-                if str(r.get("status","")).startswith("OPEN"):
-                    try:
-                        rows.append({
-                            "symbol":         r.get("symbol",""),
-                            "direction":      r.get("direction",""),
-                            "option_symbol":  r.get("option_symbol",""),
-                            "strike":         r.get("strike",""),
-                            "expiry":         r.get("expiry",""),
-                            "lot_size":       int(r.get("lot_size",0) or 0),
-                            "entry_premium":  float(r.get("entry_premium",0) or 0),
-                            "sl_premium":     float(r.get("sl_premium",0) or 0),
-                            "t1_premium":     float(r.get("t1_premium",0) or 0),
-                            "t2_premium":     float(r.get("t2_premium",0) or 0),
-                            "current_premium":float(r.get("current_premium",0) or 0),
-                            "investment":     float(r.get("investment",0) or 0),
-                            "pnl_rs":         float(r.get("pnl_rs",0) or 0),
-                            "score":          int(r.get("score",0) or 0),
-                            "status":         r.get("status",""),
-                            "last_checked":   r.get("last_checked",""),
-                            "date_added":     r.get("date_added",""),
-                        })
-                    except Exception: pass
+                st = str(r.get("status",""))
+                # show OPEN, T1-HIT and SL-HIT — skip truly blank/exited rows
+                if not (st.startswith("OPEN") or "HIT" in st): continue
+                try:
+                    rows.append({
+                        "symbol":              r.get("symbol",""),
+                        "direction":           r.get("direction",""),
+                        "option_symbol":       r.get("option_symbol",""),
+                        "strike":              r.get("strike",""),
+                        "expiry":              r.get("expiry",""),
+                        "lot_size":            int(r.get("lot_size",0) or 0),
+                        "lots":                int(r.get("lots",1) or 1),
+                        "entry_premium":       float(r.get("entry_premium",0) or 0),
+                        "sl_premium":          float(r.get("sl_premium",0) or 0),
+                        "t1_premium":          float(r.get("t1_premium",0) or 0),
+                        "t2_premium":          float(r.get("t2_premium",0) or 0),
+                        "current_premium":     float(r.get("current_premium",0) or 0),
+                        "current_return_pct":  float(r.get("current_return_pct",0) or 0),
+                        "investment":          float(r.get("investment",0) or 0),
+                        "pnl_rs":              float(r.get("pnl_rs",0) or 0),
+                        "score":               int(r.get("score",0) or 0),
+                        "status":              st,
+                        "last_checked":        r.get("last_checked",""),
+                        "date_added":          r.get("date_added",""),
+                    })
+                except Exception: pass
     except Exception: pass
     return rows
 
@@ -794,20 +798,34 @@ async function renderWeekly(){
       var score=parseInt(p.score||0);
       var scorePct=Math.min(100,(score/15)*100);
       var scoreClr=score>=12?'var(--rd)':score>=10?'var(--am)':'var(--gn)';
+      var currRet=parseFloat(p.current_return_pct||0);
+      var currPrice=parseFloat(p.current_price||0);
+      var hasCurr=currPrice>0;
+      var retClr=currRet>=0?'var(--gn)':'var(--rd)';
+      var statusStr=esc(p.status||'OPEN');
+      var isSl=statusStr.includes('SL');var isT=statusStr.includes('HIT')&&!isSl;
+      var statusBg=isSl?'rgba(248,113,113,.12)':isT?'rgba(52,211,153,.12)':'rgba(0,0,0,.04)';
+      var statusClr=isSl?'var(--rd)':isT?'var(--gn)':'var(--dm)';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
-        '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
+        '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">#'+p.rank+' '+esc(p.symbol)+'</span> '+
         '<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+gradeClr(p.grade)+'">'+esc(p.grade)+'</span>'+
         '<div style="font-size:10px;color:var(--dm);margin-top:2px">'+esc(p.name)+'</div></div>'+
-        '<div style="text-align:right"><div style="font-size:9px;color:var(--dm)">3Y UPSIDE</div>'+
-        '<div style="font-size:18px;font-weight:700;color:var(--gn)">+'+up3.toFixed(0)+'%</div></div></div>'+
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:6px 0">'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">ENTRY</div><div style="font-size:12px;font-weight:700">&#x20B9;'+p.entry_price.toFixed(0)+'</div></div>'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+p.sl.toFixed(0)+'</div></div>'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:8px;color:var(--dm)">T1 (1Y)</div><div style="font-size:12px;font-weight:700;color:var(--gn)">&#x20B9;'+p.target_1y.toFixed(0)+'</div></div>'+
+        '<div style="text-align:right">'+
+        (hasCurr?'<div style="font-size:9px;color:var(--dm)">NOW</div><div style="font-size:18px;font-weight:700;color:'+retClr+'">'+(currRet>=0?'+':'')+currRet.toFixed(1)+'%</div><div style="font-size:9px;color:var(--dm)">&#x20B9;'+currPrice.toFixed(0)+'</div>':
+        '<div style="font-size:9px;color:var(--dm)">3Y UPSIDE</div><div style="font-size:18px;font-weight:700;color:var(--gn)">+'+up3.toFixed(0)+'%</div>')+
+        '</div></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:6px 0">'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">ENTRY</div><div style="font-size:11px;font-weight:700">&#x20B9;'+p.entry_price.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">SL</div><div style="font-size:11px;font-weight:700;color:var(--rd)">&#x20B9;'+p.sl.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T1 (1Y)</div><div style="font-size:11px;font-weight:700;color:var(--gn)">&#x20B9;'+p.target_1y.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T3 (3Y)</div><div style="font-size:11px;font-weight:700;color:var(--bl)">&#x20B9;'+p.target_3y.toFixed(0)+'</div></div>'+
         '</div>'+
-        '<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dm);margin-bottom:4px"><span>ROE '+p.roe+'%</span><span>ROCE '+p.roce+'%</span><span>Score '+p.score+'/15</span><span>#'+p.rank+'</span></div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;color:var(--dm);margin-bottom:4px">'+
+        '<span>ROE '+p.roe+'%  ROCE '+p.roce+'%  Score '+p.score+'/15</span>'+
+        '<span style="padding:2px 6px;border-radius:3px;background:'+statusBg+';color:'+statusClr+'">'+statusStr+'</span></div>'+
         '<div style="height:4px;background:var(--c2);border-radius:2px"><div style="height:100%;width:'+scorePct.toFixed(0)+'%;background:'+scoreClr+';border-radius:2px"></div></div>'+
+        (p.last_updated?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_updated)+'</div>':'')+
         '</div>';
     }).join('');
     var closedHtml='';
@@ -833,46 +851,62 @@ async function renderFno(){
   try{
     const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
     const el=document.getElementById('p-fno');
-    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:#555;padding:30px">No open F&O positions</div>';return;}
-    var totalPnl=0;
+    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No F&O positions</div>';return;}
+    var totalPnl=0;var openCount=0;
     var cards=fno.map(function(p){
-      var ltp=parseFloat(p.ltp||p.current_premium||p.entry_premium||0);
+      // Use pre-calculated values from CSV (correct lot_size × lots formula)
+      var ltp=parseFloat(p.current_premium||p.entry_premium||0);
       var entry=parseFloat(p.entry_premium||0);
       var sl=parseFloat(p.sl_premium||0);
       var t1=parseFloat(p.t1_premium||0);
-      var lot=parseInt(p.lot_size||1);
-      var pnlPts=ltp-entry;
-      var pnlPct=(entry>0?pnlPts/entry*100:0);
-      var pnlRs=Math.round(pnlPts*lot);
+      var pnlPct=parseFloat(p.current_return_pct||0);
+      var pnlRs=parseFloat(p.pnl_rs||0);
       totalPnl+=pnlRs;
-      var w=pnlPts>=0;
-      var clr=w?'var(--gn)':'var(--rd)';
+      var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
+      var st=p.status||'';
+      var isOpen=st.startsWith('OPEN');
+      var isT1=st.includes('T1-HIT')||st.includes('T3-HIT');
+      var isSl=st.includes('SL-HIT');
+      if(isOpen)openCount++;
+      var cardBorder=isT1?'rgba(52,211,153,.4)':isSl?'rgba(248,113,113,.4)':'var(--bd)';
+      var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
+      var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
+      var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
       var range=t1-sl;
       var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
-      var barClr=pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
-      var dirClr=(p.direction||'').includes('CALL')?'var(--bl)':'var(--rd)';
-      var sign=w?'+':'';
-      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">'+
-        '<div><span style="font-weight:700;font-size:13px">'+esc(p.symbol||'')+'</span> <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(79,142,247,.12);color:'+dirClr+'">'+esc(p.direction||'')+'</span></div>'+
-        '<div><span style="font-weight:700;font-size:15px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</span> <span style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(pnlRs).toLocaleString('en-IN')+'</span></div></div>'+
-        '<div style="font-size:10px;color:#888;margin-bottom:6px">'+esc(p.option_symbol||'')+' &nbsp;·&nbsp; Entry &#x20B9;'+entry.toFixed(2)+' → LTP &#x20B9;'+ltp.toFixed(2)+'</div>'+
-        '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
-        '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
-        '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px"></div>'+
-        '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px"></div>'+
+      var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-radius:8px;padding:10px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
+        '<div>'+
+          '<span style="font-weight:700;font-size:13px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
+          '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+dirClr+'">'+esc(p.direction)+'</span>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">'+esc(p.option_symbol)+' · Lot '+p.lot_size+'\xd7'+p.lots+'</div>'+
         '</div>'+
-        '<div style="display:flex;justify-content:space-between;font-size:8px;color:#555">'+
-        '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span style="color:#888">'+pct.toFixed(0)+'% of range</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span></div>'+
+        '<div style="text-align:right">'+
+          '<div style="font-weight:700;font-size:16px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</div>'+
+          '<div style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div>'+
+          '<div style="font-size:8px;padding:1px 5px;border-radius:3px;margin-top:2px;background:'+badgeBg+';color:'+badgeClr+'">'+esc(st)+'</div>'+
+        '</div></div>'+
+        '<div style="font-size:10px;color:var(--dm);margin-bottom:5px">Entry &#x20B9;'+entry.toFixed(2)+' → Now &#x20B9;'+ltp.toFixed(2)+'</div>'+
+        '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
+          '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
+          '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px"></div>'+
+          '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px"></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
+          '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>'+pct.toFixed(0)+'% of range</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
+        '</div>'+
+        (p.last_checked?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_checked)+'</div>':'')+
         '</div>';
     }).join('');
-    var totSign=totalPnl>=0?'+':'';
-    var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
+    var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
     el.innerHTML=
       '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
-      '<div><div style="font-size:9px;color:#555;margin-bottom:2px">TOTAL F&amp;O P&amp;L</div><div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(totalPnl).toLocaleString('en-IN')+'</div></div>'+
-      '<div style="font-size:10px;color:#555">'+fno.length+' open positions</div></div>'+cards;
-  }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:#555;padding:16px">Error loading F&O data</div>';console.error(e);}
+        '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
+        '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
+        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+(fno.length-openCount)+' closed</div>'+
+      '</div>'+cards;
+  }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
 }
 
 async function loadFiles(folder){

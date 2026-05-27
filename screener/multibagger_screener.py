@@ -51,7 +51,7 @@ NSE500_CACHE  = os.path.join(BASE_DIR, "nse500_symbols.txt")
 
 DELAY_BETWEEN_REQUESTS = 2    # seconds per stock — don't go below 1.5
 MAX_STOCKS_TO_SCAN     = 504  # full NSE 500 (--quick overrides to 50)
-TOP_N                  = 10   # how many top picks to show
+TOP_N                  = 20   # how many top picks to show
 
 # =============================================================================
 # 🎯  FILTER THRESHOLDS
@@ -525,7 +525,7 @@ def rank_stocks(passed_stocks):
 # =============================================================================
 
 def update_tracker(top10):
-    """Save top 10 picks to weekly tracker CSV with entry date, SL, targets."""
+    """Save top 20 picks to weekly tracker CSV with entry date, SL, targets."""
     today = date.today().isoformat()
     rows = []
 
