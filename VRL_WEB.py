@@ -532,7 +532,9 @@ function shortSym(sym, dir, strike){
 
 function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
 
-  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{};
+  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{},rl=d.rolling||{};
+  // streak lives in rolling block, not today block — map it for the day-bar
+  if(!td.streak&&rl.streak)td.streak=rl.streak;
 
   // Version + tags
   document.getElementById('ver').textContent=d.version||'';
@@ -653,7 +655,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     if(cd&&cd.remaining>0){vclr='var(--am)';verdict='\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked';}
 
     var bw=sig.band_width||0;
-    var bwClr=(bw>=12&&bw<=16)?'var(--gn)':'var(--rd)';
+    var bwClr=(bw>=13&&bw<=16)?'var(--gn)':'var(--rd)';
     var rsi=sig.rsi||0;
     var rsiPrev=sig.rsi_prev||0;
     var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
@@ -675,9 +677,9 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
     h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
     h+=gateRow('G2B SLOPE\u22650',  sig.g2b_slope_ok,      'slope '+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope);
-    h+=gateRow('G3 BW 12-16',  sig.g3_bw_ok,          'bw='+bw);
+    h+=gateRow('G3 BW 13-16',  sig.g3_bw_ok,          'bw='+bw);
     h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
-    h+=gateRow('G5 RSI 50-65\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
+    h+=gateRow('G5 RSI 48-70\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
     if(sig.g6_stochrsi!=null){
       var g6c=sig.g6_stochrsi?'var(--gn)':'#888';
       h+='<div class="row"><div class="k">G6 STOCHRSI</div><div class="v" style="color:'+g6c+'">'+(sig.g6_stochrsi?'CROSS \u2705':'skip')+' k='+(sig.g6_k||0)+'</div></div>';
@@ -816,10 +818,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
 
-  // Fib Pivot Section
-  mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
+  // Fib Pivot Section — only render when data present
   var fp=mk.fib_pivots||{};
   if(fp.R3||fp.pivot){
+    mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
     var spot=mk.spot;
     function flvl(name,price){
       var dist=spot-price;var near=Math.abs(dist)<20;
@@ -827,8 +829,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       return '<div class="row" style="'+(near?'background:rgba(59,130,246,.08)':'')+'"><div class="k" style="color:'+clr+'">'+name+'</div><div class="v" style="font-size:11px">'+price+(near?' ◄ NEAR':' <span style=\'color:#555;font-size:9px\'>'+(dist>0?'+':'')+dist.toFixed(0)+'pts</span>')+'</div></div>';}
     mh+=flvl('R3',fp.R3||0)+flvl('R2',fp.R2||0)+flvl('R1',fp.R1||0)+flvl('PIVOT',fp.pivot||0)+flvl('S1',fp.S1||0)+flvl('S2',fp.S2||0)+flvl('S3',fp.S3||0);
     mh+='<div style="padding:5px 10px;font-size:9px;color:#555">Prev: H='+fp.prev_high+' L='+fp.prev_low+' C='+fp.prev_close+' Range='+fp.range+'pts</div>';
-  } else { mh+='<div style="padding:10px;color:#555;font-size:10px">Fib pivots load on market open</div>'; }
-  mh+='</div>';
+    mh+='</div>';
+  }
   // Straddle + context
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
