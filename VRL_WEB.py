@@ -185,6 +185,9 @@ def _read_dash():
             data = {}
     # Always inject current VERSION so dashboard shows correct version
     data["version"] = _D.VERSION
+    # Fix stale period — always recalculate from market_open flag
+    if not data.get("market", {}).get("market_open", False):
+        data["period"] = "CLOSED"
     # v15.2 BUG-2: reconcile today block from trade_log.csv (single source)
     csv_summary = _today_trade_summary()
     today_block = data.get("today") or {}
@@ -655,6 +658,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var rsiPrev=sig.rsi_prev||0;
     var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
     var slopeClr=sig.g2b_slope_ok?'var(--gn)':'var(--rd)';
+    var rsiDisplay=rsi>0?rsi:'—';
+    var rsiPrevDisplay=rsiPrev>0?rsiPrev:'—';
 
     var h='<div class="sect">';
     h+='<div class="sh">'+label+' '+strike+' &nbsp;\u00B7&nbsp; &#x20B9;'+ltp+'</div>';
@@ -663,7 +668,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
     h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 13-16)</div></div>';
     h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsi+' (prev '+rsiPrev+')</div></div>';
+    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsiDisplay+' (prev '+rsiPrevDisplay+')</div></div>';
     h+='<div class="row"><div class="k">EMA9L SLOPE</div><div class="v" style="color:'+slopeClr+'">'+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope+'</div></div>';
     // Gate rows
     h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
@@ -672,7 +677,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+=gateRow('G2B SLOPE\u22650',  sig.g2b_slope_ok,      'slope '+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope);
     h+=gateRow('G3 BW 12-16',  sig.g3_bw_ok,          'bw='+bw);
     h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
-    h+=gateRow('G5 RSI 50-65\u2191',sig.g5_rsi_ok,         'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'));
+    h+=gateRow('G5 RSI 50-65\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
     if(sig.g6_stochrsi!=null){
       var g6c=sig.g6_stochrsi?'var(--gn)':'#888';
       h+='<div class="row"><div class="k">G6 STOCHRSI</div><div class="v" style="color:'+g6c+'">'+(sig.g6_stochrsi?'CROSS \u2705':'skip')+' k='+(sig.g6_k||0)+'</div></div>';
