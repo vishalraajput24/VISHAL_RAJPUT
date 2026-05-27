@@ -852,8 +852,13 @@ async function renderFno(){
     const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
     const el=document.getElementById('p-fno');
     if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No F&O positions</div>';return;}
-    var totalPnl=0;var openCount=0;
-    var cards=fno.map(function(p){
+    // Split into open vs closed, sort each by P&L descending (best profit first)
+    var byPnl=function(a,b){return parseFloat(b.pnl_rs||0)-parseFloat(a.pnl_rs||0);}
+    var openPos=fno.filter(function(p){return (p.status||'').startsWith('OPEN');}).sort(byPnl);
+    var closedPos=fno.filter(function(p){return !(p.status||'').startsWith('OPEN');}).sort(byPnl);
+    var allPos=openPos.concat(closedPos);
+    var totalPnl=0;var openCount=openPos.length;
+    function makeCard(p,isClosedSection){
       // Use pre-calculated values from CSV (correct lot_size × lots formula)
       var ltp=parseFloat(p.current_premium||p.entry_premium||0);
       var entry=parseFloat(p.entry_premium||0);
@@ -861,13 +866,11 @@ async function renderFno(){
       var t1=parseFloat(p.t1_premium||0);
       var pnlPct=parseFloat(p.current_return_pct||0);
       var pnlRs=parseFloat(p.pnl_rs||0);
-      totalPnl+=pnlRs;
       var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
       var st=p.status||'';
       var isOpen=st.startsWith('OPEN');
       var isT1=st.includes('T1-HIT')||st.includes('T3-HIT');
       var isSl=st.includes('SL-HIT');
-      if(isOpen)openCount++;
       var cardBorder=isT1?'rgba(52,211,153,.4)':isSl?'rgba(248,113,113,.4)':'var(--bd)';
       var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
       var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
@@ -898,14 +901,22 @@ async function renderFno(){
         '</div>'+
         (p.last_checked?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_checked)+'</div>':'')+
         '</div>';
-    }).join('');
+    }
+    // Render: open section sorted by P&L desc, then closed section sorted by P&L desc
+    allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
+    var openCards=openPos.map(makeCard).join('');
+    var closedCards=closedPos.map(makeCard).join('');
+    var closedSection=closedPos.length?
+      '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Closed / Target Hit ('+closedPos.length+')</div>'+closedCards:'';
     var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
     el.innerHTML=
       '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
         '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
         '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
-        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+(fno.length-openCount)+' closed</div>'+
-      '</div>'+cards;
+        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed</div>'+
+      '</div>'+
+      (openPos.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px">Open Positions ('+openPos.length+') — sorted by P&L</div>':'')+
+      openCards+closedSection;
   }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
 }
 
