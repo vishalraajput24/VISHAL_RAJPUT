@@ -3385,6 +3385,18 @@ def _strategy_loop(kite):
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
+                        # PDH/PDL/Pivot/VWAP filter data for this P1 shadow signal
+                        try:
+                            LEVELS.log_entry(
+                                direction=_sh_dir,
+                                strike=int(_sh_strike or 0),
+                                entry_price=float(_sh_ltp),
+                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                entry_time_dt=now,
+                                dte=dte,
+                            )
+                        except Exception as _lvl_sh_e:
+                            logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
 
@@ -3654,6 +3666,18 @@ def _strategy_loop(kite):
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
+                        # PDH/PDL/Pivot/VWAP filter data for this P2 shadow signal
+                        try:
+                            LEVELS.log_entry(
+                                direction=_s2_dir,
+                                strike=int(_s2_strike or 0),
+                                entry_price=float(_s2_ltp),
+                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                entry_time_dt=now,
+                                dte=dte,
+                            )
+                        except Exception as _lvl_s2_e:
+                            logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
 

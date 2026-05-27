@@ -59,7 +59,7 @@ _vwap_state = {
     "gap"         : 0.0,    # fut_close - vwap
     "last_update" : None,   # datetime of last refresh
 }
-_VWAP_FUT_TOKEN = 16914178  # NIFTY near-month future — update when rolling
+_VWAP_FUT_TOKEN = 15956226  # NIFTY26JUNFUT 2026-06-30 — update when rolling to next expiry
 _VWAP_BUFFER    = 25        # pts — CE needs gap > +25, PE needs gap < -25
 
 # ── Output CSV ──
