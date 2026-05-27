@@ -3129,6 +3129,7 @@ def _strategy_loop(kite):
                         _sh_ema9l_1m  = float(_sh_1m_comp.get("ema9_low", 0))
                         _sh_rsi_1m    = float(_sh_1m_comp.get("RSI", 0) or 0)
                         _sh_rsi_1m_p  = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_ema9l_1m_prev = float(_sh_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP (cumulative from 9:15, resets daily)
                         _sh_1m_day = _sh_1m[_sh_1m.index.date == now.date()].copy()
@@ -3233,6 +3234,8 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"1m_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
                         elif _sh_1m_gap < 2.0:
                             _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>=2.0)"
+                        elif _sh_ema9l_1m_prev > 0 and _sh_ema9l_1m <= _sh_ema9l_1m_prev:
+                            _sh_1m_reject = f"1m_ema9l_slope_flat ema9l={_sh_ema9l_1m:.2f} prev={_sh_ema9l_1m_prev:.2f}"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
                         elif not (48 < _sh_rsi_1m < 70):
@@ -3454,6 +3457,7 @@ def _strategy_loop(kite):
                         _s2_bw       = round(_s2_ema9h - _s2_ema9l, 2) if _s2_ema9h > 0 and _s2_ema9l > 0 else 0.0
                         _s2_rsi      = float(_s2_comp.get("RSI", 0) or 0)
                         _s2_rsi_p    = float(_s2_1m.iloc[-3].get("RSI", 0) or 0)
+                        _s2_ema9l_prev = float(_s2_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP
                         _s2_day = _s2_1m[_s2_1m.index.date == now.date()].copy()
@@ -3554,6 +3558,8 @@ def _strategy_loop(kite):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
                         elif _s2_ema9h_gap < 2.0:
                             _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>=2.0)"
+                        elif _s2_ema9l_prev > 0 and _s2_ema9l <= _s2_ema9l_prev:
+                            _s2_reject = f"ema9l_slope_flat ema9l={_s2_ema9l:.2f} prev={_s2_ema9l_prev:.2f}"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
