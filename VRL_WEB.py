@@ -1594,6 +1594,16 @@ def _bind_host():
 
 
 if __name__=="__main__":
+    # Always sync static/VRL_DASHBOARD.html from inline HTML on startup.
+    # Prevents stale static file serving old UI after code updates.
+    _static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "VRL_DASHBOARD.html")
+    try:
+        os.makedirs(os.path.dirname(_static_path), exist_ok=True)
+        with open(_static_path, "w") as _sf:
+            _sf.write(HTML)
+    except Exception as _e:
+        print(f"[WARN] Could not sync static file: {_e}")
+
     _host = _bind_host()
     # ThreadingHTTPServer — each request handled in its own thread.
     # Single-threaded HTTPServer was causing the listen queue to fill
