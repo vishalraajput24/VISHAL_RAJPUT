@@ -855,13 +855,12 @@ def save_to_tracker(top_calls, top_puts):
     """Save top 3 Call + top 3 Put picks to fno_tracker.csv."""
     today = date.today().isoformat()
 
-    # Load existing
+    # Load existing — always replace today's rows with fresh EOD picks
     if os.path.exists(TRACKER_FILE):
         df = pd.read_csv(TRACKER_FILE)
-        # Skip if today already saved (any row for today exists)
         if today in df["date_added"].astype(str).values:
-            print(f"\n{Fore.YELLOW}⚠️  Today's picks already saved — skipping duplicate save{Style.RESET_ALL}")
-            return
+            df = df[df["date_added"].astype(str) != today]
+            print(f"\n{Fore.YELLOW}🔄  Replacing today's picks with fresh EOD data{Style.RESET_ALL}")
     else:
         df = pd.DataFrame(columns=TRACKER_COLS)
 
