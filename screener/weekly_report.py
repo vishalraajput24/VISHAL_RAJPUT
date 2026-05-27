@@ -58,7 +58,7 @@ def update_prices():
         return
 
     df      = pd.read_csv(TRACKER_FILE)
-    open_df = df[df["status"] == "OPEN"]
+    open_df = df[df["status"].str.startswith("OPEN", na=False)]
     unique  = open_df["symbol"].unique()
 
     print(f"Updating prices for {len(unique)} open positions...\n")
@@ -72,7 +72,7 @@ def update_prices():
             continue
 
         # Get all rows for this symbol
-        mask        = (df["symbol"] == sym) & (df["status"] == "OPEN")
+        mask        = (df["symbol"] == sym) & (df["status"].str.startswith("OPEN", na=False))
         entry_price = df.loc[mask, "entry_price"].values[0]
         sl          = df.loc[mask, "sl"].values[0]
         t1          = df.loc[mask, "target_1y"].values[0]
