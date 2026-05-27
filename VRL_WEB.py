@@ -720,7 +720,40 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
     html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
     html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
-    html+='</div></div>';
+    html+='</div>';
+    // ── Strategy Gates reference panel ──
+    function gRow(g,rule,note,pass){
+      var c=pass===true?'var(--gn)':pass===false?'var(--rd)':'#888';
+      return '<div style="display:grid;grid-template-columns:28px 1fr 1fr;padding:3px 8px;font-size:9px;border-bottom:1px solid rgba(255,255,255,.04)">'
+        +'<span style="font-weight:700;color:'+c+'">'+g+'</span>'
+        +'<span style="color:#ccc">'+rule+'</span>'
+        +'<span style="color:#777;text-align:right">'+note+'</span>'
+        +'</div>';
+    }
+    html+='<div class="sect" style="margin-top:8px;padding:6px 0 4px">';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">';
+    // P1
+    html+='<div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--bl);padding:2px 8px 4px;letter-spacing:.4px">🔵 P1 · ABOVE VWAP</div>';
+    html+=gRow('G1','gap ≥ 2.0 pts','close vs EMA9H');
+    html+=gRow('G2','EMA9L rising','band lifting ✓');
+    html+=gRow('G3','RSI 48–70 ↑','momentum');
+    html+=gRow('G4','xleg 3/5 below','other side ↓');
+    html+=gRow('G5','LTP > VWAP','at fire');
+    html+='</div>';
+    // P2
+    html+='<div style="border-left:1px solid rgba(255,255,255,.06)">';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--am);padding:2px 8px 4px;letter-spacing:.4px">🟡 P2 · BELOW VWAP</div>';
+    html+=gRow('G1','gap ≥ 2.0 pts','close vs EMA9H');
+    html+=gRow('G2','EMA9L rising','band lifting ✓');
+    html+=gRow('G3','RSI > 55 ↑','momentum');
+    html+=gRow('G4','xleg 3/5 below','other side ↓');
+    html+=gRow('G5','LTP ≤ VWAP','at fire');
+    html+='</div>';
+    html+='</div>';
+    html+='<div style="padding:4px 8px 2px;font-size:8px;color:#555">RSI floor under review · collecting 1-week data</div>';
+    html+='</div>';
+    html+='</div>';
     return html;
   }
 
