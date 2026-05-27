@@ -1035,8 +1035,8 @@ async function renderFno(){
         '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
         '</div>';
     }
-    allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
     var allPos=openPos.concat(closedPos);
+    allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
     var todayCards=openToday.map(makeCard).join('');
     var prevCards=openPrev.map(makeCard).join('');
     var closedCards=closedPos.map(makeCard).join('');
