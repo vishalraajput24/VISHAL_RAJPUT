@@ -540,8 +540,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   tags+='<span class="tag '+(mk.dte<=1?'tr':'tb')+'">DTE '+(mk.dte||0)+'</span>';
   tags+='<span class="tag tb">CE '+(mk.locked_ce||mk.atm)+' · PE '+(mk.locked_pe||mk.atm)+' \uD83D\uDD12</span>';
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
-  if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
-  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'">'+esc(mk.regime)+'</span>';}
+  if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'" title="Daily bias (ADX-based)">D: '+esc(mk.bias)+'</span>';
+  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'" title="3-min candle EMA spread regime">3m: '+esc(mk.regime)+'</span>';}
   if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
   document.getElementById('hd-spot').textContent=mk.spot||'—';
@@ -780,8 +780,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     'RSI '+(mk.spot_rsi>=70?'OVERBOUGHT — reversal likely':mk.spot_rsi>=60?'STRONG — momentum with bulls':mk.spot_rsi<=30?'OVERSOLD — reversal likely':mk.spot_rsi<=40?'WEAK — bears in control':'NEUTRAL — no clear direction')+'</div></div>';
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">SPOT</div><div class="v" style="color:var(--bl)">'+mk.spot+'</div></div>'+
+    '<div class="ctx"><div class="k">VWAP</div><div class="v" style="color:'+(mk.vwap>0?(mk.spot>mk.vwap?'var(--gn)':'var(--rd)'):'var(--dm)')+'">'+((mk.vwap>0)?mk.vwap:'—')+'</div></div>'+
     '<div class="ctx"><div class="k">EMA9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
-    '<div class="ctx"><div class="k">EMA21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
     '<div class="ctx"><div class="k">SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'</div></div></div>';
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">RSI</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
