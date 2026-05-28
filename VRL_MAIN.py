@@ -2293,6 +2293,7 @@ def _update_dashboard_ltp():
                     l2["pnl"] = running
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dash.setdefault("market", {})["market_open"] = D.is_market_open()
 
         tmp = dash_path + ".tmp"
         with open(tmp, "w") as f:
@@ -2622,6 +2623,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "session": session,
                 "regime": spot_3m.get("regime", ""),
                 "bias": bias,
+                "vwap": round(float(LEVELS._vwap_state.get("vwap", 0.0)), 2),
+                "gap": round(float(LEVELS._vwap_state.get("gap", 0.0)), 1),
                 "spot_ema9": spot_3m.get("ema9", 0),
                 "spot_ema21": spot_3m.get("ema21", 0),
                 "spot_spread": spot_3m.get("spread", 0),
@@ -3128,6 +3131,7 @@ def _strategy_loop(kite):
                         _sh_ema9l_1m  = float(_sh_1m_comp.get("ema9_low", 0))
                         _sh_rsi_1m    = float(_sh_1m_comp.get("RSI", 0) or 0)
                         _sh_rsi_1m_p  = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
+                        _sh_ema9l_1m_prev = float(_sh_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP (cumulative from 9:15, resets daily)
                         _sh_1m_day = _sh_1m[_sh_1m.index.date == now.date()].copy()
@@ -3230,6 +3234,10 @@ def _strategy_loop(kite):
                         _sh_1m_reject  = None
                         if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
                             _sh_1m_reject = f"1m_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
+                        elif _sh_1m_gap < 2.0:
+                            _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>=2.0)"
+                        elif _sh_ema9l_1m_prev > 0 and _sh_ema9l_1m <= _sh_ema9l_1m_prev:
+                            _sh_1m_reject = f"1m_ema9l_slope_flat ema9l={_sh_ema9l_1m:.2f} prev={_sh_ema9l_1m_prev:.2f}"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
                         elif not (48 < _sh_rsi_1m < 70):
@@ -3385,6 +3393,43 @@ def _strategy_loop(kite):
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
+                        # PDH/PDL/Pivot/VWAP filter data for this P1 shadow signal
+                        try:
+                            LEVELS.log_entry(
+                                direction=_sh_dir,
+                                strike=int(_sh_strike or 0),
+                                entry_price=float(_sh_ltp),
+                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                entry_time_dt=now,
+                                dte=dte,
+                            )
+                        except Exception as _lvl_sh_e:
+                            logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P1",
+                                "dte": dte,
+                                "atm_strike": int(_sh_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _sh_dir,
+                                "entry_price": float(_sh_ltp),
+                                "ema9_high": float(_sh_ema9h_1m),
+                                "ema9_low": float(_sh_ema9l_1m),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_sh_1m_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P1 DB insert error: {_sc_e}")
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
 
@@ -3414,6 +3459,7 @@ def _strategy_loop(kite):
                         _s2_bw       = round(_s2_ema9h - _s2_ema9l, 2) if _s2_ema9h > 0 and _s2_ema9l > 0 else 0.0
                         _s2_rsi      = float(_s2_comp.get("RSI", 0) or 0)
                         _s2_rsi_p    = float(_s2_1m.iloc[-3].get("RSI", 0) or 0)
+                        _s2_ema9l_prev = float(_s2_1m.iloc[-3].get("ema9_low", 0))
 
                         # 1-min session VWAP
                         _s2_day = _s2_1m[_s2_1m.index.date == now.date()].copy()
@@ -3512,6 +3558,10 @@ def _strategy_loop(kite):
                         _s2_reject     = None
                         if not (_s2_ema9h > 0 and _s2_close > _s2_ema9h):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
+                        elif _s2_ema9h_gap < 2.0:
+                            _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>=2.0)"
+                        elif _s2_ema9l_prev > 0 and _s2_ema9l <= _s2_ema9l_prev:
+                            _s2_reject = f"ema9l_slope_flat ema9l={_s2_ema9l:.2f} prev={_s2_ema9l_prev:.2f}"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
@@ -3654,6 +3704,43 @@ def _strategy_loop(kite):
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
                         )
+                        # PDH/PDL/Pivot/VWAP filter data for this P2 shadow signal
+                        try:
+                            LEVELS.log_entry(
+                                direction=_s2_dir,
+                                strike=int(_s2_strike or 0),
+                                entry_price=float(_s2_ltp),
+                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                entry_time_dt=now,
+                                dte=dte,
+                            )
+                        except Exception as _lvl_s2_e:
+                            logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
+                        # ── signal_scans DB record ──
+                        try:
+                            import VRL_DB as _SC
+                            _SC.insert_scan({
+                                "timestamp": now.isoformat(),
+                                "session": "P2",
+                                "dte": dte,
+                                "atm_strike": int(_s2_strike or 0),
+                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
+                                "direction": _s2_dir,
+                                "entry_price": float(_s2_ltp),
+                                "ema9_high": float(_s2_ema9h),
+                                "ema9_low": float(_s2_ema9l),
+                                "band_position": "ABOVE",
+                                "body_pct": float(_s2_comp.get("body_pct", 0) or 0),
+                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
+                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
+                                "spot_regime": str(spot_3m.get("regime", "")),
+                                "vix": float(D.get_vix()),
+                                "fired": "1",
+                                "trade_taken": 0,
+                                "reject_reason": "",
+                            })
+                        except Exception as _sc_e:
+                            logger.debug(f"[SHADOW-SCAN] P2 DB insert error: {_sc_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
 
@@ -4746,6 +4833,7 @@ def _cmd_help(args):
         "/status    — trade status + PNL\n"
         "/trades    — today's trade list\n"
         "/account   — balance + margin info\n"
+        "/vishal_stock_fno — F&O positions live P&L\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DATA</b>\n"
         "/download  — full day zip (or /download YYYY-MM-DD)\n"
@@ -5225,20 +5313,88 @@ def _cmd_xleg(args):
         _tg_send("📊 X-LEG error: " + str(e))
 
 
+def _cmd_vishal_stock_fno(args):
+    try:
+        import csv as _csv
+        _tracker = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "screener", "fno_tracker.csv"
+        )
+        if not os.path.isfile(_tracker):
+            _tg_send("📭 F&O tracker not found.")
+            return
+
+        with open(_tracker) as _f:
+            rows = list(_csv.DictReader(_f))
+
+        # Show OPEN + T1-HIT + SL-HIT rows (all active positions)
+        active_rows = [r for r in rows if
+                       str(r.get("status","")).startswith("OPEN") or
+                       "HIT" in str(r.get("status",""))]
+        if not active_rows:
+            _tg_send("📭 No F&O positions.")
+            return
+
+        lines = ""
+        total_pnl = 0.0
+        open_count = 0
+        for r in active_rows:
+            st       = str(r.get("status",""))
+            is_open  = st.startswith("OPEN")
+            is_t1    = "T1-HIT" in st or "T3-HIT" in st
+            is_sl    = "SL-HIT" in st
+            if is_open: open_count += 1
+            # Use pre-calculated CSV values — correct for any lot count
+            ltp      = float(r.get("current_premium") or r.get("entry_premium") or 0)
+            entry    = float(r.get("entry_premium") or 0)
+            sl       = float(r.get("sl_premium") or 0)
+            t1       = float(r.get("t1_premium") or 0)
+            pnl_pct  = float(r.get("current_return_pct") or 0)
+            pnl_rs   = float(r.get("pnl_rs") or 0)
+            total_pnl += pnl_rs
+            sign     = "+" if pnl_rs >= 0 else ""
+            dist_sl  = round(ltp - sl, 2)
+            dist_t1  = round(t1 - ltp, 2)
+            if is_t1:   icon = "🎯"
+            elif is_sl: icon = "❌"
+            elif pnl_rs >= 0: icon = "✅"
+            else: icon = "⚠️"
+            lines += (
+                icon + " <b>" + r["symbol"] + " " + r["direction"] + "</b>"
+                + (" <i>" + st + "</i>" if not is_open else "") + "\n"
+                "  Entry ₹" + str(round(entry,2)) + " → Now ₹" + str(round(ltp,2)) + "\n"
+                "  P&L: " + sign + str(round(pnl_pct,1)) + "%  " + sign + "₹" + str(int(pnl_rs)) + "\n"
+                + ("  SL ₹" + str(sl) + " (" + str(dist_sl) + " away)  T1 ₹" + str(t1) + " (" + str(dist_t1) + " away)\n" if is_open else "")
+            )
+
+        total_sign = "+" if total_pnl >= 0 else ""
+        _tg_send(
+            "📊 <b>F&O POSITIONS</b> · " + str(open_count) + " open\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            + lines +
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Total P&L: " + total_sign + "₹" + str(int(total_pnl)) + "\n"
+            "Updated: " + _now_str()
+        )
+    except Exception as e:
+        _tg_send("📊 F&O error: " + str(e))
+        logger.error("[FNO_CMD] " + str(e))
+
+
 _DISPATCH = {
-    "/help"      : _cmd_help,
-    "/pulse"     : _cmd_pulse,
-    "/status"    : _cmd_status,
-    "/trades"    : _cmd_trades,
-    "/account"   : _cmd_account,
-    "/pause"     : _cmd_pause,
-    "/resume"    : _cmd_resume,
-    "/forceexit" : _cmd_forceexit,
-    "/deploy"    : _cmd_deploy,
-    "/restart"   : _cmd_restart,
-    "/livecheck" : _cmd_livecheck,
-    "/download"  : _cmd_download,
-    "/xleg"      : _cmd_xleg,
+    "/help"               : _cmd_help,
+    "/pulse"              : _cmd_pulse,
+    "/status"             : _cmd_status,
+    "/trades"             : _cmd_trades,
+    "/account"            : _cmd_account,
+    "/pause"              : _cmd_pause,
+    "/resume"             : _cmd_resume,
+    "/forceexit"          : _cmd_forceexit,
+    "/deploy"             : _cmd_deploy,
+    "/restart"            : _cmd_restart,
+    "/livecheck"          : _cmd_livecheck,
+    "/download"           : _cmd_download,
+    "/xleg"               : _cmd_xleg,
+    "/vishal_stock_fno"   : _cmd_vishal_stock_fno,
 }
 
 

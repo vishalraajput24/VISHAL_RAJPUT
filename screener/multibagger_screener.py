@@ -51,7 +51,7 @@ NSE500_CACHE  = os.path.join(BASE_DIR, "nse500_symbols.txt")
 
 DELAY_BETWEEN_REQUESTS = 2    # seconds per stock — don't go below 1.5
 MAX_STOCKS_TO_SCAN     = 504  # full NSE 500 (--quick overrides to 50)
-TOP_N                  = 10   # how many top picks to show
+TOP_N                  = 20   # how many top picks to show
 
 # =============================================================================
 # 🎯  FILTER THRESHOLDS
@@ -474,21 +474,27 @@ def calc_targets(stock):
 
     sl = round(price * 0.80, 1)          # 20% below CMP
 
-    if eps and pe:
+    t1 = round(price * 1.25, 1)              # T1 always +25% (1Y, fixed)
+
+    if eps and pe and pe > 0:
         # Conservative: grow EPS at 75% of historical rate
-        g3y = min(pg, 50) * 0.75 / 100
+        g3y    = min(pg, 50) * 0.75 / 100
         eps_3y = eps * ((1 + g3y) ** 3)
 
-        # Target P/E = min(current PE, 45) — don't extrapolate crazy PEs
-        tgt_pe = min(pe, 45)
+        # Target PE: cap between 20–60 — don't compress high-PE stocks to 45
+        # (tgt_pe=min(45) caused targets BELOW entry for stocks with PE>45)
+        tgt_pe = max(min(pe, 60), 20)
 
-        t1 = round(price * 1.25, 1)                  # +25% (1 year)
-        t2 = round(eps_3y * tgt_pe, 1)               # 3Y EPS × target PE
-        t3 = round(eps_3y * (tgt_pe * 1.2), 1)       # 5Y optimistic
+        t2 = round(eps_3y * tgt_pe, 1)          # 3Y EPS × target PE
+        t3 = round(eps_3y * (tgt_pe * 1.2), 1)  # 5Y optimistic
     else:
-        t1 = round(price * 1.25, 1)
         t2 = round(price * 1.70, 1)
         t3 = round(price * 2.50, 1)
+
+    # Safety guardrails: targets must always be above entry in ascending order
+    # (EPS projection can fail for very high PE stocks even with cap at 60)
+    t2 = max(t2, round(price * 1.50, 1))                         # 3Y ≥ +50%
+    t3 = max(t3, round(price * 2.50, 1), round(t2 * 1.30, 1))   # 5Y ≥ +150% and ≥ T2+30%
 
     return {
         "sl"  : sl,
@@ -525,7 +531,7 @@ def rank_stocks(passed_stocks):
 # =============================================================================
 
 def update_tracker(top10):
-    """Save top 10 picks to weekly tracker CSV with entry date, SL, targets."""
+    """Save top 20 picks to weekly tracker CSV with entry date, SL, targets."""
     today = date.today().isoformat()
     rows = []
 

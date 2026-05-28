@@ -185,6 +185,9 @@ def _read_dash():
             data = {}
     # Always inject current VERSION so dashboard shows correct version
     data["version"] = _D.VERSION
+    # Fix stale period — always recalculate from market_open flag
+    if not data.get("market", {}).get("market_open", False):
+        data["period"] = "CLOSED"
     # v15.2 BUG-2: reconcile today block from trade_log.csv (single source)
     csv_summary = _today_trade_summary()
     today_block = data.get("today") or {}
@@ -330,14 +333,114 @@ def _read_trades():
     except Exception: pass
     return trades
 
+def _read_fno():
+    fno_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener", "fno_tracker.csv")
+    if not os.path.isfile(fno_path): return []
+    rows = []
+    try:
+        with open(fno_path) as f:
+            for r in csv.DictReader(f):
+                st = str(r.get("status",""))
+                # show OPEN, T1-HIT and SL-HIT — skip truly blank/exited rows
+                if not (st.startswith("OPEN") or "HIT" in st): continue
+                try:
+                    rows.append({
+                        "symbol":              r.get("symbol",""),
+                        "direction":           r.get("direction",""),
+                        "option_symbol":       r.get("option_symbol",""),
+                        "strike":              r.get("strike",""),
+                        "expiry":              r.get("expiry",""),
+                        "lot_size":            int(r.get("lot_size",0) or 0),
+                        "lots":                int(r.get("lots",1) or 1),
+                        "entry_premium":       float(r.get("entry_premium",0) or 0),
+                        "sl_premium":          float(r.get("sl_premium",0) or 0),
+                        "t1_premium":          float(r.get("t1_premium",0) or 0),
+                        "t2_premium":          float(r.get("t2_premium",0) or 0),
+                        "current_premium":     float(r.get("current_premium",0) or 0),
+                        "current_return_pct":  float(r.get("current_return_pct",0) or 0),
+                        "investment":          float(r.get("investment",0) or 0),
+                        "pnl_rs":              float(r.get("pnl_rs",0) or 0),
+                        "score":               int(r.get("score",0) or 0),
+                        "rank":                int(r.get("rank",0) or 0),
+                        "stock_price":         float(r.get("stock_price",0) or 0),
+                        "stock_sl":            float(r.get("stock_sl",0) or 0),
+                        "pcr":                 float(r.get("pcr",0) or 0),
+                        "max_pain":            float(r.get("max_pain",0) or 0),
+                        "status":              st,
+                        "last_checked":        r.get("last_checked",""),
+                        "date_added":          r.get("date_added",""),
+                    })
+                except Exception: pass
+    except Exception: pass
+    return rows
+
+def _read_weekly():
+    rows = []
+    try:
+        import csv as _csv
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener", "weekly_tracker.csv")
+        if os.path.isfile(path):
+            with open(path) as f:
+                for r in _csv.DictReader(f):
+                    try:
+                        rows.append({
+                            "date_added":    r.get("date_added",""),
+                            "rank":          int(r.get("rank",0) or 0),
+                            "symbol":        r.get("symbol",""),
+                            "name":          r.get("name",""),
+                            "entry_price":   float(r.get("entry_price",0) or 0),
+                            "sl":            float(r.get("sl",0) or 0),
+                            "target_1y":     float(r.get("target_1y",0) or 0),
+                            "target_3y":     float(r.get("target_3y",0) or 0),
+                            "t3_upside_pct": float(r.get("t3_upside_pct",0) or 0),
+                            "roe":           float(r.get("roe",0) or 0),
+                            "roce":          float(r.get("roce",0) or 0),
+                            "score":         int(r.get("score",0) or 0),
+                            "grade":         r.get("grade",""),
+                            "status":        r.get("status",""),
+                            "exit_price":    float(r.get("exit_price",0) or 0),
+                            "actual_return": float(r.get("actual_return",0) or 0),
+                        })
+                    except Exception: pass
+    except Exception: pass
+    return rows
+
+def _read_shadow():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "vrl_shadow_state.json")
+        if not os.path.isfile(path): return {}
+        with open(path) as f:
+            d = json.load(f)
+        def _sig(d, key, side):
+            s = d.get(key, {}).get(side, {})
+            return {
+                "active":       bool(s.get("active", False)),
+                "entry_price":  float(s.get("entry_price", 0) or 0),
+                "entry_time":   s.get("entry_time", ""),
+                "peak_price":   float(s.get("peak_price", 0) or 0),
+                "peak_pts":     float(s.get("peak_pts", 0) or 0),
+                "shadow_sl":    float(s.get("shadow_sl", 0) or 0),
+                "shadow_level": s.get("shadow_level", ""),
+                "entry_strike": int(s.get("entry_strike", 0) or 0),
+                "today_entry":  float(s.get("today_entry", 0) or 0),
+                "bucket_ts":    str(s.get("bucket_ts", "")),
+            }
+        return {
+            "saved_date": d.get("saved_date", ""),
+            "p1": {"CE": _sig(d,"p1","CE"), "PE": _sig(d,"p1","PE")},
+            "p2": {"CE": _sig(d,"p2","CE"), "PE": _sig(d,"p2","PE")},
+        }
+    except Exception: return {}
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VRL War Room</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#080810;--c1:#0f0f1a;--c2:#161625;--bd:#1e1e30;--tx:#e4e4e7;--dm:#666;--bl:#3b82f6;--gn:#10b981;--rd:#ef4444;--am:#f59e0b;--pr:#a855f7;--cy:#06b6d4}
-body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;font-size:12px;max-width:500px;margin:0 auto}
+:root{--bg:#fdf6ec;--c1:#fffaf4;--c2:#f5ebe0;--bd:#e0ccb0;--tx:#2c1f0e;--dm:#8a7055;--bl:#1a6bbf;--gn:#0a7a50;--rd:#c0392b;--am:#b06a00;--pr:#7c3aed;--cy:#0e7490;--gold:#b45309}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;min-height:100vh}
+@media(min-width:900px){body{display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:1fr;max-width:1200px;margin:0 auto}}
 .hd{background:var(--c1);border-bottom:1px solid var(--bd);padding:10px 12px;position:sticky;top:0;z-index:10}
 .hd h1{font-size:13px;font-weight:700;letter-spacing:.5px}.hd b{color:var(--bl)}
 .tags{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
@@ -370,7 +473,7 @@ body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;
 .tc.w{background:rgba(16,185,129,.04);border-color:rgba(16,185,129,.15)}
 .tc.l{background:rgba(239,68,68,.04);border-color:rgba(239,68,68,.15)}
 .H{display:none}
-.ft{text-align:center;padding:6px;font-size:8px;color:#444;border-top:1px solid var(--bd)}
+.ft{text-align:center;padding:6px;font-size:8px;color:#a08060;border-top:1px solid var(--bd)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:0}
 .two>.sect{margin:0;border-radius:0;border-right:none}.two>.sect:last-child{border-right:1px solid var(--bd)}
 .ctx-row{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
@@ -387,29 +490,36 @@ body{background:var(--bg);color:var(--tx);font-family:'SF Mono',Menlo,monospace;
 </style></head><body>
 
 <div class="hd">
-  <h1><b>VISHAL RAJPUT</b> TRADE <span style="color:#444;font-size:9px" id="ver"></span></h1>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <h1><b>VRL</b> WAR ROOM <span style="color:#444;font-size:9px" id="ver"></span></h1>
+    <div style="text-align:right;line-height:1.1"><div style="font-size:9px;color:#555;letter-spacing:.5px;text-transform:uppercase">Nifty</div><div id="hd-spot" style="font-size:22px;font-weight:700;color:var(--bl);letter-spacing:-1px">—</div></div>
+  </div>
   <div class="tags" id="tags"></div>
 </div>
 
 <div id="position-area"></div>
 
 <div class="tabs">
-  <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIGNALS</div>
-  <div class="tab" data-t="mkt" onclick="st('mkt')">📊 MARKET</div>
-  <div class="tab" data-t="trd" onclick="st('trd')">📒 TRADES</div>
-  <div class="tab" data-t="fil" onclick="window.location.href='/files'">📁 FILES</div>
+  <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIG</div>
+  <div class="tab" data-t="mkt" onclick="st('mkt')">📈 MKT</div>
+  <div class="tab" data-t="fno" onclick="st('fno')">📊 F&amp;O</div>
+  <div class="tab" data-t="trd" onclick="st('trd')">📒 TRD</div>
+  <div class="tab" data-t="wkly" onclick="st('wkly')">📅 WEEKLY</div>
+  <div class="tab" data-t="fil" onclick="st('fil')">📁 FILES</div>
 </div>
 
 <div id="p-sig"></div>
 <div id="p-mkt" class="H"></div>
+<div id="p-fno" class="H"></div>
 <div id="p-trd" class="H"></div>
+<div id="p-wkly" class="H"></div>
 <div id="p-fil" class="H"></div>
 
 <div class="ft">Auto-refresh 10s · <span id="ts"></span></div>
 
 
 <script>
-function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','trd','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t))}
+function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -427,7 +537,9 @@ function shortSym(sym, dir, strike){
 
 function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
 
-  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{};
+  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{},rl=d.rolling||{};
+  // streak lives in rolling block, not today block — map it for the day-bar
+  if(!td.streak&&rl.streak)td.streak=rl.streak;
 
   // Version + tags
   document.getElementById('ver').textContent=d.version||'';
@@ -435,10 +547,11 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   tags+='<span class="tag '+(mk.dte<=1?'tr':'tb')+'">DTE '+(mk.dte||0)+'</span>';
   tags+='<span class="tag tb">CE '+(mk.locked_ce||mk.atm)+' · PE '+(mk.locked_pe||mk.atm)+' \uD83D\uDD12</span>';
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
-  if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'">'+esc(mk.bias)+'</span>';
-  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'">'+esc(mk.regime)+'</span>';}
+  if(mk.bias&&mk.bias!=='')tags+='<span class="tag '+tagC(mk.bias)+'" title="Daily bias (ADX-based)">D: '+esc(mk.bias)+'</span>';
+  if(mk.regime){var rc=mk.regime.includes('TREND')?'tg':mk.regime==='NEUTRAL'?'ta':'tr';tags+='<span class="tag '+rc+'" title="3-min candle EMA spread regime">3m: '+esc(mk.regime)+'</span>';}
   if(mk.market_open&&!mk.indicators_warm)tags+='<span class="tag tr">WARMUP</span>';
   document.getElementById('tags').innerHTML=tags;
+  document.getElementById('hd-spot').textContent=mk.spot||'—';
 
   // ── POSITION CARD ──
   var ph='';
@@ -475,8 +588,19 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry+' \u2192 &#x20B9;'+ltp+'</span></div>';
     // RSI progress bar
     ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
-    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:4px">';
+    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
     ph+='<span>RSI '+rsi.toFixed(0)+' (cap 75)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
+    // 3-box status grid: SL / TIER / HELD
+    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:var(--am)">'+(pos.active_ratchet_tier||'—')+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
+    ph+='</div>';
+    // Peak-captured progress bar
+    var peakPct2=peak>0?Math.min(100,Math.max(0,(pnl/peak)*100)):0;
+    var peakBarClr=peakPct2>=80?'var(--gn)':peakPct2>=50?'var(--am)':'var(--rd)';
+    ph+='<div class="bar-label" style="margin-bottom:3px"><span>PEAK CAPTURED</span><span style="color:'+peakBarClr+'">'+peakPct2.toFixed(0)+'%  +'+peak.toFixed(1)+'pts</span></div>';
+    ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
     // Lot status
     if(!split){
       ph+='<div class="pos-lot">LOT1: '+(lot1?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
@@ -505,6 +629,9 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   ph+='<div class="day-box"><div class="dk">TRADES</div>';
   ph+='<div class="dv">'+(td.trades||0)+'</div>';
   ph+='<div class="ds">'+wins+'W '+losses+'L &nbsp; WR '+wr+'%'+(td.streak>=2?' \uD83D\uDD34'+td.streak:'')+'</div></div>';
+  ph+='<div class="day-box"><div class="dk">VIX</div>';
+  ph+='<div class="dv" style="color:'+(mk.vix>22?'var(--rd)':mk.vix>18?'var(--am)':'var(--gn)')+'">'+mk.vix+'</div>';
+  ph+='<div class="ds">'+(mk.vix>22?'HIGH':mk.vix>18?'ELEV':'NORM')+'</div></div>';
   ph+='<div class="day-box"><div class="dk">STATUS</div>';
   ph+='<div class="dv">'+(td.paused?'\u23F8':'\u26A1')+'</div>';
   ph+='<div class="ds">'+(td.paused?'PAUSED':mk.market_open?'SCANNING':'CLOSED')+'</div></div>';
@@ -533,11 +660,13 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     if(cd&&cd.remaining>0){vclr='var(--am)';verdict='\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked';}
 
     var bw=sig.band_width||0;
-    var bwClr=(bw>=12&&bw<=16)?'var(--gn)':'var(--rd)';
+    var bwClr=(bw>=13&&bw<=16)?'var(--gn)':'var(--rd)';
     var rsi=sig.rsi||0;
     var rsiPrev=sig.rsi_prev||0;
     var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
     var slopeClr=sig.g2b_slope_ok?'var(--gn)':'var(--rd)';
+    var rsiDisplay=rsi>0?rsi:'—';
+    var rsiPrevDisplay=rsiPrev>0?rsiPrev:'—';
 
     var h='<div class="sect">';
     h+='<div class="sh">'+label+' '+strike+' &nbsp;\u00B7&nbsp; &#x20B9;'+ltp+'</div>';
@@ -546,16 +675,16 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
     h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 13-16)</div></div>';
     h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsi+' (prev '+rsiPrev+')</div></div>';
+    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsiDisplay+' (prev '+rsiPrevDisplay+')</div></div>';
     h+='<div class="row"><div class="k">EMA9L SLOPE</div><div class="v" style="color:'+slopeClr+'">'+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope+'</div></div>';
     // Gate rows
     h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
     h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
     h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
     h+=gateRow('G2B SLOPE\u22650',  sig.g2b_slope_ok,      'slope '+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope);
-    h+=gateRow('G3 BW 12-16',  sig.g3_bw_ok,          'bw='+bw);
+    h+=gateRow('G3 BW 13-16',  sig.g3_bw_ok,          'bw='+bw);
     h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
-    h+=gateRow('G5 RSI 50-65\u2191',sig.g5_rsi_ok,         'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'));
+    h+=gateRow('G5 RSI 48-70\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
     if(sig.g6_stochrsi!=null){
       var g6c=sig.g6_stochrsi?'var(--gn)':'#888';
       h+='<div class="row"><div class="k">G6 STOCHRSI</div><div class="v" style="color:'+g6c+'">'+(sig.g6_stochrsi?'CROSS \u2705':'skip')+' k='+(sig.g6_k||0)+'</div></div>';
@@ -567,7 +696,77 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
 
   document.getElementById('p-sig').innerHTML=
     '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
-    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>';
+    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>'+
+    renderShadow(window._shadow||{});
+
+  function renderShadow(sh){
+    if(!sh||!sh.p1)return'';
+    function sCard(type,label,sig){
+      if(!sig)return'';
+      var act=sig.active;
+      var bclr=act?'var(--gn)':'#bbb';
+      var btxt=act?'● LIVE':'○ idle';
+      var pclr=(sig.peak_pts||0)>=0?'var(--gn)':'var(--rd)';
+      var h='<div class="sect" style="padding:8px 10px;opacity:'+(act?1:0.55)+'">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+      h+='<span style="font-weight:700;font-size:11px;color:var(--tx)">'+type+' '+label+'</span>';
+      h+='<span style="font-size:9px;font-weight:700;color:'+bclr+'">'+btxt+'</span></div>';
+      if(act){
+        if(sig.entry_strike)h+='<div class="row"><div class="k">STRIKE</div><div class="v">'+sig.entry_strike+'</div></div>';
+        h+='<div class="row"><div class="k">ENTRY</div><div class="v">₹'+sig.entry_price.toFixed(1)+(sig.entry_time?' @ '+sig.entry_time:'')+'</div></div>';
+        h+='<div class="row"><div class="k">PEAK</div><div class="v" style="color:'+pclr+'">'+(sig.peak_pts>=0?'+':'')+sig.peak_pts.toFixed(1)+' pts  (₹'+sig.peak_price.toFixed(1)+')</div></div>';
+        h+='<div class="row"><div class="k">SL</div><div class="v">₹'+sig.shadow_sl.toFixed(1)+'  •  '+esc(sig.shadow_level||'—')+'</div></div>';
+        if(sig.today_entry)h+='<div class="row"><div class="k">TODAY FIRST</div><div class="v">₹'+sig.today_entry.toFixed(1)+'</div></div>';
+      } else {
+        if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+'</div></div>';
+        else h+='<div style="font-size:10px;color:#aaa;padding:2px 0">No signal today</div>';
+      }
+      h+='</div>';
+      return h;
+    }
+    var p1=sh.p1||{};var p2=sh.p2||{};
+    var hasAny=(p1.CE&&p1.CE.active)||(p1.PE&&p1.PE.active)||(p2.CE&&p2.CE.active)||(p2.PE&&p2.PE.active);
+    var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
+    var html='<div style="margin:8px 8px 0">';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'👤 SHADOW TRADES'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+    html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
+    html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
+    html+='</div>';
+    // ── Strategy Gates reference panel ──
+    function gRow(g,rule,note){
+      return '<div style="display:grid;grid-template-columns:28px 1fr 1fr;padding:3px 8px;font-size:9px;border-bottom:1px solid var(--bd)">'
+        +'<span style="font-weight:700;color:var(--bl)">'+g+'</span>'
+        +'<span style="color:var(--tx)">'+rule+'</span>'
+        +'<span style="color:var(--dm);text-align:right">'+note+'</span>'
+        +'</div>';
+    }
+    html+='<div class="sect" style="margin-top:8px;padding:6px 0 4px">';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">';
+    // P1
+    html+='<div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--bl);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P1 · ABOVE VWAP</div>';
+    html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
+    html+=gRow('G2','EMA9L rising','band lifting');
+    html+=gRow('G3','RSI 48-70, rising','momentum');
+    html+=gRow('G4','xleg 3/5 below','other side down');
+    html+=gRow('G5','LTP > VWAP','at fire');
+    html+='</div>';
+    // P2
+    html+='<div style="border-left:1px solid var(--bd)">';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--am);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P2 · BELOW VWAP</div>';
+    html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
+    html+=gRow('G2','EMA9L rising','band lifting');
+    html+=gRow('G3','RSI > 55, rising','momentum');
+    html+=gRow('G4','xleg 3/5 below','other side down');
+    html+=gRow('G5','LTP <= VWAP','at fire');
+    html+='</div>';
+    html+='</div>';
+    html+='<div style="padding:4px 8px 2px;font-size:8px;color:var(--dm)">RSI floor under review - collecting 1-week data</div>';
+    html+='</div>';
+    html+='</div>';
+    return html;
+  }
 
   // ── MARKET TAB ──
   let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
@@ -588,8 +787,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     'RSI '+(mk.spot_rsi>=70?'OVERBOUGHT — reversal likely':mk.spot_rsi>=60?'STRONG — momentum with bulls':mk.spot_rsi<=30?'OVERSOLD — reversal likely':mk.spot_rsi<=40?'WEAK — bears in control':'NEUTRAL — no clear direction')+'</div></div>';
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">SPOT</div><div class="v" style="color:var(--bl)">'+mk.spot+'</div></div>'+
+    '<div class="ctx"><div class="k">VWAP</div><div class="v" style="color:'+(mk.vwap>0?(mk.spot>mk.vwap?'var(--gn)':'var(--rd)'):'var(--dm)')+'">'+((mk.vwap>0)?mk.vwap:'—')+'</div></div>'+
     '<div class="ctx"><div class="k">EMA9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
-    '<div class="ctx"><div class="k">EMA21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
     '<div class="ctx"><div class="k">SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'</div></div></div>';
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">RSI</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
@@ -624,10 +823,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--rd)">\u20b9'+t.ltp+'</div></div>'});
     mh+='</div>'}
 
-  // Fib Pivot Section
-  mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
+  // Fib Pivot Section — only render when data present
   var fp=mk.fib_pivots||{};
   if(fp.R3||fp.pivot){
+    mh+='<div class="sect"><div class="sh">📐 FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
     var spot=mk.spot;
     function flvl(name,price){
       var dist=spot-price;var near=Math.abs(dist)<20;
@@ -635,8 +834,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       return '<div class="row" style="'+(near?'background:rgba(59,130,246,.08)':'')+'"><div class="k" style="color:'+clr+'">'+name+'</div><div class="v" style="font-size:11px">'+price+(near?' ◄ NEAR':' <span style=\'color:#555;font-size:9px\'>'+(dist>0?'+':'')+dist.toFixed(0)+'pts</span>')+'</div></div>';}
     mh+=flvl('R3',fp.R3||0)+flvl('R2',fp.R2||0)+flvl('R1',fp.R1||0)+flvl('PIVOT',fp.pivot||0)+flvl('S1',fp.S1||0)+flvl('S2',fp.S2||0)+flvl('S3',fp.S3||0);
     mh+='<div style="padding:5px 10px;font-size:9px;color:#555">Prev: H='+fp.prev_high+' L='+fp.prev_low+' C='+fp.prev_close+' Range='+fp.range+'pts</div>';
-  } else { mh+='<div style="padding:10px;color:#555;font-size:10px">Fib pivots load on market open</div>'; }
-  mh+='</div>';
+    mh+='</div>';
+  }
   // Straddle + context
   mh+='<div class="ctx-row">'+
     '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
@@ -694,6 +893,169 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('p-trd').innerHTML=th;
   document.getElementById('ts').textContent=d.ts||new Date().toLocaleTimeString('en-IN')}
 
+async function renderWeekly(){
+  try{
+    const data=await fetch('/api/weekly').then(r=>r.json()).catch(e=>[]);
+    const el=document.getElementById('p-wkly');
+    if(!data||!data.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No weekly picks yet — runs every Sunday</div>';return;}
+    const open=data.filter(d=>d.status==='OPEN'||d.status.includes('OPEN'));
+    const closed=data.filter(d=>!d.status.includes('OPEN'));
+    const lastDate=data[0].date_added||'';
+    var gradeClr=function(g){return g.includes('STRONG')?'var(--rd)':g.includes('BUY')?'var(--gn)':'var(--am)';}
+    var cards=open.map(function(p){
+      var up3=parseFloat(p.t3_upside_pct||0);
+      var score=parseInt(p.score||0);
+      var scorePct=Math.min(100,(score/15)*100);
+      var scoreClr=score>=12?'var(--rd)':score>=10?'var(--am)':'var(--gn)';
+      var currRet=parseFloat(p.current_return_pct||0);
+      var currPrice=parseFloat(p.current_price||0);
+      var hasCurr=currPrice>0;
+      var retClr=currRet>=0?'var(--gn)':'var(--rd)';
+      var statusStr=esc(p.status||'OPEN');
+      var isSl=statusStr.includes('SL');var isT=statusStr.includes('HIT')&&!isSl;
+      var statusBg=isSl?'rgba(248,113,113,.12)':isT?'rgba(52,211,153,.12)':'rgba(0,0,0,.04)';
+      var statusClr=isSl?'var(--rd)':isT?'var(--gn)':'var(--dm)';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
+        '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">#'+p.rank+' '+esc(p.symbol)+'</span> '+
+        '<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+gradeClr(p.grade)+'">'+esc(p.grade)+'</span>'+
+        '<div style="font-size:10px;color:var(--dm);margin-top:2px">'+esc(p.name)+'</div></div>'+
+        '<div style="text-align:right">'+
+        (hasCurr?'<div style="font-size:9px;color:var(--dm)">NOW</div><div style="font-size:18px;font-weight:700;color:'+retClr+'">'+(currRet>=0?'+':'')+currRet.toFixed(1)+'%</div><div style="font-size:9px;color:var(--dm)">&#x20B9;'+currPrice.toFixed(0)+'</div>':
+        '<div style="font-size:9px;color:var(--dm)">3Y UPSIDE</div><div style="font-size:18px;font-weight:700;color:var(--gn)">+'+up3.toFixed(0)+'%</div>')+
+        '</div></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:6px 0">'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">ENTRY</div><div style="font-size:11px;font-weight:700">&#x20B9;'+p.entry_price.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">SL</div><div style="font-size:11px;font-weight:700;color:var(--rd)">&#x20B9;'+p.sl.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T1 (1Y)</div><div style="font-size:11px;font-weight:700;color:var(--gn)">&#x20B9;'+p.target_1y.toFixed(0)+'</div></div>'+
+        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T3 (3Y)</div><div style="font-size:11px;font-weight:700;color:var(--bl)">&#x20B9;'+p.target_3y.toFixed(0)+'</div></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;color:var(--dm);margin-bottom:4px">'+
+        '<span>ROE '+p.roe+'%  ROCE '+p.roce+'%  Score '+p.score+'/15</span>'+
+        '<span style="padding:2px 6px;border-radius:3px;background:'+statusBg+';color:'+statusClr+'">'+statusStr+'</span></div>'+
+        '<div style="height:4px;background:var(--c2);border-radius:2px"><div style="height:100%;width:'+scorePct.toFixed(0)+'%;background:'+scoreClr+';border-radius:2px"></div></div>'+
+        (p.last_updated?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_updated)+'</div>':'')+
+        '</div>';
+    }).join('');
+    var closedHtml='';
+    if(closed.length){
+      closedHtml='<div style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px">Closed Positions</div>'+
+      closed.map(function(p){
+        var ret=parseFloat(p.actual_return||0);
+        var w=ret>=0;
+        return '<div style="margin:3px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center">'+
+          '<div><span style="font-weight:700">'+esc(p.symbol)+'</span> <span style="font-size:9px;color:var(--dm)">'+esc(p.grade)+'</span></div>'+
+          '<span style="font-weight:700;color:'+(w?'var(--gn)':'var(--rd)')+'">'+(w?'+':'')+ret.toFixed(1)+'%</span></div>';
+      }).join('');
+    }
+    el.innerHTML=
+      '<div style="margin:8px;padding:8px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+      '<div><div style="font-size:9px;color:var(--dm)">WEEKLY SCREENER</div><div style="font-weight:700;font-size:13px">'+open.length+' Open · '+closed.length+' Closed</div></div>'+
+      '<div style="font-size:9px;color:var(--dm)">Updated '+esc(lastDate)+'</div></div>'+
+      cards+closedHtml;
+  }catch(e){document.getElementById('p-wkly').innerHTML='<div style="color:var(--dm);padding:16px">Error loading weekly data</div>';console.error(e);}
+}
+
+async function renderFno(){
+  try{
+    const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
+    const el=document.getElementById('p-fno');
+    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No F&O positions</div>';return;}
+    // Split today vs prev days; open sorted by score desc (all pnl=0 initially); closed by pnl
+    var today=new Date().toISOString().slice(0,10);
+    var byScore=function(a,b){return (b.score||0)-(a.score||0)||((b.rank||99)-(a.rank||99))*-1;};
+    var byPnl=function(a,b){return parseFloat(b.pnl_rs||0)-parseFloat(a.pnl_rs||0);};
+    var openToday=fno.filter(function(p){return (p.status||'').startsWith('OPEN')&&p.date_added===today;}).sort(byScore);
+    var openPrev=fno.filter(function(p){return (p.status||'').startsWith('OPEN')&&p.date_added!==today;}).sort(byScore);
+    var closedPos=fno.filter(function(p){return !(p.status||'').startsWith('OPEN');}).sort(byPnl);
+    var openPos=openToday.concat(openPrev);
+    var totalPnl=0;var openCount=openPos.length;
+    function makeCard(p){
+      var ltp=parseFloat(p.current_premium||p.entry_premium||0);
+      var entry=parseFloat(p.entry_premium||0);
+      var sl=parseFloat(p.sl_premium||0);
+      var t1=parseFloat(p.t1_premium||0);
+      var t2=parseFloat(p.t2_premium||0);
+      var pnlPct=parseFloat(p.current_return_pct||0);
+      var pnlRs=parseFloat(p.pnl_rs||0);
+      var score=p.score||0;
+      var rank=p.rank||0;
+      var stockPx=parseFloat(p.stock_price||0);
+      var stockSl=parseFloat(p.stock_sl||0);
+      var pcr=parseFloat(p.pcr||0);
+      var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
+      var st=p.status||'';
+      var isOpen=st.startsWith('OPEN');
+      var isT1=st.includes('T1-HIT');var isSl=st.includes('SL-HIT');
+      var cardBorder=isT1?'rgba(52,211,153,.4)':isSl?'rgba(248,113,113,.4)':'var(--bd)';
+      var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
+      var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
+      var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
+      // Score badge colour
+      var scoreClr=score>=9?'var(--gn)':score>=7?'var(--am)':'#888';
+      // Progress bar: SL → T1 range
+      var range=t1-sl;
+      var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
+      var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
+      // T2 marker position on bar
+      var t2Pct=range>0?Math.max(0,Math.min(100,((t2-sl)/range)*100)):0;
+      // Expiry short format
+      var expShort=p.expiry?p.expiry.slice(5):'';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-radius:8px;padding:10px">'+
+        // Header row: symbol + direction + score + rank
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px">'+
+        '<div>'+
+          '<span style="font-weight:700;font-size:13px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
+          '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+dirClr+'">'+esc(p.direction)+'</span>'+
+          (rank?'<span style="font-size:9px;color:var(--dm);margin-left:5px">#'+rank+'</span>':'')+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">'+esc(p.option_symbol)+' · exp '+expShort+'</div>'+
+        '</div>'+
+        '<div style="text-align:right">'+
+          '<div style="font-weight:700;font-size:16px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</div>'+
+          '<div style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div>'+
+          '<div style="display:flex;gap:4px;justify-content:flex-end;margin-top:2px">'+
+            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:700;background:rgba(0,0,0,.06);color:'+scoreClr+'">★ '+score+'</span>'+
+            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:'+badgeBg+';color:'+badgeClr+'">'+esc(st)+'</span>'+
+          '</div>'+
+        '</div></div>'+
+        // Stock price row
+        (stockPx>0?'<div style="font-size:9px;color:var(--dm);margin-bottom:3px">Stock &#x20B9;'+stockPx.toFixed(1)+(stockSl>0?' · SL &#x20B9;'+stockSl.toFixed(1):'')+' · PCR '+pcr+'</div>':'')+
+        // Option entry row
+        '<div style="font-size:10px;color:var(--dm);margin-bottom:5px">Option: entry &#x20B9;'+entry.toFixed(2)+' → now &#x20B9;'+ltp.toFixed(2)+'</div>'+
+        // Progress bar SL→T1 with T2 marker
+        '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
+          '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
+          '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL"></div>'+
+          (t2Pct>0&&t2Pct<100?'<div style="position:absolute;top:-3px;left:'+t2Pct.toFixed(0)+'%;width:2px;height:14px;background:var(--cy);border-radius:1px" title="T2"></div>':'')+
+          '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px" title="T1"></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
+          '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>T2 &#x20B9;'+t2.toFixed(2)+'</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
+        '</div>'+
+        '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
+        '</div>';
+    }
+    var allPos=openPos.concat(closedPos);
+    allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
+    var todayCards=openToday.map(makeCard).join('');
+    var prevCards=openPrev.map(makeCard).join('');
+    var closedCards=closedPos.map(makeCard).join('');
+    var prevSection=openPrev.length?
+      '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Previous Days Open ('+openPrev.length+')</div>'+prevCards:'';
+    var closedSection=closedPos.length?
+      '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Closed / Target Hit ('+closedPos.length+')</div>'+closedCards:'';
+    var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
+    el.innerHTML=
+      '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+        '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
+        '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
+        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed</div>'+
+      '</div>'+
+      (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s Picks ('+openToday.length+') — sorted by score</div>':'')+
+      todayCards+prevSection+closedSection;
+  }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
+}
+
 async function loadFiles(folder){
   const d=await fetch('/api/files'+(folder?'?folder='+folder:'')).then(r=>r.json()).catch(e=>null);
   const el=document.getElementById('p-fil');
@@ -710,13 +1072,12 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t,z,mtf]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]}))]);
+    const[d,t,z,mtf,sh]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]})),fetch('/api/shadow').then(r=>r.json()).catch(e=>({}))]);
+    window._shadow=sh||{};
     render(d||{},t||[],z||{zones:[]},mtf||{})
   }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
-// Load files tab when clicked
-document.querySelector('[data-t="fil"]').addEventListener('click',function(){loadFiles('')});
 </script></body></html>"""
 
 class H(BaseHTTPRequestHandler):
@@ -1159,11 +1520,15 @@ class H(BaseHTTPRequestHandler):
             else:
                 self.send_response(200)
                 self.send_header("Content-Type","text/html")
+                self.send_header("Cache-Control","no-cache, no-store, must-revalidate")
                 self.end_headers()
                 self.wfile.write(HTML.encode())
         elif p=="/api/dashboard":self._j(_read_dash())
         elif p=="/api/trades":self._j(_read_trades())
         elif p=="/api/multitf":self._j(_read_multitf())
+        elif p=="/api/fno":self._j(_read_fno())
+        elif p=="/api/weekly":self._j(_read_weekly())
+        elif p=="/api/shadow":self._j(_read_shadow())
         elif p.startswith("/static/"):
             # Serve any whitelisted asset under static/ (bg image, css, etc.)
             # Whitelist file extensions to prevent directory traversal.
@@ -1268,6 +1633,16 @@ def _bind_host():
 
 
 if __name__=="__main__":
+    # Always sync static/VRL_DASHBOARD.html from inline HTML on startup.
+    # Prevents stale static file serving old UI after code updates.
+    _static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "VRL_DASHBOARD.html")
+    try:
+        os.makedirs(os.path.dirname(_static_path), exist_ok=True)
+        with open(_static_path, "w") as _sf:
+            _sf.write(HTML)
+    except Exception as _e:
+        print(f"[WARN] Could not sync static file: {_e}")
+
     _host = _bind_host()
     # ThreadingHTTPServer — each request handled in its own thread.
     # Single-threaded HTTPServer was causing the listen queue to fill

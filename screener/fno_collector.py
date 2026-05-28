@@ -140,8 +140,17 @@ def tech_score(tech):
     rsi   = tech["rsi"];   vol   = tech["volume"]; vol_avg = tech["vol_avg"]
     call_pts = 0; put_pts = 0; signals = []
 
-    if price > ema20:  call_pts += 1; signals.append(f"P>EMA20({ema20:.0f})✅")
-    else:              put_pts  += 1; signals.append(f"P<EMA20({ema20:.0f})🔻")
+    ema20_dist = round((price - ema20) / ema20 * 100, 2)
+    if price > ema20:
+        call_pts += 1
+        signals.append(f"P>EMA20({ema20:.0f})+{ema20_dist:.1f}%✅")
+    else:
+        put_pts += 1
+        if abs(ema20_dist) >= 2.0:
+            signals.append(f"P<EMA20({ema20:.0f}){ema20_dist:.1f}%🔻")
+        else:
+            put_pts -= 1    # penalise — too close to EMA20, reversal risk
+            signals.append(f"P<EMA20({ema20:.0f}){ema20_dist:.1f}%⚠️EMA_support")
     if price > ema50:  call_pts += 1; signals.append(f"P>EMA50({ema50:.0f})✅")
     else:              put_pts  += 1; signals.append(f"P<EMA50({ema50:.0f})🔻")
     if ema20 > ema50 * 1.005:   call_pts += 1; signals.append("EMA20>EMA50✅")
@@ -188,7 +197,7 @@ def get_option_chain_fast(kite, nfo_df, symbol, price, expiry):
         lot_size = int(opts.iloc[0]["lot_size"])
         strikes  = sorted(opts["strike"].unique())
         atm_idx  = min(range(len(strikes)), key=lambda i: abs(strikes[i] - price))
-        lo = max(0, atm_idx - 5); hi = min(len(strikes)-1, atm_idx + 5)
+        lo = max(0, atm_idx - 8); hi = min(len(strikes)-1, atm_idx + 8)
         sel = set(strikes[lo:hi+1]); atm = strikes[atm_idx]
         opts = opts[opts["strike"].isin(sel)]
 
@@ -234,9 +243,11 @@ def get_option_chain_fast(kite, nfo_df, symbol, price, expiry):
     except Exception:
         return None
 
-def opt_score(opt, direction):
+def opt_score(opt, direction, price=0):
     pts = 0; sigs = []
-    pcr = opt["pcr"]; price = 0; mp = opt["max_pain"]
+    pcr = opt["pcr"]; mp = opt["max_pain"]
+
+    # ── PCR ────────────────────────────────────────────────────────────────
     if direction == "CALL":
         if pcr >= 1.2:   pts += 2; sigs.append(f"PCR={pcr}✅✅")
         elif pcr >= 1.0: pts += 1; sigs.append(f"PCR={pcr}✅")
@@ -245,6 +256,20 @@ def opt_score(opt, direction):
         if pcr <= 0.8:   pts += 2; sigs.append(f"PCR={pcr}✅✅")
         elif pcr <= 1.0: pts += 1; sigs.append(f"PCR={pcr}✅")
         elif pcr > 1.2:  pts -= 1; sigs.append(f"PCR={pcr}⚠️")
+
+    # ── Max Pain gravity ────────────────────────────────────────────────────
+    if price > 0 and mp > 0:
+        if direction == "CALL":
+            if price < mp:
+                pts += 1; sigs.append(f"MP={mp:.0f}>price — gravity↑✅")
+            elif price > mp * 1.01:
+                pts -= 1; sigs.append(f"MP={mp:.0f}<price — no upward pull⚠️")
+        else:  # PUT
+            if price > mp:
+                pts += 1; sigs.append(f"MP={mp:.0f}<price — gravity↓✅")
+            elif price < mp * 0.99:
+                pts -= 1; sigs.append(f"MP={mp:.0f}>price — no downward pull⚠️")
+
     return pts, sigs
 
 
@@ -389,6 +414,13 @@ def tick_scan(kite, nfo_df):
         ltp_val = ltp_map.get(f"NSE:{sym}", {}).get("last_price", 0)
         price   = float(ltp_val) if ltp_val else tech_data["price"]
 
+        # BUG3 FIX: Recalculate tech direction with live price (cached EMA/RSI, live price)
+        live_tech = dict(tech_data)
+        live_tech["price"] = price
+        direction, tech_pts, _ = tech_score(live_tech)
+        if direction == "NEUTRAL":
+            time.sleep(0.3); continue
+
         # Get option chain
         expiry = get_nearest_expiry(nfo_df, sym)
         if expiry is None: continue
@@ -396,7 +428,7 @@ def tick_scan(kite, nfo_df):
         opt = get_option_chain_fast(kite, nfo_df, sym, price, expiry)
         if opt is None: continue
 
-        o_pts, o_sigs = opt_score(opt, direction)
+        o_pts, o_sigs = opt_score(opt, direction, price)   # BUG1 FIX: pass live price
         total         = tech_pts + o_pts
 
         if total < MIN_SCORE_TO_LOG:
