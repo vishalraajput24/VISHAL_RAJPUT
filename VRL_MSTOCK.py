@@ -291,7 +291,7 @@ def test_connection() -> bool:
     """Call from auth script to confirm MStock is working. Checks fund summary."""
     try:
         mc   = get_mstock()
-        resp = mc.fund_summary()
+        resp = mc.get_fund_summary()
         data = resp.json()
         ok   = data.get("status") == "success"
         if ok:
