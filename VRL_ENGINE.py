@@ -645,7 +645,7 @@ def manage_exit(state: dict, option_ltp: float, profile: dict, other_token: int 
 # === CHARGES (merged from VRL_CHARGES) ===
 # ═══════════════════════════════════════════════════════════════
 
-BROKERAGE_PER_ORDER = 20.0
+BROKERAGE_PER_ORDER = 0.0   # MStock: ₹0 brokerage on options (update if your plan differs)
 STT_SELL_PCT = 0.000625
 EXCHANGE_NSE_PCT = 0.000530
 SEBI_TURNOVER_PCT = 0.000001
