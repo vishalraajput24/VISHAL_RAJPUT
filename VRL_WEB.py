@@ -581,7 +581,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // RSI progress bar
     ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
     ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
-    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 75)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
+    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 70)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
     // 3-box status grid: SL / TIER / HELD
     ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
@@ -613,7 +613,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   var wins=parseInt(td.wins||0),losses=parseInt(td.losses||0);
   var totalT=wins+losses;
   var wr=totalT>0?Math.round((wins/totalT)*100):0;
-  var dpnlRs=Math.round(dpnl*65);
+  var dpnlRs=Math.round(parseFloat(td.pnl_rs||0));
   ph+='<div class="day-bar">';
   ph+='<div class="day-box"><div class="dk">DAY P&L</div>';
   ph+='<div class="dv" style="color:'+(dpnl>=0?'var(--gn)':'var(--rd)')+'">'+(dpnl>=0?'+':'')+dpnl.toFixed(1)+'pts</div>';
@@ -851,13 +851,39 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     }
     mh+='<div style="padding:4px 10px;font-size:9px;color:#444">Total: '+zl.length+' active zones</div></div>';
   }
+  // ── ACCOUNT + ROLLING ──
+  var acct=d.account||{};
+  var balAmt=Math.round(parseFloat(acct.balance||0));
+  var usedAmt=Math.round(parseFloat(acct.used||0));
+  var balClr=balAmt>=0?'var(--gn)':'var(--rd)';
+  var balStr=(balAmt<0?'-₹':'₹')+Math.abs(balAmt).toLocaleString('en-IN')+(balAmt<0?' ⚠':'');
+  mh+='<div class="sect"><div class="sh">💼 MSTOCK · '+esc(acct.name||'—')+'</div>'+
+    '<div class="ctx-row">'+
+    '<div class="ctx"><div class="k">AVAILABLE</div><div class="v" style="color:'+balClr+';font-size:11px">'+balStr+'</div></div>'+
+    '<div class="ctx"><div class="k">USED MARGIN</div><div class="v" style="color:var(--am);font-size:11px">₹'+usedAmt.toLocaleString('en-IN')+'</div></div>'+
+    '<div class="ctx"><div class="k">MODE</div><div class="v" style="color:'+(d.mode==='LIVE'?'var(--gn)':'var(--bl)')+'">'+esc(d.mode||'PAPER')+'</div></div>'+
+    '<div class="ctx"><div class="k">VERSION</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.version||'—')+'</div></div>'+
+    '</div></div>';
+  var l10c=rl.last10_wr>=60?'var(--gn)':rl.last10_wr>=40?'var(--am)':'var(--rd)';
+  var l20c=rl.last20_wr>=60?'var(--gn)':rl.last20_wr>=40?'var(--am)':'var(--rd)';
+  var ptsc=(rl.last10_pts||0)>=0?'var(--gn)':'var(--rd)';
+  var strk=rl.streak||0;
+  var strkTxt=strk>=2?('🟢 '+strk+'-WIN STREAK'):strk<=-2?('🔴 '+Math.abs(strk)+'-LOSS STREAK'):'No streak';
+  var strkClr=strk>=2?'var(--gn)':strk<=-2?'var(--rd)':'var(--dm)';
+  mh+='<div class="sect"><div class="sh">📊 ROLLING PERFORMANCE</div>'+
+    '<div class="ctx-row">'+
+    '<div class="ctx"><div class="k">LAST 10 WR</div><div class="v" style="color:'+l10c+'">'+(rl.last10_wr||0)+'%</div></div>'+
+    '<div class="ctx"><div class="k">LAST 20 WR</div><div class="v" style="color:'+l20c+'">'+(rl.last20_wr||0)+'%</div></div>'+
+    '<div class="ctx"><div class="k">L10 PTS</div><div class="v" style="color:'+ptsc+'">'+(rl.last10_pts>=0?'+':'')+( rl.last10_pts||0)+'</div></div>'+
+    '<div class="ctx"><div class="k">STREAK</div><div class="v" style="color:'+strkClr+';font-size:9px">'+strkTxt+'</div></div>'+
+    '</div></div>';
   document.getElementById('p-mkt').innerHTML=mh;
 
   // ── TRADES TAB ──
   var th='';
   if(!trades||!trades.length){th='<div style="text-align:center;color:#444;padding:30px">No trades today</div>';}
   else{
-    var cum=0,tw=0,tl=0;
+    var cum=0,cumRs=0,tw=0,tl=0;
     var tcards=trades.map(function(t){
       var pts=parseFloat(t.pnl_pts||0),w=pts>0;cum+=pts;
       if(w)tw++;else tl++;
@@ -865,7 +891,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       var held=t.candles_held||'?';
       var reason=esc((t.exit_reason||'').replace(/_/g,' '));
       var sym=esc((t.direction||'')+' '+(t.strike||''));
-      var rs=Math.round(pts*65);
+      var rs=Math.round(parseFloat(t.pnl_rs||0));cumRs+=rs;
       var dirClr=t.direction==='CE'?'var(--gn)':'var(--rd)';
       return '<div class="tc '+(w?'w':'l')+'" style="flex-direction:column;gap:4px">'+
         '<div style="display:flex;justify-content:space-between;width:100%;align-items:center">'+
@@ -877,7 +903,6 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         '</div>';
     }).join('');
     var totalT=tw+tl,wr=totalT>0?Math.round((tw/totalT)*100):0;
-    var cumRs=Math.round(cum*65);
     th='<div style="margin:8px;padding:8px 10px;background:var(--c2);border:1px solid var(--bd);border-radius:6px;font-weight:700;color:'+(cum>=0?'var(--gn)':'var(--rd)')+'">'+
       (cum>=0?'+':'')+cum.toFixed(1)+'pts &#x20B9;'+cumRs+' | '+totalT+' trades | '+tw+'W '+tl+'L | WR '+wr+'%</div>';
     th+=tcards;
