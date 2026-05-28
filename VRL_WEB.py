@@ -5,7 +5,7 @@ Dashboard server with admin login + subscriber token access.
 """
 import csv, json, os, hashlib, secrets, time, threading, logging
 from datetime import date, datetime, timedelta
-from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from http.cookies import SimpleCookie
 

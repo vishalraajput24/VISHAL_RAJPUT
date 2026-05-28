@@ -28,19 +28,9 @@ from VRL_CONFIG import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     compute_entry_sl,
-    get_option_ema_spread,
     check_entry_v8,
 )
-# VRL_TRADE handles both paper and live mode
 import VRL_CONFIG as CFG
-try:
-    from kiteconnect.exceptions import (
-        TokenException, NetworkException, GeneralException,
-        OrderException, InputException,
-    )
-except ImportError:
-    TokenException = NetworkException = GeneralException = Exception
-    OrderException = InputException = Exception
 
 from VRL_LAB    import start_lab
 import VRL_LEVELS as LEVELS   # shadow data collection — no live impact
@@ -157,7 +147,6 @@ DEFAULT_STATE = {
 state   = deepcopy(DEFAULT_STATE)
 _running = True
 
-V8_SHADOW_MODE = False
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
     "_signals_today": 0,             # count for /pulse
@@ -2867,29 +2856,11 @@ def _strategy_loop(kite):
                         _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
                             "strike", _locked_ce_strike or _locked_pe_strike or 0)
                         _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
-                        if V8_SHADOW_MODE:
-                            _v8_state["_last_fired_candle_ts"] = _v8_res.get("fired_candle_ts", "")
-                            _xleg = ""
-                            if _v8_res.get("xleg_other_dying"):
-                                _xleg = ("X-Leg ✓ " + ('PE' if _v8_dir == 'CE' else 'CE') + " dying ("
-                                         + "{:.1f}".format(_v8_res.get('xleg_other_close', 0))
-                                         + " < ema9l "
-                                         + "{:.1f}".format(_v8_res.get('xleg_other_ema9l', 0)) + ")\n")
-                            _tg_send(
-                                "👻 <b>V8 SHADOW SIGNAL</b>\n"
-                                + _v8_dir + " " + str(_v8_strike)
-                                + " @ Rs" + "{:.2f}".format(_v8_res["entry_price"]) + "\n"
-                                + "Close " + "{:.1f}".format(_v8_res["close"])
-                                + " > EMA9L " + "{:.1f}".format(_v8_res["ema9_low"]) + "\n"
-                                + "Body " + str(int(_v8_res.get("body_pct", 0))) + "% GREEN\n"
-                                + _xleg + "<i>SHADOW MODE — no actual trade</i>"
-                            )
-                        else:
-                            _v8_execute_paper_entry(
-                                direction=_v8_dir, strike=_v8_strike,
-                                symbol=_v8_symbol, token=_v8_token,
-                                entry_price=_v8_res["entry_price"],
-                                entry_result=_v8_res, other_token=_v8_other)
+                        _v8_execute_paper_entry(
+                            direction=_v8_dir, strike=_v8_strike,
+                            symbol=_v8_symbol, token=_v8_token,
+                            entry_price=_v8_res["entry_price"],
+                            entry_result=_v8_res, other_token=_v8_other)
                         break
                     if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
                         if not _v8_in_both_cooldown:
@@ -4755,7 +4726,7 @@ def _cmd_pulse(args):
             + "🕐 V9: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
-            + ("👻 V8 (shadow): " if V8_SHADOW_MODE else "⚡ V8 (live): ")
+            + "⚡ V8 (live): "
             + str(_v8_state.get("_trades_today", 0)) + " trades · "
             + str(_v8_state.get("_wins_today", 0)) + "W "
             + str(_v8_state.get("_losses_today", 0)) + "L · "
