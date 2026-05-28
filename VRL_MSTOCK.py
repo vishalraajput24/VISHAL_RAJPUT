@@ -178,10 +178,23 @@ def ms_verify_fill(mc, order_id: str, timeout_secs: int = 10) -> tuple[float, in
 # ── Entry order ───────────────────────────────────────────────────────────────
 
 def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
-                 timeout_secs: int = 8) -> dict:
+                 timeout_secs: int = 8,
+                 exchange: str = MSTOCK_EXCHANGE,
+                 product: str = MSTOCK_PRODUCT) -> dict:
     """
-    Place a LIMIT BUY (entry) on MStock NFO.
-    Returns same dict shape as place_entry() in VRL_MAIN.py:
+    Place a LIMIT BUY (entry) on MStock.
+
+    Args:
+      symbol      — NSE tradingsymbol (same format as Kite)
+                    NIFTY options  : "NIFTY2660223900CE"
+                    Stock options  : "RELIANCE26JUN1400CE"
+                    Stock futures  : "RELIANCE26JUNFUT"
+      qty         — quantity (lots × lot_size)
+      limit_price — limit price (bot adds 1% buffer before calling)
+      exchange    — "NFO" for all F&O (default). Use "NSE"/"BSE" for equity.
+      product     — "MIS" intraday (default) | "NRML" positional overnight
+
+    Returns same dict shape as place_entry():
       {"ok": bool, "fill_price": float, "fill_qty": int,
        "order_id": str, "error": str, "slippage": float}
     """
@@ -189,11 +202,11 @@ def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
         resp = mc.place_order(
             _variety           = "regular",
             _tradingsymbol     = symbol,
-            _exchange          = MSTOCK_EXCHANGE,
+            _exchange          = exchange,
             _transaction_type  = "BUY",
             _order_type        = "LIMIT",
             _quantity          = str(qty),
-            _product           = MSTOCK_PRODUCT,
+            _product           = product,
             _validity          = MSTOCK_VALIDITY,
             _price             = str(round(limit_price, 1)),
             _trigger_price     = "0",
@@ -208,7 +221,7 @@ def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
                     "order_id": "", "error": f"ORDER_REJECTED: {err}", "slippage": 0}
 
         order_id = str(data["data"]["order_id"])
-        logger.info(f"[MSTOCK] LIMIT BUY placed: {order_id} limit={limit_price}")
+        logger.info(f"[MSTOCK] LIMIT BUY placed: {order_id} {symbol} {exchange}/{product} limit={limit_price}")
 
         fill_price, fill_qty = ms_verify_fill(mc, order_id, timeout_secs)
 
@@ -237,20 +250,30 @@ def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
 # ── Exit order ────────────────────────────────────────────────────────────────
 
 def ms_place_sell(mc, symbol: str, qty: int,
-                  timeout_secs: int = 8) -> dict:
+                  timeout_secs: int = 8,
+                  exchange: str = MSTOCK_EXCHANGE,
+                  product: str = MSTOCK_PRODUCT) -> dict:
     """
-    Place a MARKET SELL (exit) on MStock NFO.
-    Returns same dict shape as place_exit() in VRL_MAIN.py.
+    Place a MARKET SELL (exit) on MStock.
+
+    Args:
+      symbol   — NSE tradingsymbol (same as used at entry)
+      qty      — quantity to exit
+      exchange — "NFO" for all F&O (default)
+      product  — "MIS" intraday (default) | "NRML" positional overnight
+                 MUST match what was used at entry, else exchange rejects.
+
+    Returns same dict shape as place_exit().
     """
     try:
         resp = mc.place_order(
             _variety           = "regular",
             _tradingsymbol     = symbol,
-            _exchange          = MSTOCK_EXCHANGE,
+            _exchange          = exchange,
             _transaction_type  = "SELL",
             _order_type        = "MARKET",
             _quantity          = str(qty),
-            _product           = MSTOCK_PRODUCT,
+            _product           = product,
             _validity          = MSTOCK_VALIDITY,
             _price             = "0",
             _trigger_price     = "0",
@@ -283,6 +306,72 @@ def ms_place_sell(mc, symbol: str, qty: int,
         logger.error(f"[MSTOCK] ms_place_sell exception: {e}")
         return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
                 "order_id": "", "error": str(e), "slippage": 0}
+
+
+# ── Stock F&O convenience wrappers ───────────────────────────────────────────
+# Usage when stock F&O strategy is added:
+#
+#   mc = MSTOCK.get_mstock()
+#
+#   # Intraday stock option (MIS — auto square-off by 3:20)
+#   result = MSTOCK.ms_stock_buy(mc, "RELIANCE26JUN1400CE", qty=250, limit_price=45.5)
+#
+#   # Positional stock option (NRML — carries overnight)
+#   result = MSTOCK.ms_stock_buy(mc, "TCS26JUN3600CE", qty=150, limit_price=88.0,
+#                                positional=True)
+#
+#   # Exit (product MUST match what was used at entry)
+#   result = MSTOCK.ms_stock_sell(mc, "RELIANCE26JUN1400CE", qty=250)
+
+def ms_stock_buy(mc, symbol: str, qty: int, limit_price: float,
+                 positional: bool = False,
+                 timeout_secs: int = 10) -> dict:
+    """
+    Buy a stock F&O contract (option or future) on MStock NFO.
+
+    positional=False → MIS  (intraday, auto square-off at 3:20 PM)
+    positional=True  → NRML (carry overnight, manual exit required)
+
+    Symbol examples:
+      Stock option  : "RELIANCE26JUN1400CE", "TCS2660523600CE"
+      Stock future  : "RELIANCE26JUNFUT", "TCS26JUNFUT"
+    """
+    product = "NRML" if positional else "MIS"
+    return ms_place_buy(mc, symbol, qty, limit_price,
+                        timeout_secs=timeout_secs,
+                        exchange="NFO", product=product)
+
+
+def ms_stock_sell(mc, symbol: str, qty: int,
+                  positional: bool = False,
+                  timeout_secs: int = 10) -> dict:
+    """
+    Sell/exit a stock F&O contract on MStock NFO.
+    positional must match what was used at entry.
+    """
+    product = "NRML" if positional else "MIS"
+    return ms_place_sell(mc, symbol, qty,
+                         timeout_secs=timeout_secs,
+                         exchange="NFO", product=product)
+
+
+def ms_get_stock_positions(mc) -> list:
+    """
+    Return all open stock F&O positions from MStock (NFO only, non-NIFTY/BANKNIFTY).
+    Useful for reconciliation when stock F&O strategy goes live.
+    """
+    try:
+        resp = mc.get_net_position()
+        data = resp.json()
+        net  = (data.get("data") or {}).get("net", []) if data.get("status") == "success" else []
+        return [p for p in net
+                if p.get("exchange") == "NFO"
+                and p.get("quantity", 0) != 0
+                and not str(p.get("tradingsymbol", "")).startswith("NIFTY")
+                and not str(p.get("tradingsymbol", "")).startswith("BANKNIFTY")]
+    except Exception as e:
+        logger.error(f"[MSTOCK] ms_get_stock_positions error: {e}")
+        return []
 
 
 # ── Quick connection test ─────────────────────────────────────────────────────
