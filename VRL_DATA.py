@@ -809,6 +809,7 @@ TRADING_HOLIDAYS = {
 # holidays AND special Sunday sessions (Budget day etc.) by
 # checking whether Nifty spot ticks actually arrived today.
 _dyn_holiday_cache: dict = {}   # {"YYYY-MM-DD": True/False/None}
+_dyn_last_fail_ts: float = 0.0  # epoch time of last API failure — throttle retries to 1/5min
 
 def _detect_market_active_today() -> bool | None:
     """
@@ -836,6 +837,12 @@ def _detect_market_active_today() -> bool | None:
     if _kite is None:
         return None
 
+    # Throttle retries: if last API call failed, wait 5 min before retrying
+    global _dyn_last_fail_ts
+    import time as _time
+    if _dyn_last_fail_ts and (_time.time() - _dyn_last_fail_ts) < 300:
+        return None  # cooldown — caller uses static list
+
     try:
         quote = _kite.quote(["NSE:NIFTY 50"])
         ltt = (quote.get("NSE:NIFTY 50") or {}).get("last_trade_time")
@@ -856,7 +863,8 @@ def _detect_market_active_today() -> bool | None:
             logger.info(f"[DATA] Dynamic: market HOLIDAY today — NSE last_trade_time={ltt_date} (not today)")
             return False
     except Exception as _e:
-        logger.debug(f"[DATA] Dynamic holiday check failed: {_e} — using static list")
+        _dyn_last_fail_ts = _time.time()  # start cooldown
+        logger.debug(f"[DATA] Dynamic holiday check failed: {_e} — using static list (retry in 5m)")
         return None  # fall back to static list on any API error
 
 
