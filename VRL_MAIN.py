@@ -989,16 +989,19 @@ def _load_shadow_state():
 
 def _reconcile_positions(kite):
     """
-    Startup position reconciliation — compare saved state with broker.
+    Startup position reconciliation — compare saved state with MStock broker.
     If bot crashed mid-trade and position is gone at broker, reset state.
     If broker has position but state says no trade, alert for manual resolution.
-    v13.1: Verified — runs on live startup, alerts on mismatch, never auto-closes.
+    v13.2: Uses MStock get_net_position() — orders placed on MStock, not Kite.
     """
     if kite is None or D.PAPER_MODE:
         return
     try:
-        positions = kite.positions()
-        net = positions.get("net", [])
+        mc        = MSTOCK.get_mstock()
+        resp      = mc.get_net_position()
+        data      = resp.json()
+        positions = data.get("data", {}) if data.get("status") == "success" else {}
+        net       = positions.get("net", []) if isinstance(positions, dict) else []
         # Find NFO positions with non-zero quantity
         nfo_positions = [p for p in net
                          if p.get("exchange") == "NFO"
@@ -5413,27 +5416,8 @@ def _verify_timeout(kind: str, default: int) -> int:
     return default
 
 
-def verify_order_fill(kite, order_id: str, timeout_secs: int = 10) -> tuple:
-    deadline = time.time() + timeout_secs
-    while time.time() < deadline:
-        try:
-            history = kite.order_history(order_id)
-            if not history:
-                time.sleep(0.5)
-                continue
-            last = history[-1]
-            status = last.get("status", "")
-            if status == "COMPLETE":
-                return float(last.get("average_price", 0)), int(last.get("filled_quantity", 0))
-            elif status in ("REJECTED", "CANCELLED"):
-                logger.error("[TRADE] Order " + order_id + " " + status
-                             + " msg=" + str(last.get("status_message", "")))
-                return 0.0, 0
-        except Exception as e:
-            logger.warning("[TRADE] verify_fill error: " + str(e))
-        time.sleep(0.5)
-    logger.error("[TRADE] Fill verification timeout: " + order_id)
-    return 0.0, 0
+# verify_order_fill(kite, ...) removed — orders now via MStock.
+# Fill verification handled by MSTOCK.ms_verify_fill() inside VRL_MSTOCK.py.
 
 
 def place_entry(kite, symbol: str, token: int,
