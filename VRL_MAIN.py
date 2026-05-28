@@ -2291,6 +2291,7 @@ def _update_dashboard_ltp():
                     l2["pnl"] = running
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dash["version"] = D.VERSION
         dash.setdefault("market", {})["market_open"] = D.is_market_open()
 
         tmp = dash_path + ".tmp"
