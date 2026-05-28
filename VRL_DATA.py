@@ -781,8 +781,10 @@ def get_vix() -> float:
     return 0.0
 
 # ═══════════════════════════════════════════════════════════════
-#  TRADING HOLIDAYS (NSE 2026) — add new ones here
-#  Format: "YYYY-MM-DD" strings. Check local date, not UTC.
+#  TRADING HOLIDAYS — static fallback list (used only before 9:35
+#  when dynamic detection hasn't run yet). Dynamic tick-based
+#  detection overrides this after 9:35 IST each day.
+#  Keep updated as a safety net; dynamic detection is primary.
 # ═══════════════════════════════════════════════════════════════
 TRADING_HOLIDAYS = {
     "2026-01-26",  # Republic Day
@@ -790,24 +792,75 @@ TRADING_HOLIDAYS = {
     "2026-03-05",  # Holi
     "2026-03-27",  # Eid-ul-Fitr
     "2026-04-03",  # Good Friday
-    "2026-04-14",  # Ambedkar Jayanti / Dr B R Ambedkar Jayanti
+    "2026-04-14",  # Ambedkar Jayanti
     "2026-05-01",  # Maharashtra Day
     "2026-05-27",  # Bakri Eid
     "2026-05-28",  # Buddha Purnima
     "2026-08-15",  # Independence Day
     "2026-08-27",  # Ganesh Chaturthi
     "2026-10-02",  # Gandhi Jayanti
-    "2026-10-21",  # Diwali Laxmi Pujan (Muhurat special session)
+    "2026-10-21",  # Diwali Laxmi Pujan
     "2026-11-05",  # Guru Nanak Jayanti
     "2026-12-25",  # Christmas
 }
 
+# ── Dynamic holiday detection state ──────────────────────────
+# Avoids need to update TRADING_HOLIDAYS manually. Detects
+# holidays AND special Sunday sessions (Budget day etc.) by
+# checking whether Nifty spot ticks actually arrived today.
+_dyn_holiday_cache: dict = {}   # {"YYYY-MM-DD": True/False/None}
+
+def _detect_market_active_today() -> bool | None:
+    """
+    Dynamically detect if market is actually trading today.
+    Returns True  — ticks confirmed, market is active.
+    Returns False — no ticks 20 min into session, it's a holiday.
+    Returns None  — too early to tell (before 9:35 IST).
+    Called from is_market_open(); result cached per calendar day.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    if today in _dyn_holiday_cache and _dyn_holiday_cache[today] is not None:
+        return _dyn_holiday_cache[today]
+
+    now = datetime.now()
+    # Only decide after 9:35 (20 min into session) — give time for first tick
+    check_after = now.replace(hour=9, minute=35, second=0, microsecond=0)
+    if now < check_after:
+        return None  # too early — caller uses static list as fallback
+
+    # Check if a Nifty spot tick has arrived since 9:15 today
+    market_open_ts = now.replace(
+        hour=MARKET_OPEN_HOUR, minute=MARKET_OPEN_MIN,
+        second=0, microsecond=0
+    ).timestamp()
+    with _tick_lock:
+        spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
+
+    if spot_entry and spot_entry.get("ts", 0) >= market_open_ts:
+        _dyn_holiday_cache[today] = True
+        logger.info("[DATA] Dynamic: market ACTIVE today — tick confirmed at "
+                    + datetime.fromtimestamp(spot_entry['ts']).strftime('%H:%M:%S'))
+        return True
+
+    # No tick 20+ min into session → exchange closed today
+    _dyn_holiday_cache[today] = False
+    logger.info("[DATA] Dynamic: market HOLIDAY today — no tick 20min into session")
+    return False
+
+
 def is_trading_day(now: datetime = None) -> bool:
-    """True only on weekdays that are NOT NSE holidays."""
+    """True only on weekdays. Uses dynamic detection after 9:35, static list before."""
     if now is None:
         now = datetime.now()
     if now.weekday() >= 5:
-        return False
+        return False  # always skip weekends
+    # After 9:35: dynamic detection is authoritative
+    active = _detect_market_active_today()
+    if active is True:
+        return True   # ticks confirmed — even a special Sunday session
+    if active is False:
+        return False  # no ticks → holiday
+    # Before 9:35 or no tick data yet — fall back to static list
     return now.strftime("%Y-%m-%d") not in TRADING_HOLIDAYS
 
 
