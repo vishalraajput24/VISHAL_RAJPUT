@@ -793,6 +793,7 @@ TRADING_HOLIDAYS = {
     "2026-04-14",  # Ambedkar Jayanti / Dr B R Ambedkar Jayanti
     "2026-05-01",  # Maharashtra Day
     "2026-05-27",  # Bakri Eid
+    "2026-05-28",  # Buddha Purnima
     "2026-08-15",  # Independence Day
     "2026-08-27",  # Ganesh Chaturthi
     "2026-10-02",  # Gandhi Jayanti
