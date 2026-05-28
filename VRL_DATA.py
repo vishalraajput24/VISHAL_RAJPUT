@@ -9,7 +9,6 @@ import logging
 import threading
 from datetime import date, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 from kiteconnect import KiteTicker
@@ -19,11 +18,8 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v18"
+VERSION  = "v19"
 BOT_NAME = "VISHAL RAJPUT TRADE"
-
-# ── Timezone ──
-IST = ZoneInfo("Asia/Kolkata")
 
 def _load_env_file(path: str):
     if not os.path.isfile(path):
@@ -87,14 +83,6 @@ STRIKE_STEP         = CFG.strike_cfg("step_normal", 50)
 STRIKE_STEP_EXPIRY  = CFG.strike_cfg("step_dte0", 50)
 NIFTY_SPOT_TOKEN = CFG.spot_token()
 INDIA_VIX_TOKEN  = CFG.vix_token()
-
-PROFIT_LOCK_TRAIL_TF    = "3minute"
-
-# v16: RSI constants kept for shadow analysis
-RSI_1M_LOW         = 30
-RSI_1M_HIGH_NORMAL = 60
-RSI_1M_HIGH_STRONG = 70
-RSI_1M_HIGH        = RSI_1M_HIGH_NORMAL
 
 LOOKBACK_1M = CFG.lookback("1m")
 LOOKBACK_3M = CFG.lookback("3m")
@@ -1272,19 +1260,12 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
 #  Entry fire: 9:30-15:10 | Scan from 9:15
 # ═══════════════════════════════════════════════════════════════
 
-VIX_WARN_LEVEL    = 22
-VIX_DANGER_LEVEL  = 28
-STRADDLE_WARN_PCT = 5.0
-ENTRY_FIRE_HOUR   = 9
-ENTRY_FIRE_MIN    = 31   # v13.3: 9:31 — catch morning moves
-
 _straddle_open     = 0.0
 _straddle_captured = False
 _daily_bias        = "UNKNOWN"
 _daily_bias_done   = False
 _hourly_rsi        = 0.0
 _hourly_rsi_ts     = 0
-_straddle_check_ts = 0
 
 
 def capture_straddle(kite, strike, expiry):
@@ -1455,14 +1436,13 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
 
 def reset_daily_warnings():
     global _straddle_open, _straddle_captured, _daily_bias, _daily_bias_done
-    global _hourly_rsi, _hourly_rsi_ts, _straddle_check_ts
+    global _hourly_rsi, _hourly_rsi_ts
     _straddle_open = 0.0
     _straddle_captured = False
     _daily_bias = "UNKNOWN"
     _daily_bias_done = False
     _hourly_rsi = 0.0
     _hourly_rsi_ts = 0
-    _straddle_check_ts = 0
 
 
 # ═══════════════════════════════════════════════════════════════
