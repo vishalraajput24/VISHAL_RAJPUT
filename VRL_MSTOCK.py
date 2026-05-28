@@ -379,46 +379,50 @@ def ms_get_stock_positions(mc) -> list:
 def ms_get_banner_line() -> str:
     """
     Return a one-liner for the bot startup Telegram banner, e.g.:
-      "MStock: MA2081433 | Avail: ₹1,23,456 | Used: ₹0"
+      "MStock: VISHAL RAGHUNATH RAJPUT | Avail: ₹1,23,456 | Used: ₹0"
     Falls back to client-id-only on any error (non-blocking).
+
+    Name is extracted from the JWT payload (CLIENTNAME field) in the
+    cached token — no extra API call needed.
+    Fund balance uses get_fund_summary() with ALL-CAPS key names.
     """
+    import base64
     client_id = os.getenv("MSTOCK_CLIENT_ID", "MStock")
     try:
-        mc   = get_mstock()
+        mc = get_mstock()
 
-        # ── Profile (name) ──
+        # ── Name from JWT payload ──────────────────────────────────────
         name = ""
         try:
-            p    = mc.get_profile()
-            pd   = p.json()
-            if pd.get("status") == "success":
-                raw  = pd.get("data") or {}
-                name = str(raw.get("name") or raw.get("client_name") or "").strip()
+            saved = _read_token()
+            jwt   = saved.get("access_token", "")
+            if jwt:
+                # JWT = header.payload.sig — payload is base64url-encoded JSON
+                payload_b64 = jwt.split(".")[1]
+                # Fix padding for base64 decode
+                padding = 4 - len(payload_b64) % 4
+                if padding != 4:
+                    payload_b64 += "=" * padding
+                payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                name = str(payload.get("CLIENTNAME", "")).strip().title()
         except Exception:
             pass
 
-        # ── Fund summary (balance) ──
+        # ── Fund summary (balance) ─────────────────────────────────────
         avail_str = ""
         used_str  = ""
         try:
             f  = mc.get_fund_summary()
             fd = f.json()
             if fd.get("status") == "success":
-                raw   = fd.get("data") or {}
-                # MStock fund summary keys vary — try common names
-                avail = float(
-                    raw.get("available_cash")
-                    or raw.get("net")
-                    or raw.get("available_balance")
-                    or raw.get("equity", {}).get("available_cash", 0)
-                    or 0
+                rows = fd.get("data") or []
+                # get_fund_summary returns a list; find the equity/capital segment
+                row = next(
+                    (r for r in rows if str(r.get("SEG", "")).upper() in ("A", "E", "EQUITY")),
+                    rows[0] if rows else {}
                 )
-                used  = float(
-                    raw.get("utilised_amount")
-                    or raw.get("used")
-                    or raw.get("equity", {}).get("utilised_amount", 0)
-                    or 0
-                )
+                avail = float(row.get("AVAILABLE_BALANCE") or row.get("NET") or 0)
+                used  = float(row.get("AMOUNT_UTILIZED") or row.get("LIMIT_SOD") or 0)
                 avail_str = " | Avail: ₹{:,.0f}".format(avail)
                 used_str  = " | Used: ₹{:,.0f}".format(used)
         except Exception:
