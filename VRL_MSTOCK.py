@@ -4,19 +4,18 @@ VRL_MSTOCK.py — MStock (Mirae Asset) broker wrapper for ORDER EXECUTION only.
 Market data (ticks, quotes, historical) stays on Kite.
 This module handles: BUY entry, SELL exit, cancel, order-fill verification.
 
-Auth flow (runs once per day, same pattern as Kite auth):
-  login(client_id, password) → ugid (request_token)
-  checksum = SHA256(api_key + ugid + api_secret)
-  generate_session(api_key, ugid, checksum) → access_token (cached to file)
+Auth flow (TOTP path — recommended, fully automated):
+  login(client_id, password) → ugid
+  verify_totp(api_key, pyotp.TOTP(secret).now()) → access_token
 
 Env vars required in ~/.env:
-  MSTOCK_CLIENT_ID   — your MStock login ID
-  MSTOCK_PASSWORD    — your MStock password
-  MSTOCK_API_KEY     — API key from MStock developer portal
-  MSTOCK_API_SECRET  — API secret / checksum key
+  MSTOCK_CLIENT_ID      — your MStock login ID (e.g. MA2081433)
+  MSTOCK_PASSWORD       — your MStock password
+  MSTOCK_API_KEY        — API key from MStock developer portal
+  MSTOCK_TOTP_SECRET    — TOTP secret from MStock Security settings
+                          (enable Authenticator App → copy the secret key)
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -60,28 +59,31 @@ def _write_token(data: dict):
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
-def _checksum(api_key: str, request_token: str, api_secret: str) -> str:
-    """SHA-256(api_key + request_token + api_secret) — MStock's checksum spec."""
-    raw = api_key + request_token + api_secret
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def _do_login_totp(mc, client_id: str, password: str,
+                   api_key: str, totp_secret: str) -> str:
+    """
+    Automated login via TOTP (Authenticator App) — fully unattended.
+    Requires TOTP enabled on MStock account (Settings → Security → Auth App).
 
+    Flow:
+      1. login(client_id, password) → ugid
+      2. verify_totp(api_key, pyotp.TOTP(totp_secret).now()) → access_token
+    """
+    import pyotp
 
-def _do_login(mc, client_id: str, password: str, api_key: str, api_secret: str) -> str:
-    """Full login flow → returns access_token. Raises on any failure."""
     logger.info("[MSTOCK] Step 1: Login")
     resp = mc.login(client_id, password)
     data = resp.json()
     if data.get("status") != "success":
         raise RuntimeError(f"[MSTOCK] Login failed: {data}")
-    request_token = data["data"]["ugid"]   # MStock uses ugid as request token
-    logger.info(f"[MSTOCK] Step 1 OK — ugid={request_token[:12]}...")
+    logger.info("[MSTOCK] Step 1 OK")
 
-    logger.info("[MSTOCK] Step 2: Generate session")
-    cs   = _checksum(api_key, request_token, api_secret)
-    resp = mc.generate_session(api_key, request_token, cs)
+    logger.info("[MSTOCK] Step 2: TOTP verify")
+    totp_code = pyotp.TOTP(totp_secret).now()
+    resp = mc.verify_totp(api_key, totp_code)
     data = resp.json()
     if data.get("status") != "success":
-        raise RuntimeError(f"[MSTOCK] generate_session failed: {data}")
+        raise RuntimeError(f"[MSTOCK] verify_totp failed: {data}")
     access_token = data["data"]["access_token"]
     logger.info("[MSTOCK] Step 2 OK — session ready ✓")
     return access_token
@@ -95,19 +97,23 @@ def get_mstock():
     """
     from tradingapi_a.mconnect import MConnect
 
-    api_key    = os.getenv("MSTOCK_API_KEY", "")
-    api_secret = os.getenv("MSTOCK_API_SECRET", "")
-    client_id  = os.getenv("MSTOCK_CLIENT_ID", "")
-    password   = os.getenv("MSTOCK_PASSWORD", "")
+    api_key     = os.getenv("MSTOCK_API_KEY", "")
+    totp_secret = os.getenv("MSTOCK_TOTP_SECRET", "")
+    client_id   = os.getenv("MSTOCK_CLIENT_ID", "")
+    password    = os.getenv("MSTOCK_PASSWORD", "")
 
     missing = [n for n, v in [
-        ("MSTOCK_API_KEY",    api_key),
-        ("MSTOCK_API_SECRET", api_secret),
-        ("MSTOCK_CLIENT_ID",  client_id),
-        ("MSTOCK_PASSWORD",   password),
+        ("MSTOCK_API_KEY",     api_key),
+        ("MSTOCK_TOTP_SECRET", totp_secret),
+        ("MSTOCK_CLIENT_ID",   client_id),
+        ("MSTOCK_PASSWORD",    password),
     ] if not v]
     if missing:
-        raise RuntimeError(f"[MSTOCK] Missing env vars: {', '.join(missing)}")
+        raise RuntimeError(
+            f"[MSTOCK] Missing env vars: {', '.join(missing)}\n"
+            f"  → Enable Authenticator App on MStock (Profile → Security)\n"
+            f"  → Copy the TOTP secret and add to ~/.env as MSTOCK_TOTP_SECRET=..."
+        )
 
     mc        = MConnect()
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -119,8 +125,8 @@ def get_mstock():
         mc.set_api_key(api_key)
         return mc
 
-    logger.info("[MSTOCK] No valid token — doing fresh login")
-    access_token = _do_login(mc, client_id, password, api_key, api_secret)
+    logger.info("[MSTOCK] No valid token — doing fresh login (TOTP)")
+    access_token = _do_login_totp(mc, client_id, password, api_key, totp_secret)
     _write_token({"date": today_str, "access_token": access_token})
     mc.set_access_token(access_token)
     mc.set_api_key(api_key)
