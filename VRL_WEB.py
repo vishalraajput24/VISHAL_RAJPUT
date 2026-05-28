@@ -183,21 +183,15 @@ def _read_dash():
             except Exception:
                 pass
             data = {}
-    # Fix stale period — always recalculate from market_open flag
-    if not data.get("market", {}).get("market_open", False):
-        data["period"] = "CLOSED"
-    # v15.2 BUG-2: reconcile today block from trade_log.csv (single source)
+    # v15.2 BUG-2: reconcile today block from trade_log.csv (single source of truth)
     csv_summary = _today_trade_summary()
     today_block = data.get("today") or {}
     today_block.update({
-        "trades":         csv_summary["trades"],
-        "wins":           csv_summary["wins"],
-        "losses":         csv_summary["losses"],
-        "pnl":            csv_summary["pnl"],
-        "pnl_rs":         csv_summary["pnl_rs"],
-        "gross_pnl_rs":   csv_summary["gross_pnl_rs"],
-        "total_charges":  csv_summary["total_charges"],
-        "net_pnl_rs":     csv_summary["net_pnl_rs"],
+        "trades": csv_summary["trades"],
+        "wins":   csv_summary["wins"],
+        "losses": csv_summary["losses"],
+        "pnl":    csv_summary["pnl"],
+        "pnl_rs": csv_summary["pnl_rs"],
     })
     data["today"] = today_block
     return data

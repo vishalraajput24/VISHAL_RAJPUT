@@ -2365,16 +2365,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 return {
                     "close": 0, "ema9_high": 0, "ema9_low": 0,
                     "band_width": 0, "body_pct": 0,
-                    "candle_green": False, "fired": False,
+                    "fired": False,
                     "verdict": "MARKET CLOSED" if not D.is_market_open() else "WARMING UP",
-                    "ltp": round(_ltp_fallback, 2), "entry_mode": "",
+                    "ltp": round(_ltp_fallback, 2),
                     "strike": dir_strikes.get(opt_type, atm_strike),
-                    # V9 gate fields
                     "g1_green": False, "g2_close_above_ema9l": False,
                     "g2b_slope_ok": False, "g3_bw_ok": False,
                     "g4_other_falling": False, "g5_rsi_ok": False,
                     "rsi": 0, "rsi_prev": 0,
-                    "ema9_low_slope": 0, "reject_reason": "",
+                    "ema9_low_slope": 0,
                 }
             _fired = result.get("fired", False)
             _mode = result.get("entry_mode", "")
@@ -2420,25 +2419,19 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ema9_low": round(_el, 2),
                 "band_width": _bw,
                 "body_pct": round(_body, 1),
-                "candle_green": _green,
-                "reject_reason": _reject,
                 "fired": _fired,
                 "verdict": verdict,
-                "entry_mode": _mode,
                 "ltp": _ltp_out,
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
                 "rsi": _rsi,
                 "rsi_prev": _rsi_prev,
                 "ema9_low_slope": _slope,
-                # V9 gate flags for dashboard
                 "g1_green": _g1,
                 "g2_close_above_ema9l": _g2,
                 "g2b_slope_ok": _g2b,
                 "g3_bw_ok": _g3,
                 "g4_other_falling": _g4,
                 "g5_rsi_ok": _g5,
-                "xleg_signal":       result.get("xleg_signal", ""),
-                "xleg_other_margin": round(float(result.get("xleg_other_margin", 0) or 0), 2),
                 "g6_stochrsi": result.get("g6_stochrsi_os_cross"),
                 "g6_k": result.get("g6_k_now", 0),
             }
@@ -2496,31 +2489,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "peak": round(st.get("peak_pnl", 0), 1),
                 "candles": st.get("candles_held", 0),
                 "strike": st.get("strike", 0),
-                "entry_mode": st.get("entry_mode", ""),
-                "current_ema9_high": round(st.get("current_ema9_high", 0), 2),
-                "current_ema9_low":  round(st.get("current_ema9_low", 0), 2),
-                "stop": _stop_price,
-                "stop_dist": round(opt_ltp - _stop_price, 2)
-                              if opt_ltp > 0 and _stop_price > 0 else 0,
+                "sl": _stop_price,
                 "active_ratchet_tier": st.get("active_ratchet_tier", ""),
-                "active_ratchet_sl":   round(float(st.get("active_ratchet_sl", 0) or 0), 2),
-                "trail_tier":          st.get("active_ratchet_tier", ""),
-                "trail_sl":            round(float(st.get("active_ratchet_sl", 0) or 0), 2),
-                "xleg_signal":       st.get("_xleg_signal", "NA"),
-                "xleg_other_close":  round(float(st.get("_xleg_other_close", 0) or 0), 2),
-                "xleg_other_ema9l":  round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
-                "xleg_other_margin": round(float(st.get("_xleg_other_margin", 0) or 0), 2),
-                "spike_close":       round(float(st.get("_spike_close", 0) or 0), 2),
-                "spike_target":      round(float(st.get("_spike_target", 0) or 0), 2),
-                "spike_fill":        round(float(st.get("_spike_fill", 0) or 0), 2),
-                "spike_wait_used":   round(float(st.get("_spike_wait_used", 0) or 0), 1),
-                "spike_saved_pts":   round(float(st.get("_spike_close", 0) or 0)
-                                            - float(st.get("_spike_fill", 0) or 0), 2)
-                                       if st.get("_spike_fill") else 0,
-                "lots_split": False,
                 "current_floor": round(st.get("current_ema9_low", 0), 2),
+                "current_rsi": round(float(st.get("current_rsi", 0) or 0), 1),
                 "lot1": lot1,
                 "lot2": lot2,
+                "lot1_active": lot1["status"] == "active",
+                "lot2_active": lot2["status"] == "active",
+                "lots_split": False,
             }
         else:
             position = {"in_trade": False}
@@ -2551,17 +2528,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "paused": st.get("paused", False),
         }
 
-        try:
-            _t_charges = sum(float(t.get("total_charges", 0)) for t in _today_trades)
-            _t_gross = sum(float(t.get("gross_pnl_rs", t.get("pnl_rs", 0))) for t in _today_trades)
-            _t_net = sum(float(t.get("net_pnl_rs", 0)) for t in _today_trades)
-            today_block["total_charges"] = round(_t_charges, 2)
-            today_block["gross_pnl_rs"] = round(_t_gross, 2)
-            today_block["net_pnl_rs"] = round(_t_net, 2)
-        except Exception:
-            today_block["total_charges"] = 0
-            today_block["gross_pnl_rs"] = 0
-            today_block["net_pnl_rs"] = 0
+        pass
 
         rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
         try:
@@ -2595,28 +2562,15 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "captured": straddle_captured,
         }
 
-        _mod = now.hour * 60 + now.minute
-        if 585 <= _mod < 630:
-            _period = "OPENING"
-        elif 630 <= _mod < 840:
-            _period = "MIDDAY"
-        else:
-            _period = "CLOSING"
-
-        with _post_exit_lock:
-            _post_exit_count = len(_post_exit_observation)
-
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
             "mode": "PAPER" if D.PAPER_MODE else "LIVE",
-            "period": _period,
             "market": {
                 "spot": round(spot_ltp, 1),
                 "atm": atm_strike,
                 "locked_ce": _locked_ce_strike,
                 "locked_pe": _locked_pe_strike,
-                "locked_at_spot": round(_locked_at_spot, 1) if _locked_at_spot else 0,
                 "dte": dte,
                 "vix": round(vix_ltp, 1),
                 "session": session,
@@ -2628,14 +2582,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "spot_ema21": spot_3m.get("ema21", 0),
                 "spot_spread": spot_3m.get("spread", 0),
                 "spot_rsi": spot_3m.get("rsi", 0),
-                "spot_adx_3m": spot_3m.get("adx", 0),
                 "hourly_rsi": round(hourly_rsi, 1),
                 "expiry": expiry.isoformat() if expiry else "",
                 "market_open": D.is_market_open(),
                 "indicators_warm": _is_warm,
-                "warmup_progress": _w_done,
-                "warmup_needed": _w_need,
-                "warmup_eta": _w_eta,
             },
             "ce": ce_signal,
             "pe": pe_signal,
@@ -2644,13 +2594,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "straddle": straddle_block,
             "account": {
                 "name": D.get_account_info().get("name", ""),
-                "user_id": D.get_account_info().get("user_id", ""),
                 "balance": D.get_account_info().get("total_balance", 0),
-                "available": D.get_account_info().get("available_margin", 0),
                 "used": D.get_account_info().get("used_margin", 0),
             },
             "rolling": rolling_block,
-            "post_exit_count": _post_exit_count,
+            "cooldown": {},
         }
 
         tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
