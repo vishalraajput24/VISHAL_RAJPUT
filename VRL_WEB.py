@@ -1647,6 +1647,10 @@ if __name__=="__main__":
     # up + curl-timeouts when one request blocked (e.g. slow trade-log
     # read, big bg.jpg static fetch). Threaded server prevents head-of-
     # line blocking. daemon_threads = True so threads die with parent.
+    # SO_REUSEPORT: kill any ghost process holding the port on restart.
+    import socket as _socket
+    ThreadingHTTPServer.allow_reuse_address = True
+    ThreadingHTTPServer.allow_reuse_port    = True
     s = ThreadingHTTPServer((_host, PORT), H)
     s.daemon_threads = True
     print("VRL War Room v16.7 — http://" + _host + ":" + str(PORT))
