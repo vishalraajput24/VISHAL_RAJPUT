@@ -812,40 +812,52 @@ _dyn_holiday_cache: dict = {}   # {"YYYY-MM-DD": True/False/None}
 
 def _detect_market_active_today() -> bool | None:
     """
-    Dynamically detect if market is actually trading today.
-    Returns True  — ticks confirmed, market is active.
-    Returns False — no ticks 20 min into session, it's a holiday.
-    Returns None  — too early to tell (before 9:35 IST).
-    Called from is_market_open(); result cached per calendar day.
+    Dynamically detect if market is actually trading today using
+    Kite's quote API last_trade_time — this is NSE's own timestamp,
+    not our receive time, so it correctly shows yesterday's date on
+    holidays even if the WS sends a cached "last known" price on connect.
+
+    Returns True  — NSE last_trade_time is today → market active.
+    Returns False — last_trade_time is from a previous day → holiday.
+    Returns None  — too early (before 9:20) or kite not ready yet.
+    Result cached per calendar day — only 1 API call per day.
     """
     today = datetime.now().strftime("%Y-%m-%d")
     if today in _dyn_holiday_cache and _dyn_holiday_cache[today] is not None:
         return _dyn_holiday_cache[today]
 
     now = datetime.now()
-    # Only decide after 9:35 (20 min into session) — give time for first tick
-    check_after = now.replace(hour=9, minute=35, second=0, microsecond=0)
+    # Only check after 9:20 IST (5 min into session, enough time for first trade)
+    check_after = now.replace(hour=9, minute=20, second=0, microsecond=0)
     if now < check_after:
         return None  # too early — caller uses static list as fallback
 
-    # Check if a Nifty spot tick has arrived since 9:15 today
-    market_open_ts = now.replace(
-        hour=MARKET_OPEN_HOUR, minute=MARKET_OPEN_MIN,
-        second=0, microsecond=0
-    ).timestamp()
-    with _tick_lock:
-        spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
+    # kite must be initialised
+    if _kite is None:
+        return None
 
-    if spot_entry and spot_entry.get("ts", 0) >= market_open_ts:
-        _dyn_holiday_cache[today] = True
-        logger.info("[DATA] Dynamic: market ACTIVE today — tick confirmed at "
-                    + datetime.fromtimestamp(spot_entry['ts']).strftime('%H:%M:%S'))
-        return True
+    try:
+        quote = _kite.quote(["NSE:NIFTY 50"])
+        ltt = (quote.get("NSE:NIFTY 50") or {}).get("last_trade_time")
+        if ltt is None:
+            return None  # API error — don't decide
+        # last_trade_time can be a datetime or string "YYYY-MM-DD HH:MM:SS"
+        if hasattr(ltt, "strftime"):
+            ltt_date = ltt.strftime("%Y-%m-%d")
+        else:
+            ltt_date = str(ltt)[:10]
 
-    # No tick 20+ min into session → exchange closed today
-    _dyn_holiday_cache[today] = False
-    logger.info("[DATA] Dynamic: market HOLIDAY today — no tick 20min into session")
-    return False
+        if ltt_date == today:
+            _dyn_holiday_cache[today] = True
+            logger.info(f"[DATA] Dynamic: market ACTIVE today — NSE last_trade_time={ltt_date}")
+            return True
+        else:
+            _dyn_holiday_cache[today] = False
+            logger.info(f"[DATA] Dynamic: market HOLIDAY today — NSE last_trade_time={ltt_date} (not today)")
+            return False
+    except Exception as _e:
+        logger.debug(f"[DATA] Dynamic holiday check failed: {_e} — using static list")
+        return None  # fall back to static list on any API error
 
 
 def is_trading_day(now: datetime = None) -> bool:
