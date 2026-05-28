@@ -710,6 +710,11 @@ def check_and_reconnect():
         spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
     if spot_entry and (time.time() - spot_entry["ts"]) < 180:
         return  # tick is fresh (< 3 min), no action needed
+    # If last tick was not from today, market never opened — holiday/weekend, don't alert
+    from datetime import date as _date
+    _last_tick_date = _date.fromtimestamp(spot_entry["ts"]) if spot_entry else None
+    if _last_tick_date != _date.today():
+        return
     # v13.10: rate limit 1 auto-heal per 10 minutes to prevent loops
     if time.time() - _last_reconnect_attempt < 600:
         return
