@@ -45,6 +45,7 @@ except ImportError:
 from VRL_LAB    import start_lab
 import VRL_LEVELS as LEVELS   # shadow data collection — no live impact
 import VRL_ENGINE as CHARGES
+import VRL_MSTOCK as MSTOCK   # order execution via MStock (data stays on Kite)
 
 # ── Loggers ─────────────────────────────────────────────────────
 logger     = setup_logger("vrl_live", D.LIVE_LOG_FILE)
@@ -5457,73 +5458,29 @@ def place_entry(kite, symbol: str, token: int,
     limit_price = round(entry_price_ref + buffer, 1)
 
     logger.info("[TRADE] LIMIT ENTRY: ref=" + str(round(entry_price_ref, 2))
-                + " buffer=" + str(buffer) + " limit=" + str(limit_price))
+                + " buffer=" + str(buffer) + " limit=" + str(limit_price)
+                + " broker=MStock")
 
-    try:
-        order_id = kite.place_order(
-            variety          = kite.VARIETY_REGULAR,
-            exchange         = D.EXCHANGE_NFO,
-            tradingsymbol    = symbol,
-            transaction_type = kite.TRANSACTION_TYPE_BUY,
-            quantity         = qty,
-            order_type       = kite.ORDER_TYPE_LIMIT,
-            price            = limit_price,
-            product          = kite.PRODUCT_MIS,
-        )
-        logger.info("[TRADE] LIMIT ENTRY placed: " + str(order_id)
-                    + " limit=" + str(limit_price))
+    mc     = MSTOCK.get_mstock()
+    result = MSTOCK.ms_place_buy(mc, symbol, qty, limit_price,
+                                 timeout_secs=_verify_timeout("entry", 8))
 
-        fill_price, fill_qty = verify_order_fill(
-            kite, order_id, timeout_secs=_verify_timeout("entry", 8))
+    if result["ok"] and not os.path.isfile(_first_live_flag):
+        try:
+            with open(_first_live_flag, "w") as _f:
+                _f.write(datetime.now().isoformat())
+        except Exception:
+            pass
 
-        if fill_qty == 0:
-            try:
-                kite.cancel_order(kite.VARIETY_REGULAR, order_id)
-                logger.info("[TRADE] Entry cancelled — price moved away")
-            except Exception:
-                pass
-            return {
-                "ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": str(order_id),
-                "error": "LIMIT_NOT_FILLED", "slippage": 0,
-            }
+    if result["ok"] and result["fill_qty"] < qty:
+        logger.warning("[TRADE] Partial fill accepted: "
+                       + str(result["fill_qty"]) + "/" + str(qty))
 
-        slippage = round(fill_price - entry_price_ref, 2)
-        logger.info("[TRADE] ENTRY FILLED: price=" + str(fill_price)
-                    + " slippage=" + str(slippage) + "pts")
+    # Re-compute slippage relative to original ref price (not limit price)
+    if result["ok"]:
+        result["slippage"] = round(result["fill_price"] - entry_price_ref, 2)
 
-        if not os.path.isfile(_first_live_flag):
-            try:
-                with open(_first_live_flag, "w") as _f:
-                    _f.write(datetime.now().isoformat())
-            except Exception:
-                pass
-
-        if fill_qty < qty:
-            logger.warning("[TRADE] Partial fill accepted: "
-                           + str(fill_qty) + "/" + str(qty))
-
-        return {
-            "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
-            "order_id": str(order_id), "error": "", "slippage": slippage,
-        }
-
-    except TokenException as e:
-        logger.error("[TRADE] Entry auth error: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "AUTH_EXPIRED: " + str(e), "slippage": 0}
-    except OrderException as e:
-        logger.error("[TRADE] Entry order rejected: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "ORDER_REJECTED: " + str(e), "slippage": 0}
-    except NetworkException as e:
-        logger.error("[TRADE] Entry network error: " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": "NETWORK: " + str(e), "slippage": 0}
-    except Exception as e:
-        logger.error("[TRADE] Entry unexpected: " + type(e).__name__ + " " + str(e))
-        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
-                "order_id": "", "error": str(e), "slippage": 0}
+    return result
 
 
 def place_exit(kite, symbol: str, token: int,
@@ -5541,43 +5498,25 @@ def place_exit(kite, symbol: str, token: int,
             "error": "", "slippage": 0,
         }
 
-    for attempt in range(2):
-        try:
-            order_id = kite.place_order(
-                variety          = kite.VARIETY_REGULAR,
-                exchange         = D.EXCHANGE_NFO,
-                tradingsymbol    = symbol,
-                transaction_type = kite.TRANSACTION_TYPE_SELL,
-                quantity         = qty,
-                order_type       = kite.ORDER_TYPE_MARKET,
-                product          = kite.PRODUCT_MIS,
-                market_protection = -1,
-            )
-            logger.info("[TRADE] MARKET EXIT placed attempt=" + str(attempt + 1)
-                        + " order=" + str(order_id))
+    logger.info("[TRADE] MARKET EXIT: " + symbol
+                + " qty=" + str(qty) + " reason=" + reason + " broker=MStock")
 
-            fill_price, fill_qty = verify_order_fill(kite, order_id)
+    mc     = MSTOCK.get_mstock()
+    result = MSTOCK.ms_place_sell(mc, symbol, qty,
+                                  timeout_secs=_verify_timeout("exit", 8))
 
-            if fill_qty > 0:
-                slippage = round(exit_price_ref - fill_price, 2)
-                return {
-                    "ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
-                    "order_id": str(order_id), "error": "", "slippage": slippage,
-                }
+    if result["ok"]:
+        result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
+        return result
 
-            logger.warning("[TRADE] Exit attempt " + str(attempt + 1) + " not filled")
-            time.sleep(1)
-
-        except TokenException as e:
-            logger.error("[TRADE] Exit auth error attempt=" + str(attempt + 1) + ": " + str(e))
-            time.sleep(1)
-        except (OrderException, NetworkException) as e:
-            logger.error("[TRADE] Exit order/network error attempt=" + str(attempt + 1) + ": " + str(e))
-            time.sleep(1)
-        except Exception as e:
-            logger.error("[TRADE] Exit unexpected error attempt=" + str(attempt + 1)
-                         + ": " + type(e).__name__ + " " + str(e))
-            time.sleep(1)
+    # First attempt failed — retry once
+    logger.warning("[TRADE] Exit attempt 1 failed — retrying")
+    time.sleep(1)
+    result = MSTOCK.ms_place_sell(mc, symbol, qty,
+                                  timeout_secs=_verify_timeout("exit", 8))
+    if result["ok"]:
+        result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
+        return result
 
     logger.critical("CRITICAL: Exit failed for " + symbol
                     + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
