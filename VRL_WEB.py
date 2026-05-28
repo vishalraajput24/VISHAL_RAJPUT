@@ -183,8 +183,6 @@ def _read_dash():
             except Exception:
                 pass
             data = {}
-    # Always inject current VERSION so dashboard shows correct version
-    data["version"] = _D.VERSION
     # Fix stale period — always recalculate from market_open flag
     if not data.get("market", {}).get("market_open", False):
         data["period"] = "CLOSED"
