@@ -374,6 +374,64 @@ def ms_get_stock_positions(mc) -> list:
         return []
 
 
+# ── Startup banner helper ────────────────────────────────────────────────────
+
+def ms_get_banner_line() -> str:
+    """
+    Return a one-liner for the bot startup Telegram banner, e.g.:
+      "MStock: MA2081433 | Avail: ₹1,23,456 | Used: ₹0"
+    Falls back to client-id-only on any error (non-blocking).
+    """
+    client_id = os.getenv("MSTOCK_CLIENT_ID", "MStock")
+    try:
+        mc   = get_mstock()
+
+        # ── Profile (name) ──
+        name = ""
+        try:
+            p    = mc.get_profile()
+            pd   = p.json()
+            if pd.get("status") == "success":
+                raw  = pd.get("data") or {}
+                name = str(raw.get("name") or raw.get("client_name") or "").strip()
+        except Exception:
+            pass
+
+        # ── Fund summary (balance) ──
+        avail_str = ""
+        used_str  = ""
+        try:
+            f  = mc.get_fund_summary()
+            fd = f.json()
+            if fd.get("status") == "success":
+                raw   = fd.get("data") or {}
+                # MStock fund summary keys vary — try common names
+                avail = float(
+                    raw.get("available_cash")
+                    or raw.get("net")
+                    or raw.get("available_balance")
+                    or raw.get("equity", {}).get("available_cash", 0)
+                    or 0
+                )
+                used  = float(
+                    raw.get("utilised_amount")
+                    or raw.get("used")
+                    or raw.get("equity", {}).get("utilised_amount", 0)
+                    or 0
+                )
+                avail_str = " | Avail: ₹{:,.0f}".format(avail)
+                used_str  = " | Used: ₹{:,.0f}".format(used)
+        except Exception:
+            pass
+
+        label = name if name else client_id
+        return f"MStock: {label}{avail_str}{used_str}"
+
+    except Exception as e:
+        logger.warning(f"[MSTOCK] banner_line error: {e}")
+        return f"MStock: {client_id} (login pending)"
+
+
 # ── Quick connection test ─────────────────────────────────────────────────────
 
 def test_connection() -> bool:

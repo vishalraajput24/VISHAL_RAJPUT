@@ -1552,12 +1552,17 @@ def _alert_bot_started():
     if _acct.get("name"):
         _acct_line = ("Account : " + _acct["name"] + "\n"
                       "Balance : Rs" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
+    try:
+        _ms_line = "Orders  : " + MSTOCK.ms_get_banner_line() + "\n"
+    except Exception:
+        _ms_line = ""
     _tg_send(
         "<b>VISHAL RAJPUT TRADE " + D.VERSION + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Time    : " + _now_str() + "\n"
         "Mode    : " + _mode_tag() + "\n"
-        + _acct_line +
+        + _acct_line
+        + _ms_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v19\n"
