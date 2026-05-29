@@ -54,165 +54,78 @@ INST_CACHE_NFO = os.path.join(BASE_DIR, "inst_cache_nfo.csv")
 #               CROMPTON, KEI, BERGERPAINTS, BIOCON, TORNTPHARM, NMDC,
 #               SAIL, ADANIGREEN (erratic / thin options)
 #
-# Total: 120 stocks across 12 sectors
+# Total: 90 stocks (top-90 by turnover; trimmed from 119 on 2026-05-29)
 # ──────────────────────────────────────────────────────────────────────────
 
 FNO_UNIVERSE = [
-    # ── BANKS (most liquid F&O segment) ───────────────────────────────────
-    "HDFCBANK",    # #1 most liquid stock F&O
-    "ICICIBANK",   # top 3 always
-    "KOTAKBANK",
-    "AXISBANK",
-    "SBIN",        # PSU bank, huge retail interest
-    "INDUSINDBK",
-    "BANDHANBNK",
-    "FEDERALBNK",
-    "PNB",
-    "BANKBARODA",
-    "CANBK",
-    "AUBANK",      # AU Small Finance — good OI
-    "IDFCFIRSTB",  # IDFC First Bank
+    # Trimmed 119 -> 90 on 2026-05-29: kept the top 90 by traded turnover
+    # (more liquidity = tighter spreads + better fills). The 29 lowest-turnover
+    # names were dropped: ZYDUSLIFE, BANKBARODA, POLYCAB, MAZDOCK, GAIL,
+    # DIVISLAB, JSWSTEEL, SBILIFE, GODREJCP, GODREJPROP, BANDHANBNK, CHOLAFIN,
+    # AUROPHARMA, RECLTD, TATAPOWER, PNB, MPHASIS, INDUSINDBK, FORTIS, UNITDSPR,
+    # HINDZINC, BAJAJFINSV, COLPAL, PETRONET, LICI, AMBUJACEM, CONCOR, KPITTECH,
+    # LICHSGFIN.
+
+    # ── BANKS ─────────────────────────────────────────────────────────────
+    "HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN",
+    "FEDERALBNK", "CANBK", "AUBANK", "IDFCFIRSTB",
 
     # ── FINANCE / NBFC / INSURANCE ────────────────────────────────────────
-    "BAJFINANCE",
-    "BAJAJFINSV",
-    "CHOLAFIN",
-    "LICHSGFIN",
-    "MUTHOOTFIN",
-    "SHRIRAMFIN",  # ✅ NEW — Shriram Finance, 43 strikes, large NBFC
-    "HDFCLIFE",
-    "SBILIFE",
-    "ICICIGI",
-    "LICI",        # ✅ NEW — LIC India, massive MCap, 54 strikes
-    "HDFCAMC",     # ✅ NEW — HDFC AMC, 49 strikes
-    "JIOFIN",      # ✅ NEW — Jio Financial, 39 strikes, Reliance backed
+    "BAJFINANCE", "MUTHOOTFIN", "SHRIRAMFIN", "HDFCLIFE", "ICICIGI",
+    "HDFCAMC", "JIOFIN",
 
     # ── IT / TECHNOLOGY ───────────────────────────────────────────────────
-    "TCS",
-    "INFY",
-    "WIPRO",
-    "HCLTECH",
-    "TECHM",
-    "LTM",         # LTIMindtree — correct Kite symbol
-    "MPHASIS",
-    "PERSISTENT",
-    "COFORGE",
-    "OFSS",        # ✅ NEW — Oracle Financial Services, 81 strikes, very liquid
-    "KPITTECH",    # ✅ NEW — KPIT Technologies, auto-tech software
+    "TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTM", "PERSISTENT",
+    "COFORGE", "OFSS",
 
     # ── AUTO & AUTO ANCILLARY ─────────────────────────────────────────────
-    "MARUTI",
-    # TATAMOTORS — unavailable in Kite NSE/NFO (check later)
-    "M&M",
-    "BAJAJ-AUTO",
-    "HEROMOTOCO",
-    "EICHERMOT",
-    "TVSMOTOR",
-    "ASHOKLEY",
-    "MOTHERSON",   # ✅ NEW — Samvardhana Motherson, 58 strikes, auto ancillary
-    "BOSCHLTD",    # ✅ NEW — Bosch India, 54 strikes
+    "MARUTI", "M&M", "BAJAJ-AUTO", "HEROMOTOCO", "EICHERMOT", "TVSMOTOR",
+    "ASHOKLEY", "MOTHERSON", "BOSCHLTD",
 
     # ── OIL & GAS ─────────────────────────────────────────────────────────
-    "RELIANCE",
-    "ONGC",
-    "BPCL",
-    "IOC",
-    "GAIL",
-    "HINDPETRO",
-    "PETRONET",    # ✅ NEW — Petronet LNG, 42 strikes
+    "RELIANCE", "ONGC", "BPCL", "IOC", "HINDPETRO",
 
     # ── METALS & MINING ───────────────────────────────────────────────────
-    "TATASTEEL",
-    "JSWSTEEL",
-    "HINDALCO",
-    "VEDL",
-    "HINDZINC",    # ✅ NEW — Hindustan Zinc, 33 strikes, Vedanta subsidiary
-    "JINDALSTEL",  # ✅ NEW — Jindal Steel & Power, 44 strikes
+    "TATASTEEL", "HINDALCO", "VEDL", "JINDALSTEL",
 
     # ── PHARMA & HEALTHCARE ───────────────────────────────────────────────
-    "SUNPHARMA",
-    "DRREDDY",
-    "CIPLA",
-    "DIVISLAB",
-    "AUROPHARMA",
-    "LUPIN",
-    "MANKIND",     # ✅ NEW — Mankind Pharma, 64 strikes, large cap
-    "APOLLOHOSP",  # ✅ NEW — Apollo Hospitals, 58 strikes
-    "MAXHEALTH",   # ✅ NEW — Max Healthcare, 44 strikes
-    "FORTIS",      # ✅ NEW — Fortis Healthcare, 30 strikes
-    "ZYDUSLIFE",   # ✅ NEW — Zydus Life Sciences, 47 strikes
+    "SUNPHARMA", "DRREDDY", "CIPLA", "LUPIN", "MANKIND", "APOLLOHOSP",
+    "MAXHEALTH",
 
     # ── FMCG & CONSUMER ───────────────────────────────────────────────────
-    "HINDUNILVR",
-    "ITC",
-    "NESTLEIND",
-    "BRITANNIA",
-    "DABUR",
-    "GODREJCP",
-    "MARICO",
-    "TATACONSUM",
-    "COLPAL",      # ✅ NEW — Colgate-Palmolive, 43 strikes
-    "VBL",         # ✅ NEW — Varun Beverages (Pepsi bottler), 41 strikes
-    "UNITDSPR",    # ✅ NEW — United Spirits, 51 strikes
+    "HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "DABUR", "MARICO",
+    "TATACONSUM", "VBL",
 
     # ── CAPITAL GOODS / INDUSTRIALS ───────────────────────────────────────
-    "LT",
-    "ABB",
-    "SIEMENS",
-    "BHEL",
-    "HAVELLS",
-    "POLYCAB",
-    "CGPOWER",     # ✅ NEW — CG Power & Industrial, 36 strikes, transformers
-    "DIXON",       # ✅ NEW — Dixon Technologies (electronics mfg), 55 strikes
-    "CONCOR",      # ✅ NEW — Container Corp (logistics), 77 strikes
+    "LT", "ABB", "SIEMENS", "BHEL", "HAVELLS", "CGPOWER", "DIXON",
 
     # ── POWER ─────────────────────────────────────────────────────────────
-    "NTPC",
-    "POWERGRID",
-    "TATAPOWER",
-    "ADANIPOWER",
-    "PFC",         # ✅ NEW — Power Finance Corp, 35 strikes
-    "RECLTD",      # ✅ NEW — REC Ltd, 32 strikes
-    "JSWENERGY",   # ✅ NEW — JSW Energy, 47 strikes
+    "NTPC", "POWERGRID", "ADANIPOWER", "PFC", "JSWENERGY",
 
     # ── TELECOM ───────────────────────────────────────────────────────────
     "BHARTIARTL",
 
     # ── CONSUMER / RETAIL / LIFESTYLE ─────────────────────────────────────
-    "TITAN",
-    "ASIANPAINT",
-    "PIDILITIND",
-    "TRENT",       # ✅ NEW — Tata Trent (Zudio/Westside), 37 strikes, hot stock
-    "DMART",       # ✅ NEW — Avenue Supermarts, 33 strikes
-    "JUBLFOOD",    # ✅ NEW — Jubilant FoodWorks (Domino's), 44 strikes
-    "INDIGO",      # ✅ NEW — IndiGo Airlines, 41 strikes
+    "TITAN", "ASIANPAINT", "PIDILITIND", "TRENT", "DMART", "JUBLFOOD",
+    "INDIGO",
 
     # ── CEMENT ────────────────────────────────────────────────────────────
-    "ULTRACEMCO",
-    "GRASIM",
-    "AMBUJACEM",   # ✅ NEW — Ambuja Cements, 30 strikes
+    "ULTRACEMCO", "GRASIM",
 
     # ── CONGLOMERATE / ADANI ──────────────────────────────────────────────
-    "ADANIENT",
-    "ADANIPORTS",
+    "ADANIENT", "ADANIPORTS",
 
     # ── REAL ESTATE ───────────────────────────────────────────────────────
-    "DLF",
-    "GODREJPROP",
-    "LODHA",       # ✅ NEW — Macrotech (Lodha), 41 strikes
+    "DLF", "LODHA",
 
-    # ── EXCHANGES & FINANCIAL SERVICES ────────────────────────────────────
-    "MCX",         # ✅ NEW — Multi Commodity Exchange, 33 strikes
-    "BSE",         # ✅ NEW — BSE Ltd, 45 strikes
+    # ── EXCHANGES ─────────────────────────────────────────────────────────
+    "MCX", "BSE",
 
     # ── NEW-AGE / INTERNET ────────────────────────────────────────────────
-    "ETERNAL",     # Zomato renamed to Eternal — correct Kite symbol, 40 strikes
+    "ETERNAL",
 
     # ── DEFENCE / PSU ─────────────────────────────────────────────────────
-    "HAL",
-    "BEL",
-    "COALINDIA",
-    "MAZDOCK",     # ✅ NEW — Mazagon Dock (defence shipyard), 56 strikes
+    "HAL", "BEL", "COALINDIA",
 ]
 FNO_UNIVERSE = list(dict.fromkeys(FNO_UNIVERSE))   # safety dedup
 
