@@ -42,6 +42,39 @@ ADMIN_PASS_HASH = hashlib.sha256(_env_pass.encode()).hexdigest() if _env_pass el
 # Sessions: {token: {"user": str, "role": "admin"|"subscriber", "expires": datetime}}
 _sessions = {}
 _sessions_lock = threading.Lock()
+_SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "vrl_web_sessions.json")
+
+def _save_sessions():
+    try:
+        with _sessions_lock:
+            data = {k: {"user": v["user"], "role": v["role"], "expires": v["expires"].isoformat()}
+                    for k, v in _sessions.items()}
+        os.makedirs(os.path.dirname(_SESSION_FILE), exist_ok=True)
+        with open(_SESSION_FILE, "w") as _sf:
+            json.dump(data, _sf)
+    except Exception:
+        pass
+
+def _load_sessions():
+    try:
+        if not os.path.isfile(_SESSION_FILE):
+            return
+        with open(_SESSION_FILE) as _sf:
+            data = json.load(_sf)
+        now = datetime.now()
+        loaded = 0
+        with _sessions_lock:
+            for k, v in data.items():
+                try:
+                    exp = datetime.fromisoformat(v["expires"])
+                    if exp > now:
+                        _sessions[k] = {"user": v["user"], "role": v["role"], "expires": exp}
+                        loaded += 1
+                except Exception:
+                    pass
+        print(f"[SESSION] Loaded {loaded} active sessions from disk")
+    except Exception:
+        pass
 
 # Login rate limit: {ip: [timestamps]}
 _login_attempts = {}
@@ -75,6 +108,7 @@ def _create_session(user, role="admin", days=30):
             "user": user, "role": role,
             "expires": datetime.now() + timedelta(days=days),
         }
+    _save_sessions()
     return token
 
 def _cleanup_sessions():
@@ -1419,6 +1453,7 @@ class H(BaseHTTPRequestHandler):
                 token = c["vrl_session"].value
                 with _sessions_lock:
                     _sessions.pop(token, None)
+                _save_sessions()
         except Exception:
             pass
         self.send_response(302)
@@ -1660,6 +1695,7 @@ if __name__=="__main__":
     except Exception as _e:
         print(f"[WARN] Could not sync static file: {_e}")
 
+    _load_sessions()
     _host = _bind_host()
     # ThreadingHTTPServer — each request handled in its own thread.
     # Single-threaded HTTPServer was causing the listen queue to fill
