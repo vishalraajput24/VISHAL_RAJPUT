@@ -1,0 +1,9 @@
+{
+  "_README": "Overrides for fno_strategy.py DEFAULT_CONFIG. Any key here wins; anything omitted falls back to the documented defaults in fno_strategy.py. Edit + save — no code change, no restart; picked up on the next scan/tick. Set 'mode' to 'naked' or 'spread' to paper-compare the two structures.",
+  "mode": "naked",
+  "min_score": 8,
+  "elite_score": 12,
+  "max_new_per_day": 4,
+  "max_open_total": 8,
+  "require_regime_align": true
+}

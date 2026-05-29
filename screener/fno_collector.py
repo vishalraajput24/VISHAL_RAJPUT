@@ -33,6 +33,8 @@ from colorama import Fore, Style, init
 import warnings
 warnings.filterwarnings("ignore")
 
+import fno_strategy as FS   # single source of truth: gate, regime, structure, caps
+
 init(autoreset=True)
 
 load_dotenv(os.path.expanduser("~/.env"))
@@ -370,7 +372,7 @@ def morning_scan(kite, nse_df, nfo_df):
 # ⏱️  15-MIN TICK — fast scan using cached technicals
 # =============================================================================
 
-def tick_scan(kite, nfo_df):
+def tick_scan(kite, nse_df, nfo_df):
     now      = datetime.now()
     ts       = now.strftime("%Y-%m-%d %H:%M")
     date_str = now.strftime("%Y-%m-%d")
@@ -405,157 +407,68 @@ def tick_scan(kite, nfo_df):
     new_entries  = 0
     signal_count = 0
 
+    # Intraday entries now use the SAME gate as the EOD scan (fno_strategy):
+    # regime + multi-factor score + liquidity + cross-day dedup + caps, applied
+    # one-at-a-time so a best-trade-in-between is caught (elite bypasses the daily
+    # cap) while choppy/low-conviction signals are rejected.
+    cfg    = FS.load_config()
+    regime = FS.compute_index_regime(kite, nse_df)
+    print(f"  Regime={regime['regime']} (call={'Y' if regime['allow_call'] else 'N'} "
+          f"put={'Y' if regime['allow_put'] else 'N'}) | mode={cfg['mode']}\n")
+
     for tech_data in qualified:
-        sym       = tech_data["symbol"]
-        direction = tech_data["direction"]
-        tech_pts  = tech_data["tech_score"]
+        sym  = tech_data["symbol"]
+        tech = FS.get_technicals(kite, nse_df, sym)
+        if tech is None:
+            time.sleep(0.2); continue
+        expiry = FS.get_nearest_expiry(nfo_df, sym, cfg)
+        opt = FS.get_option_chain(kite, nfo_df, sym, tech["price"], expiry) if expiry else None
+        if opt is None:
+            time.sleep(0.2); continue
 
-        # Update price from LTP
-        ltp_val = ltp_map.get(f"NSE:{sym}", {}).get("last_price", 0)
-        price   = float(ltp_val) if ltp_val else tech_data["price"]
+        # Telemetry: log the raw signal whether or not it becomes a trade
+        d_dbg, sc_dbg, sig_dbg, _ = FS.score_signal(tech, regime, opt, cfg)
+        append_signal({
+            "timestamp": ts, "date": date_str, "time": time_str, "symbol": sym,
+            "direction": d_dbg, "tech_score": sc_dbg, "opt_score": 0,
+            "total_score": sc_dbg, "price": tech["price"], "ema20": tech["ema20"],
+            "ema50": tech["ema50"], "rsi": tech["rsi"], "atr": tech["atr"],
+            "pcr": opt["pcr"], "max_pain": opt["max_pain"], "atm_strike": opt["atm"],
+            "ce_prem": 0, "pe_prem": 0, "ce_sym": "", "pe_sym": "",
+            "lot_size": opt["lot_size"], "signals": " | ".join(sig_dbg),
+        })
 
-        # BUG3 FIX: Recalculate tech direction with live price (cached EMA/RSI, live price)
-        live_tech = dict(tech_data)
-        live_tech["price"] = price
-        direction, tech_pts, _ = tech_score(live_tech)
-        if direction == "NEUTRAL":
-            time.sleep(0.3); continue
-
-        # Get option chain
-        expiry = get_nearest_expiry(nfo_df, sym)
-        if expiry is None: continue
-
-        opt = get_option_chain_fast(kite, nfo_df, sym, price, expiry)
-        if opt is None: continue
-
-        o_pts, o_sigs = opt_score(opt, direction, price)   # BUG1 FIX: pass live price
-        total         = tech_pts + o_pts
-
-        if total < MIN_SCORE_TO_LOG:
+        # Re-read tracker each time so caps/dedup see adds made earlier this tick
+        tracker_df = pd.read_csv(ENTRIES_FILE) if os.path.exists(ENTRIES_FILE) else None
+        setup, reason = FS.evaluate(sym, tech, opt, regime, tracker_df, cfg,
+                                    today=date_str, apply_caps=True)
+        if setup is None:
             time.sleep(0.3); continue
 
         signal_count += 1
+        new_entries  += 1
+        if tracker_df is None or len(tracker_df) == 0:
+            from vishal_fno_screener import TRACKER_COLS
+            tracker_df = pd.DataFrame(columns=TRACKER_COLS)
+        row = FS.setup_to_tracker_row(setup, date_str, rank=len(tracker_df) + 1)
+        edf = pd.concat([tracker_df, pd.DataFrame([row])], ignore_index=True)
+        edf.to_csv(ENTRIES_FILE, index=False)
 
-        # Select option symbol and premium
-        if direction == "CALL":
-            opt_sym  = opt["ce_sym"]
-            premium  = opt["ce_prem"]
-        else:
-            opt_sym  = opt["pe_sym"]
-            premium  = opt["pe_prem"]
-
-        sl_prem = round(premium * 0.65, 1)
-        t1_prem = round(premium * 1.50, 1)
-        t2_prem = round(premium * 1.80, 1)
-        atr     = tech_data["atr"]
-
-        # ── Log to signals CSV ─────────────────────────────────────────────
-        append_signal({
-            "timestamp"  : ts,
-            "date"       : date_str,
-            "time"       : time_str,
-            "symbol"     : sym,
-            "direction"  : direction,
-            "tech_score" : tech_pts,
-            "opt_score"  : o_pts,
-            "total_score": total,
-            "price"      : price,
-            "ema20"      : tech_data["ema20"],
-            "ema50"      : tech_data["ema50"],
-            "rsi"        : tech_data["rsi"],
-            "atr"        : atr,
-            "pcr"        : opt["pcr"],
-            "max_pain"   : opt["max_pain"],
-            "atm_strike" : opt["atm"],
-            "ce_prem"    : opt["ce_prem"],
-            "pe_prem"    : opt["pe_prem"],
-            "ce_sym"     : opt["ce_sym"],
-            "pe_sym"     : opt["pe_sym"],
-            "lot_size"   : opt["lot_size"],
-            "signals"    : tech_data["signals"] + "|" + "|".join(o_sigs),
+        append_history({
+            "event_time": ts, "date": date_str, "time": time_str, "symbol": sym,
+            "direction": setup["direction"], "option_symbol": setup["option_symbol"],
+            "entry_time": ts, "entry_premium": setup["entry_premium"],
+            "current_premium": setup["entry_premium"], "pnl_pct": 0.0, "pnl_rs": 0.0,
+            "lot_size": setup["lot_size"], "sl_premium": setup["sl_premium"],
+            "t1_premium": setup["t1_premium"], "t2_premium": setup["t2_premium"],
+            "event_type": "NEW_ENTRY", "hold_minutes": 0,
+            "notes": f"score={setup['score']} {setup['structure']} "
+                     f"regime={setup.get('regime','')}{' ELITE' if setup.get('elite') else ''}",
         })
-
-        # ── Check if already tracked ───────────────────────────────────────
-        already_tracked = False
-        if os.path.exists(ENTRIES_FILE):
-            edf = pd.read_csv(ENTRIES_FILE)
-            open_e = edf[edf["status"].str.startswith("OPEN", na=False)]
-            already_tracked = ((open_e["symbol"] == sym) &
-                               (open_e["direction"] == direction)).any()
-
-        # ── New entry if score >= threshold and not already tracked ────────
-        if total >= MIN_SCORE_ENTRY and not already_tracked and premium > 0:
-            new_entries += 1
-            lot_size     = opt["lot_size"]
-            investment   = round(premium * lot_size, 0)
-
-            # Save to entries tracker
-            if os.path.exists(ENTRIES_FILE):
-                edf = pd.read_csv(ENTRIES_FILE)
-            else:
-                from vishal_fno_screener import TRACKER_COLS
-                edf = pd.DataFrame(columns=TRACKER_COLS)
-
-            exp_str = expiry.strftime("%Y-%m-%d") if hasattr(expiry, "strftime") else str(expiry)
-            if direction == "CALL":
-                stock_sl = round(price - 1.5 * atr, 1)
-            else:
-                stock_sl = round(price + 1.5 * atr, 1)
-
-            new_row = {
-                "date_added"       : date_str,
-                "symbol"           : sym,
-                "direction"        : direction,
-                "option_symbol"    : opt_sym,
-                "strike"           : opt["atm"],
-                "expiry"           : exp_str,
-                "lot_size"         : lot_size,
-                "entry_premium"    : premium,
-                "sl_premium"       : sl_prem,
-                "t1_premium"       : t1_prem,
-                "t2_premium"       : t2_prem,
-                "stock_price"      : price,
-                "stock_sl"         : stock_sl,
-                "pcr"              : opt["pcr"],
-                "max_pain"         : opt["max_pain"],
-                "score"            : total,
-                "rank"             : len(edf) + 1,
-                "current_premium"  : premium,
-                "current_return_pct": 0.0,
-                "last_checked"     : date_str,
-                "status"           : "OPEN",
-                "lots"             : 1,
-                "investment"       : investment,
-                "pnl_rs"           : 0.0,
-            }
-            edf = pd.concat([edf, pd.DataFrame([new_row])], ignore_index=True)
-            edf.to_csv(ENTRIES_FILE, index=False)
-
-            # Log to history
-            append_history({
-                "event_time"    : ts,
-                "date"          : date_str,
-                "time"          : time_str,
-                "symbol"        : sym,
-                "direction"     : direction,
-                "option_symbol" : opt_sym,
-                "entry_time"    : ts,
-                "entry_premium" : premium,
-                "current_premium": premium,
-                "pnl_pct"       : 0.0,
-                "pnl_rs"        : 0.0,
-                "lot_size"      : lot_size,
-                "sl_premium"    : sl_prem,
-                "t1_premium"    : t1_prem,
-                "t2_premium"    : t2_prem,
-                "event_type"    : "NEW_ENTRY",
-                "hold_minutes"  : 0,
-                "notes"         : f"score={total} pcr={opt['pcr']} rsi={tech_data['rsi']:.0f}",
-            })
-
-            col = Fore.GREEN if direction == "CALL" else Fore.RED
-            print(f"  {col}🆕 NEW ENTRY  {sym:<12} {direction}  score={total}  prem=₹{premium}  pcr={opt['pcr']}{Style.RESET_ALL}")
-
+        col = Fore.GREEN if setup["direction"] == "CALL" else Fore.RED
+        print(f"  {col}🆕 NEW ENTRY  {sym:<12} {setup['direction']}  score={setup['score']}  "
+              f"{setup['structure']}  prem=₹{setup['entry_premium']}"
+              f"{'  ELITE*' if setup.get('elite') else ''}{Style.RESET_ALL}")
         time.sleep(0.4)
 
     # ── Update existing open entries ───────────────────────────────────────
@@ -574,9 +487,17 @@ def tick_scan(kite, nfo_df):
             lots     = int(_lots_v) if pd.notna(_lots_v) else 1
             entry_ts = str(row.get("date_added", date_str)) + " 09:15"
 
+            structure = str(row.get("structure", "NAKED"))
+            sell_sym  = str(row.get("sell_symbol", "") or "")
             try:
-                q   = kite.quote([f"NFO:{opt_sym}"])
-                ltp = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
+                if structure == "SPREAD" and sell_sym and sell_sym not in ("nan", ""):
+                    q = kite.quote([f"NFO:{opt_sym}", f"NFO:{sell_sym}"])
+                    long_ltp  = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
+                    short_ltp = float(q.get(f"NFO:{sell_sym}", {}).get("last_price", 0) or 0)
+                    ltp = round(long_ltp - short_ltp, 1)   # net spread value
+                else:
+                    q   = kite.quote([f"NFO:{opt_sym}"])
+                    ltp = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
             except Exception:
                 continue
 
@@ -848,7 +769,7 @@ def main():
     if mode == "--morning":
         morning_scan(kite, nse_df, nfo_df)
     elif mode == "--tick":
-        tick_scan(kite, nfo_df)
+        tick_scan(kite, nse_df, nfo_df)
     elif mode == "--entries":
         analysis_report()
     else:
