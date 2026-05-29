@@ -570,7 +570,8 @@ def tick_scan(kite, nfo_df):
             t1       = float(row["t1_premium"])
             t2       = float(row["t2_premium"])
             lot_size = int(row["lot_size"])
-            lots     = int(row.get("lots", 1))
+            _lots_v  = row.get("lots", 1)
+            lots     = int(_lots_v) if pd.notna(_lots_v) else 1
             entry_ts = str(row.get("date_added", date_str)) + " 09:15"
 
             try:
