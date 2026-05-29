@@ -544,13 +544,15 @@ _v8_shadow_dt = {
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
            "entry_tok": 0, "entry_strike": 0,
-           "sl_ts": 0.0},  # unix ts of last SL-HIT — blocks re-entry 1 min
+           "sl_ts": 0.0,  # unix ts of last SL-HIT — blocks re-entry 1 min
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
     "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
            "peak_price": 0.0, "peak_pts": 0.0, "live_entry": 0.0,
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
            "entry_tok": 0, "entry_strike": 0,
-           "sl_ts": 0.0},  # unix ts of last SL-HIT — blocks re-entry 1 min
+           "sl_ts": 0.0,  # unix ts of last SL-HIT — blocks re-entry 1 min
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
 }
 
 # Shadow Part 2 — buildup tracker (close > EMA9H, close < VWAP, RSI > 55 rising)
@@ -561,13 +563,15 @@ _v8_shadow_p2 = {
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
            "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
-           "exit_ts": 0.0},
+           "exit_ts": 0.0,
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
     "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
            "peak_price": 0.0, "peak_pts": 0.0,
            "shadow_sl": 0.0, "shadow_level": "INITIAL",
            "today_entry": 0.0, "today_date": "",
            "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
-           "exit_ts": 0.0},
+           "exit_ts": 0.0,
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
 }
 
 # ── V2 shadow trackers (A/B test: same entry, new exit logic) ──
@@ -3027,6 +3031,8 @@ def _strategy_loop(kite):
                                 "active": False, "entry_price": 0.0, "entry_time": "",
                                 "peak_price": 0.0, "peak_pts": 0.0,
                                 "shadow_sl": 0.0, "shadow_level": "INITIAL",
+                                "last_exit_pnl": _pnl_e, "last_exit_reason": _reason_e,
+                                "last_exit_ts": time.time(),
                             }
                             # BUG-A fix: set sl_ts on P1 SL-HIT so cooldown blocks re-entry 60s
                             if _reason_e == "SL-HIT" and _sd_label_e == "P1":
@@ -3125,6 +3131,8 @@ def _strategy_loop(kite):
                                     "shadow_sl": 0.0, "shadow_level": "INITIAL",
                                     "bucket_ts": _sh_1m_bk_ts,  # block re-fire on same candle
                                     "sl_ts": time.time() if reason == "SL-HIT" else _sh_ds.get("sl_ts", 0.0),
+                                    "last_exit_pnl": _fin_pnl, "last_exit_reason": reason,
+                                    "last_exit_ts": time.time(),
                                 })
                                 _save_shadow_state()
 
@@ -3234,6 +3242,8 @@ def _strategy_loop(kite):
                             "shadow_sl": round(_sh_ltp - 12, 1), "shadow_level": "INITIAL",
                             "today_entry": _sh_ltp, "today_date": str(now.date()),
                             "entry_tok": _sh_tok, "entry_strike": _sh_strike,
+                            "sl_ts": 0.0,  # clear stale cooldown/outcome from prior trade
+                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
                         })
                         # V2 tracker: same entry, new exit (dynamic trail + hard exit +40)
                         _v8_shadow_dt_v2[_sh_dir].update({
@@ -3447,6 +3457,8 @@ def _strategy_loop(kite):
                                     "peak_price": 0.0, "peak_pts": 0.0,
                                     "shadow_sl": 0.0, "shadow_level": "INITIAL", "p1_entry": 0.0,
                                     "bucket_ts": _s2_bk_ts,  # block re-fire on same candle
+                                    "last_exit_pnl": _s2_fin_pnl, "last_exit_reason": reason,
+                                    "last_exit_ts": time.time(),
                                 })
                                 _save_shadow_state()
 
@@ -3551,6 +3563,8 @@ def _strategy_loop(kite):
                             "today_entry": _s2_ltp, "today_date": str(now.date()),
                             "p1_entry": 0.0,
                             "entry_tok": _s2_tok, "entry_strike": _s2_strike,
+                            "exit_ts": 0.0,  # clear stale cooldown/outcome from prior trade
+                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
                         })
                         # V2 tracker: same entry, hard exit at +20
                         _v8_shadow_p2_v2[_s2_dir].update({
@@ -4967,6 +4981,8 @@ def _cmd_forceexit(args):
                     "active": False, "entry_price": 0.0, "entry_time": "",
                     "peak_price": 0.0, "peak_pts": 0.0,
                     "shadow_sl": 0.0, "shadow_level": "INITIAL",
+                    "last_exit_pnl": _spnl, "last_exit_reason": "FORCE-EXIT",
+                    "last_exit_ts": time.time(),
                 })
                 _shadow_closed.append(f"{_sd_label}-{_sdir}")
                 logger.warning(f"[CTRL] Force exit shadow {_sd_label} {_sdir} pnl={_spnl:+.1f}")
