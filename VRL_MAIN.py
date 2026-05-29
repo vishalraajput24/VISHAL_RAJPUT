@@ -621,7 +621,7 @@ _shadow_analysis = {
 def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
                          vwap_gap, other_vwap_gap, spot_adx, last_peaks,
                          ema9h_gap=0.0, xleg_buf=None, dte=0,
-                         fut_vwap_gap=0.0, spot_ema9=0.0, spot_ema21=0.0):
+                         fut_vwap_gap=0.0, spot_ema9=0.0, spot_ema21=0.0, bw=0.0):
     """Log all analysis flags at signal fire — no trade impact."""
     flags = []
 
@@ -673,17 +673,55 @@ def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
         _ema_align = "BULL" if spot_ema9 > spot_ema21 else "BEAR"
         _ema_note = f"SPOT_EMA_{_ema_align}(ema9={spot_ema9:.0f} ema21={spot_ema21:.0f})"
 
+    # ── EXCELLENT SCORE (0-100, LOG-ONLY — zero trade impact) ─────────────
+    # Composite of the confirmed winning DNA. This is a HYPOTHESIS under test,
+    # not a verdict: OI-wall proximity (~10 pts of edge) is NOT yet wired, so
+    # false positives during the open chop are EXPECTED — measuring them is the
+    # whole point of this shadow phase. Grades: A+>=80 A>=65 B>=50 C<50.
+    _es = 0
+    _es_parts = []
+    _aligned = False
+    if spot_ema9 > 0 and spot_ema21 > 0:
+        _aligned = ((direction == "CE" and spot_ema9 > spot_ema21) or
+                    (direction == "PE" and spot_ema9 < spot_ema21))
+    if _aligned:
+        _es += 28; _es_parts.append("trend")
+    if 0 < bw <= 6:
+        _es += 17; _es_parts.append("bw")
+    if 0.8 <= ema9h_gap <= 2.5:
+        _es += 17; _es_parts.append("gap+")
+    elif 2.5 < ema9h_gap <= 5.0:
+        _es += 10; _es_parts.append("gap")
+    elif ema9h_gap > 5.0 and _aligned:
+        _es += 5;  _es_parts.append("gapX")
+    elif 0 < ema9h_gap < 0.8:
+        _es += 8;  _es_parts.append("gapT")
+    if "XLEG_CONFIRMED" in _xleg_note:
+        _es += 18; _es_parts.append("xleg")
+    _trend_est = (fire_time.hour * 60 + fire_time.minute) >= 630   # past 10:30 open chop
+    _adx_ok = spot_adx >= 18
+    if _trend_est and _adx_ok:
+        _es += 10; _es_parts.append("trendOK")
+    elif _trend_est or _adx_ok:
+        _es += 5
+    if (direction == "PE" and fut_vwap_gap < 0) or (direction == "CE" and fut_vwap_gap > 0):
+        _es += 10; _es_parts.append("fut")
+    _grade = "A+" if _es >= 80 else ("A" if _es >= 65 else ("B" if _es >= 50 else "C"))
+    _es_tag = f"EXCELLENT={_es}({_grade})[{'+'.join(_es_parts)}]"
+
     _dte_tag = f"DTE={dte}"
     if flags:
         logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
                     f"FLAGS: {' | '.join(flags)}"
                     + (f" | {_xleg_note}" if _xleg_note else "")
-                    + (f" | {_ema_note}" if _ema_note else ""))
+                    + (f" | {_ema_note}" if _ema_note else "")
+                    + f" | {_es_tag}")
     else:
         logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
                     f"clean (no flags)"
                     + (f" | {_xleg_note}" if _xleg_note else "")
-                    + (f" | {_ema_note}" if _ema_note else ""))
+                    + (f" | {_ema_note}" if _ema_note else "")
+                    + f" | {_es_tag}")
 
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
@@ -3331,6 +3369,7 @@ def _strategy_loop(kite):
                             fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
+                            bw=_sh_bw,
                         )
                         # PDH/PDL/Pivot/VWAP filter data for this P1 shadow signal
                         try:
@@ -3644,6 +3683,7 @@ def _strategy_loop(kite):
                             fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
                             spot_ema9=float(spot_3m.get("ema9", 0)),
                             spot_ema21=float(spot_3m.get("ema21", 0)),
+                            bw=_s2_bw,
                         )
                         # PDH/PDL/Pivot/VWAP filter data for this P2 shadow signal
                         try:
