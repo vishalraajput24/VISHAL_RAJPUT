@@ -377,7 +377,7 @@ def _read_fno():
                         "strike":              r.get("strike",""),
                         "expiry":              r.get("expiry",""),
                         "lot_size":            int(r.get("lot_size",0) or 0),
-                        "lots":                int(r.get("lots",1) or 1),
+                        "lots":                (lambda v: int(float(v)) if v and str(v).strip() not in ('','nan') else 1)(r.get("lots","")),
                         "entry_premium":       float(r.get("entry_premium",0) or 0),
                         "sl_premium":          float(r.get("sl_premium",0) or 0),
                         "t1_premium":          float(r.get("t1_premium",0) or 0),
@@ -450,6 +450,9 @@ def _read_shadow():
                 "entry_strike": int(s.get("entry_strike", 0) or 0),
                 "today_entry":  float(s.get("today_entry", 0) or 0),
                 "bucket_ts":    str(s.get("bucket_ts", "")),
+                "sl_ts":        float(s.get("sl_ts", 0) or 0),
+                "exit_ts":      float(s.get("exit_ts", 0) or 0),
+                "today_date":   s.get("today_date", ""),
             }
         return {
             "saved_date": d.get("saved_date", ""),
@@ -545,7 +548,8 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 
 
 <script>
-function st(t){document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
+var _curTab='sig';
+function st(t){_curTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -595,7 +599,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var lot2=pos.lot2_active;
     var split=pos.lots_split;
     var activeLots=(lot1?1:0)+(lot2?1:0);
-    var pnlRs=Math.round(pnl*65*activeLots);
+    var pnlRs=Math.round(pnl*(pos.lot_size||65)*activeLots);
     var pnlClr=pnl>=0?'var(--gn)':'var(--rd)';
     // RSI progress bar
     var rsiPct=Math.min(100,(rsi/70)*100);
@@ -690,7 +694,6 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var rsi=sig.rsi||0;
     var rsiPrev=sig.rsi_prev||0;
     var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
-    var slopeClr=sig.g2b_slope_ok?'var(--gn)':'var(--rd)';
     var rsiDisplay=rsi>0?rsi:'—';
     var rsiPrevDisplay=rsiPrev>0?rsiPrev:'—';
 
@@ -702,12 +705,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 13-16)</div></div>';
     h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsiDisplay+' (prev '+rsiPrevDisplay+')</div></div>';
-    h+='<div class="row"><div class="k">EMA9L SLOPE</div><div class="v" style="color:'+slopeClr+'">'+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope+'</div></div>';
     // Gate rows
     h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
     h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
     h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
-    h+=gateRow('G2B SLOPE\u22650',  sig.g2b_slope_ok,      'slope '+(sig.ema9_low_slope>=0?'+':'')+sig.ema9_low_slope);
     h+=gateRow('G3 BW 13-16',  sig.g3_bw_ok,          'bw='+bw);
     h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
     h+=gateRow('G5 RSI 48-70\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
@@ -744,7 +745,10 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         h+='<div class="row"><div class="k">SL</div><div class="v">₹'+sig.shadow_sl.toFixed(1)+'  •  '+esc(sig.shadow_level||'—')+'</div></div>';
         if(sig.today_entry)h+='<div class="row"><div class="k">TODAY FIRST</div><div class="v">₹'+sig.today_entry.toFixed(1)+'</div></div>';
       } else {
-        if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+'</div></div>';
+        var outcome='';var outClr='#999';
+        if(sig.sl_ts>0&&sig.today_entry>0){outcome='SL-HIT';outClr='var(--rd)';}
+        else if(sig.exit_ts>0&&sig.today_entry>0){outcome='EXITED';outClr='var(--am)';}
+        if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+(outcome?' <span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.08);color:'+outClr+'">'+outcome+'</span>':'')+'</div></div>';
         else h+='<div style="font-size:10px;color:#aaa;padding:2px 0">No signal today</div>';
       }
       h+='</div>';
@@ -773,19 +777,17 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     html+='<div>';
     html+='<div style="font-size:9px;font-weight:700;color:var(--bl);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P1 · ABOVE VWAP</div>';
     html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
-    html+=gRow('G2','EMA9L rising','band lifting');
-    html+=gRow('G3','RSI 48-70, rising','momentum');
-    html+=gRow('G4','xleg 3/5 below','other side down');
-    html+=gRow('G5','LTP > VWAP','at fire');
+    html+=gRow('G2','RSI 48-70, rising','momentum');
+    html+=gRow('G3','xleg 3/5 below','other side down');
+    html+=gRow('G4','LTP > VWAP','at fire');
     html+='</div>';
     // P2
     html+='<div style="border-left:1px solid var(--bd)">';
     html+='<div style="font-size:9px;font-weight:700;color:var(--am);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P2 · BELOW VWAP</div>';
     html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
-    html+=gRow('G2','EMA9L rising','band lifting');
-    html+=gRow('G3','RSI > 55, rising','momentum');
-    html+=gRow('G4','xleg 3/5 below','other side down');
-    html+=gRow('G5','LTP <= VWAP','at fire');
+    html+=gRow('G2','RSI > 55, rising','momentum');
+    html+=gRow('G3','xleg 3/5 below','other side down');
+    html+=gRow('G4','LTP <= VWAP','at fire');
     html+='</div>';
     html+='</div>';
     html+='<div style="padding:4px 8px 2px;font-size:8px;color:var(--dm)">RSI floor under review - collecting 1-week data</div>';
@@ -938,7 +940,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     }).join('');
     var totalT=tw+tl,wr=totalT>0?Math.round((tw/totalT)*100):0;
     th='<div style="margin:8px;padding:8px 10px;background:var(--c2);border:1px solid var(--bd);border-radius:6px;font-weight:700;color:'+(cum>=0?'var(--gn)':'var(--rd)')+'">'+
-      (cum>=0?'+':'')+cum.toFixed(1)+'pts &#x20B9;'+cumRs+' | '+totalT+' trades | '+tw+'W '+tl+'L | WR '+wr+'%</div>';
+      (cum>=0?'+':'')+cum.toFixed(1)+'pts &#x20B9;'+(cumRs>=0?'+':'')+cumRs.toLocaleString('en-IN')+' | '+totalT+' trades | '+tw+'W '+tl+'L | WR '+wr+'%</div>';
     th+=tcards;
   }
   document.getElementById('p-trd').innerHTML=th;
@@ -1083,7 +1085,7 @@ async function renderFno(){
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
           '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>T2 &#x20B9;'+t2.toFixed(2)+'</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
         '</div>'+
-        '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
+        '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+(p.investment>0?' · Inv ₹'+Math.round(p.investment).toLocaleString('en-IN'):'')+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
         '</div>';
     }
     var allPos=openPos.concat(closedPos);
@@ -1125,7 +1127,9 @@ async function go(){
   try{
     const[d,t,z,mtf,sh]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]})),fetch('/api/shadow').then(r=>r.json()).catch(e=>({}))]);
     window._shadow=sh||{};
-    render(d||{},t||[],z||{zones:[]},mtf||{})
+    render(d||{},t||[],z||{zones:[]},mtf||{});
+    if(_curTab==='fno')renderFno();
+    if(_curTab==='wkly')renderWeekly();
   }catch(e){console.error(e)}
 }
 go();setInterval(go,10000);
