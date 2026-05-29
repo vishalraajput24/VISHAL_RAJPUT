@@ -2498,6 +2498,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "lot1_active": lot1["status"] == "active",
                 "lot2_active": lot2["status"] == "active",
                 "lots_split": False,
+                "lot_size": CFG.lot_size(),
             }
         else:
             position = {"in_trade": False}
@@ -2582,6 +2583,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "spot_ema21": spot_3m.get("ema21", 0),
                 "spot_spread": spot_3m.get("spread", 0),
                 "spot_rsi": spot_3m.get("rsi", 0),
+                "spot_adx_3m": round(float(spot_3m.get("adx", 0)), 1),
                 "hourly_rsi": round(hourly_rsi, 1),
                 "expiry": expiry.isoformat() if expiry else "",
                 "market_open": D.is_market_open(),
