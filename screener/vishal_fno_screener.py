@@ -31,6 +31,8 @@ from colorama import Fore, Style, init
 import warnings
 warnings.filterwarnings("ignore")
 
+import fno_strategy as FS   # single source of truth: gate, regime, structure, caps
+
 init(autoreset=True)
 
 # ── Load credentials ───────────────────────────────────────────────────────
@@ -931,16 +933,25 @@ def update_tracker_prices(kite):
 
         print(f"  {opt_sym:<30}", end="", flush=True)
 
+        structure = str(row.get("structure", "NAKED"))
+        sell_sym  = str(row.get("sell_symbol", "") or "")
         try:
-            q   = kite.quote([f"NFO:{opt_sym}"])
-            ltp = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
+            if structure == "SPREAD" and sell_sym and sell_sym not in ("nan", ""):
+                # spread value = long leg LTP - short leg LTP (vs entry net debit)
+                q = kite.quote([f"NFO:{opt_sym}", f"NFO:{sell_sym}"])
+                long_ltp  = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
+                short_ltp = float(q.get(f"NFO:{sell_sym}", {}).get("last_price", 0) or 0)
+                ltp = round(long_ltp - short_ltp, 1)
+            else:
+                q   = kite.quote([f"NFO:{opt_sym}"])
+                ltp = float(q.get(f"NFO:{opt_sym}", {}).get("last_price", 0) or 0)
         except Exception:
             print(f"{Fore.YELLOW}fetch failed{Style.RESET_ALL}")
             time.sleep(1)
             continue
 
         if ltp <= 0:
-            print(f"{Fore.YELLOW}LTP=0 (market closed / expired){Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}value<=0 (market closed / expired){Style.RESET_ALL}")
             continue
 
         ret_pct = round((ltp / entry - 1) * 100, 1)
@@ -1103,6 +1114,83 @@ def show_tracker_report():
 # 🚀  MAIN
 # =============================================================================
 
+def run_strategy_scan(kite, nse_df, nfo_df, universe):
+    """SINGLE SOURCE OF TRUTH scan. Market regime -> per-stock multi-factor gate
+    (fno_strategy.evaluate) -> rank qualified candidates -> apply daily/portfolio
+    caps in ranked order (elite trades get an extra slot) -> save. Replaces the
+    old per-side tech_score + get_trade_setup + blind top-3/top-3 flow."""
+    cfg   = FS.load_config()
+    today = date.today().isoformat()
+
+    regime = FS.compute_index_regime(kite, nse_df)
+    print(f"\n{Fore.CYAN}  MARKET REGIME: {regime['regime']}  "
+          f"(call={'Y' if regime['allow_call'] else 'N'} "
+          f"put={'Y' if regime['allow_put'] else 'N'})  {regime.get('detail','')}{Style.RESET_ALL}")
+    print(f"  Mode={cfg['mode'].upper()} | min_score={cfg['min_score']} elite={cfg['elite_score']} | "
+          f"caps: {cfg['max_new_per_day']}/day, {cfg['max_open_total']} open, "
+          f"Rs{cfg['max_capital_deploy']:,.0f}\n")
+
+    tracker_df = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else None
+
+    total = len(universe)
+    candidates, rejects = [], {}
+    for i, sym in enumerate(universe, 1):
+        print(f"  [{i:3}/{total}] {sym:<14}", end="", flush=True)
+        tech = FS.get_technicals(kite, nse_df, sym)
+        if tech is None:
+            print(f"{Fore.YELLOW}skip (no data){Style.RESET_ALL}"); time.sleep(0.3); continue
+        expiry = FS.get_nearest_expiry(nfo_df, sym, cfg)
+        opt = FS.get_option_chain(kite, nfo_df, sym, tech["price"], expiry) if expiry else None
+        setup, reason = FS.evaluate(sym, tech, opt, regime, tracker_df, cfg,
+                                    today=today, apply_caps=False)
+        if setup is None:
+            rejects[reason] = rejects.get(reason, 0) + 1
+            print(f"{Fore.YELLOW}{reason}{Style.RESET_ALL}")
+        else:
+            col = Fore.GREEN if setup["direction"] == "CALL" else Fore.RED
+            print(f"{col}{setup['direction']:<5} score={setup['score']} {setup['structure']} "
+                  f"prem=Rs{setup['entry_premium']}{' ELITE' if setup.get('elite') else ''}{Style.RESET_ALL}")
+            candidates.append(setup)
+        time.sleep(0.35)
+
+    top_rej = sorted(rejects.items(), key=lambda x: -x[1])[:6]
+    print(f"\n  Qualified: {len(candidates)} | top rejects: "
+          + ", ".join(f"{k}={v}" for k, v in top_rej))
+
+    accepted = FS.select_with_caps(candidates, tracker_df, cfg, today)
+    print(f"\n{Fore.GREEN}  ACCEPTED {len(accepted)} trade(s) after caps:{Style.RESET_ALL}")
+    for s in sorted(accepted, key=lambda x: -x["score"]):
+        tag = " ELITE*" if s.get("elite") else ""
+        print(f"    {s['direction']:<5} {s['symbol']:<12} score={s['score']:<3} {s['structure']:<6} "
+              f"entry=Rs{s['entry_premium']:<7} SL=Rs{s['sl_premium']} T1=Rs{s['t1_premium']}{tag}")
+
+    if accepted:
+        save_setups(accepted, today)
+    else:
+        print(f"  {Fore.YELLOW}No trade cleared the gate today — capital protected, "
+              f"not forced.{Style.RESET_ALL}")
+
+
+def save_setups(accepted, today=None):
+    """Write accepted setups to the tracker, replacing today's prior rows. Keeps
+    the existing TRACKER_COLS plus new structure/spread/elite columns so the
+    dashboard and update_tracker_prices keep working."""
+    today = today or date.today().isoformat()
+    df = None
+    if os.path.exists(TRACKER_FILE):
+        df = pd.read_csv(TRACKER_FILE)
+        if today in df["date_added"].astype(str).values:
+            df = df[df["date_added"].astype(str) != today]
+            print(f"\n{Fore.YELLOW}🔄  Replacing today's rows with fresh scan{Style.RESET_ALL}")
+
+    rows = [FS.setup_to_tracker_row(s, today, rank)
+            for rank, s in enumerate(sorted(accepted, key=lambda x: -x["score"]), 1)]
+    new_df = pd.DataFrame(rows)
+    out = pd.concat([df, new_df], ignore_index=True) if (df is not None and len(df)) else new_df
+    out.to_csv(TRACKER_FILE, index=False)
+    print(f"\n{Fore.GREEN}✅ Saved {len(rows)} trade(s) to tracker: {TRACKER_FILE}{Style.RESET_ALL}")
+
+
 def main():
     if "--help" in sys.argv:
         print(__doc__)
@@ -1139,133 +1227,8 @@ def main():
     universe = FNO_UNIVERSE[:30] if quick else FNO_UNIVERSE
     total    = len(universe)
 
-    print(f"\n{'─'*68}")
-    print(f"  PHASE 1 — Technical Scan ({total} stocks)")
-    print(f"{'─'*68}\n")
-
-    # ── Phase 1: Technical scan ────────────────────────────────────────────
-    tech_qualified = []
-
-    for i, sym in enumerate(universe, 1):
-        print(f"  [{i:3}/{total}] {sym:<14}", end="", flush=True)
-
-        tech = get_technicals(kite, nse_df, sym)
-        if tech is None:
-            print(f"{Fore.YELLOW}─ skip (no data){Style.RESET_ALL}")
-            time.sleep(0.3)
-            continue
-
-        direction, score, signals = tech_score(tech)
-
-        if direction == "CALL":
-            col = Fore.GREEN
-        elif direction == "PUT":
-            col = Fore.RED
-        else:
-            col = Fore.WHITE
-
-        print(f"{col}{direction:<8}{Style.RESET_ALL}"
-              f"  RSI={tech['rsi']:4.0f}  "
-              f"EMA20=₹{tech['ema20']:,.0f}  "
-              f"ATR={tech['atr']:.1f}  "
-              f"score={score}")
-
-        if direction != "NEUTRAL" and score >= 3:
-            tech["direction"] = direction
-            tech["tech_score"] = score
-            tech["signals"]   = signals
-            tech_qualified.append(tech)
-
-        time.sleep(0.35)    # Kite rate limit ~3 req/sec
-
-    print(f"\n  ✅ Phase 1 done — {len(tech_qualified)}/{total} stocks qualified\n")
-
-    if not tech_qualified:
-        print(f"{Fore.YELLOW}No technical setups found today. Market may be choppy.{Style.RESET_ALL}")
-        return
-
-    # ── Phase 2: Option chain ──────────────────────────────────────────────
-    print(f"{'─'*68}")
-    print(f"  PHASE 2 — Option Chain Analysis ({len(tech_qualified)} stocks)")
-    print(f"{'─'*68}\n")
-
-    setups = []
-
-    for tech in tech_qualified:
-        sym       = tech["symbol"]
-        price     = tech["price"]
-        direction = tech["direction"]
-
-        print(f"  {sym:<14}", end="", flush=True)
-
-        expiry = get_nearest_expiry(nfo_df, sym)
-        if expiry is None:
-            print(f"{Fore.YELLOW}no expiry found{Style.RESET_ALL}")
-            continue
-
-        opt_chain = get_option_chain_data(kite, nfo_df, sym, price, expiry)
-        if opt_chain is None:
-            print(f"{Fore.YELLOW}option chain failed{Style.RESET_ALL}")
-            continue
-
-        setup = get_trade_setup(
-            tech, opt_chain, direction,
-            tech["signals"], tech["tech_score"]
-        )
-
-        if setup is None:
-            print(f"{Fore.YELLOW}no valid premium{Style.RESET_ALL}")
-            continue
-
-        col = Fore.GREEN if direction == "CALL" else Fore.RED
-        print(f"{col}{direction:<6}{Style.RESET_ALL}  "
-              f"PCR={opt_chain['pcr']}  "
-              f"MaxPain=₹{opt_chain['max_pain']:.0f}  "
-              f"Prem=₹{setup['premium']:.1f}  "
-              f"score={setup['total_score']}")
-
-        setups.append(setup)
-        time.sleep(0.5)
-
-    # ── Phase 3: Rank & Display ────────────────────────────────────────────
-    if not setups:
-        print(f"\n{Fore.YELLOW}No valid option setups found today.{Style.RESET_ALL}")
-        return
-
-    setups.sort(key=lambda x: x["total_score"], reverse=True)
-
-    call_setups = [s for s in setups if s["direction"] == "CALL"][:5]
-    put_setups  = [s for s in setups if s["direction"] == "PUT"][:5]
-    # Top 3 only for display + tracking
-    top3_calls  = call_setups[:3]
-    top3_puts   = put_setups[:3]
-    all_top     = top3_calls + top3_puts
-
-    # ── CALL setups ────────────────────────────────────────────────────────
-    if top3_calls:
-        print(f"\n\n{Fore.GREEN}{'█'*68}")
-        print(f"  📈  TOP 3 CALL SETUPS")
-        print(f"{'█'*68}{Style.RESET_ALL}")
-        for i, s in enumerate(top3_calls, 1):
-            display_setup(i, s)
-
-    # ── PUT setups ─────────────────────────────────────────────────────────
-    if top3_puts:
-        print(f"\n\n{Fore.RED}{'█'*68}")
-        print(f"  📉  TOP 3 PUT SETUPS")
-        print(f"{'█'*68}{Style.RESET_ALL}")
-        for i, s in enumerate(top3_puts, 1):
-            display_setup(i, s)
-
-    # ── Quick reference table ──────────────────────────────────────────────
-    print(f"\n{Fore.CYAN}{'='*68}")
-    print(f"  📋  QUICK REFERENCE TABLE  (Top 3 CALL + Top 3 PUT)")
-    print(f"{'='*68}{Style.RESET_ALL}\n")
-    display_summary_table(all_top)
-
-    # ── Save to tracker ────────────────────────────────────────────────────
-    if all_top:
-        save_to_tracker(top3_calls, top3_puts)
+    # ── New single-source-of-truth scan (regime + multi-factor gate + caps) ──
+    run_strategy_scan(kite, nse_df, nfo_df, universe)
 
     # ── Trading rules reminder ─────────────────────────────────────────────
     print(f"\n{Fore.CYAN}{'='*68}")
