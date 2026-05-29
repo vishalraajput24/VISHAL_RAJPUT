@@ -453,6 +453,9 @@ def _read_shadow():
                 "sl_ts":        float(s.get("sl_ts", 0) or 0),
                 "exit_ts":      float(s.get("exit_ts", 0) or 0),
                 "today_date":   s.get("today_date", ""),
+                "last_exit_pnl":    float(s.get("last_exit_pnl", 0) or 0),
+                "last_exit_reason": s.get("last_exit_reason", ""),
+                "last_exit_ts":     float(s.get("last_exit_ts", 0) or 0),
             }
         return {
             "saved_date": d.get("saved_date", ""),
@@ -746,7 +749,12 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         if(sig.today_entry)h+='<div class="row"><div class="k">TODAY FIRST</div><div class="v">₹'+sig.today_entry.toFixed(1)+'</div></div>';
       } else {
         var outcome='';var outClr='#999';
-        if(sig.sl_ts>0&&sig.today_entry>0){outcome='SL-HIT';outClr='var(--rd)';}
+        if(sig.last_exit_reason&&sig.today_entry>0){
+          var lp=sig.last_exit_pnl||0;
+          outClr=lp>0?'var(--gn)':(lp<0?'var(--rd)':'#999');
+          var rtag=sig.last_exit_reason==='SL-HIT'?(lp>=0?'TRAIL':'SL'):sig.last_exit_reason;
+          outcome=(lp>=0?'+':'')+lp.toFixed(0)+' '+rtag;
+        } else if(sig.sl_ts>0&&sig.today_entry>0){outcome='SL-HIT';outClr='var(--rd)';}
         else if(sig.exit_ts>0&&sig.today_entry>0){outcome='EXITED';outClr='var(--am)';}
         if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+(outcome?' <span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.08);color:'+outClr+'">'+outcome+'</span>':'')+'</div></div>';
         else h+='<div style="font-size:10px;color:#aaa;padding:2px 0">No signal today</div>';
