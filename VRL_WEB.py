@@ -432,6 +432,8 @@ def _read_weekly():
                             "rs_vs_nifty":   float(r.get("rs_vs_nifty",0) or 0),
                             "crash_flag":    int(float(r.get("crash_flag",0) or 0)),
                             "mon_status":    r.get("mon_status",""),
+                            "weeks_as_pick": int(float(r.get("weeks_as_pick",1) or 1)),
+                            "reconfirmed":   r.get("reconfirmed",""),
                         })
                     except Exception: pass
     except Exception: pass
@@ -986,6 +988,8 @@ async function renderWeekly(){
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
         '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">#'+p.rank+' '+esc(p.symbol)+'</span> '+
         '<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+gradeClr(p.grade)+'">'+esc(p.grade)+'</span>'+
+        ((p.weeks_as_pick||1)>=2?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;margin-left:3px;background:rgba(245,158,11,.15);color:var(--am)" title="weeks it has stayed a top pick">★ '+p.weeks_as_pick+'w</span>':'')+
+        (String(p.reconfirmed||'').indexOf('dropped')>=0?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;margin-left:3px;background:rgba(248,113,113,.15);color:var(--rd)" title="fell out of this week’s screen">✗ dropped</span>':'')+
         '<div style="font-size:10px;color:var(--dm);margin-top:2px">'+esc(p.name)+'</div></div>'+
         '<div style="text-align:right">'+
         (hasCurr?'<div style="font-size:9px;color:var(--dm)">NOW</div><div style="font-size:18px;font-weight:700;color:'+retClr+'">'+(currRet>=0?'+':'')+currRet.toFixed(1)+'%</div><div style="font-size:9px;color:var(--dm)">&#x20B9;'+currPrice.toFixed(0)+'</div>':
