@@ -426,6 +426,12 @@ def _read_weekly():
                             "status":        r.get("status",""),
                             "exit_price":    float(r.get("exit_price",0) or 0),
                             "actual_return": float(r.get("actual_return",0) or 0),
+                            "current_price":      float(r.get("current_price",0) or 0),
+                            "current_return_pct": float(r.get("current_return_%",0) or 0),
+                            "trail_sl":      float(r.get("trail_sl",0) or 0),
+                            "rs_vs_nifty":   float(r.get("rs_vs_nifty",0) or 0),
+                            "crash_flag":    int(float(r.get("crash_flag",0) or 0)),
+                            "mon_status":    r.get("mon_status",""),
                         })
                     except Exception: pass
     except Exception: pass
@@ -995,6 +1001,10 @@ async function renderWeekly(){
         '<span>ROE '+p.roe+'%  ROCE '+p.roce+'%  Score '+p.score+'/15</span>'+
         '<span style="padding:2px 6px;border-radius:3px;background:'+statusBg+';color:'+statusClr+'">'+statusStr+'</span></div>'+
         '<div style="height:4px;background:var(--c2);border-radius:2px"><div style="height:100%;width:'+scorePct.toFixed(0)+'%;background:'+scoreClr+';border-radius:2px"></div></div>'+
+        (p.mon_status?'<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd)">'+
+          '<span style="font-weight:700;color:'+(p.crash_flag?'var(--rd)':(String(p.mon_status).indexOf("⚠")>=0?'var(--am)':'var(--dm)'))+'">'+(p.crash_flag?"🔴 ":"")+esc(p.mon_status)+'</span>'+
+          '<span style="color:var(--dm)">trail SL &#x20B9;'+(p.trail_sl||0).toFixed(0)+' · RS '+((p.rs_vs_nifty||0)>=0?"+":"")+(p.rs_vs_nifty||0).toFixed(1)+'</span>'+
+          '</div>':'')+
         (p.last_updated?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_updated)+'</div>':'')+
         '</div>';
     }).join('');
