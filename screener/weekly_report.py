@@ -52,55 +52,81 @@ def get_current_price(symbol):
 # =============================================================================
 
 def update_prices():
-    """Fetch current price for all OPEN picks and update status."""
+    """Refresh current price + status for every LIVE pick.
+
+    Two correctness rules:
+      * Per-ROW (per weekly cohort): a symbol recurs across weeks (the tracker
+        appends a new cohort every Sunday), so each cohort's return is computed
+        against its OWN entry price — not the first cohort's.
+      * T1 (1Y, +25%) is a MILESTONE, not an exit: keep tracking the pick toward
+        the 3Y target. Only SL-HIT or T3-HIT are terminal (stop updating).
+    """
     if not os.path.exists(TRACKER_FILE):
         print("No tracker file found. Run screener first.")
         return
 
-    df      = pd.read_csv(TRACKER_FILE)
-    open_df = df[df["status"].str.startswith("OPEN", na=False)]
-    unique  = open_df["symbol"].unique()
+    df = pd.read_csv(TRACKER_FILE)
 
-    print(f"Updating prices for {len(unique)} open positions...\n")
+    # A fresh screener cohort has no tracking columns yet; .at won't create them.
+    for _c in ("current_price", "current_return_%", "last_updated"):
+        if _c not in df.columns:
+            df[_c] = pd.NA
+    df["last_updated"] = df["last_updated"].astype("object")  # holds date strings
 
-    for sym in unique:
+    def _terminal(s):
+        s = str(s)
+        return ("SL-HIT" in s) or ("T3-HIT" in s)
+
+    live_idx = df.index[~df["status"].map(_terminal)]
+    if len(live_idx) == 0:
+        print("No live positions to update.")
+        return
+
+    syms = list(dict.fromkeys(df.loc[live_idx, "symbol"]))   # unique, order-preserving
+    print(f"Updating {len(live_idx)} live position(s) across {len(syms)} symbol(s)...\n")
+
+    # Fetch each symbol's price ONCE so duplicate cohorts don't double-scrape.
+    price_cache = {}
+    for sym in syms:
         print(f"  {sym:<15}", end="", flush=True)
-        price = get_current_price(sym)
-        if price is None:
-            print(f"{Fore.YELLOW}price not found{Style.RESET_ALL}")
-            time.sleep(1)
+        p = get_current_price(sym)
+        price_cache[sym] = p
+        print(f"{Fore.YELLOW}price not found{Style.RESET_ALL}" if p is None
+              else f"{Fore.GREEN}₹{p}{Style.RESET_ALL}")
+        time.sleep(2)
+
+    updated = 0
+    for idx in live_idx:                       # one row = one cohort entry
+        sym   = df.at[idx, "symbol"]
+        price = price_cache.get(sym)
+        try:
+            entry = float(df.at[idx, "entry_price"]); sl = float(df.at[idx, "sl"])
+            t1    = float(df.at[idx, "target_1y"]);   t3 = float(df.at[idx, "target_3y"])
+        except (TypeError, ValueError):
+            continue
+        if price is None or entry <= 0:
             continue
 
-        # Get all rows for this symbol
-        mask        = (df["symbol"] == sym) & (df["status"].str.startswith("OPEN", na=False))
-        entry_price = df.loc[mask, "entry_price"].values[0]
-        sl          = df.loc[mask, "sl"].values[0]
-        t1          = df.loc[mask, "target_1y"].values[0]
-        t3          = df.loc[mask, "target_3y"].values[0]
+        chg    = round((price / entry - 1) * 100, 1)        # vs THIS cohort's entry
+        hit_t1 = str(df.at[idx, "status"]).startswith("T1")  # already past T1 milestone
 
-        chg = round((price / entry_price - 1) * 100, 1)
-
-        # Determine status
         if price <= sl:
-            new_status = "SL-HIT ❌"
+            new_status = "SL-HIT ❌"                         # terminal — exit
         elif price >= t3:
-            new_status = "T3-HIT 🔥"
-        elif price >= t1:
-            new_status = "T1-HIT ✅"
+            new_status = "T3-HIT 🔥"                         # terminal — full multibagger
+        elif price >= t1 or hit_t1:
+            new_status = f"T1✅ ({chg:+.1f}%)"               # milestone — keep riding to T3
         else:
             new_status = f"OPEN ({chg:+.1f}%)"
 
-        df.loc[mask, "current_price"]   = price
-        df.loc[mask, "current_return_%"] = chg
-        df.loc[mask, "last_updated"]    = date.today().isoformat()
-        df.loc[mask, "status"]          = new_status
-
-        color = Fore.GREEN if chg > 0 else Fore.RED
-        print(f"{color}₹{price} ({chg:+.1f}%) → {new_status}{Style.RESET_ALL}")
-        time.sleep(2)
+        df.at[idx, "current_price"]    = price
+        df.at[idx, "current_return_%"] = chg
+        df.at[idx, "last_updated"]     = date.today().isoformat()
+        df.at[idx, "status"]           = new_status
+        updated += 1
 
     df.to_csv(TRACKER_FILE, index=False)
-    print(f"\n{Fore.GREEN}✅ Tracker updated: {TRACKER_FILE}{Style.RESET_ALL}")
+    print(f"\n{Fore.GREEN}✅ Tracker updated — {updated} live row(s): {TRACKER_FILE}{Style.RESET_ALL}")
 
 
 # =============================================================================
