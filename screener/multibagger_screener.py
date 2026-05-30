@@ -531,52 +531,77 @@ def rank_stocks(passed_stocks):
 # =============================================================================
 
 def update_tracker(top10):
-    """Save top 20 picks to weekly tracker CSV with entry date, SL, targets."""
+    """Maintain a ONE-ROW-PER-STOCK holdings list.
+
+    A multibagger is bought once and held for years, so a weekly re-pick is a
+    RE-CONFIRMATION of an existing holding — not a new buy. So:
+      * a genuinely new stock -> add a holding row
+      * an already-held stock -> just bump last_screened + weeks_as_pick
+      * a held stock that DROPS OUT of this week's screen -> flag it
+        (✗ dropped) — an early thesis-weakening signal for the monitor.
+    This keeps the tracker a true holdings list instead of ballooning by 20 rows
+    every week.
+    """
     today = date.today().isoformat()
-    rows = []
 
-    # Check if we already saved this week
-    if os.path.exists(TRACKER_FILE):
-        existing = pd.read_csv(TRACKER_FILE)
-        if today in existing["date_added"].values:
-            print(f"{Fore.YELLOW}Tracker already has entry for {today} — skipping{Style.RESET_ALL}")
-            return
+    df = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else pd.DataFrame()
+    for c in ("weeks_as_pick", "last_screened", "reconfirmed"):
+        if c not in df.columns:
+            df[c] = pd.NA
+    if len(df):
+        df["last_screened"] = df["last_screened"].astype("object")
+        df["reconfirmed"]   = df["reconfirmed"].astype("object")
 
+    def _held(s):  # still a live holding (OPEN or past the T1 milestone)
+        s = str(s)
+        return s.startswith("OPEN") or s.startswith("T1")
+
+    held = {}
+    if len(df):
+        for i in df.index[df["status"].map(_held)]:
+            held.setdefault(df.at[i, "symbol"], i)   # earliest live row per symbol
+    picked_today = {s["symbol"] for s in top10}
+
+    new_rows = []; added = 0; reconf = 0
     for rank, s in enumerate(top10, 1):
-        tgts = calc_targets(s)
-        rows.append({
-            "date_added"    : today,
-            "rank"          : rank,
-            "symbol"        : s["symbol"],
-            "name"          : s.get("name","")[:30],
-            "entry_price"   : s.get("price"),
-            "sl"            : tgts.get("sl"),
-            "target_1y"     : tgts.get("t1"),
-            "target_3y"     : tgts.get("t2"),
-            "target_5y"     : tgts.get("t3"),
-            "t3_upside_pct" : tgts.get("t3_pct"),
-            "roe"           : s.get("roe"),
-            "roce"          : s.get("roce"),
-            "profit_gr_3y"  : s.get("profit_growth_3y"),
-            "de"            : s.get("debt_equity"),
-            "promoter"      : s.get("promoter_holding"),
-            "peg"           : s.get("peg"),
-            "score"         : s.get("_score"),
-            "grade"         : grade(s.get("_score",0)),
-            "status"        : "OPEN",
-            "exit_price"    : None,
-            "exit_date"     : None,
-            "actual_return" : None,
-        })
+        sym = s["symbol"]
+        if sym in held:                              # re-confirm existing holding
+            i = held[sym]
+            if str(df.at[i, "last_screened"]) != today:   # idempotent per day
+                try:    prev = int(float(df.at[i, "weeks_as_pick"]))
+                except (TypeError, ValueError): prev = 1
+                df.at[i, "weeks_as_pick"] = prev + 1
+            df.at[i, "last_screened"] = today
+            df.at[i, "reconfirmed"]   = "✓ " + today
+            reconf += 1
+        else:                                        # genuinely new holding
+            tgts = calc_targets(s)
+            new_rows.append({
+                "date_added": today, "rank": rank, "symbol": sym,
+                "name": s.get("name","")[:30], "entry_price": s.get("price"),
+                "sl": tgts.get("sl"), "target_1y": tgts.get("t1"),
+                "target_3y": tgts.get("t2"), "target_5y": tgts.get("t3"),
+                "t3_upside_pct": tgts.get("t3_pct"), "roe": s.get("roe"),
+                "roce": s.get("roce"), "profit_gr_3y": s.get("profit_growth_3y"),
+                "de": s.get("debt_equity"), "promoter": s.get("promoter_holding"),
+                "peg": s.get("peg"), "score": s.get("_score"),
+                "grade": grade(s.get("_score", 0)), "status": "OPEN",
+                "exit_price": None, "exit_date": None, "actual_return": None,
+                "weeks_as_pick": 1, "last_screened": today, "reconfirmed": "✓ " + today,
+            })
+            added += 1
 
-    new_df = pd.DataFrame(rows)
-    if os.path.exists(TRACKER_FILE):
-        old_df = pd.read_csv(TRACKER_FILE)
-        combined = pd.concat([old_df, new_df], ignore_index=True)
-    else:
-        combined = new_df
-    combined.to_csv(TRACKER_FILE, index=False)
-    print(f"{Fore.GREEN}✅ Tracker updated: {TRACKER_FILE}{Style.RESET_ALL}")
+    dropped = 0                                       # held but not re-picked this week
+    for sym, i in held.items():
+        if sym not in picked_today:
+            df.at[i, "reconfirmed"] = "✗ dropped " + today
+            dropped += 1
+
+    if new_rows:
+        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+    df.to_csv(TRACKER_FILE, index=False)
+    print(f"{Fore.GREEN}✅ Holdings: +{added} new, {reconf} re-confirmed, "
+          f"{dropped} dropped-from-screen{Style.RESET_ALL}")
 
 
 def show_tracker_report():
