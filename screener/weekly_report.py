@@ -186,15 +186,16 @@ def show_report():
     print(f"  Still open          : {total_picks - closed}")
     print(f"  Win rate (closed)   : {win_pct}%")
     print()
-    if total_picks >= 10:
+    if closed >= 10:
         if isinstance(win_pct, float) and win_pct >= 60:
-            print(f"{Fore.GREEN}✅ SCREENER IS WORKING — Win rate {win_pct}% over {total_picks} picks{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ SCREENER IS WORKING — Win rate {win_pct}% over {closed} closed{Style.RESET_ALL}")
         elif isinstance(win_pct, float) and win_pct >= 40:
             print(f"{Fore.YELLOW}⚠️  SCREENER MARGINAL — Win rate {win_pct}% — review filters{Style.RESET_ALL}")
         else:
             print(f"{Fore.RED}❌ SCREENER UNDERPERFORMING — Win rate {win_pct}% — tighten filters{Style.RESET_ALL}")
     else:
-        print(f"{Fore.YELLOW}📊 Need at least 10 closed trades to judge screener quality (currently {closed} closed){Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}📊 Need at least 10 closed trades to judge screener quality "
+              f"({closed} closed / {total_picks} tracked, avg unrealized shown above){Style.RESET_ALL}")
 
 
 # =============================================================================
