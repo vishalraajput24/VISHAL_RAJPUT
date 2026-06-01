@@ -146,6 +146,7 @@ DEFAULT_STATE = {
 
 state   = deepcopy(DEFAULT_STATE)
 _running = True
+_last_health_log_ts = 0.0   # throttle for intraday [MAIN] Token health re-log
 
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
@@ -2655,7 +2656,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
 
 def _strategy_loop(kite):
-    global _running
+    global _running, _last_health_log_ts
     today_str = date.today().isoformat()
     logger.info("[MAIN] Strategy loop started")
     os.makedirs(os.path.expanduser("~/state"), exist_ok=True)
@@ -2711,7 +2712,29 @@ def _strategy_loop(kite):
     else:
         logger.warning("[MAIN] Expiry not resolved on startup — will retry in loop")
 
+    _last_health_log_ts = time.time()   # startup health already logged; first loop re-log in 30 min
     while _running:
+        # ── intraday Token-health refresh (every 30 min; startup check was one-shot) ──
+        try:
+            _hb_now = time.time()
+            if _hb_now - _last_health_log_ts >= 1800:
+                _last_health_log_ts = _hb_now
+                _hb_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                with D._tick_lock:
+                    _hb_e = D._ticks.get(int(D.NIFTY_SPOT_TOKEN))
+                if D.is_market_open() and _hb_spot > 0:
+                    _hb_ws = "WS: ✅ tick=" + str(round(_hb_spot, 1))
+                elif _hb_e:
+                    _hb_ws = ("WS: 💤 market closed (last tick "
+                              + str(int((_hb_now - _hb_e["ts"]) / 60)) + "m ago at "
+                              + str(round(_hb_e["ltp"], 1)) + ")")
+                else:
+                    _hb_ws = "WS: 💤 no ticks yet"
+                logger.info("[MAIN] Token health: Token: ✅ | Spot: "
+                            + (("✅ " + str(round(_hb_spot, 1))) if _hb_spot > 0 else "⚠️ —")
+                            + " | " + _hb_ws)
+        except Exception:
+            pass
         try:
             now   = datetime.now()
             today = date.today()
