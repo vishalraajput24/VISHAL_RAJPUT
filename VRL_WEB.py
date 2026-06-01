@@ -701,7 +701,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     if(cd&&cd.remaining>0){vclr='var(--am)';verdict='\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked';}
 
     var bw=sig.band_width||0;
-    var bwClr=(bw>=13&&bw<=16)?'var(--gn)':'var(--rd)';
+    var bwp=sig.bw_pct||0;
+    var bwClr=(bwp>=7&&bwp<=11)?'var(--gn)':'var(--rd)';
     var rsi=sig.rsi||0;
     var rsiPrev=sig.rsi_prev||0;
     var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
@@ -713,14 +714,14 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // Raw values
     h+='<div class="row"><div class="k">CLOSE</div><div class="v">'+(sig.close||0)+'</div></div>';
     h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
-    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bw+' pts (need 13-16)</div></div>';
+    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bwp+'% &nbsp;·&nbsp; '+bw+'pts (need 7-11%)</div></div>';
     h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
     h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsiDisplay+' (prev '+rsiPrevDisplay+')</div></div>';
     // Gate rows
     h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
     h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
     h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
-    h+=gateRow('G3 BW 13-16',  sig.g3_bw_ok,          'bw='+bw);
+    h+=gateRow('G3 BW 7-11%',  sig.g3_bw_ok,          bwp+'% ('+bw+'pts)');
     h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
     h+=gateRow('G5 RSI 48-70\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
     if(sig.g6_stochrsi!=null){
