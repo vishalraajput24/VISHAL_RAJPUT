@@ -5,8 +5,9 @@ Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
 - **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
 - **V9**: 3-min candle strategy — **LIVE paper trading** (active)
 
-**Current version**: `v19` (V9 gates: BW 13-16 + RSI 48-70, deployed 2026-05-19)
-**Previous**: v18 — BW 12-16, RSI 50-65 (sweep showed -252pts over 10d)
+**Current version**: `v20` (V9 G3: band width = **7-11% of premium** %-normalized + RSI 48-70, 2026-06-01)
+**Previous**: v19 — BW **13-16 absolute pts**, RSI 48-70 (abs gate was premium-biased: cheap ATM options couldn't reach 13pts → V9 sat out real moves; backtest 1,122 sigs: %-BW 7-11% flipped exp -2.3→+1.4, win 53→62%; config-tunable bw_pct_min/max)
+**v18**: BW 12-16, RSI 50-65 (sweep showed -252pts over 10d)
 **v17**: V8 gates: BW>=11, RSI 45-75
 
 **Current version**: `v17` (merged to main 2026-05-14 via PR #7)
@@ -41,7 +42,7 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 | G1 | Candle must be green (close > open) |
 | G2 | Close > EMA9_low (broke above support band) |
 | G2B | EMA9_low slope ≥ 0 for last 2 candles (support band rising, not fake breakout) |
-| G3 | `13 <= band_width <= 16` (momentum sweet spot — not choppy, not overextended) |
+| G3 | **band width = 7-11% of premium** (v20 %-normalized; was abs 13-16 — that was premium-biased, missed moves on cheap ATM options) |
 | G4 | `other_close <= other_band_mid` (other side in lower half of its band = falling) |
 | G5 | `48 < RSI < 70` AND rising vs previous candle |
 
