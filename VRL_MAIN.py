@@ -2407,7 +2407,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             if not result:
                 return {
                     "close": 0, "ema9_high": 0, "ema9_low": 0,
-                    "band_width": 0, "body_pct": 0,
+                    "band_width": 0, "bw_pct": 0, "body_pct": 0,
                     "fired": False,
                     "verdict": "MARKET CLOSED" if not D.is_market_open() else "WARMING UP",
                     "ltp": round(_ltp_fallback, 2),
@@ -2435,7 +2435,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _g1 = _green
             _g2 = (_close > _el) if (_el > 0 and _close > 0) else False
             _g2b = (_slope >= 0)
-            _g3 = (13 <= _bw <= 16) if _bw > 0 else False
+            _bw_pct = round(_bw / _close * 100, 2) if _close > 0 else 0.0
+            _g3 = (7 <= _bw_pct <= 11) if _bw > 0 else False   # v20: %-of-premium gate
             _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))
             _g5 = (48 < _rsi < 70 and _rsi > _rsi_prev) if _rsi > 0 else False
 
@@ -2448,7 +2449,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 if not _g1: _fails.append("G1:red_candle")
                 if not _g2: _fails.append(f"G2:close({round(_close,1)})<ema9l({round(_el,1)})")
                 if not _g2b: _fails.append(f"G2B:slope_falling({_slope:+.2f})")
-                if not _g3: _fails.append(f"G3:BW={_bw}(need13-16)")
+                if not _g3: _fails.append(f"G3:BW%={_bw_pct}(need7-11%)")
                 if not _g4: _fails.append("G4:other_side_not_falling")
                 if not _g5: _fails.append(f"G5:RSI={_rsi}(need48-70↑)")
                 verdict = _fails[0] if _fails else "scanning"
@@ -2461,6 +2462,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "ema9_high": round(_eh, 2),
                 "ema9_low": round(_el, 2),
                 "band_width": _bw,
+                "bw_pct": _bw_pct,
                 "body_pct": round(_body, 1),
                 "fired": _fired,
                 "verdict": verdict,
@@ -4786,7 +4788,7 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>CONFIG</b>\n"
             "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
-            + "Band min: " + str(_eb.get("band_width_min", "?")) + "pts (display)\n"
+            + "Band: " + str(_eb.get("bw_pct_min", 7)) + "-" + str(_eb.get("bw_pct_max", 11)) + "% of premium\n"
             "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
             + "SL: -12 (TICK, single floor)\n"
             "Time: " + str(_eb.get("warmup_until", "?")) + " - "
