@@ -257,8 +257,8 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
 
     Gates:
       G2.  Close > EMA9_low (broke above support band)
-      G3.  12 <= band_width <= 16 (momentum sweet spot)
-      G5.  50 < RSI < 65
+      G3.  band width = 7-11% of premium (momentum sweet spot; v20 %-normalized)
+      G5.  48 < RSI < 70
     Same-candle guard prevents same-candle re-fires (state-driven).
     """
     if state is None:
@@ -351,22 +351,32 @@ def check_entry_v8(token: int, option_type: str, spot_ltp: float = 0,
                             f"ema9h={round(ema9_high,1)} bw={_bw}")
             return result
 
-        # ── GATE 3: band width 13-16 (momentum sweet spot — v19 update from sweep) ──
-        # v18: 12-16 | v19: 13-16 — BW=12 was adding choppy entries, sweep -140pts better
+        # ── GATE 3: band width as % of premium, 7-11% (v20: %-normalized) ──
+        # Was absolute 13-16 pts (v19) — premium-biased: cheap ATM options (premium
+        # ~80-130) can't reach 13 pts so V9 sat out real moves, while expensive strikes
+        # passed by price alone. Backtest 2026-06 (1,122 signals): %-BW sweet spot 7-11%
+        # flipped expectancy -2.3 -> +1.4 pts/trade, win 53% -> ~62%, more valid signals.
+        # Thresholds config-tunable via entry_ema9_band(bw_pct_min / bw_pct_max).
         _band_mid = round((ema9_high + ema9_low) / 2, 2)
-        if _bw < 13:
-            result["reject_reason"] = f"band_too_narrow_{_bw}"
+        _bw_pct_lo = float(CFG.entry_ema9_band("bw_pct_min", 7.0))
+        _bw_pct_hi = float(CFG.entry_ema9_band("bw_pct_max", 11.0))
+        _bw_pct = round(_bw / close * 100, 2) if close > 0 else 0.0
+        result["bw_pct"] = _bw_pct
+        if _bw_pct < _bw_pct_lo:
+            result["reject_reason"] = f"band_too_narrow_{_bw_pct}pct"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_narrow "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)} "
-                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
+                            f"ema9h={round(ema9_high,1)} width={_bw} bw%={_bw_pct} "
+                            f"(need {_bw_pct_lo}-{_bw_pct_hi}%)")
             return result
-        if _bw > 16:
-            result["reject_reason"] = f"band_too_wide_{_bw}"
+        if _bw_pct > _bw_pct_hi:
+            result["reject_reason"] = f"band_too_wide_{_bw_pct}pct"
             if not silent:
                 logger.info(f"[REJECT-V8] {option_type} gate3_band_wide "
                             f"close={round(close,1)} ema9l={round(ema9_low,1)} "
-                            f"ema9h={round(ema9_high,1)} width={_bw} (need 13-16)")
+                            f"ema9h={round(ema9_high,1)} width={_bw} bw%={_bw_pct} "
+                            f"(need {_bw_pct_lo}-{_bw_pct_hi}%)")
             return result
 
         # ── GATE 5: 48 < RSI < 70 (momentum zone — v19 update from sweep) ──
