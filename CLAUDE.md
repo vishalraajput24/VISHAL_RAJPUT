@@ -1,16 +1,27 @@
 # VRL Trading Bot — Developer Reference
 
 ## Project Overview
-Paper trading bot for NIFTY options (Zerodha Kite). Two parallel strategies:
-- **V7**: 15-min candle strategy — currently in `V7_SHADOW_MODE = True` (signals computed, no trades)
-- **V9**: 3-min candle strategy — **LIVE paper trading** (active)
+Paper trading bot for NIFTY options (Zerodha Kite).
+- **V10 (LIVE, v20)** — P1/P2 **1-min** strategy, live paper trading since 2026-06-02 (PR #111).
+  Entry gates: `XLEG_CONFIRMED` + near-VWAP (`|gap_vwap|<5`) + `ema9h_gap>=0.8` + LTP-on-correct-side.
+  Fires route through the shared `_v8_execute_paper_entry` executor + exit ladder. Master switch: `V10_LIVE` in VRL_MAIN.py.
+- **V9 (RETIRED 2026-06-02)** — old 3-min BW-7-11% engine. `check_entry_v8` still computes for reference but
+  **no longer enters** (gated off by `V10_LIVE`). It took ~0 trades — BW gate too strict.
+- **V7** — 15-min, `V7_SHADOW_MODE = True` (signals only, no trades).
 
-**Current version**: `v20` (V9 G3: band width = **7-11% of premium** %-normalized + RSI 48-70, 2026-06-01)
-**Previous**: v19 — BW **13-16 absolute pts**, RSI 48-70 (abs gate was premium-biased: cheap ATM options couldn't reach 13pts → V9 sat out real moves; backtest 1,122 sigs: %-BW 7-11% flipped exp -2.3→+1.4, win 53→62%; config-tunable bw_pct_min/max)
-**v18**: BW 12-16, RSI 50-65 (sweep showed -252pts over 10d)
-**v17**: V8 gates: BW>=11, RSI 45-75
+**Current version**: `v20` (V10 cutover — PR #111, 2026-06-02)
 
-**Current version**: `v17` (merged to main 2026-05-14 via PR #7)
+### v10 gates (tunable constants in VRL_MAIN.py)
+- `V10_NEAR_VWAP_MAX = 5.0` — block if `|close − vwap| >= 5` (the 5-15 zone = −4.5/trade)
+- `V10_MIN_EMA9H_GAP = 0.8` — block tiny gaps (<0.8 = −7.2/trade)
+- Basis: 79 pooled shadow signals → win 47%→71%, −44→+88 pts. P2 = edge, P1 marginal+. DEAD_WINDOW rejected (435-trade study: 13:00-14:15 is the *best* window).
+
+### Stock F&O screener (screener/, also updated 2026-06-02)
+- **CALLs enabled** (`require_regime_align=false`) — 33-trade study: CALLs 67% win vs PUTs 24%.
+- `max_pcr=1.0` (block PCR>1.0) + `naked_sl_pct=25` in `fno_strategy_config.json`.
+
+### v9-era version history (retired)
+v20/v9: BW 7-11% %-norm | v19: BW 13-16 abs | v18: BW 12-16 | v17: BW>=11
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
@@ -34,7 +45,7 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 
 ---
 
-## V9 Architecture
+## V9 Architecture (RETIRED 2026-06-02 — reference only; `check_entry_v8` no longer trades, superseded by V10 above)
 
 ### Entry Gates (check_entry_v8 in VRL_ENGINE.py)
 | Gate | Check |
