@@ -27,7 +27,21 @@ import os, sys, json, time, math
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:                 # python-dotenv optional — never hard-crash
+    def load_dotenv(dotenv_path=None, **_kw):
+        _p = os.path.expanduser(dotenv_path or "~/.env")
+        if not os.path.isfile(_p):
+            return False
+        with open(_p) as _fh:
+            for _ln in _fh:
+                _ln = _ln.strip()
+                if not _ln or _ln.startswith("#") or "=" not in _ln:
+                    continue
+                _k, _, _v = _ln.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+        return True
 from kiteconnect import KiteConnect
 from colorama import Fore, Style, init
 import warnings
@@ -482,9 +496,12 @@ def tick_scan(kite, nse_df, nfo_df):
             sl       = float(row["sl_premium"])
             t1       = float(row["t1_premium"])
             t2       = float(row["t2_premium"])
-            lot_size = int(row["lot_size"])
+            _ls_v    = row.get("lot_size", 0)
+            lot_size = int(_ls_v) if pd.notna(_ls_v) else 0
             _lots_v  = row.get("lots", 1)
             lots     = int(_lots_v) if pd.notna(_lots_v) else 1
+            if lot_size <= 0:
+                continue                      # skip malformed row — don't crash the whole tick
             entry_ts = str(row.get("date_added", date_str)) + " 09:15"
 
             structure = str(row.get("structure", "NAKED"))

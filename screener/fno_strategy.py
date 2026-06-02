@@ -388,6 +388,11 @@ def score_signal(tech, regime, opt, cfg):
     if ext > cfg["max_ext_from_ema20_pct"]:
         return direction, score, sig, f"overextended({ext:.1f}%)"
 
+    # ── PCR gate: PCR > max_pcr = poor win rate (F&O data 2026-06: PCR>1.0 → 25% win) ──
+    _max_pcr = cfg.get("max_pcr", 0)
+    if _max_pcr and pcr > _max_pcr:
+        return direction, score, sig, f"pcr_high({pcr})"
+
     # ── Regime gate (THE big fix) ──
     if cfg["require_regime_align"]:
         if direction == "CALL" and not regime["allow_call"]:
