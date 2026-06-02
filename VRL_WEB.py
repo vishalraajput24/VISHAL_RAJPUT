@@ -680,62 +680,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('position-area').innerHTML=ph;
 
   // ── SIGNAL TAB ──
-  // \u2500\u2500 V9 Signal Block \u2014 shows G1-G5 gate status \u2500\u2500
-  function gateRow(label, pass, detail){
-    var clr=pass?'var(--gn)':'var(--rd)';
-    var ic=pass?'\u2705':'\u274C';
-    return '<div class="row"><div class="k">'+label+'</div><div class="v" style="color:'+clr+'">'+ic+' '+esc(detail||'')+'</div></div>';
-  }
-
-  function signalBlock(label, sig){
-    var strike=sig.strike||mk.atm;
-    var ltp=(sig.ltp||0).toFixed(2);
-    var cd=d.cooldown&&d.cooldown[label]?d.cooldown[label]:(d.cooldown&&d.cooldown.remaining?d.cooldown:null);
-
-    // Verdict colour
-    var verdict=sig.verdict||'\u2014';
-    var vclr='var(--am)';
-    if(sig.fired||verdict.indexOf('ALL GATES')>=0){vclr='var(--gn)';verdict='\u2705 ALL GATES \u2014 READY TO TRADE';}
-    else if(verdict==='MARKET CLOSED'||verdict==='WARMING UP'){vclr='#888';}
-    else if(verdict==='NO DATA'){vclr='#888';}
-    if(cd&&cd.remaining>0){vclr='var(--am)';verdict='\u23F3 COOLDOWN '+cd.remaining+'min \u2014 '+label+' blocked';}
-
-    var bw=sig.band_width||0;
-    var bwp=sig.bw_pct||0;
-    var bwClr=(bwp>=7&&bwp<=11)?'var(--gn)':'var(--rd)';
-    var rsi=sig.rsi||0;
-    var rsiPrev=sig.rsi_prev||0;
-    var rsiClr=sig.g5_rsi_ok?'var(--gn)':'var(--rd)';
-    var rsiDisplay=rsi>0?rsi:'—';
-    var rsiPrevDisplay=rsiPrev>0?rsiPrev:'—';
-
-    var h='<div class="sect">';
-    h+='<div class="sh">'+label+' '+strike+' &nbsp;\u00B7&nbsp; &#x20B9;'+ltp+'</div>';
-    // Raw values
-    h+='<div class="row"><div class="k">CLOSE</div><div class="v">'+(sig.close||0)+'</div></div>';
-    h+='<div class="row"><div class="k">EMA9L / EMA9H</div><div class="v">'+(sig.ema9_low||0)+' / '+(sig.ema9_high||0)+'</div></div>';
-    h+='<div class="row"><div class="k">BAND WIDTH</div><div class="v" style="color:'+bwClr+'">'+bwp+'% &nbsp;·&nbsp; '+bw+'pts (need 7-11%)</div></div>';
-    h+='<div class="row"><div class="k">BODY %</div><div class="v">'+(sig.body_pct||0)+'%</div></div>';
-    h+='<div class="row"><div class="k">RSI</div><div class="v" style="color:'+rsiClr+'">'+rsiDisplay+' (prev '+rsiPrevDisplay+')</div></div>';
-    // Gate rows
-    h+='<div style="padding:4px 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:.5px">\u2500\u2500 V9 GATES \u2500\u2500</div>';
-    h+=gateRow('G1 GREEN',     sig.g1_green,          sig.g1_green?'candle green':'candle red');
-    h+=gateRow('G2 CLOSE>EMA9L', sig.g2_close_above_ema9l, (sig.close||0)+' vs '+(sig.ema9_low||0));
-    h+=gateRow('G3 BW 7-11%',  sig.g3_bw_ok,          bwp+'% ('+bw+'pts)');
-    h+=gateRow('G4 OTHER\u2193',    sig.g4_other_falling,  sig.g4_other_falling?'other side falling':'other side rising');
-    h+=gateRow('G5 RSI 48-70\u2191',sig.g5_rsi_ok,         rsi>0?'rsi='+rsi+(rsi>rsiPrev?' \u2191':' \u2193'):'market closed');
-    if(sig.g6_stochrsi!=null){
-      var g6c=sig.g6_stochrsi?'var(--gn)':'#888';
-      h+='<div class="row"><div class="k">G6 STOCHRSI</div><div class="v" style="color:'+g6c+'">'+(sig.g6_stochrsi?'CROSS \u2705':'skip')+' k='+(sig.g6_k||0)+'</div></div>';
-    }
-    h+='<div class="verdict" style="color:'+vclr+'">'+esc(verdict)+'</div>';
-    h+='</div>';
-    return h;
-  }
-
   document.getElementById('p-sig').innerHTML=
-    '<div class="two" style="margin:8px;gap:6px;display:grid;grid-template-columns:1fr 1fr">'+
-    signalBlock('CE',ce)+signalBlock('PE',pe)+'</div>'+
     renderShadow(window._shadow||{});
 
   function renderShadow(sh){
@@ -775,7 +720,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var hasAny=(p1.CE&&p1.CE.active)||(p1.PE&&p1.PE.active)||(p2.CE&&p2.CE.active)||(p2.PE&&p2.PE.active);
     var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
     var html='<div style="margin:8px 8px 0">';
-    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'👤 SHADOW TRADES'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — P1/P2 (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
     html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
     html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
@@ -793,21 +738,21 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // P1
     html+='<div>';
     html+='<div style="font-size:9px;font-weight:700;color:var(--bl);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P1 · ABOVE VWAP</div>';
-    html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
-    html+=gRow('G2','RSI 48-70, rising','momentum');
-    html+=gRow('G3','xleg 3/5 below','other side down');
+    html+=gRow('G1','|gap_vwap| < 5','near VWAP');
+    html+=gRow('G2','ema9h_gap >= 0.8','not tiny');
+    html+=gRow('G3','xleg all-5 below','cross-leg dead');
     html+=gRow('G4','LTP > VWAP','at fire');
     html+='</div>';
     // P2
     html+='<div style="border-left:1px solid var(--bd)">';
     html+='<div style="font-size:9px;font-weight:700;color:var(--am);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P2 · BELOW VWAP</div>';
-    html+=gRow('G1','gap >= 2.0 pts','close vs EMA9H');
-    html+=gRow('G2','RSI > 55, rising','momentum');
-    html+=gRow('G3','xleg 3/5 below','other side down');
+    html+=gRow('G1','|gap_vwap| < 5','near VWAP');
+    html+=gRow('G2','ema9h_gap >= 0.8','not tiny');
+    html+=gRow('G3','xleg all-5 below','cross-leg dead');
     html+=gRow('G4','LTP <= VWAP','at fire');
     html+='</div>';
     html+='</div>';
-    html+='<div style="padding:4px 8px 2px;font-size:8px;color:var(--dm)">RSI floor under review - collecting 1-week data</div>';
+    html+='<div style="padding:4px 8px 2px;font-size:8px;color:var(--dm)">v10 gates live (1-min) — thresholds tuning as data grows</div>';
     html+='</div>';
     html+='</div>';
     return html;
@@ -1729,11 +1674,27 @@ if __name__=="__main__":
     # up + curl-timeouts when one request blocked (e.g. slow trade-log
     # read, big bg.jpg static fetch). Threaded server prevents head-of-
     # line blocking. daemon_threads = True so threads die with parent.
-    # SO_REUSEPORT: kill any ghost process holding the port on restart.
+    # Bind with SO_REUSEADDR (clears TIME_WAIT) + a short retry loop so a fast
+    # restart WAITS for the old process to release the port instead of crashing
+    # and letting systemd loop every 10s (which spammed 'Address already in use'
+    # thousands of times). allow_reuse_port stays OFF — we want exactly ONE
+    # dashboard bound, never two silently sharing the port via SO_REUSEPORT.
     import socket as _socket
     ThreadingHTTPServer.allow_reuse_address = True
-    ThreadingHTTPServer.allow_reuse_port    = True
-    s = ThreadingHTTPServer((_host, PORT), H)
+    ThreadingHTTPServer.allow_reuse_port    = False
+    s = None
+    for _attempt in range(1, 31):
+        try:
+            s = ThreadingHTTPServer((_host, PORT), H)
+            break
+        except OSError as _e:
+            if _e.errno == 98:   # EADDRINUSE — previous instance not gone yet
+                print(f"VRL Web: port {PORT} busy, waiting for old process … ({_attempt}/30)")
+                time.sleep(1)
+                continue
+            raise
+    if s is None:
+        raise SystemExit(f"VRL Web: port {PORT} still in use after 30s — aborting")
     s.daemon_threads = True
     print("VRL War Room v16.7 — http://" + _host + ":" + str(PORT))
     try: s.serve_forever()

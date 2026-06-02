@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v19 (Vishal Clean V7+V9)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (Vishal Clean V7+V10)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V9 (LIVE):   3-min  | 3-gate (close>ema9l, BW 13-16, RSI 48-70)
-#  V9 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
+#  V10 (LIVE):   3-min  | 3-gate (close>ema9l, BW 13-16, RSI 48-70)
+#  V10 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
 
@@ -527,7 +527,7 @@ _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 _v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
-_v9_last_results: dict = {"CE": None, "PE": None}  # last V9 gate results for dashboard
+_v9_last_results: dict = {"CE": None, "PE": None}  # last V10 gate results for dashboard
 spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
 # Shadow: dual-TF early entry tracking (1 week data collection before going live)
 _v8_shadow_dt = {
@@ -618,6 +618,16 @@ _shadow_analysis = {
     "CE": {"last_peaks": [], "last_peaks_p2": [], "cross_buf": []},
     "PE": {"last_peaks": [], "last_peaks_p2": [], "cross_buf": []},
 }
+
+# ── v10 ENTRY GATES (derived 2026-06-02 from 79 pooled shadow signals across 6 days) ──
+# near-VWAP + non-tiny-gap flips P1/P2 from -0.6 to +3.7 pts/trade (47%->71% win).
+# Tunable on purpose — will tighten as more live days of data arrive.
+V10_NEAR_VWAP_MAX = 5.0   # block fire if |option_close - vwap| >= this  (the 5-15 zone = -4.5/trade)
+V10_MIN_EMA9H_GAP = 0.8   # block fire if ema9h_gap < this              (tiny gap = -7.2/trade)
+# CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades and the old
+# v9 (BW 7-11%, 3-min) engine no longer enters. Flip to False to instantly revert to v9.
+V10_LIVE = True
+
 
 def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
                          vwap_gap, other_vwap_gap, spot_adx, last_peaks,
@@ -1608,18 +1618,18 @@ def _alert_bot_started():
         + _ms_line +
         "Web     : " + _web_url + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STRATEGY</b>  Vishal Clean v19\n"
+        "<b>STRATEGY</b>  Vishal Clean v20\n"
         ""
-        "V9 LIVE   : 3-min  | 3-gate | PAPER trading\n"
+        "V10 LIVE   : 3-min  | 3-gate | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V9 GATES</b>\n"
+        "<b>V10 GATES</b>\n"
         "G2) Close > EMA9_low\n"
         "G3) Band width 13-16 pts\n"
         "G5) 48 < RSI < 70\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V9 SL LADDER</b>\n"
+        "<b>V10 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
         "peak >= 12 → LOCK_4   entry + 4\n"
         "peak >= 24 → LOCK_12  entry + 12\n"
@@ -1926,7 +1936,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         _slip_block = "Slippage: " + "{:+.2f}".format(float(_entry_slippage)) + " pts\n"
 
     _tg_send(
-        "🕐 <b>V9 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
+        "🕐 <b>V10 ENTRY " + ("FRESH" if _entry_mode_tag == "CLOSE_FILL" else str(_entry_mode_tag)) + "</b>\n"
         + _dir_emoji + " <b>" + _sym + " " + _strike_label + " x "
         + str(lot_count) + " LOTS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -2182,7 +2192,7 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             pass
 
         _tg_send(
-            _dir_emoji + " <b>V9 EXIT " + _sym_exit + "</b>\n"
+            _dir_emoji + " <b>V10 EXIT " + _sym_exit + "</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>" + reason + "</b>    " + _sign_pnl + "{:.1f}".format(pnl) + " pts\n"
             + _reason_line +
@@ -2431,7 +2441,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _rsi_prev = round(float(result.get("rsi_prev", 0) or 0), 1)
             _slope = round(float(result.get("ema9_low_slope", 0) or 0), 2)
 
-            # V9 gate pass/fail flags
+            # V10 gate pass/fail flags
             _g1 = _green
             _g2 = (_close > _el) if (_el > 0 and _close > 0) else False
             _g2b = (_slope >= 0)
@@ -2879,6 +2889,9 @@ def _strategy_loop(kite):
                         _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
                             "strike", _locked_ce_strike or _locked_pe_strike or 0)
                         _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
+                        if V10_LIVE:
+                            # CUTOVER: v9 (BW 7-11% engine) no longer trades — P1/P2 (v10) drive entries below.
+                            continue
                         _v8_execute_paper_entry(
                             direction=_v8_dir, strike=_v8_strike,
                             symbol=_v8_symbol, token=_v8_token,
@@ -3176,7 +3189,7 @@ def _strategy_loop(kite):
                                     _fin_msg += f"P2 at {_p2_e2:.1f} → P1 saved {_sv2:+.1f}pts\n"
                                 if _sh_ds["live_entry"] > 0:
                                     _sv3 = round(_sh_ds["live_entry"] - _sh_entry, 1)
-                                    _fin_msg += f"vs V9: {_sh_ds['live_entry']:.1f}  diff={_sv3:+.1f}pts\n"
+                                    _fin_msg += f"vs V10: {_sh_ds['live_entry']:.1f}  diff={_sv3:+.1f}pts\n"
                                 _fin_msg += f"<i>⚠️ Shadow only</i>"
                                 logger.info(
                                     f"[SHADOW-P1] {_sh_dir} {reason} "
@@ -3296,7 +3309,31 @@ def _strategy_loop(kite):
                                 f"slip={round(_sh_ltp - _sh_1m_vwap, 1)}"
                             )
                             continue
+                        # ── v10 GATE A — near-VWAP only (|gap_vwap| < V10_NEAR_VWAP_MAX) ──
+                        if abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
+                            logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_vwap_far "
+                                        f"gap_vwap={_sh_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
+                            continue
+                        # ── v10 GATE B — block tiny ema9h_gap (< V10_MIN_EMA9H_GAP) ──
+                        if _sh_1m_gap < V10_MIN_EMA9H_GAP:
+                            logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_tiny_gap "
+                                        f"ema9h_gap={_sh_1m_gap:+.2f} (need >={V10_MIN_EMA9H_GAP})")
+                            continue
                         _sh_strike = int(_sh_info.get("strike", 0) or 0)
+                        # ── v10 LIVE: P1 places the real paper trade via the proven v8 executor ──
+                        if V10_LIVE and not _v8_state.get("in_trade"):
+                            try:
+                                _v8_execute_paper_entry(
+                                    direction=_sh_dir, strike=_sh_strike,
+                                    symbol=_sh_info.get("symbol", ""), token=_sh_tok,
+                                    entry_price=_sh_ltp,
+                                    entry_result={"entry_price": _sh_ltp, "entry_mode": "V10_P1",
+                                                  "fired_candle_ts": _sh_1m_bk_ts,
+                                                  "close": _sh_1m_close,
+                                                  "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m},
+                                    other_token=0)
+                            except Exception as _v10p1e:
+                                logger.warning(f"[V10-LIVE] P1 execute error: {_v10p1e}")
                         _sh_sl     = round(_sh_ltp - 12, 1)
                         _sh_ds.update({
                             "active": True, "bucket_ts": _sh_1m_bk_ts,
@@ -3617,7 +3654,31 @@ def _strategy_loop(kite):
                                 f"gap={round(_s2_ltp - _s2_vwap, 1)}"
                             )
                             continue
+                        # ── v10 GATE A — near-VWAP only (|gap_vwap| < V10_NEAR_VWAP_MAX) ──
+                        if abs(_s2_vwap_gap) >= V10_NEAR_VWAP_MAX:
+                            logger.info(f"[SHADOW-P2] REJECT {_s2_dir} v10_vwap_far "
+                                        f"gap_vwap={_s2_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
+                            continue
+                        # ── v10 GATE B — block tiny ema9h_gap (< V10_MIN_EMA9H_GAP) ──
+                        if _s2_ema9h_gap < V10_MIN_EMA9H_GAP:
+                            logger.info(f"[SHADOW-P2] REJECT {_s2_dir} v10_tiny_gap "
+                                        f"ema9h_gap={_s2_ema9h_gap:+.2f} (need >={V10_MIN_EMA9H_GAP})")
+                            continue
                         _s2_strike = int(_s2_info.get("strike", 0) or 0)
+                        # ── v10 LIVE: P2 places the real paper trade via the proven v8 executor ──
+                        if V10_LIVE and not _v8_state.get("in_trade"):
+                            try:
+                                _v8_execute_paper_entry(
+                                    direction=_s2_dir, strike=_s2_strike,
+                                    symbol=_s2_info.get("symbol", ""), token=_s2_tok,
+                                    entry_price=_s2_ltp,
+                                    entry_result={"entry_price": _s2_ltp, "entry_mode": "V10_P2",
+                                                  "fired_candle_ts": _s2_bk_ts,
+                                                  "close": _s2_close,
+                                                  "ema9_low": _s2_ema9l, "ema9_high": _s2_ema9h},
+                                    other_token=0)
+                            except Exception as _v10p2e:
+                                logger.warning(f"[V10-LIVE] P2 execute error: {_v10p2e}")
                         _s2_sl_px  = round(_s2_ltp - 12, 1)
                         _s2_ds.update({
                             "active": True, "bucket_ts": _s2_bk_ts,
@@ -3994,7 +4055,7 @@ def _strategy_loop(kite):
                             _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
                                            if _prev_sl > 0 else "entry-10")
                             _tg_send(
-                                _icon + " <b>V9 SL UPGRADED → " + _new_tier + "</b>\n"
+                                _icon + " <b>V10 SL UPGRADED → " + _new_tier + "</b>\n"
                                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                 + _r_emoji + " " + _r_sym + "   Peak +"
                                 + "{:.1f}".format(_r_peak) + "\n"
@@ -4035,7 +4096,7 @@ def _strategy_loop(kite):
                                 _lock_str = (("+" if _lock >= 0 else "")
                                              + "{:.1f}".format(_lock))
                                 _tg_send(
-                                    _ms_icon + " <b>V9 Peak +" + str(_m)
+                                    _ms_icon + " <b>V10 Peak +" + str(_m)
                                     + " pts</b>   " + _r_tier + "\n"
                                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                     "Peak  +" + "{:.1f}".format(_peak) + "\n"
@@ -4168,7 +4229,7 @@ def _strategy_loop(kite):
                         time.sleep(2)
                         continue
 
-                # Seed dashboard with last V9 scan results (updated every 3s by V9 entry loop)
+                # Seed dashboard with last V10 scan results (updated every 3s by V10 entry loop)
                 all_results = {k: v for k, v in _v9_last_results.items() if v is not None}
                 best_result = None
                 best_type = None
@@ -4224,7 +4285,7 @@ def _strategy_loop(kite):
                                             _passed = False
                                             _re_result["fired"] = False
                                             _re_result["reject_reason"] = f"reentry_weak_body_{_re_body}pct"
-                                            logger.info(f"[REENTRY-V9] {_re_dir} body={_re_body}% < 20% — rejected")
+                                            logger.info(f"[REENTRY-V10] {_re_dir} body={_re_body}% < 20% — rejected")
                                     if not _passed:
                                         _why = _re_result.get("reject_reason", "?")
                                         if _re_attempts >= 2:
@@ -4315,7 +4376,7 @@ def _strategy_loop(kite):
                                             continue
                                         _re_close = float(_re_result.get("close", 0) or 0)
                                         _tg_send(
-                                            "🔄 <b>V9 RE-ENTRY CONFIRMED " + _re_dir + " "
+                                            "🔄 <b>V10 RE-ENTRY CONFIRMED " + _re_dir + " "
                                             + str(_re_strike) + "</b>\n"
                                             "Confirmation candle " + _re_close_dt.strftime("%H:%M")
                                             + ": GREEN body "
@@ -4345,8 +4406,8 @@ def _strategy_loop(kite):
                             logger.error("[REENTRY] check error: " + str(_ree)
                                          + "\n" + _tb_re.format_exc())
 
-                # V7 15-min check_entry scan removed — V9 (check_entry_v8) handles all entries
-                # V9 entry is handled above in the 10-second scan (outside 1-min gate)
+                # V7 15-min check_entry scan removed — V10 (check_entry_v8) handles all entries
+                # V10 entry is handled above in the 10-second scan (outside 1-min gate)
 
                 try:
                     vix_ltp = D.get_vix()
@@ -4754,7 +4815,7 @@ def _cmd_pulse(args):
             + _ok(_lot > 0) + " lot size: " + str(_lot) + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>TODAY</b>\n"
-            + "🕐 V9: " + str(len(_trades_today)) + " trades · "
+            + "🕐 V10: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
             + "⚡ V8 (live): "
@@ -4801,7 +4862,7 @@ def _cmd_pulse(args):
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>V9 SL LADDER (Em -12 TICK)</b>\n"
+            "<b>V10 SL LADDER (Em -12 TICK)</b>\n"
             "INITIAL  (peak <12)  entry-12\n"
             "LOCK_4   (peak >=12) entry+4\n"
             "LOCK_12  (peak >=24) entry+12\n"
@@ -4852,7 +4913,7 @@ def _cmd_help(args):
         "/deploy     — git pull main + restart\n"
         "/restart    — restart bot (no pull)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "VISHAL RAJPUT TRADE v19 — V9 live 3-min, "
+        "VISHAL RAJPUT TRADE v20 — V10 live 3-min, "
         "3-rule exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -5198,7 +5259,7 @@ def _cmd_trades(args):
     total = 0.0
     idx   = 1
 
-    # Live/paper V9 trades from CSV
+    # Live/paper V10 trades from CSV
     for t in live_trades:
         pts  = float(t.get("pnl_pts", 0))
         total += pts
@@ -5207,7 +5268,7 @@ def _cmd_trades(args):
         peak = float(t.get("peak_pnl", 0))
         captured = round(pts / peak * 100) if peak > 0 else 0
         lines += (
-            icon + " <b>V9 Trade " + str(idx) + "</b>  " + t.get("direction", "") + "\n"
+            icon + " <b>V10 Trade " + str(idx) + "</b>  " + t.get("direction", "") + "\n"
             "  " + t.get("entry_time", "") + " → " + t.get("exit_time", "") + "\n"
             "  Entry: ₹" + str(t.get("entry_price", "")) + " → Exit: ₹" + str(t.get("exit_price", "")) + "\n"
             "  PNL: " + sign + str(round(pts, 1)) + "pts\n"

@@ -18,7 +18,7 @@ import VRL_CONFIG as CFG
 # Load config at import time — fails fast if config.yaml is missing/invalid
 CFG.load()
 
-VERSION  = "v19"
+VERSION  = "v20"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 def _load_env_file(path: str):

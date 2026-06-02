@@ -5,5 +5,7 @@
   "elite_score": 12,
   "max_new_per_day": 4,
   "max_open_total": 8,
-  "require_regime_align": true
+  "require_regime_align": false,
+  "max_pcr": 1.0,
+  "naked_sl_pct": 25.0
 }

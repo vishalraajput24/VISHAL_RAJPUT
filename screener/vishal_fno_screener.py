@@ -25,7 +25,21 @@ import os, sys, json, time, math
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:                 # python-dotenv optional — never hard-crash
+    def load_dotenv(dotenv_path=None, **_kw):
+        _p = os.path.expanduser(dotenv_path or "~/.env")
+        if not os.path.isfile(_p):
+            return False
+        with open(_p) as _fh:
+            for _ln in _fh:
+                _ln = _ln.strip()
+                if not _ln or _ln.startswith("#") or "=" not in _ln:
+                    continue
+                _k, _, _v = _ln.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+        return True
 from kiteconnect import KiteConnect
 from colorama import Fore, Style, init
 import warnings
@@ -1123,9 +1137,13 @@ def run_strategy_scan(kite, nse_df, nfo_df, universe):
     today = date.today().isoformat()
 
     regime = FS.compute_index_regime(kite, nse_df)
+    if cfg.get("require_regime_align", True):
+        _dir_note = (f"(call={'Y' if regime['allow_call'] else 'N'} "
+                     f"put={'Y' if regime['allow_put'] else 'N'})")
+    else:
+        _dir_note = "(regime-align OFF — CALL+PUT both allowed, best-scoring side per stock)"
     print(f"\n{Fore.CYAN}  MARKET REGIME: {regime['regime']}  "
-          f"(call={'Y' if regime['allow_call'] else 'N'} "
-          f"put={'Y' if regime['allow_put'] else 'N'})  {regime.get('detail','')}{Style.RESET_ALL}")
+          f"{_dir_note}  {regime.get('detail','')}{Style.RESET_ALL}")
     print(f"  Mode={cfg['mode'].upper()} | min_score={cfg['min_score']} elite={cfg['elite_score']} | "
           f"caps: {cfg['max_new_per_day']}/day, {cfg['max_open_total']} open, "
           f"Rs{cfg['max_capital_deploy']:,.0f}\n")
