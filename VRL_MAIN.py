@@ -31,7 +31,11 @@ class _DBNoop:
     """Safe no-op proxy for removed VRL_DB — any method call does nothing."""
     def __getattr__(self, name):
         return lambda *a, **kw: None
-DB = _DBNoop()  # VRL_DB removed — all DB calls silently no-op
+DB        = _DBNoop()  # VRL_DB removed — all DB calls silently no-op
+_VDB      = _DBNoop()  # no-op stub — trade insert DB removed
+_SC       = _DBNoop()  # no-op stub — scan DB removed
+_DB_clean = _DBNoop()  # no-op stub — DB cleanup removed
+_DB_dash  = _DBNoop()  # no-op stub — dashboard DB removed
 
 logger = logging.getLogger("vrl_live")
 lab_logger = logging.getLogger("vrl_lab")
@@ -4809,7 +4813,8 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         with open(log_path, "a", newline="") as f:
             w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
             w.writerow(_v8_row)
-        _VDB.insert_trade(_v8_row)
+        try: _VDB.insert_trade(_v8_row)
+        except Exception: pass  # DB removed
     except Exception as _le:
         logger.warning("[V8] Trade log write error: " + str(_le))
 
@@ -5013,6 +5018,7 @@ V10_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
 _v10_live_lock = threading.Lock()
 _v10_live = {"CE": {}, "PE": {}}
+_shadow_lock = threading.Lock()  # protects _v8_shadow_dt / _v8_shadow_p2 snapshots
 
 
 def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
@@ -5307,6 +5313,7 @@ def _load_v8_state():
                 _v8_state["_wins_today"]    = 0
                 _v8_state["_losses_today"]  = 0
                 _v8_state["_v8_both_rejected_ts"] = 0.0
+                _v8_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
             logger.info("[V8] New trading day — daily counters reset (last_date=" + _last_date + ")")
         if _v8_state.get("in_trade"):
             _sym  = str(_v8_state.get("symbol", ""))
@@ -5345,25 +5352,20 @@ def _load_v8_state():
 def _save_shadow_state():
     """Persist _v8_shadow_dt and _v8_shadow_p2 to disk so active signals survive restarts."""
     try:
+        with _shadow_lock:
+            _p1_snap = {"CE": dict(_v8_shadow_dt["CE"]), "PE": dict(_v8_shadow_dt["PE"])}
+            _p2_snap = {"CE": dict(_v8_shadow_p2["CE"]), "PE": dict(_v8_shadow_p2["PE"])}
+            _p1v2_snap = {"CE": dict(_v8_shadow_dt_v2["CE"]), "PE": dict(_v8_shadow_dt_v2["PE"])}
+            _p2v2_snap = {"CE": dict(_v8_shadow_p2_v2["CE"]), "PE": dict(_v8_shadow_p2_v2["PE"])}
+        with _v10_live_lock:
+            _live_snap = {k: dict(v) for k, v in _v10_live.items()}
         payload = {
-            "p1": {
-                "CE": dict(_v8_shadow_dt["CE"]),
-                "PE": dict(_v8_shadow_dt["PE"]),
-            },
-            "p2": {
-                "CE": dict(_v8_shadow_p2["CE"]),
-                "PE": dict(_v8_shadow_p2["PE"]),
-            },
-            "p1_v2": {
-                "CE": dict(_v8_shadow_dt_v2["CE"]),
-                "PE": dict(_v8_shadow_dt_v2["PE"]),
-            },
-            "p2_v2": {
-                "CE": dict(_v8_shadow_p2_v2["CE"]),
-                "PE": dict(_v8_shadow_p2_v2["PE"]),
-            },
+            "p1":    _p1_snap,
+            "p2":    _p2_snap,
+            "p1_v2": _p1v2_snap,
+            "p2_v2": _p2v2_snap,
             "saved_date": date.today().isoformat(),
-            "live": _v10_live,
+            "live": _live_snap,
         }
         tmp = D.SHADOW_STATE_FILE_PATH + ".tmp"
         with open(tmp, "w") as f:
@@ -5487,6 +5489,8 @@ def _reset_daily(today_str: str):
     _v8_state["_signals_today"]    = 0
     _v8_state["_last_signal_time"] = ""
     _v8_state["_last_fired_candle_ts"] = ""
+    with _v8_lock:
+        _v8_state["_sl_cooldown_skip_next"] = False  # BUG-FIX: clear stale ESL flag on new day
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
@@ -6421,6 +6425,15 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
         return
 
     actual_exit = fill["fill_price"] if fill["ok"] else exit_price
+    # ── Partial fill check: if broker filled less than requested, log + alert ──
+    _filled_qty = fill.get("fill_qty", exit_qty)
+    if fill["ok"] and _filled_qty < exit_qty:
+        _unfilled = exit_qty - _filled_qty
+        logger.warning(f"[TRADE] PARTIAL FILL: filled {_filled_qty}/{exit_qty}, "
+                       f"unfilled {_unfilled} — manual close needed for remaining")
+        _tg_send(f"⚠️ <b>PARTIAL FILL</b> {symbol}\n"
+                 f"Filled: {_filled_qty}/{exit_qty}\n"
+                 f"Remaining {_unfilled} units — <b>CLOSE MANUALLY</b>")
     pnl = round(actual_exit - entry, 2)
 
     # Update lot state + track per-lot exit data
@@ -6874,7 +6887,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         # Feed dashboard from the live v10 gate snapshot (updated every scan by P1/P2)
         def _v10_to_result(side):
             """Convert _v10_live snapshot to a result dict that _build_signal understands."""
-            lv = _v10_live.get(side, {})
+            with _v10_live_lock:
+                lv = dict(_v10_live.get(side, {}))
             if not lv or lv.get("gap") is None:
                 return None
             _gap_val = float(lv.get("gap", 0))
@@ -9850,8 +9864,11 @@ def place_entry(kite, symbol: str, token: int,
             pass
 
     if result["ok"] and result["fill_qty"] < qty:
-        logger.warning("[TRADE] Partial fill accepted: "
-                       + str(result["fill_qty"]) + "/" + str(qty))
+        logger.critical("[TRADE] Partial fill REJECTED: "
+                        + str(result["fill_qty"]) + "/" + str(qty)
+                        + " — " + symbol + ". MANUAL CHECK REQUIRED.")
+        return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
+                "order_id": result.get("order_id", ""), "error": "PARTIAL_FILL_REJECTED", "slippage": 0}
 
     # Re-compute slippage relative to original ref price (not limit price)
     if result["ok"]:
@@ -9897,20 +9914,7 @@ def place_exit(kite, symbol: str, token: int,
             result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
             return result
 
-    # Final fallback: try Kite API directly
-    logger.warning("[TRADE] MStock exit failed 3x — trying Kite fallback")
-    try:
-        _kite_order = kite.place_order(
-            variety=kite.VARIETY_REGULAR, exchange="NFO",
-            tradingsymbol=symbol, transaction_type=kite.TRANSACTION_TYPE_SELL,
-            quantity=qty, order_type=kite.ORDER_TYPE_MARKET,
-            product=kite.PRODUCT_MIS)
-        logger.info(f"[TRADE] Kite fallback order placed: {_kite_order}")
-        return {"ok": True, "fill_price": exit_price_ref, "fill_qty": qty,
-                "order_id": str(_kite_order), "error": "", "slippage": 0}
-    except Exception as _ke:
-        logger.critical(f"[TRADE] Kite fallback also failed: {_ke}")
-
+    # MStock is the only broker for orders — Kite is data-only
     logger.critical("CRITICAL: Exit failed for " + symbol
                     + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
     return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
@@ -10202,6 +10206,10 @@ def main():
         logger.warning("[MAIN] Trade log restore failed: " + str(e))
     try:
         import csv as _sync_csv
+        if DB is not None and not isinstance(DB, _DBNoop):
+            _sync_db = DB
+        else:
+            raise ImportError("DB removed")
         _sync_db.init_db()
         _today_iso = date.today().isoformat()
         _csv_path = D.TRADE_LOG_PATH
