@@ -8744,28 +8744,6 @@ def _cmd_pulse(args):
         _td_loss = len(_trades_today) - _td_wins
         _last_t = _trades_today[-1] if _trades_today else None
 
-        _in_trade = state.get("in_trade", False)
-        _pos_str = "—"
-        if _in_trade:
-            _ep = float(state.get("entry_price", 0) or 0)
-            _ltp = D.get_ltp(state.get("token", 0))
-            _pn = round(_ltp - _ep, 1) if _ltp else 0
-            _pk = float(state.get("peak_pnl", 0) or 0)
-            _tier = state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
-            _sl = float(state.get("active_ratchet_sl", 0) or 0)
-            if _sl <= 0: _sl = round(_ep - 10, 2)
-            _lock = round(_sl - _ep, 1)
-            _room = round(_ltp - _sl, 1) if _ltp else 0
-            _dir_emj = "🟢" if state.get("direction") == "CE" else "🔴"
-            _sym = state.get("direction", "") + " " + str(state.get("strike", ""))
-            _pos_str = (
-                _dir_emj + " " + _sym + "  " + ("+" if _pn >= 0 else "") + str(_pn) + "pts\n"
-                + "Entry Rs" + str(_ep) + " → " + str(round(_ltp, 2)) + " · Peak +" + str(_pk) + "\n"
-                + "Tier: " + _tier + " @ Rs" + str(round(_sl, 2))
-                + " (Lock " + ("+" if _lock >= 0 else "") + str(_lock) + " · Room "
-                + ("+" if _room >= 0 else "") + str(_room) + ")"
-            )
-
         _v8_in_trade = _v8_state.get("in_trade", False)
         _v8_pos_str = ""
         if _v8_in_trade:
@@ -8795,8 +8773,6 @@ def _cmd_pulse(args):
         _pe_lck = _locked_pe_strike or "?"
         _last_scan = state.get("_last_scan_minute", "?")
 
-        _eb = CFG.get().get("entry", {}).get("ema9_band", {}) or {}
-        _xb = CFG.get().get("exit", {}).get("ema9_band", {}) or {}
         _cd = CFG.entry_ema9_band("cooldown_minutes", 5) if hasattr(CFG, "entry_ema9_band") else 5
 
         _err_lines = []
@@ -8860,9 +8836,7 @@ def _cmd_pulse(args):
                + str(_last_t.get("exit_reason", "?")) + ")\n" if _last_t else "")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>POSITION</b>\n"
-            + (_pos_str + "\n" if _in_trade else "")
-            + (_v8_pos_str + "\n" if _v8_in_trade else "")
-            + ("—\n" if not _in_trade and not _v8_in_trade else "")
+            + (_v8_pos_str + "\n" if _v8_in_trade else "—\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ENGINE</b>\n"
             + ("Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
@@ -8870,41 +8844,27 @@ def _cmd_pulse(args):
                + "Bias: " + str(state.get("daily_bias", "?")) + "\n"
                if _market else "💤 awaiting market open\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>CONFIG</b>\n"
-            "Body min: " + str(_eb.get("body_pct_min", "?")) + "%  "
-            + "Band: " + str(_eb.get("bw_pct_min", 7)) + "-" + str(_eb.get("bw_pct_max", 11)) + "% of premium\n"
-            "Slope lookback: " + str(_eb.get("ema9_slope_lookback", "?")) + "c  "
-            + "SL: -12 (TICK, single floor)\n"
-            "Time: " + str(_eb.get("warmup_until", "?")) + " - "
-            + str(_eb.get("cutoff_after", "?")) + "  "
-            + "EOD: " + str(_xb.get("eod_exit_time", "?")) + "\n"
+            "<b>V10 CONFIG (1-min P1+P2)</b>\n"
+            "EMA9H gap ≥ " + str(V10_MIN_EMA9H_GAP) + "  "
+            + "RSI " + str(V10_RSI_MIN) + "–" + str(V10_RSI_MAX) + " rising  "
+            + "BW ≥ " + str(V10_BW_MIN) + "\n"
+            "XLEG_CONFIRMED + LTP on correct VWAP side\n"
+            "VWAP dist gate: " + ("OFF" if V10_NEAR_VWAP_MAX == 0 else "≤" + str(V10_NEAR_VWAP_MAX)) + "\n"
             "Cooldown: " + str(_cd) + "min BOTH sides\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>V10 SL LADDER</b>\n"
+            "INITIAL  peak<12   entry-12\n"
+            "LOCK_4   peak≥12   entry+4\n"
+            "LOCK_12  peak≥24   entry+12\n"
+            "LOCK_20  peak≥30   entry+20\n"
+            "LOCK_30  peak≥36   entry+30\n"
+            "LOCK_36  peak≥40   entry+36\n"
+            "LOCK_50  peak≥50   entry+50\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
                + "\n".join(ln[:100] for ln in _err_lines) + "</pre>"
                if _err_lines else _ok(True) + " None\n")
-            + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>V10 SL LADDER (Em -12 TICK)</b>\n"
-            "INITIAL  (peak <12)  entry-12\n"
-            "LOCK_4   (peak >=12) entry+4\n"
-            "LOCK_12  (peak >=24) entry+12\n"
-            "LOCK_20  (peak >=30) entry+20\n"
-            "LOCK_30  (peak >=36) entry+30\n"
-            "LOCK_36  (peak >=40) entry+36\n"
-            "LOCK_50  (peak >=50) entry+50\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>2-GATE ENTRY (V7 — 15-min RSI)</b>\n"
-            "Time " + str(_eb.get("warmup_until", "09:35")) + " - "
-            + str(_eb.get("cutoff_after", "15:00")) + "\n"
-            "1. 15-min candle close > EMA9_low\n"
-            "2. RSI >= 40 AND rising (RSI[fired] > RSI[prior])\n"
-            "(spot bias tracked for display only — not a gate)\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>EXIT CHAIN</b>\n"
-            "1. Emergency -12 pts (TICK) | 2. EOD 15:20 | 3. Vishal Trail (TICK)\n"
-            "Cooldown: " + str(_cd) + "min BOTH sides. Scan stays live;\n"
-            "first 2-gate fire (CE or PE) at 15-min close after cooldown enters.\n"
         )
         _tg_send(msg)
     except Exception as e:
