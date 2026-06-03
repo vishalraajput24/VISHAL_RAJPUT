@@ -469,6 +469,7 @@ def _read_shadow():
             "saved_date": d.get("saved_date", ""),
             "p1": {"CE": _sig(d,"p1","CE"), "PE": _sig(d,"p1","PE")},
             "p2": {"CE": _sig(d,"p2","CE"), "PE": _sig(d,"p2","PE")},
+            "live": d.get("live", {}),
         }
     except Exception: return {}
 
@@ -721,38 +722,26 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — P1/P2 (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
+    // ── LIVE GATE MONITOR — watch each side approach the thresholds ──
+    (function(){
+      var lv=sh.live||{};
+      function chip(ok,txt){return '<span style="color:'+(ok?'var(--gn)':'var(--rd)')+';font-weight:600">'+(ok?'✅':'❌')+txt+'</span>';}
+      function row(side,o){
+        if(!o||o.gap===undefined)return '<div style="padding:3px 10px;font-size:11px"><b>'+side+'</b> <span style="color:#999">— no data —</span></div>';
+        var rdy=o.ready?'<b style="color:var(--gn)">● READY</b>':'<span style="color:#888">blocked: '+esc(o.reject||'')+'</span>';
+        return '<div style="padding:3px 10px;font-size:11px"><b>'+side+'</b> &nbsp;'
+          +chip(o.gap_ok,' gap '+o.gap)+' &nbsp; '
+          +chip(o.rsi_ok,' RSI '+o.rsi+(o.rsi_rising?'↑':'↓'))+' &nbsp; '
+          +chip(o.bw_ok,' BW '+o.bw)+' &nbsp;→ '+rdy+'</div>';
+      }
+      html+='<div style="margin:0 10px 6px;padding:6px 0;background:#fff;border-radius:8px">';
+      html+='<div style="font-size:9px;font-weight:700;color:#888;padding:0 10px 4px;letter-spacing:.4px">⚡ LIVE GATES — need gap≥3.5 · RSI 55-70↑ · BW≥5</div>';
+      html+=row('CE',lv.CE)+row('PE',lv.PE);
+      html+='</div>';
+    })();
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
     html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
     html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
-    html+='</div>';
-    // ── Strategy Gates reference panel ──
-    function gRow(g,rule,note){
-      return '<div style="display:grid;grid-template-columns:28px 1fr 1fr;padding:3px 8px;font-size:9px;border-bottom:1px solid var(--bd)">'
-        +'<span style="font-weight:700;color:var(--bl)">'+g+'</span>'
-        +'<span style="color:var(--tx)">'+rule+'</span>'
-        +'<span style="color:var(--dm);text-align:right">'+note+'</span>'
-        +'</div>';
-    }
-    html+='<div class="sect" style="margin-top:8px;padding:6px 0 4px">';
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">';
-    // P1
-    html+='<div>';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--bl);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P1 · ABOVE VWAP</div>';
-    html+=gRow('G1','|gap_vwap| < 5','near VWAP');
-    html+=gRow('G2','ema9h_gap >= 0.8','not tiny');
-    html+=gRow('G3','xleg all-5 below','cross-leg dead');
-    html+=gRow('G4','LTP > VWAP','at fire');
-    html+='</div>';
-    // P2
-    html+='<div style="border-left:1px solid var(--bd)">';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--am);padding:2px 8px 4px;letter-spacing:.4px;border-bottom:1px solid var(--bd)">P2 · BELOW VWAP</div>';
-    html+=gRow('G1','|gap_vwap| < 5','near VWAP');
-    html+=gRow('G2','ema9h_gap >= 0.8','not tiny');
-    html+=gRow('G3','xleg all-5 below','cross-leg dead');
-    html+=gRow('G4','LTP <= VWAP','at fire');
-    html+='</div>';
-    html+='</div>';
-    html+='<div style="padding:4px 8px 2px;font-size:8px;color:var(--dm)">v10 gates live (1-min) — thresholds tuning as data grows</div>';
     html+='</div>';
     html+='</div>';
     return html;
