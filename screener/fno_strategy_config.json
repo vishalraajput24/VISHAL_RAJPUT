@@ -3,7 +3,7 @@
   "mode": "naked",
   "min_score": 8,
   "elite_score": 12,
-  "max_new_per_day": 4,
+  "max_new_per_day": 8,
   "max_open_total": 8,
   "require_regime_align": false,
   "max_pcr": 1.0,
