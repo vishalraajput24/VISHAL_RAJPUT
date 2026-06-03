@@ -11,10 +11,18 @@ Paper trading bot for NIFTY options (Zerodha Kite).
 
 **Current version**: `v20` (V10 cutover — PR #111, 2026-06-02)
 
-### v10 gates (tunable constants in VRL_MAIN.py)
-- `V10_NEAR_VWAP_MAX = 5.0` — block if `|close − vwap| >= 5` (the 5-15 zone = −4.5/trade)
-- `V10_MIN_EMA9H_GAP = 0.8` — block tiny gaps (<0.8 = −7.2/trade)
-- Basis: 79 pooled shadow signals → win 47%→71%, −44→+88 pts. P2 = edge, P1 marginal+. DEAD_WINDOW rejected (435-trade study: 13:00-14:15 is the *best* window).
+### v10 gates — FINAL (tunable constants in VRL_MAIN.py)
+5 HARD entry gates (all must pass), VWAP-free:
+- `V10_MIN_EMA9H_GAP = 3.5` — momentum breakout floor (gap 3.5-5 = +5.3/trade; <3.5 loses)
+- `V10_RSI_MIN = 55`, `V10_RSI_MAX = 70` — RSI 55-70 **and rising** (48-55 = 26% win loser zone)
+- `V10_BW_MIN = 5.0` — band-width floor (BW<5 = no energy)
+- **XLEG_CONFIRMED** (cross-leg dying) + **LTP on correct side of VWAP** at fire
+- `V10_NEAR_VWAP_MAX = 0` — near-VWAP DISTANCE gate **OFF** (was killing ~99% of live signals; median signal was 16.5 from VWAP)
+
+Warning-only (logged + dashboard, does NOT block): **trend-align** (CE+bull / PE+bear vs counter-trend).
+NOT gated: **ADX** — weak-ADX actually won (78%), so no ADX gate.
+Basis: 79 pooled shadow signals. Expected ~59% win, +4.2 pts/trade (backtest — validate live).
+Note: P1/P2 still use VWAP to define above/below (P1 above, P2 below) — only the *distance* gate is off.
 
 ### Stock F&O screener (screener/, also updated 2026-06-02)
 - **CALLs enabled** (`require_regime_align=false`) — 33-trade study: CALLs 67% win vs PUTs 24%.

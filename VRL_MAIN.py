@@ -300,7 +300,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
                 + (" k=" + str(entry_result.get("g6_k_now", "")) if _g6 is not None else "")
                 + " [shadow]\n")
     _tg_send(
-        "⚡ <b>V8 ENTRY " + _mode_tag + "</b>\n"
+        "⚡ <b>V10 ENTRY " + _mode_tag + "</b>\n"
         + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (1-min)\n"
@@ -437,7 +437,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
 
     _emoji = "🟢" if pnl_pts >= 0 else "🔴"
     _tg_send(
-        "⚡ <b>V8 EXIT " + direction + " " + str(strike) + "</b>\n"
+        "⚡ <b>V10 EXIT " + direction + " " + str(strike) + "</b>\n"
         + reason + "    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Entry  Rs" + "{:.1f}".format(entry_price) + "\n"
@@ -448,7 +448,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         "Charges -Rs" + "{:.0f}".format(total_charges) + "\n"
         "Net    " + ("+" if net_pnl >= 0 else "") + "Rs" + "{:.0f}".format(net_pnl) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "V8 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+        "V10 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
         + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
         + str(_v8_state.get("_wins_today", 0)) + "W "
         + str(_v8_state.get("_losses_today", 0)) + "L)",
@@ -487,7 +487,7 @@ def _v8_check_exit():
     # Tier upgrade alert (matches V7 style)
     if prev_tier and prev_tier != trail_tier and trail_tier != "INITIAL":
         _tg_send(
-            "⚡ <b>V8 SL UPGRADED → " + trail_tier + "</b>\n"
+            "⚡ <b>V10 SL UPGRADED → " + trail_tier + "</b>\n"
             "Peak +{:.1f}".format(peak) + " pts\n"
             "Prev " + str(prev_tier) + "  →  New " + trail_tier
             + "  SL Rs" + "{:.1f}".format(trail_sl),
@@ -622,11 +622,16 @@ _shadow_analysis = {
 # ── v10 ENTRY GATES (derived 2026-06-02 from 79 pooled shadow signals across 6 days) ──
 # near-VWAP + non-tiny-gap flips P1/P2 from -0.6 to +3.7 pts/trade (47%->71% win).
 # Tunable on purpose — will tighten as more live days of data arrive.
-V10_NEAR_VWAP_MAX = 5.0   # block fire if |option_close - vwap| >= this  (the 5-15 zone = -4.5/trade)
-V10_MIN_EMA9H_GAP = 0.8   # block fire if ema9h_gap < this              (tiny gap = -7.2/trade)
+V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (gap 3.5-5 = +5.3/trade; below loses)
+V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
+V10_RSI_MAX       = 70    # RSI cap
+V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
+V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
 # CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades and the old
 # v9 (BW 7-11%, 3-min) engine no longer enters. Flip to False to instantly revert to v9.
 V10_LIVE = True
+# Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
+_v10_live = {"CE": {}, "PE": {}}
 
 
 def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
@@ -940,7 +945,7 @@ def _load_v8_state():
             _emj   = "🟢" if _dir == "CE" else "🔴"
             logger.info("[V8] Was in trade on last shutdown — " + _sym + " monitoring resumed")
             _tg_send(
-                "⚡ <b>V8 restarted mid-trade</b>\n"
+                "⚡ <b>V10 restarted mid-trade</b>\n"
                 + _emj + " " + _dir + " " + _strk + " · qty " + str(_qty) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "Entry  Rs" + "{:.2f}".format(_ep) + "  @ " + _etime + "\n"
@@ -977,6 +982,7 @@ def _save_shadow_state():
                 "PE": dict(_v8_shadow_p2_v2["PE"]),
             },
             "saved_date": date.today().isoformat(),
+            "live": _v10_live,
         }
         tmp = D.SHADOW_STATE_FILE_PATH + ".tmp"
         with open(tmp, "w") as f:
@@ -1625,10 +1631,12 @@ def _alert_bot_started():
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GATES (P1)</b>\n"
-        "1) XLEG_CONFIRMED (cross-leg below EMA9H)\n"
-        "2) |gap_vwap| < " + str(V10_NEAR_VWAP_MAX) + " pts\n"
-        "3) ema9h_gap >= " + str(V10_MIN_EMA9H_GAP) + " pts\n"
-        "4) LTP above VWAP at fire\n"
+        "1) ema9h_gap >= " + str(V10_MIN_EMA9H_GAP) + " pts (momentum break)\n"
+        "2) RSI " + str(V10_RSI_MIN) + "-" + str(V10_RSI_MAX) + " AND rising\n"
+        "3) Band width >= " + str(V10_BW_MIN) + " pts (energy)\n"
+        "4) XLEG_CONFIRMED (cross-leg dying)\n"
+        "5) LTP on correct side of VWAP at fire\n"
+        "   near-VWAP gate OFF · trend-align = warning only\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
@@ -3254,10 +3262,22 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
-                        elif not (48 < _sh_rsi_1m < 70):
-                            _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}"
+                        elif not (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX):
+                            _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
+                        elif (_sh_ema9h_1m - _sh_ema9l_1m) < V10_BW_MIN:
+                            _sh_1m_reject = f"1m_bw_weak bw={round(_sh_ema9h_1m-_sh_ema9l_1m,1)}(need>={V10_BW_MIN})"
                         elif not (_sh_1m_close > _sh_1m_vwap):
                             _sh_1m_reject = f"1m_below_vwap close={_sh_1m_close:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap}"
+                        # ── live gate snapshot for dashboard (per side, every scan) ──
+                        _v10_live[_sh_dir] = {
+                            "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
+                            "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
+                            "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
+                            "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
+                            "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
+                        }
+                        if now.second % 15 == 0:
+                            _save_shadow_state()   # persist live gate snapshot for dashboard monitor
                         if _sh_1m_reject:
                             if now.second % 15 == 0:
                                 logger.info(f"[SHADOW-DTF] REJECT {_sh_dir} {_sh_1m_reject}")
@@ -3310,8 +3330,8 @@ def _strategy_loop(kite):
                                 f"slip={round(_sh_ltp - _sh_1m_vwap, 1)}"
                             )
                             continue
-                        # ── v10 GATE A — near-VWAP only (|gap_vwap| < V10_NEAR_VWAP_MAX) ──
-                        if abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
+                        # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
+                        if V10_NEAR_VWAP_MAX > 0 and abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
                             logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_vwap_far "
                                         f"gap_vwap={_sh_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
                             continue
@@ -3607,8 +3627,10 @@ def _strategy_loop(kite):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
                             _s2_reject = f"rsi_falling rsi={_s2_rsi:.1f} prev={_s2_rsi_p:.1f}"
-                        elif not (_s2_rsi > 55):
-                            _s2_reject = f"rsi_weak rsi={_s2_rsi:.1f}"
+                        elif not (V10_RSI_MIN < _s2_rsi < V10_RSI_MAX):
+                            _s2_reject = f"rsi_weak rsi={_s2_rsi:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
+                        elif _s2_bw < V10_BW_MIN:
+                            _s2_reject = f"bw_weak bw={_s2_bw}(need>={V10_BW_MIN})"
                         # Update cross-leg buffer every 15 sec (reject AND fire both recorded)
                         if now.second % 15 == 0:
                             _s2_above_ema9h = (_s2_ema9h > 0 and _s2_close > _s2_ema9h)
@@ -3655,8 +3677,8 @@ def _strategy_loop(kite):
                                 f"gap={round(_s2_ltp - _s2_vwap, 1)}"
                             )
                             continue
-                        # ── v10 GATE A — near-VWAP only (|gap_vwap| < V10_NEAR_VWAP_MAX) ──
-                        if abs(_s2_vwap_gap) >= V10_NEAR_VWAP_MAX:
+                        # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
+                        if V10_NEAR_VWAP_MAX > 0 and abs(_s2_vwap_gap) >= V10_NEAR_VWAP_MAX:
                             logger.info(f"[SHADOW-P2] REJECT {_s2_dir} v10_vwap_far "
                                         f"gap_vwap={_s2_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
                             continue
