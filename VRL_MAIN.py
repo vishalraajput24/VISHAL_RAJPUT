@@ -624,7 +624,7 @@ _shadow_analysis = {
 # Tunable on purpose — will tighten as more live days of data arrive.
 V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (gap 3.5-5 = +5.3/trade; below loses)
 V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
-V10_RSI_MAX       = 70    # RSI cap
+V10_RSI_MAX       = 80    # RSI cap (raised 70→80 2026-06-03: 70 blocked a strong CE breakout, RSI 76→88 ran +20-50; no data proved 70+ loses)
 V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
 V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
 # CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades and the old
@@ -3270,6 +3270,8 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"1m_below_vwap close={_sh_1m_close:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap}"
                         # ── live gate snapshot for dashboard (per side, every scan) ──
                         _v10_live[_sh_dir] = {
+                            "strike": int(_sh_info.get("strike", 0) or 0),
+                            "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
                             "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
                             "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
                             "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
