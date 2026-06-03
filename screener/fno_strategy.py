@@ -170,6 +170,8 @@ def get_technicals(kite, nse_df, symbol):
         return {
             "symbol": symbol,
             "price": price,
+            "day_high": round(float(last["high"]), 2),
+            "day_low": round(float(last["low"]), 2),
             "ema20": round(ema20_now, 2),
             "ema50": round(float(last["ema50"]), 2),
             "rsi": round(float(last["rsi"]), 1),
@@ -388,10 +390,25 @@ def score_signal(tech, regime, opt, cfg):
     if ext > cfg["max_ext_from_ema20_pct"]:
         return direction, score, sig, f"overextended({ext:.1f}%)"
 
-    # ── PCR gate: PCR > max_pcr = poor win rate (F&O data 2026-06: PCR>1.0 → 25% win) ──
+    # ── PCR gate: PCR > max_pcr = poor win rate ──
     _max_pcr = cfg.get("max_pcr", 0)
     if _max_pcr and pcr > _max_pcr:
         return direction, score, sig, f"pcr_high({pcr})"
+
+    # ── RSI DEAD ZONE: skip 45-50 (0% win in data) ──
+    if 45 <= rsi <= 50:
+        return direction, score, sig, f"rsi_dead_zone({rsi:.0f})"
+
+    # ── MAX PAIN PROXIMITY: stock must be within 2% of max pain ──
+    if mp > 0 and price > 0:
+        _mp_dist = abs(price - mp) / price * 100
+        if _mp_dist > cfg.get("max_pain_dist_pct", 2.0):
+            return direction, score, sig, f"far_from_maxpain({_mp_dist:.1f}%)"
+
+    # ── FRESH MOVE: skip if stock already moved >2% in 5 days ──
+    _max_5d = cfg.get("max_5d_move_pct", 2.0)
+    if abs(ret5) > _max_5d:
+        return direction, score, sig, f"5d_already_moved({ret5:+.1f}%)"
 
     # ── Regime gate (THE big fix) ──
     if cfg["require_regime_align"]:
@@ -453,8 +470,10 @@ def build_setup(direction, tech, opt, cfg):
         return None, why
     long_prem = float(long_leg["ltp"])
 
-    # stock-level SL (informational): 1.5 ATR adverse move
-    stock_sl = round(price - 1.5 * atr, 1) if direction == "CALL" else round(price + 1.5 * atr, 1)
+    # ── DYNAMIC STOCK-LEVEL SL: entry-day range (not fixed % on option) ──
+    day_high = tech.get("day_high", price + atr)
+    day_low  = tech.get("day_low", price - atr)
+    stock_sl = round(day_low, 1) if direction == "CALL" else round(day_high, 1)
 
     base = {
         "direction": direction,
@@ -503,21 +522,26 @@ def build_setup(direction, tech, opt, cfg):
         })
         return base, ""
 
-    # ── naked, realistic + ATR-scaled targets ──
-    t1_pct, t2_pct, sl_pct = cfg["naked_t1_pct"], cfg["naked_t2_pct"], cfg["naked_sl_pct"]
-    if cfg["naked_atr_scale"] and atr > 0 and price > 0:
-        # scale targets toward how big a move the stock typically makes (ATR%/day)
-        atr_pct = atr / price * 100.0
-        factor = max(0.7, min(1.4, atr_pct / 1.5))  # ~1.5% ATR = neutral
-        t1_pct = round(t1_pct * factor, 0); t2_pct = round(t2_pct * factor, 0)
+    # ── DYNAMIC TARGETS: based on stock ATR, not fixed % on option ──
+    # T1 = option value when stock moves 1× ATR in your direction
+    # T2 = option value when stock moves 2× ATR
+    # SL = option value when stock hits entry-day low (call) / high (put)
+    # Approximate option delta ~0.5 for ATM to convert stock move → option move
+    _delta = 0.5
+    _t1_move = round(atr * _delta, 1) if atr > 0 else round(long_prem * 0.30, 1)
+    _t2_move = round(atr * 2 * _delta, 1) if atr > 0 else round(long_prem * 0.60, 1)
+    # SL: stock distance to day-level × delta
+    _sl_stock_dist = abs(price - stock_sl) if stock_sl else atr
+    _sl_move = round(_sl_stock_dist * _delta, 1)
     base.update({
         "structure": "NAKED",
         "entry_premium": long_prem,
-        "sl_premium": round(long_prem * (1 - sl_pct / 100.0), 1),
-        "t1_premium": round(long_prem * (1 + t1_pct / 100.0), 1),
-        "t2_premium": round(long_prem * (1 + t2_pct / 100.0), 1),
+        "sl_premium": round(max(long_prem - _sl_move, long_prem * 0.50), 1),  # floor at -50% (safety)
+        "t1_premium": round(long_prem + _t1_move, 1),
+        "t2_premium": round(long_prem + _t2_move, 1),
         "sell_strike": "", "sell_symbol": "", "net_debit": "", "max_value": "",
         "invest_per_lot": round(long_prem * lot, 0),
+        "atr": atr, "day_high": day_high, "day_low": day_low,
     })
     return base, ""
 
@@ -556,6 +580,29 @@ def can_add_entry(tracker_df, symbol, direction, invest, cfg, today=None, score=
     # 1) cross-day dedup: same symbol+direction already open (any date) — HARD
     if is_open_dup(df, symbol, direction):
         return False, "already_open"
+
+    # 1b) NEVER RE-ENTER same symbol in same expiry (0/3 wins on 2nd entry)
+    _all_syms = df[df["symbol"] == symbol]
+    if len(_all_syms) > 0:
+        return False, "no_reentry_same_expiry"
+
+    # 1c) SECTOR LIMIT: max 1 stock per sector per day
+    _SECTORS = {
+        "BANK": ["HDFCBANK","ICICIBANK","SBIN","FEDERALBNK","BANDHANBNK","BAJFINANCE",
+                 "BAJAJFINSV","AUBANK","INDUSINDBK","KOTAKBANK","AXISBANK","BANKBARODA",
+                 "PNB","CANBK","IDFCFIRSTB","BANKINDIA"],
+        "IT": ["INFY","TCS","HCLTECH","TECHM","WIPRO","LTIM","COFORGE","MPHASIS","PERSISTENT"],
+        "AUTO": ["MARUTI","TATAMOTORS","M&M","BAJAJ-AUTO","HEROMOTOCO","EICHERMOT","ASHOKLEY"],
+        "PHARMA": ["SUNPHARMA","DRREDDY","CIPLA","DIVISLAB","LUPIN","AUROPHARMA","BIOCON"],
+    }
+    _my_sector = None
+    for _sec, _syms in _SECTORS.items():
+        if symbol in _syms: _my_sector = _sec; break
+    if _my_sector:
+        _today_df = df[df["date_added"].astype(str) == today]
+        _today_same_sector = sum(1 for _, _r in _today_df.iterrows() if _r["symbol"] in _SECTORS[_my_sector])
+        if _today_same_sector >= 1:
+            return False, f"sector_limit({_my_sector})"
 
     # 2) daily cap counts only ROUTINE (non-elite) adds, so elite trades are a
     #    genuine extra slot on top of the 4 — never blocked by it.

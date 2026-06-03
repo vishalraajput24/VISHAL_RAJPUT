@@ -11266,40 +11266,32 @@ async function renderFno(){
       var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
       var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
       var scoreClr=score>=9?'var(--gn)':score>=7?'var(--am)':'#888';
-      var range=t1-sl;
+      var range=t2-sl;
       var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
       var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
-      var t2Pct=range>0?Math.max(0,Math.min(100,((t2-sl)/range)*100)):0;
-      var expShort=p.expiry?p.expiry.slice(5):'';
-      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-radius:8px;padding:10px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px">'+
-        '<div>'+
-          '<span style="font-weight:700;font-size:13px;color:var(--tx)">'+esc(p.symbol)+'</span> '+
-          '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+dirClr+'">'+esc(p.direction)+'</span>'+
-          (rank?'<span style="font-size:9px;color:var(--dm);margin-left:5px">#'+rank+'</span>':'')+
-          '<div style="font-size:9px;color:var(--dm);margin-top:1px">'+esc(p.option_symbol)+' · exp '+expShort+'</div>'+
+      var t1Pct=range>0?Math.max(0,Math.min(100,((t1-sl)/range)*100)):0;
+      var dirIcon=p.direction==='CALL'?'🟢':'🔴';
+      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-left:3px solid '+dirClr+';border-radius:8px;padding:10px 10px 8px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+
+          '<span style="font-size:10px;font-weight:700;color:'+dirClr+';margin-left:5px">'+esc(p.direction)+' '+(p.strike||'')+'</span>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+'</div></div>'+
+          '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+sign+pnlPct.toFixed(0)+'%</span>'+
+          '<div style="font-size:10px;color:'+clr+'">'+sign+'₹'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div></div>'+
         '</div>'+
-        '<div style="text-align:right">'+
-          '<div style="font-weight:700;font-size:16px;color:'+clr+'">'+sign+pnlPct.toFixed(1)+'%</div>'+
-          '<div style="font-size:11px;color:'+clr+'">'+sign+'&#x20B9;'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div>'+
-          '<div style="display:flex;gap:4px;justify-content:flex-end;margin-top:2px">'+
-            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;font-weight:700;background:rgba(0,0,0,.06);color:'+scoreClr+'">'+score+'</span>'+
-            '<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:'+badgeBg+';color:'+badgeClr+'">'+esc(st)+'</span>'+
-          '</div>'+
-        '</div></div>'+
-        (stockPx>0?'<div style="font-size:9px;color:var(--dm);margin-bottom:3px">Stock &#x20B9;'+stockPx.toFixed(1)+(stockSl>0?' · SL &#x20B9;'+stockSl.toFixed(1):'')+' · PCR '+pcr+'</div>':'')+
-        '<div style="font-size:10px;color:var(--dm);margin-bottom:5px">Option: entry &#x20B9;'+entry.toFixed(2)+' now &#x20B9;'+ltp.toFixed(2)+'</div>'+
-        '<div style="position:relative;height:8px;background:var(--c2);border-radius:4px;overflow:visible;margin:2px 0 4px">'+
-          '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:4px;transition:width .5s"></div>'+
-          '<div style="position:absolute;top:-3px;left:2px;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL"></div>'+
-          (t2Pct>0&&t2Pct<100?'<div style="position:absolute;top:-3px;left:'+t2Pct.toFixed(0)+'%;width:2px;height:14px;background:var(--cy);border-radius:1px" title="T2"></div>':'')+
-          '<div style="position:absolute;top:-3px;right:2px;width:2px;height:14px;background:var(--gn);border-radius:1px" title="T1"></div>'+
+        '<div style="position:relative;height:6px;background:var(--c2);border-radius:3px;overflow:visible;margin:0 0 3px">'+
+          '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:3px;transition:width .5s"></div>'+
+          '<div style="position:absolute;top:-4px;left:0;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL ₹'+sl.toFixed(0)+'"></div>'+
+          (t1Pct>0&&t1Pct<100?'<div style="position:absolute;top:-4px;left:'+t1Pct.toFixed(0)+'%;width:2px;height:14px;background:var(--am);border-radius:1px" title="T1 ₹'+t1.toFixed(0)+'"></div>':'')+
+          '<div style="position:absolute;top:-4px;right:0;width:2px;height:14px;background:var(--gn);border-radius:1px" title="T2 ₹'+t2.toFixed(0)+'"></div>'+
         '</div>'+
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
-          '<span>SL &#x20B9;'+sl.toFixed(2)+'</span><span>T2 &#x20B9;'+t2.toFixed(2)+'</span><span>T1 &#x20B9;'+t1.toFixed(2)+'</span>'+
+          '<span>SL ₹'+sl.toFixed(0)+'</span><span>T1 ₹'+t1.toFixed(0)+'</span><span>T2 ₹'+t2.toFixed(0)+'</span>'+
         '</div>'+
-        '<div style="font-size:8px;color:var(--dm);margin-top:3px">Lot '+p.lot_size+'\xd7'+p.lots+(p.investment>0?' · Inv ₹'+Math.round(p.investment).toLocaleString('en-IN'):'')+' · Added '+esc(p.date_added)+(p.last_checked&&p.last_checked!==p.date_added?' · chk '+esc(p.last_checked):'')+'</div>'+
-        '</div>';
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm);margin-top:3px">'+
+          '<span style="background:'+badgeBg+';color:'+badgeClr+';padding:1px 6px;border-radius:3px;font-weight:600">'+esc(st)+'</span>'+
+          '<span>'+esc(p.date_added)+'</span>'+
+        '</div></div>';
     }
     var allPos=openPos.concat(closedPos);
     allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
