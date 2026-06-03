@@ -8797,7 +8797,7 @@ def _cmd_pulse(args):
 
         _eb = CFG.get().get("entry", {}).get("ema9_band", {}) or {}
         _xb = CFG.get().get("exit", {}).get("ema9_band", {}) or {}
-        _cd = CFG.entry_ema9_band("cooldown_minutes", 5) if hasattr(_CFG, "entry_ema9_band") else 5
+        _cd = CFG.entry_ema9_band("cooldown_minutes", 5) if hasattr(CFG, "entry_ema9_band") else 5
 
         _err_lines = []
         try:
