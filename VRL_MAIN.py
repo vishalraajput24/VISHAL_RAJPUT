@@ -28,7 +28,6 @@ from VRL_CONFIG import get_kite
 from VRL_ENGINE import (
     check_entry, manage_exit, pre_entry_checks,
     compute_entry_sl,
-    check_entry_v8,
 )
 import VRL_CONFIG as CFG
 
@@ -107,7 +106,7 @@ DEFAULT_STATE = {
     # 2026-05-07 same-candle re-fire bug.
     "_last_fired_candle_ts": "",
     # V8 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
-    # check_entry_v8 skips the very next candle then clears the flag.
+    # entry scan skips the very next candle then clears the flag.
     "_sl_cooldown_skip_next": False,
     "_force_exit_ts"        : 0.0,
     # ── Last exit memory (cooldown) ────────────────────────
@@ -510,7 +509,6 @@ _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 _v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
-_v9_last_results: dict = {"CE": None, "PE": None}  # last V10 gate results for dashboard
 spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
 # Shadow: dual-TF early entry tracking (1 week data collection before going live)
 _v8_shadow_dt = {
@@ -610,8 +608,7 @@ V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
 V10_RSI_MAX       = 80    # RSI cap (raised 70→80 2026-06-03: 70 blocked a strong CE breakout, RSI 76→88 ran +20-50; no data proved 70+ loses)
 V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
 V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
-# CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades and the old
-# v9 (BW 7-11%, 3-min) engine no longer enters. Flip to False to instantly revert to v9.
+# CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades.
 V10_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
 _v10_live = {"CE": {}, "PE": {}}
@@ -2429,14 +2426,14 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _rsi_prev = round(float(result.get("rsi_prev", 0) or 0), 1)
             _slope = round(float(result.get("ema9_low_slope", 0) or 0), 2)
 
-            # V10 gate pass/fail flags
-            _g1 = _green
-            _g2 = (_close > _el) if (_el > 0 and _close > 0) else False
-            _g2b = (_slope >= 0)
+            # V10 gate pass/fail flags (must match the REAL v10 gates in the fire path)
+            _gap = round(_close - _eh, 2) if _eh > 0 else 0.0
             _bw_pct = round(_bw / _close * 100, 2) if _close > 0 else 0.0
-            _g3 = (7 <= _bw_pct <= 11) if _bw > 0 else False   # v20: %-of-premium gate
-            _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))
-            _g5 = (48 < _rsi < 70 and _rsi > _rsi_prev) if _rsi > 0 else False
+            _g1 = (_gap >= V10_MIN_EMA9H_GAP)                        # ema9h_gap >= 3.5
+            _g2 = (V10_RSI_MIN < _rsi < V10_RSI_MAX and _rsi > _rsi_prev) if _rsi > 0 else False  # RSI 55-80 rising
+            _g3 = (_bw >= V10_BW_MIN)                                 # BW >= 5
+            _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))  # xleg
+            _g5 = (_close > _el) if (_el > 0 and _close > 0) else False  # close > ema9l (basic trend)
 
             if _fired:
                 verdict = "✅ ALL GATES PASSED"
@@ -2444,12 +2441,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = _reject
             else:
                 _fails = []
-                if not _g1: _fails.append("G1:red_candle")
-                if not _g2: _fails.append(f"G2:close({round(_close,1)})<ema9l({round(_el,1)})")
-                if not _g2b: _fails.append(f"G2B:slope_falling({_slope:+.2f})")
-                if not _g3: _fails.append(f"G3:BW%={_bw_pct}(need7-11%)")
-                if not _g4: _fails.append("G4:other_side_not_falling")
-                if not _g5: _fails.append(f"G5:RSI={_rsi}(need48-70↑)")
+                if not _g1: _fails.append(f"G1:gap={_gap:.1f}(need>={V10_MIN_EMA9H_GAP})")
+                if not _g2: _fails.append(f"G2:RSI={_rsi}(need {V10_RSI_MIN}-{V10_RSI_MAX}↑)")
+                if not _g3: _fails.append(f"G3:BW={_bw:.1f}(need>={V10_BW_MIN})")
+                if not _g4: _fails.append("G4:xleg_not_confirmed")
+                if not _g5: _fails.append(f"G5:below_ema9l({round(_close,1)}<{round(_el,1)})")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0) or _ltp_fallback, 2)
@@ -2832,70 +2828,7 @@ def _strategy_loop(kite):
                     and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
-            if (not _v8_state.get("in_trade")
-                    and not state.get("paused")
-                    and D.is_trading_window(now)
-                    and _locked_tokens
-                    and not _v8_in_force_cooldown
-                    and time.time() - _v8_last_entry_scan_ts >= 3):
-                _v8_last_entry_scan_ts = time.time()
-                try:
-                    _v8_ce_info = (_locked_tokens or {}).get("CE", {})
-                    _v8_pe_info = (_locked_tokens or {}).get("PE", {})
-                    _v8_ce_tok  = int(_v8_ce_info.get("token", 0) or 0)
-                    _v8_pe_tok  = int(_v8_pe_info.get("token", 0) or 0)
-                    _v8_ce_gate_rejected = False
-                    _v8_pe_gate_rejected = False
-                    _v8_both_rej_ts = float(_v8_state.get("_v8_both_rejected_ts", 0) or 0)
-                    _v8_in_both_cooldown = (_v8_both_rej_ts > 0 and time.time() - _v8_both_rej_ts < 60)
-                    for _v8_dir, _v8_token, _v8_other in [
-                        ("CE", _v8_ce_tok, _v8_pe_tok),
-                        ("PE", _v8_pe_tok, _v8_ce_tok),
-                    ]:
-                        if not _v8_token:
-                            continue
-                        _v8_res = check_entry_v8(
-                            token=_v8_token, option_type=_v8_dir,
-                            spot_ltp=spot_ltp,
-                            silent=False,
-                            state=_v8_state, other_token=_v8_other)
-                        # Store for dashboard display
-                        _v8_res["_strike"] = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
-                            "strike", _locked_ce_strike or _locked_pe_strike or 0)
-                        _v9_last_results[_v8_dir] = _v8_res
-                        if not _v8_res.get("fired"):
-                            if _v8_dir == "CE": _v8_ce_gate_rejected = True
-                            else: _v8_pe_gate_rejected = True
-                            continue
-                        if _v8_in_both_cooldown:
-                            _age = round(time.time() - _v8_both_rej_ts)
-                            logger.info(f"[REJECT-V8] {_v8_dir} both_sides_cooldown "
-                                        f"age={_age}s — gates passed but blocked")
-                            continue
-                        _v8_state["_signals_today"] = int(_v8_state.get("_signals_today", 0)) + 1
-                        _v8_state["_last_signal_time"] = now.strftime("%H:%M:%S")
-                        _v8_strike = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get(
-                            "strike", _locked_ce_strike or _locked_pe_strike or 0)
-                        _v8_symbol = (_v8_ce_info if _v8_dir == "CE" else _v8_pe_info).get("symbol", "")
-                        if V10_LIVE:
-                            # CUTOVER: v9 (BW 7-11% engine) no longer trades — P1/P2 (v10) drive entries below.
-                            continue
-                        _v8_execute_paper_entry(
-                            direction=_v8_dir, strike=_v8_strike,
-                            symbol=_v8_symbol, token=_v8_token,
-                            entry_price=_v8_res["entry_price"],
-                            entry_result=_v8_res, other_token=_v8_other)
-                        break
-                    if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
-                        if not _v8_in_both_cooldown:
-                            _v8_state["_v8_both_rejected_ts"] = time.time()
-                            if _v8_both_rej_ts == 0:
-                                logger.info("[V8] both_sides_cooldown ARMED — both CE+PE failed (1 min block)")
-                            else:
-                                logger.info("[V8] both_sides_cooldown RE-ARMED — both CE+PE failed again")
-                except Exception as _v8e:
-                    import traceback as _v8tb
-                    logger.warning("[V8] entry scan error: " + str(_v8e) + "\n" + _v8tb.format_exc())
+            # (legacy entry scan removed — V10 P1/P2 drives all entries now)
 
 
             # ── V2 EXIT + DYNAMIC TRAIL (A/B comparison — no real trades) ──
@@ -4198,8 +4131,7 @@ def _strategy_loop(kite):
                         time.sleep(2)
                         continue
 
-                # Seed dashboard with last V10 scan results (updated every 3s by V10 entry loop)
-                all_results = {k: v for k, v in _v9_last_results.items() if v is not None}
+                all_results = {}
                 best_result = None
                 best_type = None
                 best_opt_info = None
@@ -4375,7 +4307,7 @@ def _strategy_loop(kite):
                             logger.error("[REENTRY] check error: " + str(_ree)
                                          + "\n" + _tb_re.format_exc())
 
-                # V7 15-min check_entry scan removed — V10 (check_entry_v8) handles all entries
+                # V7 15-min check_entry scan removed — V10 P1/P2 handles all entries
                 # V10 entry is handled above in the 10-second scan (outside 1-min gate)
 
                 try:
