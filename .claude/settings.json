@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(ssh *)",
+      "Bash(ssh-add *)",
+      "Bash(ssh-keygen *)",
+      "Bash(ssh-keyscan *)",
+      "Bash(ssh-copy-id *)",
+      "Bash(gcloud *)",
+      "Bash(sed *)",
+      "Bash(sudo systemctl *)",
+      "Bash(sudo /usr/bin/systemctl *)",
+      "Bash(sudo /bin/systemctl *)",
+      "Bash(sudo -n systemctl *)",
+      "Bash(sudo -n /usr/bin/systemctl *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Bash(ps *)",
+      "Bash(pgrep *)",
+      "Bash(python3 *)",
+      "Bash(~/kite_env/bin/python3 *)",
+      "Bash(crontab *)",
+      "Bash(export *)",
+      "Bash(source *)",
+      "Bash(mkdir *)",
+      "Bash(chmod *)",
+      "Bash(stat *)",
+      "Bash(wc *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(du *)",
+      "Bash(df *)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ]
+  }
+}
