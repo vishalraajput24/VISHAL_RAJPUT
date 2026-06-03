@@ -27,7 +27,11 @@ from logging.handlers import TimedRotatingFileHandler
 
 from kiteconnect import KiteConnect, KiteTicker
 
-DB = None  # VRL_DB removed — all DB calls are optional
+class _DBNoop:
+    """Safe no-op proxy for removed VRL_DB — any method call does nothing."""
+    def __getattr__(self, name):
+        return lambda *a, **kw: None
+DB = _DBNoop()  # VRL_DB removed — all DB calls silently no-op
 
 logger = logging.getLogger("vrl_live")
 lab_logger = logging.getLogger("vrl_lab")
@@ -2385,10 +2389,13 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                         "volume": float(r.get("volume", 0)),
                     })
                 if rows:
-                    if tf == "3minute":
-                        DB.insert_option_3min_many(rows)
-                    elif tf == "minute":
-                        DB.insert_option_1min_many(rows)
+                    try:
+                        if tf == "3minute":
+                            DB.insert_option_3min_many(rows)
+                        elif tf == "minute":
+                            DB.insert_option_1min_many(rows)
+                    except Exception:
+                        pass  # DB removed — skip silently
                     fetched_any = True
                     new_cnt = cnt + len(rows)
                     if side == "CE":
@@ -4544,6 +4551,7 @@ _last_health_log_ts = 0.0   # throttle for intraday [MAIN] Token health re-log
 
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
+    "_entry_tok_stale": True,          # force re-resolve on new day
     "_signals_today": 0,             # count for /pulse
     "_last_signal_time": "",
     # Paper position state (parallel to V7, independent).
@@ -5003,6 +5011,7 @@ V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to
 # CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades.
 V10_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
+_v10_live_lock = threading.Lock()
 _v10_live = {"CE": {}, "PE": {}}
 
 
@@ -7456,7 +7465,8 @@ def _strategy_loop(kite):
                     if _lp_tok:
                         _lp_px = D.get_ltp(_lp_tok)
                         if _lp_px and _lp_dir in _v10_live:
-                            _v10_live[_lp_dir]["price"] = round(_lp_px, 1)
+                            with _v10_live_lock:
+                                _v10_live[_lp_dir]["price"] = round(_lp_px, 1)
                 if now.second % 15 == 0:
                     _save_shadow_state()
 
@@ -7473,7 +7483,7 @@ def _strategy_loop(kite):
                             continue
 
                         # ── 1-min PRIMARY: last completed 1-min candle ──
-                        _sh_1m = D.get_option_1min(_sh_tok, 100)   # full session for VWAP
+                        _sh_1m = get_option_1min(_sh_tok, 100)   # full session for VWAP (local, uses WS cache)
                         if _sh_1m is None or len(_sh_1m) < 4:
                             continue
                         _sh_1m_comp   = _sh_1m.iloc[-2]   # last completed 1-min candle
@@ -7596,15 +7606,16 @@ def _strategy_loop(kite):
                         elif not (_sh_1m_close > _sh_1m_vwap):
                             _sh_1m_reject = f"1m_below_vwap close={_sh_1m_close:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap}"
                         # ── live gate snapshot for dashboard (per side, every scan) ──
-                        _v10_live[_sh_dir] = {
-                            "strike": int(_sh_info.get("strike", 0) or 0),
-                            "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
-                            "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
-                            "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
-                            "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
-                            "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
-                            "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
-                        }
+                        with _v10_live_lock:
+                            _v10_live[_sh_dir] = {
+                                "strike": int(_sh_info.get("strike", 0) or 0),
+                                "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
+                                "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
+                                "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
+                                "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
+                                "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
+                                "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
+                            }
                         if now.second % 15 == 0:
                             _save_shadow_state()   # persist live gate snapshot for dashboard monitor
                         if _sh_1m_reject:
@@ -8891,6 +8902,9 @@ def _strategy_loop(kite):
                         _snap_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
                         _dj["snaps"][_delay]      = _snap_ltp  if _snap_ltp  else 0.0
                         _dj["spot_snaps"][_delay] = _snap_spot if _snap_spot else 0.0
+                # Timeout: discard jobs older than 2 min (prevent memory leak if LTP fails)
+                if _elapsed > 120 and not all(v is not None for v in _dj["snaps"].values()):
+                    _done_jobs.append(_dj); continue
                 if all(v is not None for v in _dj["snaps"].values()):
                     _b   = _dj["base"]
                     _sb  = _dj.get("spot_base", 0.0)
@@ -9215,7 +9229,7 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>DIAGNOSTIC</b>\n"
         "/pulse     — 🩺 full health check (one-shot)\n"
-        "/xleg      — 📊 cross-leg divergence accuracy (7-day)\n"
+        ""  # /xleg removed
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>TRADING</b>\n"
         "/status    — trade status + PNL\n"
@@ -9872,14 +9886,30 @@ def place_exit(kite, symbol: str, token: int,
         result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
         return result
 
-    # First attempt failed — retry once
-    logger.warning("[TRADE] Exit attempt 1 failed — retrying")
-    time.sleep(1)
-    result = MSTOCK.ms_place_sell(mc, symbol, qty,
-                                  timeout_secs=_verify_timeout("exit", 8))
-    if result["ok"]:
-        result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
-        return result
+    # First attempt failed — retry with exponential backoff (3 attempts total)
+    for _retry in range(2, 4):
+        _wait = 2 ** (_retry - 1)  # 2s, 4s
+        logger.warning(f"[TRADE] Exit attempt {_retry-1} failed — retry {_retry} in {_wait}s")
+        time.sleep(_wait)
+        result = MSTOCK.ms_place_sell(mc, symbol, qty,
+                                      timeout_secs=_verify_timeout("exit", 8))
+        if result["ok"]:
+            result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
+            return result
+
+    # Final fallback: try Kite API directly
+    logger.warning("[TRADE] MStock exit failed 3x — trying Kite fallback")
+    try:
+        _kite_order = kite.place_order(
+            variety=kite.VARIETY_REGULAR, exchange="NFO",
+            tradingsymbol=symbol, transaction_type=kite.TRANSACTION_TYPE_SELL,
+            quantity=qty, order_type=kite.ORDER_TYPE_MARKET,
+            product=kite.PRODUCT_MIS)
+        logger.info(f"[TRADE] Kite fallback order placed: {_kite_order}")
+        return {"ok": True, "fill_price": exit_price_ref, "fill_qty": qty,
+                "order_id": str(_kite_order), "error": "", "slippage": 0}
+    except Exception as _ke:
+        logger.critical(f"[TRADE] Kite fallback also failed: {_ke}")
 
     logger.critical("CRITICAL: Exit failed for " + symbol
                     + " qty=" + str(qty) + ". MANUAL ACTION REQUIRED.")
@@ -10003,6 +10033,7 @@ def _shutdown(signum, frame):
             logger.debug("[MAIN] Shutdown telegram send failed: " + str(_tge))
     _save_state()
     _remove_pid()
+    time.sleep(0.5)  # ensure pending TG messages flush
     logger.info("[MAIN] Clean shutdown")
     sys.exit(0)
 
@@ -10328,9 +10359,9 @@ def _web_save_sessions():
         with _web_sessions_lock:
             data = {k: {"user": v["user"], "role": v["role"], "expires": v["expires"].isoformat()}
                     for k, v in _web_sessions.items()}
-        os.makedirs(os.path.dirname(_WEB_SESSION_FILE), exist_ok=True)
-        with open(_WEB_SESSION_FILE, "w") as _sf:
-            json.dump(data, _sf)
+            os.makedirs(os.path.dirname(_WEB_SESSION_FILE), exist_ok=True)
+            with open(_WEB_SESSION_FILE, "w") as _sf:
+                json.dump(data, _sf)
     except Exception:
         pass
 
@@ -10683,6 +10714,9 @@ def _web_read_weekly():
                             "rs_vs_nifty":   float(r.get("rs_vs_nifty",0) or 0),
                             "crash_flag":    int(float(r.get("crash_flag",0) or 0)),
                             "mon_status":    r.get("mon_status",""),
+                            "peg":           float(r.get("peg",0) or 0),
+                            "promoter":      float(r.get("promoter",0) or 0),
+                            "last_updated":  r.get("last_updated",""),
                             "weeks_as_pick": int(float(r.get("weeks_as_pick",1) or 1)),
                             "reconfirmed":   r.get("reconfirmed",""),
                         })
@@ -10691,6 +10725,7 @@ def _web_read_weekly():
     return rows
 
 def _web_read_shadow():
+    """Read shadow state JSON — atomic file, safe read with fallback."""
     try:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "vrl_shadow_state.json")
         if not os.path.isfile(path): return {}
@@ -11166,67 +11201,60 @@ async function renderWeekly(){
     const data=await fetch('/api/weekly').then(r=>r.json()).catch(e=>[]);
     const el=document.getElementById('p-wkly');
     if(!data||!data.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No weekly picks yet — runs every Sunday</div>';return;}
-    const open=data.filter(d=>d.status==='OPEN'||d.status.includes('OPEN'));
-    const closed=data.filter(d=>!d.status.includes('OPEN'));
-    const lastDate=data[0].date_added||'';
-    var gradeClr=function(g){return g.includes('STRONG')?'var(--rd)':g.includes('BUY')?'var(--gn)':'var(--am)';}
-    var cards=open.map(function(p){
-      var up3=parseFloat(p.t3_upside_pct||0);
-      var score=parseInt(p.score||0);
-      var scorePct=Math.min(100,(score/15)*100);
-      var scoreClr=score>=12?'var(--rd)':score>=10?'var(--am)':'var(--gn)';
-      var currRet=parseFloat(p.current_return_pct||0);
-      var currPrice=parseFloat(p.current_price||0);
-      var hasCurr=currPrice>0;
-      var retClr=currRet>=0?'var(--gn)':'var(--rd)';
-      var statusStr=esc(p.status||'OPEN');
-      var isSl=statusStr.includes('SL');var isT=statusStr.includes('HIT')&&!isSl;
-      var statusBg=isSl?'rgba(248,113,113,.12)':isT?'rgba(52,211,153,.12)':'rgba(0,0,0,.04)';
-      var statusClr=isSl?'var(--rd)':isT?'var(--gn)':'var(--dm)';
-      return '<div style="margin:6px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;padding:10px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'+
-        '<div><span style="font-weight:700;font-size:14px;color:var(--tx)">#'+p.rank+' '+esc(p.symbol)+'</span> '+
-        '<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.06);color:'+gradeClr(p.grade)+'">'+esc(p.grade)+'</span>'+
-        ((p.weeks_as_pick||1)>=2?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;margin-left:3px;background:rgba(245,158,11,.15);color:var(--am)" title="weeks it has stayed a top pick">'+p.weeks_as_pick+'w</span>':'')+
-        (String(p.reconfirmed||'').indexOf('dropped')>=0?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;margin-left:3px;background:rgba(248,113,113,.15);color:var(--rd)" title="fell out of this week\'s screen">dropped</span>':'')+
-        '<div style="font-size:10px;color:var(--dm);margin-top:2px">'+esc(p.name)+'</div></div>'+
-        '<div style="text-align:right">'+
-        (hasCurr?'<div style="font-size:9px;color:var(--dm)">NOW</div><div style="font-size:18px;font-weight:700;color:'+retClr+'">'+(currRet>=0?'+':'')+currRet.toFixed(1)+'%</div><div style="font-size:9px;color:var(--dm)">&#x20B9;'+currPrice.toFixed(0)+'</div>':
-        '<div style="font-size:9px;color:var(--dm)">3Y UPSIDE</div><div style="font-size:18px;font-weight:700;color:var(--gn)">+'+up3.toFixed(0)+'%</div>')+
-        '</div></div>'+
-        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:6px 0">'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">ENTRY</div><div style="font-size:11px;font-weight:700">&#x20B9;'+p.entry_price.toFixed(0)+'</div></div>'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">SL</div><div style="font-size:11px;font-weight:700;color:var(--rd)">&#x20B9;'+p.sl.toFixed(0)+'</div></div>'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T1 (1Y)</div><div style="font-size:11px;font-weight:700;color:var(--gn)">&#x20B9;'+p.target_1y.toFixed(0)+'</div></div>'+
-        '<div style="background:var(--c2);border:1px solid var(--bd);border-radius:5px;padding:5px;text-align:center"><div style="font-size:7px;color:var(--dm)">T3 (3Y)</div><div style="font-size:11px;font-weight:700;color:var(--bl)">&#x20B9;'+p.target_3y.toFixed(0)+'</div></div>'+
+    const open=data.filter(d=>(d.status||'').includes('OPEN'));
+    const closed=data.filter(d=>!(d.status||'').includes('OPEN'));
+    // summary
+    var totRet=0;var wins=0;
+    open.forEach(function(p){var r=parseFloat(p.current_return_pct||0);totRet+=r;if(r>0)wins++;});
+    var avgRet=open.length?totRet/open.length:0;
+    var avgClr=avgRet>=0?'var(--gn)':'var(--rd)';
+    // cards
+    var cards=open.sort(function(a,b){return parseFloat(b.current_return_pct||0)-parseFloat(a.current_return_pct||0);}).map(function(p){
+      var ret=parseFloat(p.current_return_pct||0);
+      var cur=parseFloat(p.current_price||0);
+      var entry=parseFloat(p.entry_price||0);
+      var sl=parseFloat(p.sl||0);
+      var peg=parseFloat(p.peg||0);
+      var prom=parseFloat(p.promoter||0);
+      var w=ret>=0;var clr=w?'var(--gn)':'var(--rd)';
+      var mon=p.mon_status||'HOLD';
+      var monClr=mon==='HOLD'?'var(--gn)':(mon.indexOf('CRASH')>=0?'var(--rd)':'var(--am)');
+      return '<div style="margin:5px 8px;background:var(--c1);border:1px solid var(--bd);border-left:3px solid '+clr+';border-radius:8px;padding:9px 10px 7px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
+          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+esc(p.symbol)+'</span>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+(cur||entry).toFixed(0)+'</div></div>'+
+          '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+(w?'+':'')+ret.toFixed(1)+'%</span></div>'+
         '</div>'+
-        '<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;color:var(--dm);margin-bottom:4px">'+
-        '<span>ROE '+p.roe+'%  ROCE '+p.roce+'%  Score '+p.score+'/15</span>'+
-        '<span style="padding:2px 6px;border-radius:3px;background:'+statusBg+';color:'+statusClr+'">'+statusStr+'</span></div>'+
-        '<div style="height:4px;background:var(--c2);border-radius:2px"><div style="height:100%;width:'+scorePct.toFixed(0)+'%;background:'+scoreClr+';border-radius:2px"></div></div>'+
-        (p.mon_status?'<div style="display:flex;justify-content:space-between;align-items:center;font-size:9px;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd)">'+
-          '<span style="font-weight:700;color:'+(p.crash_flag?'var(--rd)':(String(p.mon_status).indexOf("!")>=0?'var(--am)':'var(--dm)'))+'">'+(p.crash_flag?"CRASH ":"")+esc(p.mon_status)+'</span>'+
-          '<span style="color:var(--dm)">trail SL &#x20B9;'+(p.trail_sl||0).toFixed(0)+' · RS '+((p.rs_vs_nifty||0)>=0?"+":"")+(p.rs_vs_nifty||0).toFixed(1)+'</span>'+
-          '</div>':'')+
-        (p.last_updated?'<div style="font-size:8px;color:var(--dm);margin-top:3px">Updated '+esc(p.last_updated)+'</div>':'')+
-        '</div>';
+        '<div style="display:flex;gap:4px;margin-bottom:4px">'+
+          '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.15)"><div style="font-size:7px;color:var(--dm)">SL</div><div style="font-size:10px;font-weight:700;color:var(--rd)">₹'+sl.toFixed(0)+'</div></div>'+
+          '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(10,122,80,.06);border:1px solid rgba(10,122,80,.15)"><div style="font-size:7px;color:var(--dm)">T1 (1Y)</div><div style="font-size:10px;font-weight:700;color:var(--gn)">₹'+parseFloat(p.target_1y||0).toFixed(0)+'</div></div>'+
+          '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(26,107,191,.06);border:1px solid rgba(26,107,191,.15)"><div style="font-size:7px;color:var(--dm)">T3 (3Y)</div><div style="font-size:10px;font-weight:700;color:var(--bl)">₹'+parseFloat(p.target_3y||0).toFixed(0)+'</div></div>'+
+          '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(0,0,0,.03);border:1px solid var(--bd)"><div style="font-size:7px;color:var(--dm)">PEG</div><div style="font-size:10px;font-weight:700">'+(peg>0?peg.toFixed(1):'—')+'</div></div>'+
+          '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(0,0,0,.03);border:1px solid var(--bd)"><div style="font-size:7px;color:var(--dm)">PROM</div><div style="font-size:10px;font-weight:700">'+(prom>0?prom.toFixed(0)+'%':'—')+'</div></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
+          '<span style="font-weight:600;color:'+monClr+'">'+esc(mon)+'</span>'+
+          '<span>'+esc(p.last_updated||p.date_added||'')+'</span>'+
+        '</div></div>';
     }).join('');
+    // closed
     var closedHtml='';
     if(closed.length){
-      closedHtml='<div style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px">Closed Positions</div>'+
+      closedHtml='<div style="padding:6px 10px;font-size:9px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);margin-top:6px">Closed ('+closed.length+')</div>'+
       closed.map(function(p){
-        var ret=parseFloat(p.actual_return||0);
-        var w=ret>=0;
-        return '<div style="margin:3px 8px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center">'+
-          '<div><span style="font-weight:700">'+esc(p.symbol)+'</span> <span style="font-size:9px;color:var(--dm)">'+esc(p.grade)+'</span></div>'+
+        var ret=parseFloat(p.current_return_pct||p.actual_return||0);var w=ret>=0;
+        return '<div style="margin:3px 8px;padding:6px 10px;background:var(--c1);border:1px solid var(--bd);border-radius:6px;display:flex;justify-content:space-between;align-items:center">'+
+          '<span style="font-weight:700;font-size:12px">'+esc(p.symbol)+'</span>'+
           '<span style="font-weight:700;color:'+(w?'var(--gn)':'var(--rd)')+'">'+(w?'+':'')+ret.toFixed(1)+'%</span></div>';
       }).join('');
     }
     el.innerHTML=
-      '<div style="margin:8px;padding:8px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
-      '<div><div style="font-size:9px;color:var(--dm)">WEEKLY SCREENER</div><div style="font-weight:700;font-size:13px">'+open.length+' Open · '+closed.length+' Closed</div></div>'+
-      '<div style="font-size:9px;color:var(--dm)">Updated '+esc(lastDate)+'</div></div>'+
-      cards+closedHtml;
+      '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+        '<div><div style="font-size:9px;color:var(--dm)">MULTIBAGGER PICKS</div>'+
+        '<div style="font-weight:700;font-size:14px">'+open.length+' Open · '+wins+'W/'+( open.length-wins)+'L</div></div>'+
+        '<div style="text-align:right"><div style="font-size:9px;color:var(--dm)">AVG RETURN</div>'+
+        '<div style="font-weight:800;font-size:16px;color:'+avgClr+'">'+(avgRet>=0?'+':'')+avgRet.toFixed(1)+'%</div></div>'+
+      '</div>'+cards+closedHtml;
   }catch(e){document.getElementById('p-wkly').innerHTML='<div style="color:var(--dm);padding:16px">Error loading weekly data</div>';console.error(e);}
 }
 
@@ -12096,6 +12124,7 @@ def _run_collector():
 
 if __name__ == "__main__":
     if "--collector" in sys.argv:
+        _load_env_file(os.path.expanduser("~/.env"))  # ensure env loaded for standalone collector
         _run_collector()
         sys.exit(0)
     main()
