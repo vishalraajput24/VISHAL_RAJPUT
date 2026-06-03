@@ -1,5 +1,5 @@
 {
-  "_README": "Overrides for fno_strategy.py DEFAULT_CONFIG. Any key here wins; anything omitted falls back to the documented defaults in fno_strategy.py. Edit + save — no code change, no restart; picked up on the next scan/tick. Set 'mode' to 'naked' or 'spread' to paper-compare the two structures.",
+  "_README": "Stock F&O strategy config. Picked up on next scan/tick — no restart needed.",
   "mode": "naked",
   "min_score": 8,
   "elite_score": 12,
@@ -7,5 +7,6 @@
   "max_open_total": 8,
   "require_regime_align": false,
   "max_pcr": 1.0,
-  "naked_sl_pct": 25.0
+  "max_pain_dist_pct": 2.0,
+  "max_5d_move_pct": 2.0
 }
