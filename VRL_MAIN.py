@@ -5600,6 +5600,7 @@ def _tg_handle_message(message: dict):
     parts   = text.split()
     raw_cmd = parts[0].split("@")[0].lower()
     args    = parts[1:] if len(parts) > 1 else []
+    logger.info(f"[TG-CMD] {raw_cmd}" + (f" {' '.join(args)}" if args else ""))
     handler = _DISPATCH.get(raw_cmd)
     if handler:
         handler(args)
