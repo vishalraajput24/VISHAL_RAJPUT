@@ -32,6 +32,7 @@ class _DBNoop:
     def __getattr__(self, name):
         return lambda *a, **kw: None
 DB        = _DBNoop()  # VRL_DB removed — all DB calls silently no-op
+_DB       = _DBNoop()  # no-op stub — used by web API handlers
 _VDB      = _DBNoop()  # no-op stub — trade insert DB removed
 _SC       = _DBNoop()  # no-op stub — scan DB removed
 _DB_clean = _DBNoop()  # no-op stub — DB cleanup removed
@@ -213,21 +214,6 @@ def entry_ema9_band(key: str, default=None):
 def exit_ema9_band(key: str, default=None):
     xb = (get().get("exit") or {}).get("ema9_band") or {}
     return xb.get(key, default)
-
-
-def straddle_filter(key: str, default=None):
-    """v16: straddle is display-only. Reads entry.filters.straddle_display."""
-    sf = ((get().get("entry") or {}).get("filters") or {}).get("straddle_display") or {}
-    return sf.get(key, default)
-
-
-def vwap_bonus(key: str, default=None):
-    vb = ((get().get("entry") or {}).get("filters") or {}).get("vwap_bonus") or {}
-    return vb.get(key, default)
-
-
-def cooldown(key: str, default=None):
-    return _deep_get(get(), "cooldown", key, default=default)
 
 
 # ── Risk ──
@@ -2393,13 +2379,6 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                         "volume": float(r.get("volume", 0)),
                     })
                 if rows:
-                    try:
-                        if tf == "3minute":
-                            DB.insert_option_3min_many(rows)
-                        elif tf == "minute":
-                            DB.insert_option_1min_many(rows)
-                    except Exception:
-                        pass  # DB removed — skip silently
                     fetched_any = True
                     new_cnt = cnt + len(rows)
                     if side == "CE":
@@ -3413,11 +3392,6 @@ def collect_spot_1min(kite):
             }
             w.writerow(_spot_row)
             f.flush()
-        # Dual write: SQLite
-        try:
-            DB.insert_spot_1min(_spot_row)
-        except Exception:
-            pass
     except Exception as e:
         logger.debug("[LAB] Spot 1m error: " + str(e))
 
@@ -3663,11 +3637,6 @@ def collect_option_3min(kite, spot_ltp: float):
     if all_rows:
         all_rows.sort(key=lambda r: (r["timestamp"], r["type"]))
         n = _append_rows(_csv_path_3m(today), FIELDNAMES_3M, all_rows)
-        try:
-            DB.insert_option_3min_many(all_rows)
-        except Exception as _dbe:
-            logger.warning("[LAB] 3m DB insert failed (CSV still wrote): "
-                           + str(_dbe))
         logger.debug("[LAB] 3m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
     try:
         _at_n = _collect_active_trade_candles(
@@ -3756,11 +3725,7 @@ def _collect_active_trade_candles(kite, interval: str, today, now,
                     "ema9_high": round(float(_arow.get("ema9_high", last["high"])), 2),
                     "ema9_low" : round(float(_arow.get("ema9_low", last["low"])), 2),
                 })
-                try:
-                    DB.insert_option_3min(row)
-                    n_written += 1
-                except Exception:
-                    pass
+                n_written += 1
             else:
                 _adf = pd.DataFrame(candles)
                 _adf.rename(columns={"date": "timestamp"}, inplace=True)
@@ -3771,11 +3736,7 @@ def _collect_active_trade_candles(kite, interval: str, today, now,
                     "rsi" : round(float(_arow.get("RSI", 50)), 1),
                     "ema9": round(float(_arow.get("EMA_9", last["close"])), 2),
                 })
-                try:
-                    DB.insert_option_1min(row)
-                    n_written += 1
-                except Exception:
-                    pass
+                n_written += 1
         except Exception as _e:
             logger.debug("[LAB] active-trade candle " + side
                          + " " + interval + ": " + str(_e))
@@ -3851,21 +3812,12 @@ def _collect_post_exit_candles(kite, interval: str, today, now,
                     "ema9_high": round(float(_arow.get("ema9_high", last["high"])), 2),
                     "ema9_low" : round(float(_arow.get("ema9_low", last["low"])), 2),
                 })
-                try:
-                    DB.insert_option_3min(row)
-                    n_written += 1
-                except Exception:
-                    pass
             else:
                 row.update({
                     "rsi" : round(float(_arow.get("RSI", 50)), 1),
                     "ema9": round(float(_arow.get("EMA_9", last["close"])), 2),
                 })
-                try:
-                    DB.insert_option_1min(row)
-                    n_written += 1
-                except Exception:
-                    pass
+            n_written += 1
         except Exception as _e:
             logger.debug("[LAB] post-exit candle " + side
                          + " " + interval + ": " + str(_e))
@@ -3969,11 +3921,6 @@ def collect_option_1min(kite, spot_ltp: float):
     if all_rows:
         all_rows.sort(key=lambda r: (r["timestamp"], r["type"]))
         n = _append_rows(_csv_path_1m(today), FIELDNAMES_1M, all_rows)
-        try:
-            DB.insert_option_1min_many(all_rows)
-        except Exception as _dbe:
-            logger.warning("[LAB] 1m DB insert failed (CSV still wrote): "
-                           + str(_dbe))
         logger.debug("[LAB] 1m wrote=" + str(n) + " @" + now.strftime("%H:%M"))
     try:
         _at_n = _collect_active_trade_candles(kite, "minute", today, now)
@@ -4110,180 +4057,10 @@ def fill_forward_columns(kite, target_date: date = None, timeframe: str = "3min"
     except Exception as e:
         logger.error("[LAB] Fwd fill write error: " + str(e))
 
-    # Dual write: update SQLite forward fill columns
-    try:
-        update_fn = DB.update_option_1min_fwd if timeframe == "1min" else DB.update_option_3min_fwd
-        for row in rows:
-            if row.get(fwd_keys[-1]):
-                ts = row.get("timestamp", "")
-                ot = row.get("type", "")
-                if timeframe == "1min":
-                    update_fn(ts, ot, row.get("fwd_1c"), row.get("fwd_3c"), row.get("fwd_5c"), row.get("fwd_outcome"))
-                else:
-                    update_fn(ts, ot, row.get("fwd_3c"), row.get("fwd_6c"), row.get("fwd_9c"), row.get("fwd_outcome"))
-    except Exception as _fwde:
-        logger.warning("[LAB] fwd-fill DB update failed (" + timeframe
-                       + ", CSV still correct): " + str(_fwde))
 
 
-def _startup_backfill(kite):
-    """Mid-day restart warmup.
-
-    When the bot restarts after market open, today's option_3min /
-    option_1min tables have a hole from 09:15 up to the restart
-    moment — because LAB was down. The live engine doesn't care
-    (check_entry fetches fresh history on every tick), but
-    dashboards, audits and daily reports read from the DB and see
-    a ragged session.
-
-    Gate: only backfills when today's in-memory indicator buffer is
-    effectively empty — i.e. today has <5 option_3min DB rows. If
-    the restart was before 09:15 or after 15:30 we also skip.
-
-    Backfill pulls the last ~60 candles per interval for the current
-    ATM CE+PE, runs D.add_indicators() so ema9_high/low/RSI are
-    populated, and inserts into the DB. Greeks/IV columns are left
-    at defaults — a cold restart cannot reconstruct them after the
-    fact; only live ticks give IV_vs_open + theta decay signal.
-    """
-    try:
-        today = date.today()
-        # Out-of-session restart → nothing useful to backfill
-        now = datetime.now()
-        mod = now.hour * 60 + now.minute
-        if mod < 9 * 60 + 15 or mod > 15 * 60 + 30:
-            logger.info("[LAB] Startup backfill skipped — outside session hours")
-            return
-        # Gate: today's buffer empty?
-        try:
-            rows = DB.query(
-                "SELECT COUNT(*) AS n FROM option_3min "
-                "WHERE date(timestamp) = ?", (today.isoformat(),))
-            n_today = int(rows[0]["n"]) if rows else 0
-        except Exception:
-            n_today = 0
-        if n_today >= 5:
-            logger.info("[LAB] Startup backfill skipped — "
-                        + str(n_today) + " option_3min rows already "
-                        "present for " + today.isoformat())
-            return
-
-        # Resolve current ATM + tokens
-        spot_ltp = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-        if spot_ltp <= 0:
-            logger.warning("[LAB] Startup backfill aborted — no spot LTP yet")
-            return
-        expiry = D.get_nearest_expiry(kite)
-        if expiry is None:
-            logger.warning("[LAB] Startup backfill aborted — no expiry")
-            return
-        atm = D.resolve_atm_strike(spot_ltp)
-        tokens = D.get_option_tokens(kite, atm, expiry) or {}
-        if not tokens:
-            logger.warning("[LAB] Startup backfill aborted — ATM tokens unresolved")
-            return
-
-        n_3m = 0
-        n_1m = 0
-        # Today 00:00 onwards — Kite returns only market-hours bars
-        today_start = datetime.combine(today, datetime.min.time())
-        for opt_type, info in tokens.items():
-            token = int(info.get("token") or 0)
-            if not token:
-                continue
-            # ── 3-min backfill ────────────────────────────────────
-            c3 = _fetch_candles_with_warmup(
-                kite, token, today_start, now, "3minute", 60)
-            if c3:
-                try:
-                    df3 = pd.DataFrame(c3)
-                    df3.rename(columns={"date": "timestamp"}, inplace=True)
-                    df3.set_index("timestamp", inplace=True)
-                    df3 = D.add_indicators(df3)
-                    rows3 = []
-                    for ts, r in df3.iterrows():
-                        ts_str = (ts.strftime("%Y-%m-%d %H:%M:%S")
-                                  if hasattr(ts, "strftime") else str(ts))
-                        if ts_str[:10] != today.isoformat():
-                            continue
-                        rows3.append({
-                            "timestamp"    : ts_str,
-                            "strike"       : atm, "type": opt_type,
-                            "open"         : round(float(r["open"]),  2),
-                            "high"         : round(float(r["high"]),  2),
-                            "low"          : round(float(r["low"]),   2),
-                            "close"        : round(float(r["close"]), 2),
-                            "volume"       : int(r.get("volume", 0) or 0),
-                            "spot_ref"     : round(spot_ltp, 2),
-                            "atm_distance" : round(abs(spot_ltp - atm), 0),
-                            "dte"          : D.calculate_dte(expiry),
-                            "session_block": D.get_session_block(
-                                ts.hour if hasattr(ts, "hour") else 10,
-                                ts.minute if hasattr(ts, "minute") else 0),
-                            "body_pct"     : 0,
-                            "rsi"          : round(float(r.get("RSI", 50)), 1),
-                            "ema9"         : round(float(r.get("EMA_9", r["close"])), 2),
-                            "ema21"        : round(float(r.get("EMA_21", r["close"])), 2),
-                            "ema_spread"   : 0,
-                            "ema9_high"    : round(float(r.get("ema9_high", r["high"])), 2),
-                            "ema9_low"     : round(float(r.get("ema9_low",  r["low"])),  2),
-                        })
-                    if rows3:
-                        try:
-                            DB.insert_option_3min_many(rows3)
-                            n_3m += len(rows3)
-                        except Exception as _de:
-                            logger.debug("[LAB] 3m backfill DB insert: " + str(_de))
-                except Exception as _e3:
-                    logger.debug("[LAB] 3m backfill parse err: " + str(_e3))
-
-            # ── 1-min backfill ────────────────────────────────────
-            c1 = _fetch_candles_with_warmup(
-                kite, token, today_start, now, "minute", 60)
-            if c1:
-                try:
-                    df1 = pd.DataFrame(c1)
-                    df1.rename(columns={"date": "timestamp"}, inplace=True)
-                    df1.set_index("timestamp", inplace=True)
-                    df1 = D.add_indicators(df1)
-                    rows1 = []
-                    for ts, r in df1.iterrows():
-                        ts_str = (ts.strftime("%Y-%m-%d %H:%M:%S")
-                                  if hasattr(ts, "strftime") else str(ts))
-                        if ts_str[:10] != today.isoformat():
-                            continue
-                        rows1.append({
-                            "timestamp"    : ts_str,
-                            "strike"       : atm, "type": opt_type,
-                            "open"         : round(float(r["open"]),  2),
-                            "high"         : round(float(r["high"]),  2),
-                            "low"          : round(float(r["low"]),   2),
-                            "close"        : round(float(r["close"]), 2),
-                            "volume"       : int(r.get("volume", 0) or 0),
-                            "spot_ref"     : round(spot_ltp, 2),
-                            "atm_distance" : round(abs(spot_ltp - atm), 0),
-                            "dte"          : D.calculate_dte(expiry),
-                            "session_block": D.get_session_block(
-                                ts.hour if hasattr(ts, "hour") else 10,
-                                ts.minute if hasattr(ts, "minute") else 0),
-                            "body_pct"     : 0,
-                            "rsi"          : round(float(r.get("RSI", 50)), 1),
-                            "ema9"         : round(float(r.get("EMA_9", r["close"])), 2),
-                            "ema9_gap"     : 0,
-                        })
-                    if rows1:
-                        try:
-                            DB.insert_option_1min_many(rows1)
-                            n_1m += len(rows1)
-                        except Exception as _de:
-                            logger.debug("[LAB] 1m backfill DB insert: " + str(_de))
-                except Exception as _e1:
-                    logger.debug("[LAB] 1m backfill parse err: " + str(_e1))
-
-        logger.info("[LAB] Startup backfill: " + str(n_3m) + " 3m + "
-                    + str(n_1m) + " 1m rows written for ATM=" + str(atm))
-    except Exception as e:
-        logger.warning("[LAB] Startup backfill top-level error: " + str(e))
+def _startup_backfill(_kite):
+    pass  # DB removed — nothing to backfill
 
 
 def start_lab(kite):
@@ -4295,13 +4072,6 @@ def start_lab(kite):
     global _kite_ref, _lab_running
     _kite_ref    = kite
     _lab_running = True
-
-    # Initialize SQLite database
-    try:
-        DB.init_db()
-        logger.info("[LAB] SQLite database initialized")
-    except Exception as e:
-        logger.warning("[LAB] SQLite init error: " + str(e))
 
     # v15.2.5 mid-day restart backfill, gated on empty buffer
     try:
@@ -4555,7 +4325,6 @@ _last_health_log_ts = 0.0   # throttle for intraday [MAIN] Token health re-log
 
 _v8_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
-    "_entry_tok_stale": True,          # force re-resolve on new day
     "_signals_today": 0,             # count for /pulse
     "_last_signal_time": "",
     # Paper position state (parallel to V7, independent).
@@ -4813,8 +4582,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         with open(log_path, "a", newline="") as f:
             w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
             w.writerow(_v8_row)
-        try: _VDB.insert_trade(_v8_row)
-        except Exception: pass  # DB removed
     except Exception as _le:
         logger.warning("[V8] Trade log write error: " + str(_le))
 
@@ -5511,14 +5278,6 @@ def _reset_daily(today_str: str):
     D.reset_daily_warnings()
     _reset_strike_lock()
     logger.info("[MAIN] _eod_exited reset for new day")
-    # DB maintenance
-    try:
-        _DB.cleanup_old_db_data()
-        from datetime import date as _d
-        if _d.today().weekday() == 6:  # Sunday
-            _DB.vacuum_db()
-    except Exception:
-        pass
     logger.info("[MAIN] Daily reset")
     # Force recompute of institutional levels for the new day
     try:
@@ -5784,12 +5543,6 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
             f.flush()
     except Exception as e:
         logger.error("[MAIN] Trade log error: " + str(e))
-
-    # Dual write: SQLite
-    try:
-        _DB.insert_trade(row)
-    except Exception as _dbe:
-        logger.warning("[MAIN] DB insert_trade error: " + str(_dbe))
 
 def _read_today_trades() -> list:
     today_str = date.today().isoformat()
@@ -7006,33 +6759,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "paused": st.get("paused", False),
         }
 
-        pass
-
         rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
-        try:
-            _l10 = _DB_dash.query("SELECT pnl_pts FROM trades ORDER BY date DESC, entry_time DESC LIMIT 10")
-            _l20 = _DB_dash.query("SELECT pnl_pts FROM trades ORDER BY date DESC, entry_time DESC LIMIT 20")
-            _w10 = len([t for t in _l10 if float(t.get("pnl_pts", 0)) > 0])
-            _w20 = len([t for t in _l20 if float(t.get("pnl_pts", 0)) > 0])
-            _pts10 = sum(float(t.get("pnl_pts", 0)) for t in _l10)
-            rolling_block["last10_wr"] = round(_w10 / len(_l10) * 100) if _l10 else 0
-            rolling_block["last20_wr"] = round(_w20 / len(_l20) * 100) if _l20 else 0
-            rolling_block["last10_pts"] = round(_pts10, 1)
-            _streak = 0
-            for _t in _l10:
-                if float(_t.get("pnl_pts", 0)) > 0:
-                    _streak += 1
-                else:
-                    break
-            if _streak == 0:
-                for _t in _l10:
-                    if float(_t.get("pnl_pts", 0)) <= 0:
-                        _streak -= 1
-                    else:
-                        break
-            rolling_block["streak"] = _streak
-        except Exception:
-            pass
 
         straddle_block = {
             "open": round(straddle_open, 1) if straddle_captured else 0,
@@ -7810,30 +7537,6 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_sh_e:
                             logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
-                        # ── signal_scans DB record ──
-                        try:
-                            _SC.insert_scan({
-                                "timestamp": now.isoformat(),
-                                "session": "P1",
-                                "dte": dte,
-                                "atm_strike": int(_sh_strike or 0),
-                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
-                                "direction": _sh_dir,
-                                "entry_price": float(_sh_ltp),
-                                "ema9_high": float(_sh_ema9h_1m),
-                                "ema9_low": float(_sh_ema9l_1m),
-                                "band_position": "ABOVE",
-                                "body_pct": float(_sh_1m_comp.get("body_pct", 0) or 0),
-                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
-                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
-                                "spot_regime": str(spot_3m.get("regime", "")),
-                                "vix": float(D.get_vix()),
-                                "fired": "1",
-                                "trade_taken": 0,
-                                "reject_reason": "",
-                            })
-                        except Exception as _sc_e:
-                            logger.debug(f"[SHADOW-SCAN] P1 DB insert error: {_sc_e}")
                 except Exception as _she:
                     logger.warning(f"[SHADOW-P1] error: {_she}")
 
@@ -8135,30 +7838,6 @@ def _strategy_loop(kite):
                             )
                         except Exception as _lvl_s2_e:
                             logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
-                        # ── signal_scans DB record ──
-                        try:
-                            _SC.insert_scan({
-                                "timestamp": now.isoformat(),
-                                "session": "P2",
-                                "dte": dte,
-                                "atm_strike": int(_s2_strike or 0),
-                                "spot": float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
-                                "direction": _s2_dir,
-                                "entry_price": float(_s2_ltp),
-                                "ema9_high": float(_s2_ema9h),
-                                "ema9_low": float(_s2_ema9l),
-                                "band_position": "ABOVE",
-                                "body_pct": float(_s2_comp.get("body_pct", 0) or 0),
-                                "spot_rsi_3m": float(spot_3m.get("rsi", 0)),
-                                "spot_ema_spread_3m": float(spot_3m.get("spread", 0)),
-                                "spot_regime": str(spot_3m.get("regime", "")),
-                                "vix": float(D.get_vix()),
-                                "fired": "1",
-                                "trade_taken": 0,
-                                "reject_reason": "",
-                            })
-                        except Exception as _sc_e:
-                            logger.debug(f"[SHADOW-SCAN] P2 DB insert error: {_sc_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
 
@@ -8317,11 +7996,6 @@ def _strategy_loop(kite):
                         except Exception as _ce:
                             logger.warning("[MAIN] Lab cleanup error: "
                                            + str(_ce))
-                        try:
-                            _DB_clean.cleanup_old_db_data()
-                        except Exception as _dce:
-                            logger.warning("[MAIN] DB cleanup error: "
-                                           + str(_dce))
                         _save_state()
             except Exception as _ce_outer:
                 logger.debug("[MAIN] Daily cleanup dispatch: "
@@ -9656,76 +9330,6 @@ def _cmd_trades(args):
     )
 
 
-def _cmdevaluate_cross_leg(args):
-    try:
-        import csv as _csv
-        from datetime import date as _date, timedelta as _td
-        path = D.TRADE_LOG_PATH
-        if not os.path.isfile(path):
-            _tg_send("📊 X-LEG: no trade log yet")
-            return
-        cutoff = (_date.today() - _td(days=7)).isoformat()
-        rows = []
-        with open(path, "r") as f:
-            for r in _trade_csv_reader(f):
-                if (r.get("date") or "") >= cutoff:
-                    rows.append(r)
-        if not rows:
-            _tg_send("📊 X-LEG: no trades in last 7 days")
-            return
-
-        def _wins_losses(group):
-            w = sum(1 for r in group if float(r.get("pnl_pts", 0) or 0) > 0)
-            l = len(group) - w
-            wr = round(w / len(group) * 100, 1) if group else 0.0
-            avg_pts = (round(sum(float(r.get("pnl_pts", 0) or 0) for r in group)
-                             / len(group), 2) if group else 0.0)
-            return w, l, wr, avg_pts
-
-        pass_rows = [r for r in rows if (r.get("xleg_signal") or "") == "PASS"]
-        fail_rows = [r for r in rows if (r.get("xleg_signal") or "") == "FAIL"]
-        na_rows   = [r for r in rows if (r.get("xleg_signal") or "") in ("", "NA")]
-
-        pw, pl, pwr, pavg = _wins_losses(pass_rows)
-        fw, fl, fwr, favg = _wins_losses(fail_rows)
-        total = len(rows)
-
-        _verdict = "—  insufficient data (need >=5 each)"
-        if len(pass_rows) >= 5 and len(fail_rows) >= 5:
-            if pwr >= 55 and pwr - fwr >= 10:
-                _verdict = "✅ READY TO PROMOTE — PASS-WR " + str(pwr) + "% > 55% AND > FAIL by " + str(round(pwr-fwr,1)) + "%"
-            elif pwr >= 55:
-                _verdict = "⚠ PASS hits 55% but edge over FAIL is thin"
-            else:
-                _verdict = "❌ NOT READY — PASS-WR " + str(pwr) + "% < 55%"
-
-        _gate_on = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
-        _gate_line = ("🛡 GATE ENABLED — FAIL signals blocked at entry"
-                      if _gate_on else
-                      "ℹ GATE DISABLED — display-only logging")
-        msg = (
-            "📊 <b>X-LEG ACCURACY (last 7 days)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Total trades : " + str(total) + "\n"
-            "PASS (other dying) : " + str(len(pass_rows)) + "\n"
-            "FAIL (other hold)  : " + str(len(fail_rows)) + "\n"
-            "NA   (no data)     : " + str(len(na_rows)) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>PASS</b>  " + str(pw) + "W / " + str(pl) + "L  ("
-            + str(pwr) + "%)   avg " + ("+" if pavg>=0 else "") + str(pavg) + " pts\n"
-            "<b>FAIL</b>  " + str(fw) + "W / " + str(fl) + "L  ("
-            + str(fwr) + "%)   avg " + ("+" if favg>=0 else "") + str(favg) + " pts\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>Verdict</b>  " + _verdict + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            + _gate_line + "\n"
-            "Backtest 5d: V3 (both filters) +570 pts vs +163 baseline"
-        )
-        _tg_send(msg)
-    except Exception as e:
-        _tg_send("📊 X-LEG error: " + str(e))
-
-
 def _cmd_vishal_stock_fno(args):
     try:
         import csv as _csv
@@ -10204,38 +9808,6 @@ def main():
             logger.info("[MAIN] No trades found for today — starting fresh")
     except Exception as e:
         logger.warning("[MAIN] Trade log restore failed: " + str(e))
-    try:
-        import csv as _sync_csv
-        if DB is not None and not isinstance(DB, _DBNoop):
-            _sync_db = DB
-        else:
-            raise ImportError("DB removed")
-        _sync_db.init_db()
-        _today_iso = date.today().isoformat()
-        _csv_path = D.TRADE_LOG_PATH
-        _csv_trades = []
-        if os.path.isfile(_csv_path):
-            with open(_csv_path) as _sf:
-                for _row in _trade_csv_reader(_sf):
-                    _d = _row.get("date", "").strip()
-                    if _d == _today_iso:
-                        _csv_trades.append(_row)
-        _db_trades = _sync_db.get_trades(_today_iso)
-        _db_times = {t.get("entry_time", "").strip() for t in _db_trades}
-        _inserted = 0
-        for _ct in _csv_trades:
-            _et = _ct.get("entry_time", "").strip()
-            if _et and _et not in _db_times:
-                _sync_db.insert_trade(_ct)
-                _inserted += 1
-        if _inserted > 0:
-            logger.info("[SYNC] CSV→DB backfill: " + str(_inserted) + " rows inserted")
-        else:
-            logger.info("[SYNC] CSV/DB in sync for " + _today_iso
-                        + " (CSV=" + str(len(_csv_trades)) + " DB=" + str(len(_db_trades)) + ")")
-    except Exception as _se:
-        logger.warning("[SYNC] CSV→DB backfill failed: " + str(_se))
-
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
     time.sleep(2)
