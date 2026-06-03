@@ -3249,8 +3249,8 @@ def _strategy_loop(kite):
                         _sh_1m_reject  = None
                         if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
                             _sh_1m_reject = f"1m_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
-                        elif _sh_1m_gap < 2.0:
-                            _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>=2.0)"
+                        elif _sh_1m_gap < V10_MIN_EMA9H_GAP:
+                            _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
                         elif not (48 < _sh_rsi_1m < 70):
@@ -3600,8 +3600,8 @@ def _strategy_loop(kite):
                         _s2_reject     = None
                         if not (_s2_ema9h > 0 and _s2_close > _s2_ema9h):
                             _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
-                        elif _s2_ema9h_gap < 2.0:
-                            _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>=2.0)"
+                        elif _s2_ema9h_gap < V10_MIN_EMA9H_GAP:
+                            _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
                         elif not (_s2_close <= _s2_vwap):
                             _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
                         elif not (_s2_rsi > _s2_rsi_p):
