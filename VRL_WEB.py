@@ -725,18 +725,31 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // ── LIVE GATE MONITOR — watch each side approach the thresholds ──
     (function(){
       var lv=sh.live||{};
-      function chip(ok,txt){return '<span style="color:'+(ok?'var(--gn)':'var(--rd)')+';font-weight:600">'+(ok?'✅':'❌')+txt+'</span>';}
-      function row(side,o){
-        if(!o||o.gap===undefined)return '<div style="padding:3px 10px;font-size:11px"><b>'+side+'</b> <span style="color:#999">— no data —</span></div>';
-        var rdy=o.ready?'<b style="color:var(--gn)">● READY</b>':'<span style="color:#888">blocked: '+esc(o.reject||'')+'</span>';
-        return '<div style="padding:3px 10px;font-size:11px"><b>'+side+'</b> &nbsp;'
-          +chip(o.gap_ok,' gap '+o.gap)+' &nbsp; '
-          +chip(o.rsi_ok,' RSI '+o.rsi+(o.rsi_rising?'↑':'↓'))+' &nbsp; '
-          +chip(o.bw_ok,' BW '+o.bw)+' &nbsp;→ '+rdy+'</div>';
+      function pill(label,val,ok){
+        var c=ok?'var(--gn)':'var(--rd)';
+        var bg=ok?'rgba(10,122,80,.10)':'rgba(192,57,43,.07)';
+        var bd=ok?'rgba(10,122,80,.30)':'rgba(192,57,43,.20)';
+        return '<div style="flex:1;text-align:center;padding:6px 2px;border-radius:10px;background:'+bg+';border:1px solid '+bd+'">'
+          +'<div style="font-size:8px;font-weight:700;color:var(--dm);letter-spacing:.6px">'+label+'</div>'
+          +'<div style="font-size:15px;font-weight:800;color:'+c+';line-height:1.25">'+val+'</div></div>';
       }
-      html+='<div style="margin:0 10px 6px;padding:6px 0;background:#fff;border-radius:8px">';
-      html+='<div style="font-size:9px;font-weight:700;color:#888;padding:0 10px 4px;letter-spacing:.4px">⚡ LIVE GATES — need gap≥3.5 · RSI 55-70↑ · BW≥5</div>';
-      html+=row('CE',lv.CE)+row('PE',lv.PE);
+      function card(side,o){
+        var acc=side==='CE'?'var(--gn)':'var(--rd)';
+        var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+'</span>';
+        if(!o||o.gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
+        if(o.ready)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px;box-shadow:0 0 0 0 rgba(10,122,80,.5);animation:pulse 1.3s infinite">● READY</span>';
+        else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.reject||'wait')+'</span>';
+        h+='</div><div style="display:flex;gap:6px">';
+        h+=pill('GAP',(o.gap_ok?'✓ ':'')+o.gap,o.gap_ok);
+        h+=pill('RSI',o.rsi+(o.rsi_rising?' ↑':' ↓'),o.rsi_ok);
+        h+=pill('BW',(o.bw_ok?'✓ ':'')+o.bw,o.bw_ok);
+        return h+'</div></div>';
+      }
+      html+='<div style="margin:2px 10px 9px">';
+      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ LIVE GATES &nbsp;·&nbsp; need gap≥3.5 · RSI 55-70↑ · BW≥5</div>';
+      html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+card('CE',lv.CE)+card('PE',lv.PE)+'</div>';
       html+='</div>';
     })();
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
