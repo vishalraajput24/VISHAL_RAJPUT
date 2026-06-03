@@ -201,6 +201,19 @@ def run():
             _log_event(f"TRAIL-SL | {sym} ({added}) | cur {cur} <= SL {trail_sl} ({tlab}) | "
                        f"peak was {round(peak,1)}")
 
+        # ── AUTO-EXIT: below 30-week MA = broken trend (data: 22% win) ──
+        if ma > 0 and cur < ma:
+            _prev_status = str(df.at[idx, "status"])
+            if not _prev_status.startswith("OPEN"):
+                pass  # already closed
+            else:
+                df.at[idx, "status"] = "BELOW-MA ❌"
+                df.at[idx, "current_price"] = cur
+                df.at[idx, "current_return_%"] = round((cur / entry - 1) * 100, 1)
+                alerts += 1
+                _log_event(f"BELOW-MA | {sym} ({added}) | cur {cur} < 30wkMA {round(ma,1)} | "
+                           f"auto-exit — 22% win rate below MA")
+
         col = "⚠" if flags else " "
         print(f"  {col} {sym:<12} cur {cur:<9} peak {round(peak,1):<9} SL {trail_sl:<9} "
               f"RS {rs if rs is not None else '-':<6} {mon_status}")

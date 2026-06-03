@@ -64,12 +64,12 @@ FILTERS = {
     "profit_growth_3y"  : 12.0,
     "debt_equity_max"   : 0.75,   # relaxed slightly for capex businesses
     "current_ratio_min" : 1.0,
-    "promoter_min"      : 40.0,   # relaxed — many quality IT/pharma cos have 30-45%
+    "promoter_min"      : 50.0,   # data: <50% promoter = -17% avg return
     "pledge_max"        : 5.0,
     "fcf_positive"      : True,
     "opm_min"           : 8.0,    # relaxed — opm parse sometimes fails
     "pe_max"            : 90.0,
-    "peg_max"           : 3.0,
+    "peg_max"           : 2.0,    # data: PEG>2.0 = -14.7% avg return
     "mcap_min_cr"       : 200,
     "mcap_max_cr"       : 100000,
 }
