@@ -2476,13 +2476,42 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             }
 
         _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
-        ce_signal = _build_signal("CE", all_results.get("CE"))
-        pe_signal = _build_signal("PE", all_results.get("PE"))
+        # Feed dashboard from the live v10 gate snapshot (updated every scan by P1/P2)
+        def _v10_to_result(side):
+            """Convert _v10_live snapshot to a result dict that _build_signal understands."""
+            lv = _v10_live.get(side, {})
+            if not lv or lv.get("gap") is None:
+                return None
+            _gap_val = float(lv.get("gap", 0))
+            _rsi_val = float(lv.get("rsi", 0))
+            _bw_val  = float(lv.get("bw", 0))
+            _price   = float(lv.get("price", 0))
+            # Reconstruct ema9_high/low from gap+bw so _build_signal's gate math works
+            _ema9h = round(_price - _gap_val, 2) if _price > 0 else 0
+            _ema9l = round(_ema9h - _bw_val, 2) if _ema9h > 0 else 0
+            return {
+                "close": _price, "entry_price": _price,
+                "ema9_high": _ema9h, "ema9_low": _ema9l,
+                "rsi": _rsi_val, "rsi_prev": _rsi_val - (1 if lv.get("rsi_rising") else -1),
+                "candle_green": True, "body_pct": 0,
+                "fired": bool(lv.get("ready")),
+                "reject_reason": lv.get("reject", ""),
+                "g4_other_falling": True,  # xleg checked in the real path
+                "entry_mode": "V10_P1",
+            }
+        ce_signal = _build_signal("CE", _v10_to_result("CE"))
+        pe_signal = _build_signal("PE", _v10_to_result("PE"))
 
         try:
             _tokens = D.get_option_tokens(None, atm_strike, expiry)
             for _sig, _side in [(ce_signal, "CE"), (pe_signal, "PE")]:
-                if _sig.get("ltp", 0) == 0 and _side in _tokens:
+                # Always sync ltp + close from the same live tick (no drift)
+                _live_tok = (_locked_tokens or {}).get(_side, _tokens.get(_side, {}))
+                _ltp = D.get_ltp(_live_tok.get("token", 0)) if _live_tok else 0
+                if _ltp and _ltp > 0:
+                    _sig["ltp"] = round(_ltp, 2)
+                    _sig["close"] = round(_ltp, 2)
+                elif _sig.get("ltp", 0) == 0 and _side in _tokens:
                     _ltp = D.get_ltp(_tokens[_side]["token"])
                     if _ltp <= 0:
                         try:
@@ -3033,6 +3062,18 @@ def _strategy_loop(kite):
                                 _upd_e["exit_ts"] = time.time()
                             _sds_e.update(_upd_e)
                             _save_shadow_state()
+
+            # ── ALWAYS update CE/PE live price for dashboard (even during a trade) ──
+            if _locked_tokens and now.second % 5 == 0:
+                for _lp_dir, _lp_info in [("CE", (_locked_tokens or {}).get("CE", {})),
+                                           ("PE", (_locked_tokens or {}).get("PE", {}))]:
+                    _lp_tok = int(_lp_info.get("token", 0) or 0)
+                    if _lp_tok:
+                        _lp_px = D.get_ltp(_lp_tok)
+                        if _lp_px and _lp_dir in _v10_live:
+                            _v10_live[_lp_dir]["price"] = round(_lp_px, 1)
+                if now.second % 15 == 0:
+                    _save_shadow_state()
 
             if (not _v8_state.get("in_trade")
                     and D.is_trading_window(now)
