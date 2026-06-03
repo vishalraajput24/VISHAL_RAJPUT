@@ -285,33 +285,16 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
                 + str(entry_result.get("entry_mode", "")))
 
     _ce_pe = "🟢" if direction == "CE" else "🔴"
-    _mode_tag = "REENTRY (X-LEG)" if is_reentry else "FRESH"
-    _xleg_line = ""
-    if entry_result.get("xleg_other_dying"):
-        _xleg_line = (
-            "X-Leg ✓ " + ("PE" if direction=='CE' else 'CE') + " dying ("
-            + "{:.1f}".format(entry_result.get("xleg_other_close", 0))
-            + " < ema9l "
-            + "{:.1f}".format(entry_result.get("xleg_other_ema9l", 0)) + ")\n"
-        )
-    _g6 = entry_result.get("g6_stochrsi_os_cross")
-    _g6_line = ("G6  StochRSI_OsCross(5) "
-                + ("✅ PASS" if _g6 else ("❌ SKIP" if _g6 is False else "—"))
-                + (" k=" + str(entry_result.get("g6_k_now", "")) if _g6 is not None else "")
-                + " [shadow]\n")
+    _gap = round(entry_result.get("close", 0) - entry_result.get("ema9_high", entry_result.get("ema9_low", 0)), 1)
     _tg_send(
-        "⚡ <b>V10 ENTRY " + _mode_tag + "</b>\n"
-        + _ce_pe + " " + direction + " " + str(strike) + " x " + str(lot_count) + " LOTS\n"
+        _ce_pe + " <b>V10 " + direction + " " + str(strike) + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  Rs" + "{:.2f}".format(entry_price) + "  @ " + now_str + " (1-min)\n"
-        "Close  " + "{:.1f}".format(entry_result.get("close", 0))
-        + " > EMA9L " + "{:.1f}".format(entry_result.get("ema9_low", 0)) + "\n"
-        "Body   " + str(int(entry_result.get("body_pct", 0))) + "% GREEN\n"
-        + _xleg_line + _g6_line +
+        "Entry   ₹" + "{:.1f}".format(entry_price) + "  @ " + now_str + "\n"
+        "SL      ₹" + "{:.1f}".format(entry_price - 12) + "  (−12 pts)\n"
+        "Gap     " + "{:+.1f}".format(_gap) + "  |  BW " + "{:.1f}".format(
+            entry_result.get("ema9_high", 0) - entry_result.get("ema9_low", 0)) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>STOP</b>\n"
-        "Hard SL  -12 pts (Rs" + "{:.1f}".format(entry_price - 12) + ")\n"
-        "Trail: peak ≥12→+4 | ≥18→+10 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n",
+        "Trail  +12→lock4  +24→lock12  +30→lock20  +50→lock50",
         priority="critical"
     )
     _save_v8_state()
@@ -1024,11 +1007,7 @@ def _load_shadow_state():
         if _p2_pe: active_list.append(f"P2-PE@{_v8_shadow_p2['PE'].get('entry_price',0)}")
         if active_list:
             logger.info("[SHADOW] Restored active signals: " + ", ".join(active_list))
-            _tg_send(
-                "🔄 <b>Shadow signals restored after restart</b>\n"
-                + "\n".join(f"• {s}" for s in active_list)
-                + "\n<i>Tracking resumed from original entry</i>"
-            )
+            pass  # shadow restore TG removed
         else:
             logger.info("[SHADOW] State loaded — no active signals")
     except Exception as e:
@@ -3104,14 +3083,7 @@ def _strategy_loop(kite):
                             logger.info(f"[SHADOW-{_sd_label_e}] {_sdir_e} {_reason_e} "
                                         f"entry={_sep_e} exit={_exit_e:.1f} "
                                         f"pnl={_pnl_e:+.1f} peak=+{_speak_e:.1f} trail={_slvl_e}")
-                            _tg_send(
-                                f"{'🔵' if _sd_label_e == 'P1' else '🟡'} "
-                                f"SHADOW {_sd_label_e} {_sdir_e} — {_reason_e}\n"
-                                f"Entry: {_sep_e:.1f}  Exit: {_exit_e:.1f}\n"
-                                f"PnL: {_icon_e} {_pnl_e:+.1f}  Peak: +{_speak_e:.1f}\n"
-                                f"Trail reached: {_slvl_e}\n"
-                                f"<i>⚠️ Shadow only</i>"
-                            )
+                            pass  # shadow TG alert removed (v10 live alerts only)
                             _upd_e = {
                                 "active": False, "entry_price": 0.0, "entry_time": "",
                                 "peak_price": 0.0, "peak_pts": 0.0,
@@ -3205,7 +3177,7 @@ def _strategy_loop(kite):
                                     f"entry={_sh_entry} exit={exit_px:.1f} "
                                     f"pnl={_fin_pnl:+.1f} peak=+{_fin_peak:.1f} trail={_fin_lvl}"
                                 )
-                                _tg_send(_fin_msg)
+                                pass  # shadow TG P1 exit alert removed
                                 # Track peak for analysis streak detection
                                 _shadow_analysis[_sh_dir]["last_peaks"].append(_fin_peak)
                                 _shadow_analysis[_sh_dir]["last_peaks"] = \
@@ -3244,11 +3216,7 @@ def _strategy_loop(kite):
                                         f"[SHADOW-P1] {_sh_dir} trail ↑ {_new_lvl} "
                                         f"peak=+{_sh_ds['peak_pts']:.1f} sl_now={_new_sl:.1f}"
                                     )
-                                    _tg_send(
-                                        f"🔵 SHADOW P1 {_sh_dir} — trail ↑ {_new_lvl}\n"
-                                        f"Peak: +{_sh_ds['peak_pts']:.1f} | SL now: {_new_sl:.1f}\n"
-                                        f"<i>⚠️ Shadow only</i>"
-                                    )
+                                    pass  # shadow TG trail alert removed
                                     _save_shadow_state()
                             continue
 
@@ -3414,17 +3382,7 @@ def _strategy_loop(kite):
                             "snaps":       {5: None, 10: None, 30: None, 60: None},
                             "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
                         })
-                        _tg_send(
-                            f"🔵 <b>SHADOW P1 — {_sh_dir} {_sh_strike}</b>\n"
-                            f"Entry: {_sh_ltp:.1f}  SL: {_sh_sl:.1f}\n"
-                            f"EMA9H: {_sh_1m_gap:+.1f}  VWAP: {_sh_vwap_gap:+.1f}  RSI: {_sh_rsi_1m:.0f}↑\n"
-                            + (_p2_line if _p2_line else "") +
-                            f"─── Shadow Trail ───\n"
-                            f"@+12→lock+4  @+18→lock+10  @+24→lock+12\n"
-                            f"@+30→lock+20  @+36→lock+30\n"
-                            f"@+40→lock+36  @+50→lock+50\n"
-                            f"<i>⚠️ Shadow only — no real trade</i>"
-                        )
+                        pass  # shadow TG P1 entry alert removed
                         _save_shadow_state()
                         # ── Analysis flags (no trade impact) ──
                         _other_sh_dir = "PE" if _sh_dir == "CE" else "CE"
@@ -3571,7 +3529,7 @@ def _strategy_loop(kite):
                                     f"entry={_s2_entry} exit={exit_px:.1f} "
                                     f"pnl={_s2_fin_pnl:+.1f} peak=+{_s2_fin_peak:.1f} trail={_s2_fin_lvl}"
                                 )
-                                _tg_send(_s2_fin_msg)
+                                pass  # shadow TG P2 exit alert removed
                                 # Track peak for analysis streak detection
                                 _shadow_analysis[_s2_dir]["last_peaks_p2"].append(_s2_fin_peak)
                                 _shadow_analysis[_s2_dir]["last_peaks_p2"] = \
@@ -3609,11 +3567,7 @@ def _strategy_loop(kite):
                                         f"[SHADOW-P2] {_s2_dir} trail ↑ {_s2_new_lvl} "
                                         f"peak=+{_s2_ds['peak_pts']:.1f} sl_now={_s2_new_sl:.1f}"
                                     )
-                                    _tg_send(
-                                        f"🟡 SHADOW P2 {_s2_dir} — trail ↑ {_s2_new_lvl}\n"
-                                        f"Peak: +{_s2_ds['peak_pts']:.1f} | SL now: {_s2_new_sl:.1f}\n"
-                                        f"<i>⚠️ Shadow only</i>"
-                                    )
+                                    pass  # shadow TG P2 trail alert removed
                                     _save_shadow_state()
                             continue
 
@@ -3754,17 +3708,7 @@ def _strategy_loop(kite):
                             "snaps":       {5: None, 10: None, 30: None, 60: None},
                             "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
                         })
-                        _tg_send(
-                            f"🟡 <b>SHADOW P2 — {_s2_dir} {_s2_strike}</b> (buildup)\n"
-                            f"Entry: {_s2_ltp:.1f}  SL: {_s2_sl_px:.1f}\n"
-                            f"EMA9H: {_s2_ema9h_gap:+.1f}  below VWAP: {_s2_vwap_gap:.1f}  RSI: {_s2_rsi:.0f}↑\n"
-                            + (_s2_p1_note if _s2_p1_note else "") +
-                            f"─── Shadow Trail ───\n"
-                            f"@+12→lock+4  @+18→lock+10  @+24→lock+12\n"
-                            f"@+30→lock+20  @+36→lock+30\n"
-                            f"@+40→lock+36  @+50→lock+50\n"
-                            f"<i>⚠️ Shadow only — no real trade</i>"
-                        )
+                        pass  # shadow TG P2 entry alert removed
                         _save_shadow_state()
                         # ── Analysis flags (no trade impact) ──
                         _other_s2_dir = "PE" if _s2_dir == "CE" else "CE"
@@ -5122,12 +5066,7 @@ def _cmd_forceexit(args):
                 _spnl = round(_exit_px - _sep, 1)
                 _speak = round(_sds.get("peak_pts", 0), 1)
                 _slvl = _sds.get("shadow_level", "INITIAL")
-                _tg_send(
-                    f"🚨 SHADOW {_sd_label} {_sdir} — FORCE EXIT\n"
-                    f"Entry: {_sep:.1f}  Exit: {_exit_px:.1f}\n"
-                    f"PnL: {_spnl:+.1f}  Peak: +{_speak:.1f}  Trail: {_slvl}\n"
-                    f"<i>⚠️ Shadow only</i>"
-                )
+                pass  # shadow force-exit TG removed
                 _sds.update({
                     "active": False, "entry_price": 0.0, "entry_time": "",
                     "peak_price": 0.0, "peak_pts": 0.0,
