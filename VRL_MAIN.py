@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (Vishal Clean V7+V10)
 #  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V10 (LIVE):   3-min  | 3-gate (close>ema9l, BW 13-16, RSI 48-70)
+#  V10 (LIVE):   1-min  | P1+P2 (XLEG_CONFIRMED, |gap_vwap|<5, ema9h_gap>=0.8, LTP>VWAP)
 #  V10 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
 #           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
 # ═══════════════════════════════════════════════════════════════
@@ -1620,14 +1620,15 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v20\n"
         ""
-        "V10 LIVE   : 3-min  | 3-gate | PAPER trading\n"
+        "V10 LIVE   : 1-min  | P1+P2 | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V10 GATES</b>\n"
-        "G2) Close > EMA9_low\n"
-        "G3) Band width 13-16 pts\n"
-        "G5) 48 < RSI < 70\n"
+        "<b>V10 GATES (P1)</b>\n"
+        "1) XLEG_CONFIRMED (cross-leg below EMA9H)\n"
+        "2) |gap_vwap| < " + str(V10_NEAR_VWAP_MAX) + " pts\n"
+        "3) ema9h_gap >= " + str(V10_MIN_EMA9H_GAP) + " pts\n"
+        "4) LTP above VWAP at fire\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
         "peak < 12  → INITIAL  entry - 12\n"
