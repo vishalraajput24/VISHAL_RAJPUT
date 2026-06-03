@@ -4434,7 +4434,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
 
     with _v8_lock:
         if _v8_state.get("in_trade"):
-            logger.warning("[V8] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
+            logger.warning("[V10] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
             return
         _v8_state["in_trade"]              = True
         _v8_state["symbol"]                = symbol
@@ -4454,7 +4454,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
 
-    logger.info("[V8] PAPER ENTRY: " + symbol + " qty=" + str(qty)
+    logger.info("[V10] PAPER ENTRY: " + symbol + " qty=" + str(qty)
                 + " entry=" + str(entry_price) + " mode="
                 + str(entry_result.get("entry_mode", "")))
 
@@ -4559,7 +4559,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "peak_pnl": peak, "exit_reason": reason,
             "dte": dte_val, "candles_held": candles, "session": "",
             "sl_pts": -12, "vix_at_entry": 0,
-            "entry_mode": "V8_" + tier,
+            "entry_mode": "V10_" + tier,
             "bias": "", "hourly_rsi": 0,
             "brokerage": charges.get("brokerage", 0) if isinstance(charges, dict) else 0,
             "stt": charges.get("stt", 0) if isinstance(charges, dict) else 0,
@@ -4583,9 +4583,9 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
             w.writerow(_v8_row)
     except Exception as _le:
-        logger.warning("[V8] Trade log write error: " + str(_le))
+        logger.warning("[V10] Trade log write error: " + str(_le))
 
-    logger.info("[V8] PAPER EXIT: " + symbol + " qty=" + str(qty)
+    logger.info("[V10] PAPER EXIT: " + symbol + " qty=" + str(qty)
                 + " ref=" + str(exit_price) + " reason=" + reason
                 + " pnl=" + str(pnl_pts) + "pts")
 
@@ -5057,7 +5057,7 @@ def _save_v8_state():
             json.dump(subset, f, indent=2, default=str)
         os.replace(tmp, D.V8_STATE_FILE_PATH)
     except Exception as e:
-        logger.error("[V8] State save error: " + str(e))
+        logger.error("[V10] State save error: " + str(e))
 
 def _load_v8_state():
     if not os.path.isfile(D.V8_STATE_FILE_PATH):
@@ -5069,7 +5069,7 @@ def _load_v8_state():
             for k, v in saved.items():
                 if k in _v8_state:
                     _v8_state[k] = v
-        logger.info("[V8] State loaded from disk")
+        logger.info("[V10] State loaded from disk")
         # Reset daily counters if state file is from a previous day
         _today = date.today().isoformat()
         _last_date = str(saved.get("_last_trade_date", ""))
@@ -5081,7 +5081,7 @@ def _load_v8_state():
                 _v8_state["_losses_today"]  = 0
                 _v8_state["_v8_both_rejected_ts"] = 0.0
                 _v8_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
-            logger.info("[V8] New trading day — daily counters reset (last_date=" + _last_date + ")")
+            logger.info("[V10] New trading day — daily counters reset (last_date=" + _last_date + ")")
         if _v8_state.get("in_trade"):
             _sym  = str(_v8_state.get("symbol", ""))
             _ep   = float(_v8_state.get("entry_price", 0))
@@ -5098,7 +5098,7 @@ def _load_v8_state():
             _qty   = int(_v8_state.get("qty", 0) or 0)
             _etime = str(_v8_state.get("entry_time", ""))
             _emj   = "🟢" if _dir == "CE" else "🔴"
-            logger.info("[V8] Was in trade on last shutdown — " + _sym + " monitoring resumed")
+            logger.info("[V10] Was in trade on last shutdown — " + _sym + " monitoring resumed")
             _tg_send(
                 "⚡ <b>V10 restarted mid-trade</b>\n"
                 + _emj + " " + _dir + " " + _strk + " · qty " + str(_qty) + "\n"
@@ -5113,7 +5113,7 @@ def _load_v8_state():
                 "✅ Exit monitoring resumed."
             )
     except Exception as e:
-        logger.error("[V8] State load error: " + str(e))
+        logger.error("[V10] State load error: " + str(e))
 
 
 def _save_shadow_state():
@@ -6068,7 +6068,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (Rs"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail (V8): ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
+        "Trail (V10): ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
     )
 
     _slip_block = ""
@@ -8760,7 +8760,7 @@ def _cmd_pulse(args):
             _v8_dir_emj = "🟢" if _v8_state.get("direction") == "CE" else "🔴"
             _v8_sym = _v8_state.get("direction", "") + " " + str(_v8_state.get("strike", ""))
             _v8_pos_str = (
-                "[V8] " + _v8_dir_emj + " " + _v8_sym + "  "
+                "[V10] " + _v8_dir_emj + " " + _v8_sym + "  "
                 + ("+" if _v8_pn >= 0 else "") + str(_v8_pn) + "pts\n"
                 + "Entry Rs" + str(_v8_ep) + " → Rs" + str(round(_v8_ltp, 2))
                 + " · Peak +" + str(_v8_pk) + "\n"
@@ -8817,7 +8817,7 @@ def _cmd_pulse(args):
             + "🕐 V10: " + str(len(_trades_today)) + " trades · "
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
-            + "⚡ V8 (live): "
+            + "⚡ V10: "
             + str(_v8_state.get("_trades_today", 0)) + " trades · "
             + str(_v8_state.get("_wins_today", 0)) + "W "
             + str(_v8_state.get("_losses_today", 0)) + "L · "
