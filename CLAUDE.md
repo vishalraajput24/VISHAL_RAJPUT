@@ -248,6 +248,15 @@ if _v8_ce_gate_rejected and _v8_pe_gate_rejected:
 
 ---
 
+### BUG-16: Hardcoded `2.0` pre-filter making `V10_MIN_EMA9H_GAP` a no-op (PR #113, 2026-06-03)
+**Symptom**: Signals with ema9h_gap 0.8–1.99 always rejected with `1m_ema9h_gap_weak(need>=2.0)` even though `V10_MIN_EMA9H_GAP = 0.8`. The tunable constant had no effect.
+**Root cause**: P1 (VRL_MAIN.py ~line 3252) and P2 (~line 3603) pre-filters used a hardcoded `< 2.0` check. When `V10_MIN_EMA9H_GAP` was tuned down from 2.0 → 0.8, only V10 gate B (lines 3318/3663) was updated — the pre-filter literals were forgotten.
+**Fix**: Both lines changed to `< V10_MIN_EMA9H_GAP` so the constant is the single source of truth.
+**Location**: VRL_MAIN.py lines ~3252 and ~3603.
+**Note**: Did NOT cause today's (2026-06-03) PE miss — that morning's PE had RSI=91 and gap_vwap=+26, both blocking independently (RSI cap 70, VWAP gate |gap|<5). Discovered as a latent bug during investigation.
+
+---
+
 ## Design Decisions (Locked)
 - **Re-entry disabled** (2026-05-15): After analyzing 11:32 losing re-entry (price reversed 5.5 pts below exit within 33s), decided re-entry adds risk without edge. `_v8_execute_paper_exit` always sets `_reentry_armed = False`. Fresh setup only after every exit.
 - **Both-sides cooldown = 1 min** (2026-05-15): Reduced from 3 min. Faster recovery when market picks a direction.
@@ -294,6 +303,7 @@ Logged after every signal fire — no trade impact, data collection only:
 - **TINY_GAP ANALYSIS flag**: Add flag for gap < 0.8.
 - **VWAP overextension flag**: gap > 25 = VWAP_OVEREXTENDED.
 - **P2 minimum VWAP gap**: Require `below_vwap < -5` for genuine buildup (at-VWAP fires are noise).
+- **Gap-open / RSI-overextended PE missed trade (2026-06-03)**: NIFTY gapped down ~180 pts at open, PE ran hard from 9:15 (RSI=91, gap_vwap=+26 at 9:17). V10 blocked correctly via VWAP gate (|gap|=26 >> 5). RSI cap 70 was redundant here. Question: should V10 handle gap-open mornings differently? Collect more gap-open days before deciding.
 - Post-emergency-SL opposite-side cooldown (2-3 candles block after ESL)
 - Max trades/day limit (suggest: 10)
 - Max consecutive EMERGENCY_SL limit (suggest: 3 → pause 30 min)
