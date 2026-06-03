@@ -5956,6 +5956,7 @@ def main():
         logger.warning(f"[VWAP] startup compute failed: {_ve}")
 
     logger.info("[MAIN] All systems ready. Strategy loop starting.")
+    _cmd_help([])
     _strategy_loop(kite)
 
 if __name__ == "__main__":
