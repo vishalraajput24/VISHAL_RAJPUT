@@ -1,6 +1,24 @@
+# Runtime data — not source code
+*.log
+*.csv
+*.json
+!config.yaml
+!screener/fno_strategy_config.json
+!screener/monitor_config.json
+!screener/nse500_symbols.txt
+*.parquet
+*.pkl
+*.db
+*.db-*
 __pycache__/
 *.pyc
-*.pyo
-.env
-static/vrl_data.db
+.claude/
+_backup*/
 state/
+static/
+*.tar.gz
+mconnect.log
+screener/inst_cache_*
+screener/fno_tech_cache*
+screener/archive/
+screener/multibagger_*.csv
