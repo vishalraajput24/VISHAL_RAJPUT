@@ -14,7 +14,7 @@ Paper trading bot for NIFTY options (Zerodha Kite).
 ### v10 gates — FINAL (tunable constants in VRL_MAIN.py)
 5 HARD entry gates (all must pass), VWAP-free:
 - `V10_MIN_EMA9H_GAP = 3.5` — momentum breakout floor (gap 3.5-5 = +5.3/trade; <3.5 loses)
-- `V10_RSI_MIN = 55`, `V10_RSI_MAX = 70` — RSI 55-70 **and rising** (48-55 = 26% win loser zone)
+- `V10_RSI_MIN = 55`, `V10_RSI_MAX = 80` — RSI 55-80 **and rising** (48-55 = 26% win loser zone; cap raised 70→80 on 2026-06-03 after RSI≤70 blocked a strong CE breakout)
 - `V10_BW_MIN = 5.0` — band-width floor (BW<5 = no energy)
 - **XLEG_CONFIRMED** (cross-leg dying) + **LTP on correct side of VWAP** at fire
 - `V10_NEAR_VWAP_MAX = 0` — near-VWAP DISTANCE gate **OFF** (was killing ~99% of live signals; median signal was 16.5 from VWAP)

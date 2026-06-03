@@ -737,7 +737,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         var acc=side==='CE'?'var(--gn)':'var(--rd)';
         var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
         h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-        h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+'</span>';
+        h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+((o&&o.price)?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">₹'+o.price+'</span>':'');
         if(!o||o.gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
         if(o.ready)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px;box-shadow:0 0 0 0 rgba(10,122,80,.5);animation:pulse 1.3s infinite">● READY</span>';
         else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.reject||'wait')+'</span>';
@@ -748,7 +748,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         return h+'</div></div>';
       }
       html+='<div style="margin:2px 10px 9px">';
-      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ LIVE GATES &nbsp;·&nbsp; need gap≥3.5 · RSI 55-70↑ · BW≥5</div>';
+      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ LIVE GATES &nbsp;·&nbsp; need gap≥3.5 · RSI 55-80↑ · BW≥5</div>';
       html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+card('CE',lv.CE)+card('PE',lv.PE)+'</div>';
       html+='</div>';
     })();
