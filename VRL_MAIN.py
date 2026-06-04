@@ -3196,18 +3196,6 @@ def log_entry(direction: str, strike: int, entry_price: float, spot_px: float,
             f"all={marks(f.get('all_pass'))}"
         )
 
-        # ── Telegram alert — clean and focused ───────────────────
-        g11v      = f.get('g11_vwap_ok')
-        vwap_gap  = _vwap_state.get('gap', 0)
-        sl_price  = round(entry_price - 12, 1)
-        vwap_icon = "✅" if g11v is True else "❌" if g11v is False else "❓"
-
-        tg_text = (
-            f"<b>{direction} {strike}</b>\n"
-            f"Entry: <b>{round(entry_price, 1)}</b>  |  SL: {sl_price}\n"
-            f"{vwap_icon} VWAP gap: {vwap_gap:+.1f} pts"
-        )
-        _tg_send_levels(tg_text)
     except Exception as e:
         logger.warning(f"[SHADOW-LVL] log_entry error: {e}")
 
