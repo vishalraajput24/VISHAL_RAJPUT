@@ -6477,6 +6477,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
     try:
         with _state_lock:
             st = dict(state)
+        with _v8_lock:
+            st_v10 = dict(_v8_state)
 
         spot_3m = {}
         spot_3m = D.get_spot_indicators("3minute")
@@ -6632,46 +6634,32 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             pass
 
         position = {}
-        if st.get("in_trade"):
-            opt_ltp = D.get_ltp(st.get("token", 0))
-            entry = st.get("entry_price", 0)
+        if st_v10.get("in_trade"):
+            opt_ltp = D.get_ltp(st_v10.get("token", 0))
+            entry = st_v10.get("entry_price", 0)
             running = round(opt_ltp - entry, 1) if opt_ltp > 0 else 0
 
-            _ratchet_sl = float(st.get("active_ratchet_sl", 0) or 0)
+            _ratchet_sl = float(st_v10.get("active_ratchet_sl", 0) or 0)
             if _ratchet_sl > 0:
                 _stop_price = round(_ratchet_sl, 2)
-                _stop_type = "RATCHET_" + str(st.get("active_ratchet_tier", ""))
+                _stop_type = "RATCHET_" + str(st_v10.get("active_ratchet_tier", ""))
             else:
-                _stop_price = round(st.get("current_ema9_low", 0), 2)
-                if _stop_price <= 0:
-                    _stop_price = round(entry - 12, 2)
-                _stop_type = "EMA9_LOW"
-
-            lot1 = {"status": "active", "pnl": running,
-                    "sl": _stop_price, "sl_type": _stop_type}
-            lot2 = {"status": "active", "pnl": running,
-                    "sl": _stop_price, "sl_type": _stop_type}
+                _stop_price = round(entry - 12, 2)
+                _stop_type = "INITIAL_SL"
 
             position = {
                 "in_trade": True,
-                "symbol": st.get("symbol", ""),
-                "direction": st.get("direction", ""),
+                "symbol": st_v10.get("symbol", ""),
+                "direction": st_v10.get("direction", ""),
                 "entry": entry,
-                "entry_time": st.get("entry_time", ""),
+                "entry_time": st_v10.get("entry_time", ""),
                 "ltp": round(opt_ltp, 2) if opt_ltp > 0 else 0,
                 "pnl": running,
-                "peak": round(st.get("peak_pnl", 0), 1),
-                "candles": st.get("candles_held", 0),
-                "strike": st.get("strike", 0),
+                "peak": round(st_v10.get("peak_pnl", 0), 1),
+                "candles": st_v10.get("candles_held", 0),
+                "strike": st_v10.get("strike", 0),
                 "sl": _stop_price,
-                "active_ratchet_tier": st.get("active_ratchet_tier", ""),
-                "current_floor": round(st.get("current_ema9_low", 0), 2),
-                "current_rsi": round(float(st.get("current_rsi", 0) or 0), 1),
-                "lot1": lot1,
-                "lot2": lot2,
-                "lot1_active": lot1["status"] == "active",
-                "lot2_active": lot2["status"] == "active",
-                "lots_split": False,
+                "active_ratchet_tier": st_v10.get("active_ratchet_tier", ""),
                 "lot_size": CFG.lot_size(),
             }
         else:
