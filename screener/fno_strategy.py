@@ -121,18 +121,21 @@ def compute_atr(df, period=14):
 # =============================================================================
 # TECHNICALS  (canonical, richer than the old per-script versions)
 # =============================================================================
-def get_technicals(kite, nse_df, symbol):
+def get_technicals(kite, nse_df, symbol, ohlcv_candles=None):
     """100 days daily OHLCV -> rich tech dict (adds ema9, rsi_slope_3d, ema20 slope, 5d return,
-    extension-from-EMA20). Returns None on failure."""
+    extension-from-EMA20). Pass ohlcv_candles (from morning cache) to skip the API fetch."""
     try:
-        inst = nse_df[(nse_df["tradingsymbol"] == symbol) &
-                      (nse_df["instrument_type"] == "EQ")]
-        if inst.empty:
-            return None
-        token = int(inst.iloc[0]["instrument_token"])
-        to_date = datetime.now()
-        from_date = to_date - timedelta(days=130)
-        candles = kite.historical_data(token, from_date, to_date, "day")
+        if ohlcv_candles is not None:
+            candles = ohlcv_candles
+        else:
+            inst = nse_df[(nse_df["tradingsymbol"] == symbol) &
+                          (nse_df["instrument_type"] == "EQ")]
+            if inst.empty:
+                return None
+            token = int(inst.iloc[0]["instrument_token"])
+            to_date = datetime.now()
+            from_date = to_date - timedelta(days=130)
+            candles = kite.historical_data(token, from_date, to_date, "day")
         if len(candles) < 30:
             return None
 
