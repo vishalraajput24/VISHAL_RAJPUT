@@ -4405,33 +4405,6 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
     now_str = now_dt.strftime("%H:%M:%S")
     is_reentry = (entry_result.get("entry_mode") == "REENTRY_XLEG")
 
-    # ── Shadow level data collection (observation only, no blocking) ──
-    try:
-        _spot_px = D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0
-        _dte = int(_v8_state.get("dte", 0) or 0)
-        if _dte == 0:
-            # Fallback: compute from expiry date if available
-            try:
-                _exp = _v8_state.get("expiry")
-                if _exp:
-                    _exp_dt = datetime.strptime(str(_exp), "%Y-%m-%d").date()
-                    _dte = max(0, (_exp_dt - date.today()).days)
-            except Exception:
-                pass
-        _opt_pdc = 0.0
-        try:
-            _opt_lvl = LEVELS.compute_opt_pdc(D, int(strike or 0), direction, int(token or 0))
-            _opt_pdc = float(_opt_lvl.get("opt_PDC", 0))
-        except Exception:
-            pass
-        LEVELS.log_entry(
-            direction=direction, strike=int(strike or 0),
-            entry_price=float(entry_price), spot_px=float(_spot_px),
-            entry_time_dt=now_dt, dte=_dte, opt_pdc=_opt_pdc,
-        )
-    except Exception as _lvl_e:
-        logger.debug(f"[SHADOW-LVL] hook error: {_lvl_e}")
-
     with _v8_lock:
         if _v8_state.get("in_trade"):
             logger.warning("[V10] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
