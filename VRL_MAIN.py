@@ -4592,6 +4592,11 @@ def _v8_check_exit():
         peak        = float(_v8_state.get("peak_pnl", 0))
         direction   = _v8_state.get("direction", "")
         strike      = int(_v8_state.get("strike", 0) or 0)
+        # Increment candles_held once per minute (V10 equivalent of V7 line 8189)
+        _cur_min = datetime.now().strftime("%H:%M")
+        if _cur_min != _v8_state.get("_last_candle_min", ""):
+            _v8_state["_last_candle_min"] = _cur_min
+            _v8_state["candles_held"] = _v8_state.get("candles_held", 0) + 1
 
     if not token: return
     ltp = D.get_ltp(token)
@@ -5561,6 +5566,42 @@ def _read_today_trades() -> list:
     except Exception as e:
         logger.error("[MAIN] Read trades error: " + str(e))
     return trades
+
+def _compute_rolling_stats(n: int = 20) -> dict:
+    """Read last n closed trades and return win-rate/pts/streak stats."""
+    trades = []
+    if not os.path.isfile(D.TRADE_LOG_PATH):
+        return {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
+    try:
+        with open(D.TRADE_LOG_PATH, "r") as f:
+            for row in _trade_csv_reader(f):
+                trades.append(row)
+    except Exception:
+        return {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
+    trades = trades[-n:] if len(trades) > n else trades
+    last20 = trades
+    last10 = trades[-10:] if len(trades) >= 10 else trades
+    def _wr(t):
+        wins = sum(1 for r in t if float(r.get("pnl_pts", 0) or 0) > 0)
+        return round(wins / len(t) * 100) if t else 0
+    def _pts(t):
+        return round(sum(float(r.get("pnl_pts", 0) or 0) for r in t), 1)
+    # Streak: count consecutive wins (+) or losses (-) from the end
+    streak = 0
+    if last20:
+        last_sign = 1 if float(last20[-1].get("pnl_pts", 0) or 0) > 0 else -1
+        for r in reversed(last20):
+            sign = 1 if float(r.get("pnl_pts", 0) or 0) > 0 else -1
+            if sign == last_sign:
+                streak += last_sign
+            else:
+                break
+    return {
+        "last10_wr": _wr(last10),
+        "last20_wr": _wr(last20),
+        "last10_pts": _pts(last10),
+        "streak": streak,
+    }
 
 # ═══════════════════════════════════════════════════════════════
 #  TELEGRAM — SEND HELPERS
@@ -6720,6 +6761,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "sl": _stop_price,
                 "active_ratchet_tier": st_v10.get("active_ratchet_tier", ""),
                 "lot_size": CFG.lot_size(),
+                "lot1_active": st_v10.get("lot1_active", True),
+                "lot2_active": st_v10.get("lot2_active", True),
+                "lots_split": st_v10.get("lots_split", False),
+                "current_floor": round(float(st_v10.get("current_floor", 0) or 0), 2),
             }
         else:
             position = {"in_trade": False}
@@ -6750,7 +6795,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "paused": st.get("paused", False),
         }
 
-        rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
+        try:
+            rolling_block = _compute_rolling_stats(20)
+        except Exception:
+            rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
 
         straddle_block = {
             "open": round(straddle_open, 1) if straddle_captured else 0,
