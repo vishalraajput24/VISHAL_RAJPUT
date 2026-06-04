@@ -5184,6 +5184,13 @@ def _load_shadow_state():
             pass  # shadow restore TG removed
         else:
             logger.info("[SHADOW] State loaded — no active signals")
+        # Restore _v10_live so LIVE GATES show last-known values after restart
+        # (P1 scan is blocked while in_trade, so without this they show "— no data —")
+        with _v10_live_lock:
+            for _dir in ("CE", "PE"):
+                _saved_live = saved.get("live", {}).get(_dir, {})
+                if _saved_live and "gap" in _saved_live:
+                    _v10_live[_dir].update(_saved_live)
     except Exception as e:
         logger.error("[SHADOW] State load error: " + str(e))
 
@@ -6766,6 +6773,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "lot2_active": st_v10.get("lot2_active", True),
                 "lots_split": st_v10.get("lots_split", False),
                 "current_floor": round(float(st_v10.get("current_floor", 0) or 0), 2),
+                "current_rsi": round(float(
+                    (_v10_live.get(st_v10.get("direction", ""), {}) or {}).get("rsi", 0) or 0
+                ), 1),
             }
         else:
             position = {"in_trade": False}
@@ -6778,7 +6788,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         for _tt in _today_trades:
             try:
                 _p = float(_tt.get("pnl_pts", 0))
-                _r = float(_tt.get("pnl_rs", 0))
+                _r = float(_tt.get("net_pnl_rs", 0) or _tt.get("pnl_rs", 0))
                 _today_pnl_pts += _p
                 _today_pnl_rs += _r
                 if _p > 0:
@@ -10468,7 +10478,16 @@ def _web_read_trades():
         with open(_WEB_TRADE_LOG) as f:
             for r in csv.DictReader(f):
                 if r.get("date","").strip() == today:
-                    try: trades.append({k: r.get(k,"") for k in r})
+                    try:
+                        row = {k: r.get(k,"") for k in r}
+                        # compute held_min from timestamps (candles_held is often 0 in CSV)
+                        try:
+                            _t1 = datetime.strptime(f"{today} {row['entry_time']}", "%Y-%m-%d %H:%M:%S")
+                            _t2 = datetime.strptime(f"{today} {row['exit_time']}", "%Y-%m-%d %H:%M:%S")
+                            row["candles_held"] = int((_t2 - _t1).total_seconds() / 60)
+                        except Exception:
+                            pass
+                        trades.append(row)
                     except Exception: pass
     except Exception: pass
     return trades
