@@ -4781,6 +4781,7 @@ V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
 V10_RSI_MAX       = 80    # RSI cap (raised 70→80 2026-06-03: 70 blocked a strong CE breakout, RSI 76→88 ran +20-50; no data proved 70+ loses)
 V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
 V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
+V10_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
 V10_P3_VWAP_EXTREME = 75  # P3 shadow: fire reversal CE/PE when |fut-vwap| >= this (data collection only)
 # CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades.
 V10_LIVE = True
@@ -7456,6 +7457,13 @@ def _strategy_loop(kite):
                                 )
                             continue
 
+                        # ── Hard gate: opening blackout 9:15–9:45 ──
+                        if now.time() < V10_OPEN_BLACKOUT_END:
+                            if now.second % 15 == 0:
+                                logger.info(f"[SHADOW-P1] REJECT {_sh_dir} open_blackout "
+                                            f"(no entries before {V10_OPEN_BLACKOUT_END})")
+                            continue
+
                         # ── Cooldown gates (no trade impact — reject only) ──
                         # 1. Post-SL cooldown: 1 min after SL-HIT, EMA9H still distorted
                         # Note: relock cooldown removed — cross_buf cleared on relock serves as
@@ -7799,6 +7807,13 @@ def _strategy_loop(kite):
                         if _s2_reject:
                             if now.second % 15 == 0:
                                 logger.info(f"[SHADOW-P2] REJECT {_s2_dir} {_s2_reject}")
+                            continue
+
+                        # ── Hard gate: opening blackout 9:15–9:45 ──
+                        if now.time() < V10_OPEN_BLACKOUT_END:
+                            if now.second % 15 == 0:
+                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} open_blackout "
+                                            f"(no entries before {V10_OPEN_BLACKOUT_END})")
                             continue
 
                         # Note: relock cooldown removed — cross_buf cleared on relock (same as P1).
