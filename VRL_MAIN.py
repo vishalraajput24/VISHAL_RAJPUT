@@ -856,8 +856,6 @@ load()  # initialize CONFIG singleton before any CFG.xxx calls
 PAPER_MODE       = CFG.is_paper()
 KITE_API_KEY     = os.getenv("KITE_API_KEY", "")
 KITE_API_SECRET  = os.getenv("KITE_API_SECRET", "")
-TELEGRAM_TOKEN   = os.getenv("TG_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TG_GROUP_ID", "")
 
 BASE_DIR         = os.path.expanduser("~")
 REPO_DIR         = os.path.dirname(os.path.abspath(__file__))
@@ -2837,20 +2835,6 @@ Shadow filters (proposed):
 _TG_BASE = "https://api.telegram.org/bot"
 
 
-def _tg_send_levels(text: str):
-    """Best-effort TG alert — never raises."""
-    try:
-        token = TELEGRAM_TOKEN
-        chat  = TELEGRAM_CHAT_ID
-        if not token or not chat:
-            return
-        requests.post(
-            _TG_BASE + token + "/sendMessage",
-            json={"chat_id": chat, "text": text, "parse_mode": "HTML"},
-            timeout=5,
-        )
-    except Exception as _e:
-        logger.debug(f"[LEVELS] TG send error: {_e}")
 
 # ── Module-level cache (computed once per day at startup) ──
 _levels_lock      = threading.Lock()
