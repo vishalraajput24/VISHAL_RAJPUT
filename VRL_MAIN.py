@@ -4342,6 +4342,12 @@ _v8_state = {
     "dte": 0,
     # EMERGENCY_SL direction cooldown — only blocks the side that triggered the SL
     "_sl_cooldown_direction": "",
+    # Strike management data collection (reset per trade, not persisted)
+    "entry_spot": 0.0,
+    "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
+    "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
+    "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
+    "max_otm_drift": 0.0,     # max pts the position went OTM during trade
 }
 _v8_lock = threading.Lock()
 
@@ -4369,7 +4375,10 @@ def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
 
 def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
                              entry_price: float, entry_result: dict,
-                             other_token: int = 0):
+                             other_token: int = 0,
+                             spot_at_entry: float = 0.0,
+                             neighbor_ltp_otm: float = 0.0,
+                             neighbor_ltp_itm: float = 0.0):
     """Open a V8 paper position. Records in _v8_state, sends Telegram alert."""
     lot_count = CFG.get().get("lots", {}).get("count", 2)
     qty = lot_count * D.get_lot_size()
@@ -4395,6 +4404,13 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["candles_held"]          = 0
         _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
         _v8_state["_other_token"]          = int(other_token or 0)
+        # Strike management data collection
+        _v8_state["entry_spot"]        = float(spot_at_entry)
+        _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
+        _v8_state["entry_atm_dist"]    = int(strike) - _true_atm
+        _v8_state["neighbor_ltp_otm"]  = float(neighbor_ltp_otm)
+        _v8_state["neighbor_ltp_itm"]  = float(neighbor_ltp_itm)
+        _v8_state["max_otm_drift"]     = 0.0
         # Clear any pending re-entry state (fresh setup wins)
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
@@ -4438,7 +4454,12 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         tier        = _v8_state.get("active_ratchet_tier", "")
         token       = int(_v8_state.get("token", 0) or 0)
         other_tok   = int(_v8_state.get("_other_token", 0) or 0)
-        dte_val     = int(_v8_state.get("dte", 0) or 0)
+        dte_val        = int(_v8_state.get("dte", 0) or 0)
+        entry_spot_val = float(_v8_state.get("entry_spot", 0))
+        entry_atm_dist = int(_v8_state.get("entry_atm_dist", 0))
+        neighbor_otm   = float(_v8_state.get("neighbor_ltp_otm", 0))
+        neighbor_itm   = float(_v8_state.get("neighbor_ltp_itm", 0))
+        max_otm_drift  = float(_v8_state.get("max_otm_drift", 0))
         pnl_pts_now = round(exit_price - entry_price, 2)
         # Clear position state
         _v8_state["in_trade"]            = False
@@ -4478,9 +4499,10 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         )
 
     # --- Lock released: safe to read captured locals for logging ---
-    pnl_pts = round(exit_price - entry_price, 2)
-    pnl_rs  = round(pnl_pts * qty, 2)
+    pnl_pts   = round(exit_price - entry_price, 2)
+    pnl_rs    = round(pnl_pts * qty, 2)
     exit_time = datetime.now().strftime("%H:%M:%S")
+    exit_spot = round(D.get_ltp(D.NIFTY_SPOT_TOKEN), 1)
 
     # Charges (reuse engine's calc)
     charges = {}
@@ -4521,6 +4543,10 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "xleg_signal": "", "xleg_other_close": "", "xleg_other_ema9l": "",
             "xleg_other_dying": "", "xleg_other_margin": "",
             "spike_close": "", "spike_target": "", "spike_fill": "", "spike_wait_used": "",
+            "entry_spot": entry_spot_val, "exit_spot": exit_spot,
+            "entry_atm_dist": entry_atm_dist,
+            "neighbor_ltp_otm": neighbor_otm, "neighbor_ltp_itm": neighbor_itm,
+            "max_otm_drift": round(max_otm_drift, 1),
         }
         import csv as _csv
         log_path = D.TRADE_LOG_PATH
@@ -4564,6 +4590,8 @@ def _v8_check_exit():
         token       = int(_v8_state.get("token", 0) or 0)
         entry_price = float(_v8_state.get("entry_price", 0))
         peak        = float(_v8_state.get("peak_pnl", 0))
+        direction   = _v8_state.get("direction", "")
+        strike      = int(_v8_state.get("strike", 0) or 0)
 
     if not token: return
     ltp = D.get_ltp(token)
@@ -4575,6 +4603,14 @@ def _v8_check_exit():
         with _v8_lock:
             _v8_state["peak_pnl"] = pnl
         peak = pnl
+
+    # Track max OTM drift (data collection for smart strike management)
+    _spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+    if _spot_now > 0 and strike > 0:
+        _otm = max(0.0, (strike - _spot_now) if direction == "CE" else (_spot_now - strike))
+        with _v8_lock:
+            if _otm > _v8_state.get("max_otm_drift", 0.0):
+                _v8_state["max_otm_drift"] = _otm
 
     # Compute trail SL using V7 ladder (12-step + 30/40/50)
     trail_sl, trail_tier = _v8_compute_trail_sl(entry_price, peak)
@@ -5334,6 +5370,9 @@ TRADE_FIELDNAMES = [
     "xleg_other_dying", "xleg_other_margin",
     # v16.7 Anti-spike pullback entry tracking
     "spike_close", "spike_target", "spike_fill", "spike_wait_used",
+    # Strike management data collection (added for smart strike analysis)
+    "entry_spot", "exit_spot", "entry_atm_dist",
+    "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
 ]
 
 def _trade_csv_reader(f):
@@ -7389,6 +7428,11 @@ def _strategy_loop(kite):
                         # ── v10 LIVE: P1 places the real paper trade via the proven v8 executor ──
                         if V10_LIVE and not _v8_state.get("in_trade"):
                             try:
+                                _sh_spot_now   = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                                _sh_otm_key    = "CE_UP" if _sh_dir == "CE" else "PE_DN"
+                                _sh_itm_key    = "CE_DN" if _sh_dir == "CE" else "PE_UP"
+                                _sh_nbr_otm    = D.get_ltp(dir_tokens.get(_sh_otm_key, {}).get("token", 0) or 0)
+                                _sh_nbr_itm    = D.get_ltp(dir_tokens.get(_sh_itm_key, {}).get("token", 0) or 0)
                                 _v8_execute_paper_entry(
                                     direction=_sh_dir, strike=_sh_strike,
                                     symbol=_sh_info.get("symbol", ""), token=_sh_tok,
@@ -7397,7 +7441,10 @@ def _strategy_loop(kite):
                                                   "fired_candle_ts": _sh_1m_bk_ts,
                                                   "close": _sh_1m_close,
                                                   "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m},
-                                    other_token=0)
+                                    other_token=0,
+                                    spot_at_entry=_sh_spot_now,
+                                    neighbor_ltp_otm=_sh_nbr_otm,
+                                    neighbor_ltp_itm=_sh_nbr_itm)
                             except Exception as _v10p1e:
                                 logger.warning(f"[V10-LIVE] P1 execute error: {_v10p1e}")
                         _sh_sl     = round(_sh_ltp - 12, 1)
@@ -7692,6 +7739,11 @@ def _strategy_loop(kite):
                         # ── v10 LIVE: P2 places the real paper trade via the proven v8 executor ──
                         if V10_LIVE and not _v8_state.get("in_trade"):
                             try:
+                                _s2_spot_now  = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                                _s2_otm_key   = "CE_UP" if _s2_dir == "CE" else "PE_DN"
+                                _s2_itm_key   = "CE_DN" if _s2_dir == "CE" else "PE_UP"
+                                _s2_nbr_otm   = D.get_ltp(dir_tokens.get(_s2_otm_key, {}).get("token", 0) or 0)
+                                _s2_nbr_itm   = D.get_ltp(dir_tokens.get(_s2_itm_key, {}).get("token", 0) or 0)
                                 _v8_execute_paper_entry(
                                     direction=_s2_dir, strike=_s2_strike,
                                     symbol=_s2_info.get("symbol", ""), token=_s2_tok,
@@ -7700,7 +7752,10 @@ def _strategy_loop(kite):
                                                   "fired_candle_ts": _s2_bk_ts,
                                                   "close": _s2_close,
                                                   "ema9_low": _s2_ema9l, "ema9_high": _s2_ema9h},
-                                    other_token=0)
+                                    other_token=0,
+                                    spot_at_entry=_s2_spot_now,
+                                    neighbor_ltp_otm=_s2_nbr_otm,
+                                    neighbor_ltp_itm=_s2_nbr_itm)
                             except Exception as _v10p2e:
                                 logger.warning(f"[V10-LIVE] P2 execute error: {_v10p2e}")
                         _s2_sl_px  = round(_s2_ltp - 12, 1)
