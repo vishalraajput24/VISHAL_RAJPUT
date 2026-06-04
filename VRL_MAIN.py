@@ -6522,25 +6522,19 @@ def _update_dashboard_ltp():
                 if ltp > 0:
                     sig["ltp"] = round(ltp, 2)
 
-        # Update position if in trade
-        with _state_lock:
-            _tk = state.get("token")
-            _ep = state.get("entry_price", 0)
-            _it = state.get("in_trade", False)
-        if _it and _tk:
-            opt_ltp = D.get_ltp(_tk)
+        # Update V10 position if in trade (_v8_state — V7 state never has V10 trades)
+        with _v8_lock:
+            _v10_it = _v8_state.get("in_trade", False)
+            _v10_tk = _v8_state.get("token", 0)
+            _v10_ep = _v8_state.get("entry_price", 0)
+            _v10_pk = _v8_state.get("peak_pnl", 0)
+        if _v10_it and _v10_tk:
+            opt_ltp = D.get_ltp(_v10_tk)
             if opt_ltp > 0:
                 pos = dash.get("position", {})
                 pos["ltp"] = round(opt_ltp, 2)
-                pos["pnl"] = round(opt_ltp - _ep, 1)
-                # Update lot PNLs
-                running = round(opt_ltp - _ep, 1)
-                l1 = pos.get("lot1", {})
-                l2 = pos.get("lot2", {})
-                if l1.get("status") == "active":
-                    l1["pnl"] = running
-                if l2.get("status") in ("active", "riding"):
-                    l2["pnl"] = running
+                pos["pnl"] = round(opt_ltp - _v10_ep, 1)
+                pos["peak"] = round(_v10_pk, 1)
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dash["version"] = D.VERSION
@@ -10749,8 +10743,8 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var pnlRs=Math.round(pnl*(pos.lot_size||65)*activeLots);
     var pnlClr=pnl>=0?'var(--gn)':'var(--rd)';
     // RSI progress bar
-    var rsiPct=Math.min(100,(rsi/70)*100);
-    var rsiBarClr=rsi>=70?'var(--rd)':rsi>=65?'var(--am)':'var(--gn)';
+    var rsiPct=Math.min(100,(rsi/80)*100);
+    var rsiBarClr=rsi>=80?'var(--rd)':rsi>=75?'var(--am)':'var(--gn)';
     // State label
     var stateIcon,stateLabel;
     if(!split){stateIcon='🟢';stateLabel=sym+' IN TRADE';}
@@ -10766,7 +10760,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     // RSI progress bar
     ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
     ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
-    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 70)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
+    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 80)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
     // 3-box status grid: SL / TIER / HELD
     ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
