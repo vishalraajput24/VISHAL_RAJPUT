@@ -856,6 +856,8 @@ load()  # initialize CONFIG singleton before any CFG.xxx calls
 PAPER_MODE       = CFG.is_paper()
 KITE_API_KEY     = os.getenv("KITE_API_KEY", "")
 KITE_API_SECRET  = os.getenv("KITE_API_SECRET", "")
+TELEGRAM_TOKEN   = os.getenv("TG_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TG_GROUP_ID", "")
 
 BASE_DIR         = os.path.expanduser("~")
 REPO_DIR         = os.path.dirname(os.path.abspath(__file__))
