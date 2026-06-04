@@ -22,4 +22,4 @@ screener/inst_cache_*
 screener/fno_tech_cache*
 screener/archive/
 screener/multibagger_*.csv
-analysis/
+analysis/daily/*.bak
