@@ -470,6 +470,20 @@ def build_setup(direction, tech, opt, cfg):
         return None, why
     long_prem = float(long_leg["ltp"])
 
+    # ── Neighbor strike data (data collection for smart strike analysis) ──
+    # CALL: OTM = higher strike; PUT: OTM = lower strike
+    _liq_strikes = sorted(s for s, v in side.items() if v.get("ltp", 0) > 0)
+    _long_idx = next((i for i, s in enumerate(_liq_strikes) if s == long_strike), -1)
+    _otm_dir = 1 if direction == "CALL" else -1
+    _nbr = {}
+    for _lbl, _off in (("otm1", _otm_dir), ("otm2", 2 * _otm_dir), ("itm1", -_otm_dir)):
+        _i = _long_idx + _off
+        if _long_idx >= 0 and 0 <= _i < len(_liq_strikes):
+            _s = _liq_strikes[_i]
+            _nbr[_lbl] = {"strike": _s, "ltp": float(side[_s].get("ltp", 0)), "oi": int(side[_s].get("oi", 0))}
+        else:
+            _nbr[_lbl] = {"strike": "", "ltp": 0.0, "oi": 0}
+
     # ── DYNAMIC STOCK-LEVEL SL: entry-day range (not fixed % on option) ──
     day_high = tech.get("day_high", price + atr)
     day_low  = tech.get("day_low", price - atr)
@@ -485,6 +499,13 @@ def build_setup(direction, tech, opt, cfg):
         "pcr": opt["pcr"],
         "max_pain": opt["max_pain"],
         "expiry": opt["expiry"],
+        # Strike management data collection
+        "atm_at_entry": atm,
+        "entry_atm_dist": round(long_strike - atm, 1),  # + = ITM for CALL / OTM for PUT; 0 = ATM
+        "atm_oi": int(long_leg.get("oi", 0) or 0),
+        "otm1_strike": _nbr["otm1"]["strike"], "otm1_ltp": _nbr["otm1"]["ltp"], "otm1_oi": _nbr["otm1"]["oi"],
+        "otm2_strike": _nbr["otm2"]["strike"], "otm2_ltp": _nbr["otm2"]["ltp"], "otm2_oi": _nbr["otm2"]["oi"],
+        "itm1_strike": _nbr["itm1"]["strike"], "itm1_ltp": _nbr["itm1"]["ltp"], "itm1_oi": _nbr["itm1"]["oi"],
     }
 
     if cfg["mode"] == "spread":
@@ -651,6 +672,12 @@ def setup_to_tracker_row(s, today, rank=0):
         "sell_symbol": s.get("sell_symbol", ""), "net_debit": s.get("net_debit", ""),
         "elite": 1 if s.get("elite") else 0, "regime": s.get("regime", ""),
         "signals": s.get("signals", ""),
+        # Strike management data collection
+        "atm_at_entry": s.get("atm_at_entry", ""), "entry_atm_dist": s.get("entry_atm_dist", 0),
+        "atm_oi": s.get("atm_oi", 0),
+        "otm1_strike": s.get("otm1_strike", ""), "otm1_ltp": s.get("otm1_ltp", 0), "otm1_oi": s.get("otm1_oi", 0),
+        "otm2_strike": s.get("otm2_strike", ""), "otm2_ltp": s.get("otm2_ltp", 0), "otm2_oi": s.get("otm2_oi", 0),
+        "itm1_strike": s.get("itm1_strike", ""), "itm1_ltp": s.get("itm1_ltp", 0), "itm1_oi": s.get("itm1_oi", 0),
     }
 
 
