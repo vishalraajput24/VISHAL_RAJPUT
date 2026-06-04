@@ -4348,6 +4348,11 @@ _v8_state = {
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
+    # BW+Gap study fields — captured at entry, written to bw_gap_study.csv on exit
+    "_study_bw": 0.0,
+    "_study_gap": 0.0,
+    "_study_rsi": 0.0,
+    "_study_path": "",
 }
 _v8_lock = threading.Lock()
 
@@ -4411,6 +4416,11 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["neighbor_ltp_otm"]  = float(neighbor_ltp_otm)
         _v8_state["neighbor_ltp_itm"]  = float(neighbor_ltp_itm)
         _v8_state["max_otm_drift"]     = 0.0
+        # BW+Gap study fields
+        _v8_state["_study_bw"]   = float(entry_result.get("bw", 0))
+        _v8_state["_study_gap"]  = float(entry_result.get("gap", 0))
+        _v8_state["_study_rsi"]  = float(entry_result.get("rsi", 0))
+        _v8_state["_study_path"] = str(entry_result.get("entry_mode", ""))
         # Clear any pending re-entry state (fresh setup wins)
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
@@ -4460,6 +4470,10 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         neighbor_otm   = float(_v8_state.get("neighbor_ltp_otm", 0))
         neighbor_itm   = float(_v8_state.get("neighbor_ltp_itm", 0))
         max_otm_drift  = float(_v8_state.get("max_otm_drift", 0))
+        study_bw   = float(_v8_state.get("_study_bw", 0))
+        study_gap  = float(_v8_state.get("_study_gap", 0))
+        study_rsi  = float(_v8_state.get("_study_rsi", 0))
+        study_path = _v8_state.get("_study_path", "")
         pnl_pts_now = round(exit_price - entry_price, 2)
         # Clear position state
         _v8_state["in_trade"]            = False
@@ -4555,6 +4569,25 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             w.writerow(_v8_row)
     except Exception as _le:
         logger.warning("[V10] Trade log write error: " + str(_le))
+
+    # BW+Gap study log — one row per trade
+    try:
+        import csv as _csv2
+        import os as _os2
+        _study_path = _os2.path.join(_os2.path.dirname(__file__), "state", "bw_gap_study.csv")
+        _study_exists = _os2.path.isfile(_study_path)
+        with open(_study_path, "a", newline="") as _sf:
+            _sw = _csv2.writer(_sf)
+            if not _study_exists:
+                _sw.writerow(["date", "time", "path", "direction", "bw", "gap", "rsi", "pnl_pts", "exit_reason"])
+            _sw.writerow([
+                date.today().isoformat(), entry_time,
+                study_path, direction,
+                round(study_bw, 1), round(study_gap, 2), round(study_rsi, 1),
+                pnl_pts, reason,
+            ])
+    except Exception as _sle:
+        logger.warning("[V10] Study log write error: " + str(_sle))
 
     logger.info("[V10] PAPER EXIT: " + symbol + " qty=" + str(qty)
                 + " ref=" + str(exit_price) + " reason=" + reason
@@ -7488,7 +7521,10 @@ def _strategy_loop(kite):
                                     entry_result={"entry_price": _sh_ltp, "entry_mode": "V10_P1",
                                                   "fired_candle_ts": _sh_1m_bk_ts,
                                                   "close": _sh_1m_close,
-                                                  "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m},
+                                                  "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m,
+                                                  "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1),
+                                                  "gap": round(_sh_1m_gap, 2),
+                                                  "rsi": round(_sh_rsi_1m, 1)},
                                     other_token=0,
                                     spot_at_entry=_sh_spot_now,
                                     neighbor_ltp_otm=_sh_nbr_otm,
@@ -7799,7 +7835,10 @@ def _strategy_loop(kite):
                                     entry_result={"entry_price": _s2_ltp, "entry_mode": "V10_P2",
                                                   "fired_candle_ts": _s2_bk_ts,
                                                   "close": _s2_close,
-                                                  "ema9_low": _s2_ema9l, "ema9_high": _s2_ema9h},
+                                                  "ema9_low": _s2_ema9l, "ema9_high": _s2_ema9h,
+                                                  "bw": round(_s2_bw, 1),
+                                                  "gap": round(_s2_ema9h_gap, 2),
+                                                  "rsi": round(_s2_rsi, 1)},
                                     other_token=0,
                                     spot_at_entry=_s2_spot_now,
                                     neighbor_ltp_otm=_s2_nbr_otm,
