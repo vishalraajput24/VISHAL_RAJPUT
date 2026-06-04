@@ -7197,6 +7197,22 @@ def _strategy_loop(kite):
                         if _sh_ds["bucket_ts"] != _sh_1m_bk_ts:
                             _sh_ds["bucket_ts"] = _sh_1m_bk_ts
 
+                        # Always update dashboard snapshot regardless of signal active state.
+                        # Without this, _v10_live only gets a price-only update while active,
+                        # leaving gap=None → _v10_to_result returns None → dashboard shows
+                        # "WARMING UP" for the entire duration of the shadow signal.
+                        _sh_1m_gap = round(_sh_1m_close - _sh_ema9h_1m, 2)
+                        with _v10_live_lock:
+                            _v10_live[_sh_dir] = {
+                                "strike": int(_sh_info.get("strike", 0) or 0),
+                                "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
+                                "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
+                                "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
+                                "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
+                                "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
+                                "ready": False, "reject": "in_trade" if _sh_ds.get("active") else "",
+                            }
+
                         # If signal active — track LTP using ORIGINAL token (not current ATM)
                         if _sh_ds["active"]:
                             _sh_track_tok = int(_sh_ds.get("entry_tok", 0) or _sh_tok)
