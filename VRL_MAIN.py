@@ -7344,13 +7344,9 @@ def _strategy_loop(kite):
                             continue
 
                         # ── Cooldown gates (no trade impact — reject only) ──
-                        # 1. ATM relock cooldown: EMA9H of new strike not settled yet
-                        _sh_relock_age = time.time() - _v8_shadow_dt.get("relock_ts", 0)
-                        if 0 < _sh_relock_age < 120:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P1] REJECT {_sh_dir} relock_cooldown age={int(_sh_relock_age)}s")
-                            continue
-                        # 2. Post-SL cooldown: 1 min after SL-HIT, EMA9H still distorted
+                        # 1. Post-SL cooldown: 1 min after SL-HIT, EMA9H still distorted
+                        # Note: relock cooldown removed — cross_buf cleared on relock serves as
+                        # the settlement gate (needs 3 fresh readings = 45s minimum).
                         _sh_sl_age = time.time() - _sh_ds.get("sl_ts", 0)
                         if 0 < _sh_sl_age < 60:
                             if now.second % 15 == 0:
@@ -7652,12 +7648,7 @@ def _strategy_loop(kite):
                                 logger.info(f"[SHADOW-P2] REJECT {_s2_dir} {_s2_reject}")
                             continue
 
-                        # ── Relock cooldown: EMA9H of new strike not settled yet (same as P1) ──
-                        _s2_relock_age = time.time() - _v8_shadow_dt.get("relock_ts", 0)
-                        if 0 < _s2_relock_age < 120:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} relock_cooldown age={int(_s2_relock_age)}s")
-                            continue
+                        # Note: relock cooldown removed — cross_buf cleared on relock (same as P1).
 
                         # ── Exit cooldown: block P2 re-entry for 120s after any exit ──
                         _s2_exit_age = time.time() - _s2_ds.get("exit_ts", 0)
@@ -8339,7 +8330,12 @@ def _strategy_loop(kite):
                     _lock_strikes(spot_ltp, dte, kite, expiry)
                     if not _is_initial_lock:
                         _v8_shadow_dt["relock_ts"] = time.time()
-                        logger.info("[SHADOW-P1] Relock cooldown armed — P1 signals blocked 2 min")
+                        # Clear cross_buf so XLEG_CONFIRMED requires fresh readings from the new strike.
+                        # This replaces the old 120s fixed cooldown — cross_buf needs 3 readings × 15s
+                        # = 45s minimum before any P1/P2 signal can fire. Faster and data-driven.
+                        _shadow_analysis["CE"]["cross_buf"] = []
+                        _shadow_analysis["PE"]["cross_buf"] = []
+                        logger.info("[SHADOW-P1] Relock — cross_buf cleared, XLEG gate is now the settlement check (45s min)")
 
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
                 dir_tokens = dict(_locked_tokens)
