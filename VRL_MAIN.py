@@ -6510,7 +6510,7 @@ def _update_dashboard_ltp():
         # Update spot + VIX
         spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         if spot > 0:
-            dash.setdefault("market", {})["spot"] = round(spot, 2)
+            dash.setdefault("market", {})["spot"] = round(spot, 1)
         vix = D.get_vix()
         if vix > 0:
             dash.setdefault("market", {})["vix"] = round(vix, 1)
@@ -6621,9 +6621,9 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "verdict": "MARKET CLOSED" if not D.is_market_open() else "WARMING UP",
                     "ltp": round(_ltp_fallback, 2),
                     "strike": dir_strikes.get(opt_type, atm_strike),
-                    "g1_green": False, "g2_close_above_ema9l": False,
+                    "g1_gap_ok": False, "g2_rsi_ok": False,
                     "g3_bw_ok": False,
-                    "g4_other_falling": False, "g5_rsi_ok": False,
+                    "g4_other_falling": False, "g5_above_ema9l": False,
                     "rsi": 0, "rsi_prev": 0,
                     "ema9_low_slope": 0,
                 }
@@ -6679,11 +6679,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "rsi": _rsi,
                 "rsi_prev": _rsi_prev,
                 "ema9_low_slope": _slope,
-                "g1_green": _g1,
-                "g2_close_above_ema9l": _g2,
+                "g1_gap_ok": _g1,
+                "g2_rsi_ok": _g2,
                 "g3_bw_ok": _g3,
                 "g4_other_falling": _g4,
-                "g5_rsi_ok": _g5,
+                "g5_above_ema9l": _g5,
                 "g6_stochrsi": result.get("g6_stochrsi_os_cross"),
                 "g6_k": result.get("g6_k_now", 0),
             }
@@ -10359,7 +10359,7 @@ def _web_read_dash():
                 _web_logger.debug("[WEB] _read_dash error: " + str(e))
             except Exception:
                 pass
-            data = {}
+            # keep data = {"version": VERSION} — don't wipe it on read error
     csv_summary = _web_today_trade_summary()
     today_block = data.get("today") or {}
     today_block.update({
