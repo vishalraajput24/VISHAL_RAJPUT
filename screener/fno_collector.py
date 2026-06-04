@@ -59,6 +59,7 @@ TOKEN_FILE     = os.path.join(os.path.expanduser("~"), "VISHAL_RAJPUT", "state",
 INST_CACHE_NSE = os.path.join(BASE_DIR, "inst_cache_nse.csv")
 INST_CACHE_NFO = os.path.join(BASE_DIR, "inst_cache_nfo.csv")
 TECH_CACHE     = os.path.join(BASE_DIR, "fno_tech_cache.json")
+OHLCV_CACHE    = os.path.join(BASE_DIR, "fno_ohlcv_cache.json")
 SIGNALS_LOG    = os.path.join(BASE_DIR, "fno_signals_log.csv")
 HISTORY_FILE   = os.path.join(BASE_DIR, "fno_history.csv")
 ENTRIES_FILE   = os.path.join(BASE_DIR, "fno_tracker.csv")   # shared with screener
@@ -150,6 +151,40 @@ def get_technicals(kite, nse_df, symbol):
         }
     except Exception:
         return None
+
+def fetch_and_store_ohlcv(kite, nse_df, symbols):
+    """Fetch 130-day daily OHLCV for all symbols once at morning; stored for tick reuse."""
+    today    = date.today().isoformat()
+    to_date  = datetime.now()
+    from_date = to_date - timedelta(days=130)
+    cache    = {"date": today, "symbols": {}}
+    total    = len(symbols)
+    print(f"\n  📦 Caching OHLCV ({total} symbols)...", flush=True)
+
+    for i, sym in enumerate(symbols, 1):
+        inst = nse_df[(nse_df["tradingsymbol"] == sym) & (nse_df["instrument_type"] == "EQ")]
+        if inst.empty:
+            continue
+        token = int(inst.iloc[0]["instrument_token"])
+        try:
+            candles = kite.historical_data(token, from_date, to_date, "day")
+            serial  = []
+            for c in candles:
+                row = dict(c)
+                if hasattr(row.get("date"), "isoformat"):
+                    row["date"] = row["date"].isoformat()
+                serial.append(row)
+            cache["symbols"][sym] = serial
+        except Exception:
+            pass
+        if i % 25 == 0:
+            print(f"    {i}/{total}...", flush=True)
+        time.sleep(0.3)
+
+    with open(OHLCV_CACHE, "w") as f:
+        json.dump(cache, f)
+    print(f"  ✅ OHLCV cache saved → {OHLCV_CACHE}\n")
+
 
 def tech_score(tech):
     price = tech["price"]; ema20 = tech["ema20"]; ema50 = tech["ema50"]
@@ -379,6 +414,9 @@ def morning_scan(kite, nse_df, nfo_df):
     qualified = [v for v in results.values() if v["direction"] != "NEUTRAL" and v["tech_score"] >= 3]
     print(f"\n{Fore.GREEN}✅ Morning scan done — {len(qualified)}/{total} qualified{Style.RESET_ALL}")
     print(f"   Cache saved: {TECH_CACHE}\n")
+
+    # Pre-fetch raw OHLCV for all scanned symbols so tick runs don't hit the API
+    fetch_and_store_ohlcv(kite, nse_df, list(results.keys()))
     return results
 
 
@@ -402,6 +440,14 @@ def tick_scan(kite, nse_df, nfo_df):
 
     if not cache:
         print("Empty cache."); return
+
+    # Load OHLCV cache — avoids 130-day historical re-fetch per symbol each tick
+    ohlcv_cache = {}
+    if os.path.exists(OHLCV_CACHE):
+        with open(OHLCV_CACHE) as f:
+            raw_ohlcv = json.load(f)
+        if raw_ohlcv.get("date") == date.today().isoformat():
+            ohlcv_cache = raw_ohlcv.get("symbols", {})
 
     # Filter: only stocks with direction + score >= 3
     qualified = [v for v in cache.values()
@@ -432,9 +478,14 @@ def tick_scan(kite, nse_df, nfo_df):
 
     for tech_data in qualified:
         sym  = tech_data["symbol"]
-        tech = FS.get_technicals(kite, nse_df, sym)
+        tech = FS.get_technicals(kite, nse_df, sym, ohlcv_candles=ohlcv_cache.get(sym))
         if tech is None:
             time.sleep(0.2); continue
+        # Override price with live LTP so score reflects current market
+        _live = ltp_map.get(f"NSE:{sym}", {})
+        _live_ltp = float(_live.get("last_price", 0) or 0)
+        if _live_ltp > 0:
+            tech["price"] = round(_live_ltp, 2)
         expiry = FS.get_nearest_expiry(nfo_df, sym, cfg)
         opt = FS.get_option_chain(kite, nfo_df, sym, tech["price"], expiry) if expiry else None
         if opt is None:
