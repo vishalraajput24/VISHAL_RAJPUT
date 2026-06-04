@@ -9106,8 +9106,9 @@ def _cmd_help(args):
 
 def _cmd_status(args):
     global _kite
-    with _state_lock:
-        st = dict(state)
+    # V10 is the live strategy — read _v8_state, not V7 state
+    with _v8_lock:
+        st = dict(_v8_state)
     with _post_exit_lock:
         _post_n = len(_post_exit_observation)
     _post_exit_line = ""
@@ -9116,7 +9117,6 @@ def _cmd_status(args):
                            + " token(s)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
     if not st.get("in_trade"):
-        last_scan = st.get("_last_scan", {})
         _warmup_line = ""
         try:
             import json as _j
@@ -9136,22 +9136,26 @@ def _cmd_status(args):
                                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
         except Exception:
             pass
+        _day_pts = round(st.get("_pnl_today_pts", 0), 1)
+        _day_w   = st.get("_wins_today", 0)
+        _day_l   = st.get("_losses_today", 0)
         _tg_send(
             "📊 <b>STATUS — NO TRADE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             + _warmup_line +
             _post_exit_line +
-            "PNL    : " + str(round(st.get("daily_pnl", 0), 1)) + "pts\n"
+            "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
+            + str(_day_w) + "W " + str(_day_l) + "L\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Last scan : " + last_scan.get("time", "—") + "\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Bot       : " + _why_blocked(st)
+            "Bot     : V10 scanning"
         )
         return
 
-    ltp = 0.0
+    qty   = int(st.get("qty", 0) or D.get_lot_size() * 2)
+    token = int(st.get("token", 0) or 0)
+    ltp   = 0.0
     try:
-        ltp = D.get_ltp(st.get("token"))
+        ltp = D.get_ltp(token)
         if ltp <= 0 and _kite is not None:
             symbol = st.get("symbol")
             if symbol:
@@ -9162,19 +9166,25 @@ def _cmd_status(args):
         logger.warning("[STATUS] LTP fetch error: " + str(e))
         ltp = 0.0
 
-    entry   = st.get("entry_price", 0)
-    pnl     = round(ltp - entry, 1) if ltp > 0 else 0
-    peak    = st.get("peak_pnl", 0)
+    entry = float(st.get("entry_price", 0))
+    pnl   = round(ltp - entry, 1) if ltp > 0 else 0
+    peak  = float(st.get("peak_pnl", 0))
+    pnl_rs = round(pnl * qty, 0)
+    pnl_rs_str = ("+" if pnl_rs >= 0 else "") + "₹" + "{:,.0f}".format(pnl_rs)
 
-    _tier = st.get("active_ratchet_tier", "None")
+    _tier = st.get("active_ratchet_tier", "INITIAL")
     _rsl  = float(st.get("active_ratchet_sl", 0) or 0)
     if _tier and _tier not in ("", "None", "INITIAL") and _rsl > 0:
-        _stop_line = "Trail  : " + _tier + " @ Rs" + str(round(_rsl, 1))
+        _stop_line = "Trail  : " + _tier + " @ ₹" + str(round(_rsl, 1))
         _stop_dist = round(ltp - _rsl, 1) if ltp > 0 else "—"
     else:
-        _init_sl   = round(entry - 10, 1)
-        _stop_line = "Trail  : INITIAL @ Rs" + str(_init_sl)
+        _init_sl   = round(entry - 12, 1)
+        _stop_line = "Trail  : INITIAL @ ₹" + str(_init_sl)
         _stop_dist = round(ltp - _init_sl, 1) if ltp > 0 else "—"
+
+    _day_pts = round(st.get("_pnl_today_pts", 0), 1)
+    _day_w   = st.get("_wins_today", 0)
+    _day_l   = st.get("_losses_today", 0)
 
     _tg_send(
         "📊 <b>STATUS — IN TRADE</b>\n"
@@ -9182,16 +9192,17 @@ def _cmd_status(args):
         "Time   : " + _now_str() + "\n"
         "Symbol : " + st.get("symbol", "") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : " + str(round(entry, 2)) + "\n"
-        "LTP    : " + str(round(ltp, 2)) + "\n"
-        "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + _rs(pnl) + "\n"
+        "Entry  : ₹" + str(round(entry, 2)) + "\n"
+        "LTP    : ₹" + str(round(ltp, 2)) + "\n"
+        "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + pnl_rs_str + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
         "Ladder : @+12→LOCK_4  @+18→LOCK_10  @+24→LOCK_12\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
-        "Day PNL: " + str(round(st.get("daily_pnl", 0), 1)) + "pts"
+        "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
+        + str(_day_w) + "W " + str(_day_l) + "L"
     )
 
 
