@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
     "require_regime_align": True,  # block CALLs in a bear tape, PUTs in a bull tape
     "rsi_call_lo": 52, "rsi_call_hi": 68,   # tightened from 55-75
     "rsi_put_lo": 38,  "rsi_put_hi": 52,    # avoid buying PUTs into deep-oversold (<38)
-    "min_adx": 18,              # below this = chop, no trend to ride
+    "rsi_slope_min": 3,         # RSI must move ≥ 3 pts in 3 days to confirm momentum
     "max_ext_from_ema20_pct": 6.0,  # skip chasing: price too far from EMA20
 
     # ── Liquidity ─────────────────────────────────────────────────────────
@@ -117,27 +117,12 @@ def compute_atr(df, period=14):
     return tr.rolling(period).mean()
 
 
-def compute_adx(df, period=14):
-    """Wilder's ADX. Returns a Series aligned to df. NaN-safe."""
-    h, l, c = df["high"], df["low"], df["close"]
-    up = h.diff()
-    dn = -l.diff()
-    plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
-    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
-    pc = c.shift(1)
-    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
-    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0, np.nan)
-    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / atr.replace(0, np.nan)
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    return dx.ewm(alpha=1 / period, adjust=False).mean().fillna(0)
-
 
 # =============================================================================
 # TECHNICALS  (canonical, richer than the old per-script versions)
 # =============================================================================
 def get_technicals(kite, nse_df, symbol):
-    """100 days daily OHLCV -> rich tech dict (adds adx, ema20 slope, 5d return,
+    """100 days daily OHLCV -> rich tech dict (adds ema9, rsi_slope_3d, ema20 slope, 5d return,
     extension-from-EMA20). Returns None on failure."""
     try:
         inst = nse_df[(nse_df["tradingsymbol"] == symbol) &
@@ -152,11 +137,11 @@ def get_technicals(kite, nse_df, symbol):
             return None
 
         df = pd.DataFrame(candles)
+        df["ema9"]  = df["close"].ewm(span=9,  adjust=False).mean()
         df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
         df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
         df["rsi"] = compute_rsi(df["close"])
         df["atr"] = compute_atr(df)
-        df["adx"] = compute_adx(df)
         df["vol_avg"] = df["volume"].rolling(10).mean()
 
         last, prev = df.iloc[-1], df.iloc[-2]
@@ -166,17 +151,21 @@ def get_technicals(kite, nse_df, symbol):
         price = round(float(last["close"]), 2)
         ret5_pct = round((price / float(df["close"].iloc[-6]) - 1) * 100, 2) if len(df) >= 6 else 0.0
         ext20_pct = round((price - ema20_now) / ema20_now * 100, 2) if ema20_now else 0.0
+        rsi_now = float(last["rsi"])
+        rsi_3d_ago = float(df["rsi"].iloc[-4]) if len(df) >= 4 else rsi_now
+        rsi_slope_3d = round(rsi_now - rsi_3d_ago, 1)
 
         return {
             "symbol": symbol,
             "price": price,
             "day_high": round(float(last["high"]), 2),
             "day_low": round(float(last["low"]), 2),
+            "ema9":  round(float(last["ema9"]),  2),
             "ema20": round(ema20_now, 2),
             "ema50": round(float(last["ema50"]), 2),
-            "rsi": round(float(last["rsi"]), 1),
+            "rsi": round(rsi_now, 1),
+            "rsi_slope_3d": rsi_slope_3d,
             "atr": round(float(last["atr"]), 2),
-            "adx": round(float(last["adx"]), 1),
             "ema20_slope_pct": ema20_slope_pct,
             "ret5_pct": ret5_pct,
             "ext20_pct": ext20_pct,
@@ -291,17 +280,18 @@ def compute_index_regime(kite, nse_df=None):
         df = pd.DataFrame(candles)
         if len(df) < 30:
             raise ValueError("insufficient index history")
+        df["ema9"]  = df["close"].ewm(span=9,  adjust=False).mean()
         df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
         df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-        df["adx"] = compute_adx(df)
         last = df.iloc[-1]
-        price = float(last["close"]); e20 = float(last["ema20"]); e50 = float(last["ema50"])
-        adx = float(last["adx"])
+        price = float(last["close"]); e9 = float(last["ema9"])
+        e20 = float(last["ema20"]); e50 = float(last["ema50"])
         e20_5 = float(df["ema20"].iloc[-6]); slope = (e20 - e20_5) / e20_5 * 100 if e20_5 else 0.0
 
         up = price > e20 and e20 > e50 and slope > 0
         dn = price < e20 and e20 < e50 and slope < 0
-        strong = adx >= 22
+        # EMA9 > EMA20 = short-term aligns with trend = STRONG; else WEAK
+        strong = (e9 > e20) if up else (e9 < e20)
         if up:
             regime = "BULL" if strong else "WEAK_BULL"
         elif dn:
@@ -316,7 +306,7 @@ def compute_index_regime(kite, nse_df=None):
             "allow_put": regime in ("BEAR", "WEAK_BEAR", "NEUTRAL"),
             "strong_call": regime == "BULL",
             "strong_put": regime == "BEAR",
-            "detail": f"px={price:.0f} e20={e20:.0f} e50={e50:.0f} slope={slope:+.2f}% adx={adx:.0f}",
+            "detail": f"px={price:.0f} e9={e9:.0f} e20={e20:.0f} e50={e50:.0f} slope={slope:+.2f}%",
         }
     except Exception as e:
         out["detail"] = f"regime-fallback({e})"
@@ -333,7 +323,9 @@ def score_signal(tech, regime, opt, cfg):
     direction in {CALL, PUT, NEUTRAL}. reject_reason is '' when a tradable
     direction qualifies, else explains why it was filtered."""
     price = tech["price"]; ema20 = tech["ema20"]; ema50 = tech["ema50"]
-    rsi = tech["rsi"]; adx = tech.get("adx", 0); slope = tech.get("ema20_slope_pct", 0)
+    rsi = tech["rsi"]; slope = tech.get("ema20_slope_pct", 0)
+    ema9 = tech.get("ema9", 0); ema20 = tech["ema20"]
+    rsi_slope = tech.get("rsi_slope_3d", 0)
     ret5 = tech.get("ret5_pct", 0); ext = abs(tech.get("ext20_pct", 0))
     vol = tech["volume"]; vol_avg = tech["vol_avg"]
     pcr = opt["pcr"] if opt else 1.0
@@ -348,9 +340,11 @@ def score_signal(tech, regime, opt, cfg):
         if (price > ema50) == bull: pts += 1; sig.append("P/EMA50 ok")
         if (ema20 > ema50 * 1.005) if bull else (ema20 < ema50 * 0.995):
             pts += 1; sig.append("EMA trend ok")
-        # ── Trend strength ──
-        if adx >= cfg["min_adx"]: pts += 1; sig.append(f"ADX={adx:.0f}")
-        if adx >= 30: pts += 1; sig.append("ADX strong")
+        # ── Short-term momentum confirmation ──
+        if ema9 > 0 and ((ema9 > ema20) == bull):
+            pts += 1; sig.append(f"EMA9{'>' if bull else '<'}EMA20")
+        if (rsi_slope > 0) == bull and abs(rsi_slope) >= 3:
+            pts += 1; sig.append(f"RSI_slope={rsi_slope:+.0f}")
         if (slope > 0) == bull and abs(slope) >= 0.2: pts += 1; sig.append(f"slope={slope:+.1f}%")
         # ── Momentum (tight RSI zone + 5d return aligned) ──
         if bull and cfg["rsi_call_lo"] <= rsi <= cfg["rsi_call_hi"]:
