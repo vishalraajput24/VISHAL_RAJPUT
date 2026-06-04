@@ -1175,6 +1175,9 @@ def run_strategy_scan(kite, nse_df, nfo_df, universe):
     print(f"\n  Qualified: {len(candidates)} | top rejects: "
           + ", ".join(f"{k}={v}" for k, v in top_rej))
 
+    # Re-read tracker fresh — fno_collector may have added entries while the scan
+    # was running (scan takes 1-3 min). Stale snapshot is the root cause of duplicates.
+    tracker_df = pd.read_csv(TRACKER_FILE) if os.path.exists(TRACKER_FILE) else None
     accepted = FS.select_with_caps(candidates, tracker_df, cfg, today)
     print(f"\n{Fore.GREEN}  ACCEPTED {len(accepted)} trade(s) after caps:{Style.RESET_ALL}")
     for s in sorted(accepted, key=lambda x: -x["score"]):
@@ -1197,9 +1200,16 @@ def save_setups(accepted, today=None):
     df = None
     if os.path.exists(TRACKER_FILE):
         df = pd.read_csv(TRACKER_FILE)
-        if today in df["date_added"].astype(str).values:
-            df = df[df["date_added"].astype(str) != today]
-            print(f"\n{Fore.YELLOW}🔄  Replacing today's rows with fresh scan{Style.RESET_ALL}")
+        # Only remove today's still-OPEN rows — preserve T1-HIT/SL-HIT closed by
+        # fno_collector during the day so they aren't wiped and re-opened by a
+        # second screener run.
+        today_open_mask = (
+            (df["date_added"].astype(str) == today) &
+            df["status"].astype(str).str.startswith("OPEN", na=False)
+        )
+        if today_open_mask.any():
+            df = df[~today_open_mask]
+            print(f"\n{Fore.YELLOW}🔄  Replacing today's OPEN rows with fresh scan{Style.RESET_ALL}")
 
     rows = [FS.setup_to_tracker_row(s, today, rank)
             for rank, s in enumerate(sorted(accepted, key=lambda x: -x["score"]), 1)]
