@@ -4348,11 +4348,6 @@ _v8_state = {
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
-    # BW+Gap study fields — captured at entry, written to bw_gap_study.csv on exit
-    "_study_bw": 0.0,
-    "_study_gap": 0.0,
-    "_study_rsi": 0.0,
-    "_study_path": "",
 }
 _v8_lock = threading.Lock()
 
@@ -4416,11 +4411,6 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["neighbor_ltp_otm"]  = float(neighbor_ltp_otm)
         _v8_state["neighbor_ltp_itm"]  = float(neighbor_ltp_itm)
         _v8_state["max_otm_drift"]     = 0.0
-        # BW+Gap study fields
-        _v8_state["_study_bw"]   = float(entry_result.get("bw", 0))
-        _v8_state["_study_gap"]  = float(entry_result.get("gap", 0))
-        _v8_state["_study_rsi"]  = float(entry_result.get("rsi", 0))
-        _v8_state["_study_path"] = str(entry_result.get("entry_mode", ""))
         # Clear any pending re-entry state (fresh setup wins)
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
@@ -4470,10 +4460,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         neighbor_otm   = float(_v8_state.get("neighbor_ltp_otm", 0))
         neighbor_itm   = float(_v8_state.get("neighbor_ltp_itm", 0))
         max_otm_drift  = float(_v8_state.get("max_otm_drift", 0))
-        study_bw   = float(_v8_state.get("_study_bw", 0))
-        study_gap  = float(_v8_state.get("_study_gap", 0))
-        study_rsi  = float(_v8_state.get("_study_rsi", 0))
-        study_path = _v8_state.get("_study_path", "")
         pnl_pts_now = round(exit_price - entry_price, 2)
         # Clear position state
         _v8_state["in_trade"]            = False
@@ -4569,25 +4555,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             w.writerow(_v8_row)
     except Exception as _le:
         logger.warning("[V10] Trade log write error: " + str(_le))
-
-    # BW+Gap study log — one row per trade
-    try:
-        import csv as _csv2
-        import os as _os2
-        _study_path = _os2.path.join(_os2.path.dirname(__file__), "state", "bw_gap_study.csv")
-        _study_exists = _os2.path.isfile(_study_path)
-        with open(_study_path, "a", newline="") as _sf:
-            _sw = _csv2.writer(_sf)
-            if not _study_exists:
-                _sw.writerow(["date", "time", "path", "direction", "bw", "gap", "rsi", "pnl_pts", "exit_reason"])
-            _sw.writerow([
-                date.today().isoformat(), entry_time,
-                study_path, direction,
-                round(study_bw, 1), round(study_gap, 2), round(study_rsi, 1),
-                pnl_pts, reason,
-            ])
-    except Exception as _sle:
-        logger.warning("[V10] Study log write error: " + str(_sle))
 
     logger.info("[V10] PAPER EXIT: " + symbol + " qty=" + str(qty)
                 + " ref=" + str(exit_price) + " reason=" + reason
@@ -7375,6 +7342,32 @@ def _strategy_loop(kite):
                                     f"entry={_sh_entry} exit={exit_px:.1f} "
                                     f"pnl={_fin_pnl:+.1f} peak=+{_fin_peak:.1f} trail={_fin_lvl}"
                                 )
+                                # BW+Gap study log
+                                try:
+                                    import csv as _csv_s1, os as _os_s1
+                                    _sp1 = _os_s1.path.join(_os_s1.path.dirname(__file__), "state", "bw_gap_study.csv")
+                                    _sp1_new = not _os_s1.path.isfile(_sp1)
+                                    with open(_sp1, "a", newline="") as _sf1:
+                                        _sw1 = _csv_s1.writer(_sf1)
+                                        if _sp1_new:
+                                            _sw1.writerow(["date", "entry_time", "path", "direction",
+                                                           "bw", "gap", "rsi", "entry_price",
+                                                           "peak_pts", "trail_level", "pnl_pts", "exit_reason"])
+                                        _sw1.writerow([
+                                            date.today().isoformat(),
+                                            _sh_ds.get("entry_time", ""),
+                                            "P1", _sh_dir,
+                                            _sh_ds.get("study_bw", 0),
+                                            _sh_ds.get("study_gap", 0),
+                                            _sh_ds.get("study_rsi", 0),
+                                            round(_sh_entry, 1),
+                                            round(_fin_peak, 1),
+                                            _fin_lvl,
+                                            _fin_pnl,
+                                            reason,
+                                        ])
+                                except Exception as _sel1:
+                                    logger.warning(f"[STUDY] P1 log error: {_sel1}")
                                 pass  # shadow TG P1 exit alert removed
                                 # Track peak for analysis streak detection
                                 _shadow_analysis[_sh_dir]["last_peaks"].append(_fin_peak)
@@ -7541,6 +7534,9 @@ def _strategy_loop(kite):
                             "entry_tok": _sh_tok, "entry_strike": _sh_strike,
                             "sl_ts": 0.0,  # clear stale cooldown/outcome from prior trade
                             "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
+                            "study_bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1),
+                            "study_gap": round(_sh_1m_gap, 2),
+                            "study_rsi": round(_sh_rsi_1m, 1),
                         })
                         # V2 tracker: same entry, new exit (dynamic trail + hard exit +40)
                         _v8_shadow_dt_v2[_sh_dir].update({
@@ -7710,6 +7706,32 @@ def _strategy_loop(kite):
                                     f"entry={_s2_entry} exit={exit_px:.1f} "
                                     f"pnl={_s2_fin_pnl:+.1f} peak=+{_s2_fin_peak:.1f} trail={_s2_fin_lvl}"
                                 )
+                                # BW+Gap study log
+                                try:
+                                    import csv as _csv_s2, os as _os_s2
+                                    _sp2 = _os_s2.path.join(_os_s2.path.dirname(__file__), "state", "bw_gap_study.csv")
+                                    _sp2_new = not _os_s2.path.isfile(_sp2)
+                                    with open(_sp2, "a", newline="") as _sf2:
+                                        _sw2 = _csv_s2.writer(_sf2)
+                                        if _sp2_new:
+                                            _sw2.writerow(["date", "entry_time", "path", "direction",
+                                                           "bw", "gap", "rsi", "entry_price",
+                                                           "peak_pts", "trail_level", "pnl_pts", "exit_reason"])
+                                        _sw2.writerow([
+                                            date.today().isoformat(),
+                                            _s2_ds.get("entry_time", ""),
+                                            "P2", _s2_dir,
+                                            _s2_ds.get("study_bw", 0),
+                                            _s2_ds.get("study_gap", 0),
+                                            _s2_ds.get("study_rsi", 0),
+                                            round(_s2_entry, 1),
+                                            round(_s2_fin_peak, 1),
+                                            _s2_fin_lvl,
+                                            _s2_fin_pnl,
+                                            reason,
+                                        ])
+                                except Exception as _sel2:
+                                    logger.warning(f"[STUDY] P2 log error: {_sel2}")
                                 pass  # shadow TG P2 exit alert removed
                                 # Track peak for analysis streak detection
                                 _shadow_analysis[_s2_dir]["last_peaks_p2"].append(_s2_fin_peak)
@@ -7856,6 +7878,9 @@ def _strategy_loop(kite):
                             "entry_tok": _s2_tok, "entry_strike": _s2_strike,
                             "exit_ts": 0.0,  # clear stale cooldown/outcome from prior trade
                             "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
+                            "study_bw": round(_s2_bw, 1),
+                            "study_gap": round(_s2_ema9h_gap, 2),
+                            "study_rsi": round(_s2_rsi, 1),
                         })
                         # V2 tracker: same entry, hard exit at +20
                         _v8_shadow_p2_v2[_s2_dir].update({
