@@ -4693,6 +4693,21 @@ _v8_shadow_p2_v2 = {
            "dyn_trail_ts": 0.0},
 }
 
+# Shadow P3 — extreme VWAP reversal (|fut-vwap| >= V10_P3_VWAP_EXTREME, shadow-only, no live trades)
+_v8_shadow_p3 = {
+    "last_scan_ts": 0.0,
+    "CE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0,
+           "shadow_sl": 0.0, "shadow_level": "INITIAL",
+           "entry_tok": 0, "entry_strike": 0, "vwap_gap_at_entry": 0.0,
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
+    "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
+           "peak_price": 0.0, "peak_pts": 0.0,
+           "shadow_sl": 0.0, "shadow_level": "INITIAL",
+           "entry_tok": 0, "entry_strike": 0, "vwap_gap_at_entry": 0.0,
+           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
+}
+
 _bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
 
 # DELAY-ANALYSIS: snapshot LTP at +5s/+10s/+30s/+60s after each P1/P2 signal
@@ -4725,6 +4740,7 @@ V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
 V10_RSI_MAX       = 80    # RSI cap (raised 70→80 2026-06-03: 70 blocked a strong CE breakout, RSI 76→88 ran +20-50; no data proved 70+ loses)
 V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
 V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
+V10_P3_VWAP_EXTREME = 75  # P3 shadow: fire reversal CE/PE when |fut-vwap| >= this (data collection only)
 # CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades.
 V10_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
@@ -5069,6 +5085,7 @@ def _save_shadow_state():
             _p2_snap = {"CE": dict(_v8_shadow_p2["CE"]), "PE": dict(_v8_shadow_p2["PE"])}
             _p1v2_snap = {"CE": dict(_v8_shadow_dt_v2["CE"]), "PE": dict(_v8_shadow_dt_v2["PE"])}
             _p2v2_snap = {"CE": dict(_v8_shadow_p2_v2["CE"]), "PE": dict(_v8_shadow_p2_v2["PE"])}
+            _p3_snap = {"CE": dict(_v8_shadow_p3["CE"]), "PE": dict(_v8_shadow_p3["PE"])}
         with _v10_live_lock:
             _live_snap = {k: dict(v) for k, v in _v10_live.items()}
         payload = {
@@ -5076,6 +5093,7 @@ def _save_shadow_state():
             "p2":    _p2_snap,
             "p1_v2": _p1v2_snap,
             "p2_v2": _p2v2_snap,
+            "p3":    _p3_snap,
             "saved_date": date.today().isoformat(),
             "live": _live_snap,
         }
@@ -5089,7 +5107,7 @@ def _save_shadow_state():
 
 def _load_shadow_state():
     """Restore shadow signal state from disk on startup."""
-    global _v8_shadow_dt, _v8_shadow_p2, _v8_shadow_dt_v2, _v8_shadow_p2_v2
+    global _v8_shadow_dt, _v8_shadow_p2, _v8_shadow_dt_v2, _v8_shadow_p2_v2, _v8_shadow_p3
     if not os.path.isfile(D.SHADOW_STATE_FILE_PATH):
         return
     try:
@@ -5108,6 +5126,8 @@ def _load_shadow_state():
                 _v8_shadow_dt_v2[_dir].update(saved["p1_v2"][_dir])
             if _dir in saved.get("p2_v2", {}):
                 _v8_shadow_p2_v2[_dir].update(saved["p2_v2"][_dir])
+            if _dir in saved.get("p3", {}):
+                _v8_shadow_p3[_dir].update(saved["p3"][_dir])
         _p1_ce = _v8_shadow_dt["CE"].get("active", False)
         _p1_pe = _v8_shadow_dt["PE"].get("active", False)
         _p2_ce = _v8_shadow_p2["CE"].get("active", False)
@@ -7788,6 +7808,139 @@ def _strategy_loop(kite):
                             logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
                 except Exception as _s2e:
                     logger.warning(f"[SHADOW-P2] error: {_s2e}")
+
+            # ── SHADOW P3: extreme VWAP reversal (|fut-vwap| >= V10_P3_VWAP_EXTREME) ──
+            # CE when VWAP >> fut (price crashed far below VWAP, bouncing back)
+            # PE when fut >> VWAP (price ran far above VWAP, fading back)
+            # Shadow-only — no live trades, data collection only.
+            _p3_fut_vwap_gap = float(LEVELS._vwap_state.get("gap", 0.0))  # fut - vwap
+            if (not _v8_state.get("in_trade")
+                    and D.is_trading_window(now)
+                    and _locked_tokens
+                    and abs(_p3_fut_vwap_gap) >= V10_P3_VWAP_EXTREME
+                    and time.time() - _v8_shadow_p3["last_scan_ts"] >= 3):
+                _v8_shadow_p3["last_scan_ts"] = time.time()
+                try:
+                    # P3-CE: VWAP far above fut (fut<vwap by 75+) → bounce CE
+                    # P3-PE: fut far above VWAP (fut>vwap by 75+) → fade PE
+                    _p3_dir = "CE" if _p3_fut_vwap_gap < 0 else "PE"
+                    _p3_info = (_locked_tokens or {}).get(_p3_dir, {})
+                    _p3_tok  = int(_p3_info.get("token", 0) or 0)
+                    if _p3_tok:
+                        _p3_1m = D.get_option_1min(_p3_tok, 100)
+                        if _p3_1m is not None and len(_p3_1m) >= 4:
+                            _p3_comp   = _p3_1m.iloc[-2]
+                            _p3_bk_ts  = str(_p3_comp.name)
+                            _p3_close  = float(_p3_comp["close"])
+                            _p3_ema9h  = float(_p3_comp.get("ema9_high", 0))
+                            _p3_ema9l  = float(_p3_comp.get("ema9_low", 0))
+                            _p3_bw     = round(_p3_ema9h - _p3_ema9l, 2) if _p3_ema9h > 0 and _p3_ema9l > 0 else 0.0
+                            _p3_rsi    = float(_p3_comp.get("RSI", 0) or 0)
+                            _p3_rsi_p  = float(_p3_1m.iloc[-3].get("RSI", 0) or 0)
+                            _p3_gap    = round(_p3_close - _p3_ema9h, 2)
+                            _p3_ds     = _v8_shadow_p3[_p3_dir]
+
+                            if _p3_ds["bucket_ts"] != _p3_bk_ts:
+                                _p3_ds["bucket_ts"] = _p3_bk_ts
+
+                            # Track active P3 signal
+                            if _p3_ds["active"]:
+                                _p3_track_tok = int(_p3_ds.get("entry_tok", 0) or _p3_tok)
+                                _p3_ltp_pk = D.get_ltp(_p3_track_tok)
+                                if _p3_ltp_pk:
+                                    _p3_entry = _p3_ds["entry_price"]
+                                    _p3_cur_sl = _p3_ds.get("shadow_sl", round(_p3_entry - 12, 1))
+
+                                    def _p3_close_signal(reason, exit_px):
+                                        _p3_fin_peak = _p3_ds["peak_pts"]
+                                        _p3_fin_lvl  = _p3_ds.get("shadow_level", "INITIAL")
+                                        _p3_fin_pnl  = round(exit_px - _p3_entry, 1)
+                                        logger.info(
+                                            f"[SHADOW-P3] {_p3_dir} {reason} "
+                                            f"entry={_p3_entry} exit={exit_px:.1f} "
+                                            f"pnl={_p3_fin_pnl:+.1f} peak=+{_p3_fin_peak:.1f} "
+                                            f"trail={_p3_fin_lvl} "
+                                            f"vwap_gap_at_entry={_p3_ds.get('vwap_gap_at_entry',0):+.0f}"
+                                        )
+                                        _p3_ds.update({
+                                            "active": False, "entry_price": 0.0, "entry_time": "",
+                                            "peak_price": 0.0, "peak_pts": 0.0,
+                                            "shadow_sl": 0.0, "shadow_level": "INITIAL",
+                                            "bucket_ts": _p3_bk_ts,
+                                            "last_exit_pnl": _p3_fin_pnl, "last_exit_reason": reason,
+                                            "last_exit_ts": time.time(),
+                                        })
+                                        _save_shadow_state()
+
+                                    if now.time() >= dtime(15, 15):
+                                        _p3_close_signal("EOD", _p3_ltp_pk)
+                                    elif _p3_ltp_pk <= _p3_cur_sl:
+                                        _p3_close_signal("SL-HIT", _p3_cur_sl)
+                                    else:
+                                        if _p3_ltp_pk > _p3_ds["peak_price"]:
+                                            _p3_ds["peak_price"] = _p3_ltp_pk
+                                            _p3_ds["peak_pts"]   = round(_p3_ltp_pk - _p3_entry, 1)
+                                            _p3_new_sl, _p3_new_lvl = _shadow_trail_sl(_p3_entry, _p3_ds["peak_pts"])
+                                            if _p3_new_lvl != _p3_ds.get("shadow_level", "INITIAL"):
+                                                _p3_ds["shadow_sl"]    = _p3_new_sl
+                                                _p3_ds["shadow_level"] = _p3_new_lvl
+                                                logger.info(
+                                                    f"[SHADOW-P3] {_p3_dir} trail ↑ {_p3_new_lvl} "
+                                                    f"peak=+{_p3_ds['peak_pts']:.1f} sl_now={_p3_new_sl:.1f}"
+                                                )
+                                                _save_shadow_state()
+                            else:
+                                # ── P3 entry gates ──
+                                _p3_reject = None
+                                if not (_p3_ema9h > 0 and _p3_close > _p3_ema9h):
+                                    _p3_reject = f"below_ema9h gap={_p3_gap:.2f}"
+                                elif _p3_gap < V10_MIN_EMA9H_GAP:
+                                    _p3_reject = f"ema9h_gap_weak gap={_p3_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
+                                elif not (_p3_rsi > _p3_rsi_p):
+                                    _p3_reject = f"rsi_falling rsi={_p3_rsi:.1f} prev={_p3_rsi_p:.1f}"
+                                elif not (V10_RSI_MIN < _p3_rsi < V10_RSI_MAX):
+                                    _p3_reject = f"rsi_outofrange rsi={_p3_rsi:.1f}"
+                                elif _p3_bw < V10_BW_MIN:
+                                    _p3_reject = f"bw_weak bw={_p3_bw:.1f}"
+
+                                # XLEG_CONFIRMED: cross-leg must be below EMA9H all last 5 scans
+                                _p3_xleg_dir = "PE" if _p3_dir == "CE" else "CE"
+                                _p3_xleg_buf = _shadow_analysis[_p3_xleg_dir].get("cross_buf", [])
+                                _p3_xleg_ok  = len(_p3_xleg_buf[-5:]) >= 3 and all(not v for v in _p3_xleg_buf[-5:])
+
+                                if _p3_reject:
+                                    if now.second % 15 == 0:
+                                        logger.info(f"[SHADOW-P3] REJECT {_p3_dir} {_p3_reject} "
+                                                    f"vwap_gap={_p3_fut_vwap_gap:+.0f}")
+                                elif not _p3_xleg_ok:
+                                    if now.second % 15 == 0:
+                                        logger.info(f"[SHADOW-P3] REJECT {_p3_dir} xleg_not_confirmed "
+                                                    f"{_p3_xleg_dir} buf={_p3_xleg_buf[-5:]} "
+                                                    f"vwap_gap={_p3_fut_vwap_gap:+.0f}")
+                                else:
+                                    _p3_ltp = D.get_ltp(_p3_tok)
+                                    if _p3_ltp:
+                                        _p3_sl_px = round(_p3_ltp - 12, 1)
+                                        _p3_strike = int(_p3_info.get("strike", 0) or 0)
+                                        _p3_ds.update({
+                                            "active": True, "bucket_ts": _p3_bk_ts,
+                                            "entry_price": _p3_ltp, "entry_time": now.strftime("%H:%M:%S"),
+                                            "peak_price": _p3_ltp, "peak_pts": 0.0,
+                                            "shadow_sl": _p3_sl_px, "shadow_level": "INITIAL",
+                                            "entry_tok": _p3_tok, "entry_strike": _p3_strike,
+                                            "vwap_gap_at_entry": round(_p3_fut_vwap_gap, 1),
+                                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
+                                        })
+                                        logger.info(
+                                            f"[SHADOW-P3] {_p3_dir} {_p3_strike} SIGNAL "
+                                            f"entry={_p3_ltp} sl={_p3_sl_px} "
+                                            f"ema9h_gap={_p3_gap:+.2f} bw={_p3_bw:.1f} "
+                                            f"rsi={_p3_rsi:.1f}↑ "
+                                            f"fut_vwap_gap={_p3_fut_vwap_gap:+.0f}(extreme)"
+                                        )
+                                        _save_shadow_state()
+                except Exception as _p3e:
+                    logger.warning(f"[SHADOW-P3] error: {_p3e}")
 
             # Capture live entry price into per-direction shadow state
             _live_dir = _v8_state.get("direction", "")
