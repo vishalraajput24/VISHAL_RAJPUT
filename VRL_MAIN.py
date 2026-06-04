@@ -6537,6 +6537,8 @@ def _update_dashboard_ltp():
                 pos["ltp"] = round(opt_ltp, 2)
                 pos["pnl"] = round(opt_ltp - _v10_ep, 1)
                 pos["peak"] = round(_v10_pk, 1)
+        elif not _v10_it and dash.get("position", {}).get("in_trade"):
+            dash["position"] = {"in_trade": False}
 
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dash["version"] = D.VERSION
@@ -6690,6 +6692,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         # Feed dashboard from the live v10 gate snapshot (updated every scan by P1/P2)
         def _v10_to_result(side):
             """Convert _v10_live snapshot to a result dict that _build_signal understands."""
+            if not D.is_market_open():
+                return None
             with _v10_live_lock:
                 lv = dict(_v10_live.get(side, {}))
             if not lv or lv.get("gap") is None:
@@ -6722,7 +6726,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 _ltp = D.get_ltp(_live_tok.get("token", 0)) if _live_tok else 0
                 if _ltp and _ltp > 0:
                     _sig["ltp"] = round(_ltp, 2)
-                    _sig["close"] = round(_ltp, 2)
+                    if D.is_market_open():
+                        _sig["close"] = round(_ltp, 2)
                 elif _sig.get("ltp", 0) == 0 and _side in _tokens:
                     _ltp = D.get_ltp(_tokens[_side]["token"])
                     if _ltp <= 0:
