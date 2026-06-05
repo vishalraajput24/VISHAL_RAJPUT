@@ -4421,6 +4421,26 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
                 + " entry=" + str(entry_price) + " mode="
                 + str(entry_result.get("entry_mode", "")))
 
+    # PDH/PDL proximity warning — analysis only, no gate
+    try:
+        _L = _daily_levels
+        _spot = float(spot_at_entry or 0)
+        if _spot > 0 and _L:
+            if direction == "CE":
+                _pdh = _L.get("PDH", 0)
+                if _pdh > 0:
+                    _dist = round(_pdh - _spot, 1)
+                    if abs(_dist) <= 50:
+                        logger.warning(f"[LEVELS] NEAR_PDH spot={_spot} pdh={_pdh} dist={_dist:+.1f} — CE entry near resistance")
+            else:
+                _pdl = _L.get("PDL", 0)
+                if _pdl > 0:
+                    _dist = round(_spot - _pdl, 1)
+                    if abs(_dist) <= 50:
+                        logger.warning(f"[LEVELS] NEAR_PDL spot={_spot} pdl={_pdl} dist={_dist:+.1f} — PE entry near support")
+    except Exception:
+        pass
+
     _ce_pe = "🟢" if direction == "CE" else "🔴"
     _gap = round(entry_result.get("close", 0) - entry_result.get("ema9_high", entry_result.get("ema9_low", 0)), 1)
     _tg_send(
