@@ -7442,6 +7442,7 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"ltp_below_vwap ltp={_sh_ltp_now:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap:.1f}"
                         _xl_snap_dir = "PE" if _sh_dir == "CE" else "CE"
                         _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-3:]
+                        _xl_snap_ok  = len(_xl_snap_buf) >= 2 and sum(1 for v in _xl_snap_buf if not v) >= 2
                         with _v10_live_lock:
                             _v10_live[_sh_dir] = {
                                 "strike": int(_sh_info.get("strike", 0) or 0),
@@ -7451,8 +7452,9 @@ def _strategy_loop(kite):
                                 "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
                                 "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
                                 "ema9l": round(_sh_ema9l_1m, 2),
-                                "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
-                                "xleg_ok": len(_xl_snap_buf) >= 2 and sum(1 for v in _xl_snap_buf if not v) >= 2,
+                                "ready": (_sh_1m_reject is None and _xl_snap_ok),
+                                "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ("xleg" if not _xl_snap_ok else "")),
+                                "xleg_ok": _xl_snap_ok,
                                 "xleg_n": len(_xl_snap_buf),
                             }
                         if now.second % 15 == 0:
