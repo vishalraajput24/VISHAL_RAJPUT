@@ -7354,9 +7354,9 @@ def _strategy_loop(kite):
                                 )
                                 # BW+Gap study log
                                 try:
-                                    import csv as _csv_s1, os as _os_s1
-                                    _sp1 = _os_s1.path.join(_os_s1.path.dirname(__file__), "state", "bw_gap_study.csv")
-                                    _sp1_new = not _os_s1.path.isfile(_sp1)
+                                    import csv as _csv_s1
+                                    _sp1 = os.path.join(D.STATE_DIR, "bw_gap_study.csv")
+                                    _sp1_new = not os.path.isfile(_sp1)
                                     with open(_sp1, "a", newline="") as _sf1:
                                         _sw1 = _csv_s1.writer(_sf1)
                                         if _sp1_new:
@@ -7733,9 +7733,9 @@ def _strategy_loop(kite):
                                 )
                                 # BW+Gap study log
                                 try:
-                                    import csv as _csv_s2, os as _os_s2
-                                    _sp2 = _os_s2.path.join(_os_s2.path.dirname(__file__), "state", "bw_gap_study.csv")
-                                    _sp2_new = not _os_s2.path.isfile(_sp2)
+                                    import csv as _csv_s2
+                                    _sp2 = os.path.join(D.STATE_DIR, "bw_gap_study.csv")
+                                    _sp2_new = not os.path.isfile(_sp2)
                                     with open(_sp2, "a", newline="") as _sf2:
                                         _sw2 = _csv_s2.writer(_sf2)
                                         if _sp2_new:
