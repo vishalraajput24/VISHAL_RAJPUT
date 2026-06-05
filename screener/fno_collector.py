@@ -23,7 +23,7 @@ Data files:
 =============================================================================
 """
 
-import os, sys, json, time, math
+import os, sys, json, time, math, urllib.request
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
@@ -370,6 +370,34 @@ try:
 except Exception:
     FNO_UNIVERSE = []
 
+def fetch_delivery_pct():
+    """NSE MTO file → {SYMBOL: delivery_%}. Tries today then falls back 2 days."""
+    for delta in range(3):
+        d = date.today() - timedelta(days=delta)
+        if d.weekday() >= 5:
+            continue  # skip weekends
+        url = f"https://archives.nseindia.com/archives/equities/deliveries/MTO_{d.strftime('%d%m%Y')}.DAT"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                lines = r.read().decode().splitlines()
+            result = {}
+            for line in lines:
+                parts = line.split("|")
+                if len(parts) >= 7 and parts[0].strip() == "20":
+                    try:
+                        result[parts[2].strip()] = float(parts[6].strip())
+                    except ValueError:
+                        pass
+            if result:
+                print(f"  Delivery data loaded ({d}) — {len(result)} symbols")
+                return result
+        except Exception:
+            pass
+    print("  Delivery data unavailable — skipping")
+    return {}
+
+
 def morning_scan(kite, nse_df, nfo_df):
     today   = date.today().isoformat()
     total   = len(FNO_UNIVERSE)
@@ -406,6 +434,11 @@ def morning_scan(kite, nse_df, nfo_df):
             "cached_at" : today,
         }
         time.sleep(0.35)
+
+    # Enrich with delivery %
+    deliv_map = fetch_delivery_pct()
+    for sym in results:
+        results[sym]["deliv_pct"] = deliv_map.get(sym, 0.0)
 
     # Save cache
     with open(TECH_CACHE, "w") as f:
@@ -486,6 +519,7 @@ def tick_scan(kite, nse_df, nfo_df):
         _live_ltp = float(_live.get("last_price", 0) or 0)
         if _live_ltp > 0:
             tech["price"] = round(_live_ltp, 2)
+        tech["deliv_pct"] = tech_data.get("deliv_pct", 0.0)  # from morning cache
         expiry = FS.get_nearest_expiry(nfo_df, sym, cfg)
         opt = FS.get_option_chain(kite, nfo_df, sym, tech["price"], expiry) if expiry else None
         if opt is None:
