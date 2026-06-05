@@ -4824,7 +4824,6 @@ def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
     elif 0 < ema9h_gap < 0.5:
         flags.append(f"TINY_GAP({ema9h_gap:.2f})")
 
-    # 6. Cross-leg confirmation via rolling buffer (last 5 P2 scans of opposite side)
     _xleg_note = ""
     if xleg_buf is not None and len(xleg_buf) >= 3:
         _buf = xleg_buf[-5:]
@@ -4832,9 +4831,9 @@ def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
         _total = len(_buf)
         _other = "PE" if direction == "CE" else "CE"
         if _rejected == _total:
-            _xleg_note = f"XLEG_CONFIRMED({_other} all{_total} below_ema9h)"
+            _xleg_note = f"XLEG_CONFIRMED({_other} all{_total} below_ema9l)"
         elif _rejected < _total // 2:
-            flags.append(f"XLEG_AMBIGUOUS({_other} only {_rejected}/{_total} below_ema9h)")
+            flags.append(f"XLEG_AMBIGUOUS({_other} only {_rejected}/{_total} below_ema9l)")
 
     # 7. Futures VWAP bias vs signal direction (data collection — no trade impact)
     if fut_vwap_gap != 0.0:
@@ -7475,10 +7474,6 @@ def _strategy_loop(kite):
                                             f"(no entries before {V10_OPEN_BLACKOUT_END})")
                             continue
 
-                        # ── Cooldown gates (no trade impact — reject only) ──
-                        # 1. Post-SL cooldown: 1 min after SL-HIT, EMA9H still distorted
-                        # Note: relock cooldown removed — cross_buf cleared on relock serves as
-                        # the settlement gate (needs 3 fresh readings = 45s minimum).
                         _sh_sl_age = time.time() - _sh_ds.get("sl_ts", 0)
                         if 0 < _sh_sl_age < 60:
                             if now.second % 15 == 0:
@@ -7809,10 +7804,9 @@ def _strategy_loop(kite):
                             _s2_reject = f"rsi_weak rsi={_s2_rsi:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
                         elif _s2_bw < V10_BW_MIN:
                             _s2_reject = f"bw_weak bw={_s2_bw}(need>={V10_BW_MIN})"
-                        # Update cross-leg buffer every 15 sec (reject AND fire both recorded)
                         if now.second % 15 == 0:
-                            _s2_above_ema9h = (_s2_ema9h > 0 and _s2_close > _s2_ema9h)
-                            _shadow_analysis[_s2_dir]["cross_buf"].append(_s2_above_ema9h)
+                            _s2_above_ema9l = (_s2_ema9l > 0 and _s2_close > _s2_ema9l)
+                            _shadow_analysis[_s2_dir]["cross_buf"].append(_s2_above_ema9l)
                             _shadow_analysis[_s2_dir]["cross_buf"] = \
                                 _shadow_analysis[_s2_dir]["cross_buf"][-5:]
                         if _s2_reject:
@@ -7827,8 +7821,6 @@ def _strategy_loop(kite):
                                             f"(no entries before {V10_OPEN_BLACKOUT_END})")
                             continue
 
-                        # Note: relock cooldown removed — cross_buf cleared on relock (same as P1).
-
                         # ── Exit cooldown: block P2 re-entry for 120s after any exit ──
                         _s2_exit_age = time.time() - _s2_ds.get("exit_ts", 0)
                         if 0 < _s2_exit_age < 120:
@@ -7836,8 +7828,6 @@ def _strategy_loop(kite):
                                 logger.info(f"[SHADOW-P2] REJECT {_s2_dir} exit_cooldown age={int(_s2_exit_age)}s")
                             continue
 
-                        # ── FIRE Part 2 ──
-                        # Gate: XLEG_CONFIRMED — cross-leg must be below EMA9H all last 5 scans
                         _xleg_g2_dir  = "PE" if _s2_dir == "CE" else "CE"
                         _xleg_g2_buf  = _shadow_analysis[_xleg_g2_dir].get("cross_buf", [])
                         _xleg_g2_buf5 = _xleg_g2_buf[-5:]
@@ -8503,10 +8493,9 @@ def _strategy_loop(kite):
                     _is_initial_lock = True
                 else:
                     _target_atm = int(round(spot_ltp / 50) * 50)
-                    _lock_buffer = int(CFG.entry_ema9_band("lock_shift_pts", 10))
                     _dist_from_lock = abs(spot_ltp - _locked_ce_strike)
                     if (_target_atm != _locked_ce_strike
-                            and _dist_from_lock >= 25 + _lock_buffer):
+                            and _dist_from_lock >= 40):
                         _relock = True
                         _spot_move = round(spot_ltp - _locked_at_spot, 1)
                         _old_ce = _locked_ce_strike
@@ -8516,19 +8505,15 @@ def _strategy_loop(kite):
                                     + str(_target_atm) + " spot="
                                     + str(round(spot_ltp, 1))
                                     + " (dist=" + "{:.1f}".format(_dist_from_lock)
-                                    + " > " + str(25 + _lock_buffer)
-                                    + ") — RELOCKING (neighbor pre-warmed)")
+                                    + " > 40) — RELOCKING (neighbor pre-warmed)")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
                     if not _is_initial_lock:
                         _v8_shadow_dt["relock_ts"] = time.time()
-                        # Clear cross_buf so XLEG_CONFIRMED requires fresh readings from the new strike.
-                        # This replaces the old 120s fixed cooldown — cross_buf needs 3 readings × 15s
-                        # = 45s minimum before any P1/P2 signal can fire. Faster and data-driven.
                         _shadow_analysis["CE"]["cross_buf"] = []
                         _shadow_analysis["PE"]["cross_buf"] = []
-                        logger.info("[SHADOW-P1] Relock — cross_buf cleared, XLEG gate is now the settlement check (45s min)")
+                        logger.info("[SHADOW-P1] Relock — cross_buf cleared")
 
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
                 dir_tokens = dict(_locked_tokens)
