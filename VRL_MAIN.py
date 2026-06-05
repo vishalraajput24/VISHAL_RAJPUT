@@ -7503,6 +7503,15 @@ def _strategy_loop(kite):
                                 f"slip={round(_sh_ltp - _sh_1m_vwap, 1)}"
                             )
                             continue
+                        # Gate: LTP must still be above EMA9H at fire time
+                        # Candle closed above EMA9H but next candle can open back inside the band
+                        if _sh_ltp and _sh_ema9h_1m > 0 and _sh_ltp < _sh_ema9h_1m:
+                            logger.info(
+                                f"[SHADOW-P1] REJECT {_sh_dir} ltp_slipped_below_ema9h "
+                                f"ltp={_sh_ltp:.1f} ema9h={_sh_ema9h_1m:.1f} "
+                                f"slip={round(_sh_ltp - _sh_ema9h_1m, 1)}"
+                            )
+                            continue
                         # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
                         if V10_NEAR_VWAP_MAX > 0 and abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
                             logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_vwap_far "
