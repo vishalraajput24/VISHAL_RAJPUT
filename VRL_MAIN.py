@@ -7421,35 +7421,38 @@ def _strategy_loop(kite):
                                     _save_shadow_state()
                             continue
 
-                        # ── 1-min: close > EMA9_high + RSI filter + above VWAP ──
-                        _sh_1m_gap     = round(_sh_1m_close - _sh_ema9h_1m, 2)
-                        _sh_vwap_gap   = round(_sh_1m_close - _sh_1m_vwap, 2)
-                        _sh_1m_reject  = None
-                        if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
-                            _sh_1m_reject = f"1m_below_ema9h close={_sh_1m_close} ema9h={_sh_ema9h_1m} gap={_sh_1m_gap}"
+                        # ── TICK-BASED: live LTP vs EMA9H — fires during candle, not at close ──
+                        # RSI and BW: last completed candle (indicators don't change tick-by-tick)
+                        # EMA9H gap and VWAP: live LTP — fires the moment LTP breaks out above EMA9H
+                        _sh_ltp_now   = D.get_ltp(_sh_tok) or _sh_1m_close
+                        _sh_1m_gap    = round(_sh_ltp_now - _sh_ema9h_1m, 2)
+                        _sh_vwap_gap  = round(_sh_ltp_now - _sh_1m_vwap, 2)
+                        _sh_1m_reject = None
+                        if not (_sh_ema9h_1m > 0 and _sh_ltp_now > _sh_ema9h_1m):
+                            _sh_1m_reject = f"ltp_below_ema9h ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f} gap={_sh_1m_gap:.1f}"
                         elif _sh_1m_gap < V10_MIN_EMA9H_GAP:
-                            _sh_1m_reject = f"1m_ema9h_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
+                            _sh_1m_reject = f"ltp_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
                         elif not (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX):
                             _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
                         elif (_sh_ema9h_1m - _sh_ema9l_1m) < V10_BW_MIN:
                             _sh_1m_reject = f"1m_bw_weak bw={round(_sh_ema9h_1m-_sh_ema9l_1m,1)}(need>={V10_BW_MIN})"
-                        elif not (_sh_1m_close > _sh_1m_vwap):
-                            _sh_1m_reject = f"1m_below_vwap close={_sh_1m_close:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap}"
+                        elif not (_sh_ltp_now > _sh_1m_vwap):
+                            _sh_1m_reject = f"ltp_below_vwap ltp={_sh_ltp_now:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap:.1f}"
                         _xl_snap_dir = "PE" if _sh_dir == "CE" else "CE"
-                        _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-5:]
+                        _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-3:]
                         with _v10_live_lock:
                             _v10_live[_sh_dir] = {
                                 "strike": int(_sh_info.get("strike", 0) or 0),
-                                "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
+                                "price": round(_sh_ltp_now, 1),
                                 "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
                                 "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
                                 "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
                                 "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
                                 "ema9l": round(_sh_ema9l_1m, 2),
                                 "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
-                                "xleg_ok": len(_xl_snap_buf) >= 3 and all(not v for v in _xl_snap_buf),
+                                "xleg_ok": len(_xl_snap_buf) >= 2 and sum(1 for v in _xl_snap_buf if not v) >= 2,
                                 "xleg_n": len(_xl_snap_buf),
                             }
                         if now.second % 15 == 0:
@@ -7464,7 +7467,7 @@ def _strategy_loop(kite):
                                 _sh_str_rb  = int(_sh_info.get("strike", 0) or 0)
                                 logger.info(
                                     f"[RSI-SHADOW] {_sh_dir} {_sh_str_rb} BLOCKED "
-                                    f"entry={_sh_1m_close:.1f} ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw_rb} "
+                                    f"entry={_sh_ltp_now:.1f} ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw_rb} "
                                     f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} "
                                     f"rsi={_sh_rsi_1m:.1f} reason={_sh_1m_reject.split()[0]}"
                                 )
@@ -7485,33 +7488,15 @@ def _strategy_loop(kite):
 
                         _xleg_g_dir  = "PE" if _sh_dir == "CE" else "CE"
                         _xleg_g_buf  = _shadow_analysis[_xleg_g_dir].get("cross_buf", [])
-                        _xleg_g_buf5 = _xleg_g_buf[-5:]
-                        _xleg_g_ok   = len(_xleg_g_buf5) >= 3 and all(not v for v in _xleg_g_buf5)
+                        _xleg_g_buf3 = _xleg_g_buf[-3:]
+                        _xleg_g_ok   = len(_xleg_g_buf3) >= 2 and sum(1 for v in _xleg_g_buf3 if not v) >= 2
                         if not _xleg_g_ok:
                             logger.info(
                                 f"[SHADOW-P1] REJECT {_sh_dir} xleg_not_confirmed "
-                                f"{_xleg_g_dir} buf={_xleg_g_buf5} n={len(_xleg_g_buf5)}"
+                                f"{_xleg_g_dir} buf={_xleg_g_buf3} n={len(_xleg_g_buf3)}"
                             )
                             continue
-                        _sh_ltp    = D.get_ltp(_sh_tok)
-                        # Gate: LTP must still be above VWAP at fire time
-                        # Candle close may have been above VWAP but LTP can slip below by signal time
-                        if _sh_ltp and _sh_ltp < _sh_1m_vwap:
-                            logger.info(
-                                f"[SHADOW-P1] REJECT {_sh_dir} ltp_slipped_below_vwap "
-                                f"ltp={_sh_ltp:.1f} vwap={_sh_1m_vwap:.1f} "
-                                f"slip={round(_sh_ltp - _sh_1m_vwap, 1)}"
-                            )
-                            continue
-                        # Gate: LTP must still be above EMA9H at fire time
-                        # Candle closed above EMA9H but next candle can open back inside the band
-                        if _sh_ltp and _sh_ema9h_1m > 0 and _sh_ltp < _sh_ema9h_1m:
-                            logger.info(
-                                f"[SHADOW-P1] REJECT {_sh_dir} ltp_slipped_below_ema9h "
-                                f"ltp={_sh_ltp:.1f} ema9h={_sh_ema9h_1m:.1f} "
-                                f"slip={round(_sh_ltp - _sh_ema9h_1m, 1)}"
-                            )
-                            continue
+                        _sh_ltp = _sh_ltp_now  # reuse LTP already fetched above
                         # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
                         if V10_NEAR_VWAP_MAX > 0 and abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
                             logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_vwap_far "
