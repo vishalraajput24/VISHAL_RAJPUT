@@ -365,12 +365,12 @@ def score_signal(tech, regime, opt, cfg):
             if pcr >= 1.2: pts += 2; sig.append(f"PCR={pcr}")
             elif pcr >= 1.0: pts += 1; sig.append(f"PCR={pcr}")
             elif pcr < 0.8: pts -= 1; sig.append(f"PCR={pcr}!")
-            if price >= mp: pts += 1; sig.append("MaxPain pull")
+            if price < mp: pts += 1; sig.append("MaxPain pull")   # stock below max pain → pull is UP → good for CALL
         else:
             if pcr <= 0.8: pts += 2; sig.append(f"PCR={pcr}")
             elif pcr <= 1.0: pts += 1; sig.append(f"PCR={pcr}")
             elif pcr > 1.2: pts -= 1; sig.append(f"PCR={pcr}!")
-            if price <= mp: pts += 1; sig.append("MaxPain pull")
+            if price > mp: pts += 1; sig.append("MaxPain pull")   # stock above max pain → pull is DOWN → good for PUT
         return pts, sig
 
     c_pts, c_sig = side_score("CALL")
@@ -548,13 +548,14 @@ def build_setup(direction, tech, opt, cfg):
     _delta = 0.5
     _t1_move = round(atr * _delta, 1) if atr > 0 else round(long_prem * 0.30, 1)
     _t2_move = round(atr * 2 * _delta, 1) if atr > 0 else round(long_prem * 0.60, 1)
-    # SL: stock distance to day-level × delta
+    # SL: stock distance to day-level × delta, but never tighter than naked_sl_pct
     _sl_stock_dist = abs(price - stock_sl) if stock_sl else atr
     _sl_move = round(_sl_stock_dist * _delta, 1)
+    _sl_pct_floor = round(long_prem * (1 - cfg.get("naked_sl_pct", 25) / 100), 1)  # e.g. 25% → SL at 0.75×entry
     base.update({
         "structure": "NAKED",
         "entry_premium": long_prem,
-        "sl_premium": round(max(long_prem - _sl_move, long_prem * 0.50), 1),  # floor at -50% (safety)
+        "sl_premium": round(max(min(long_prem - _sl_move, _sl_pct_floor), long_prem * 0.50), 1),  # ATR can widen, never tighten past naked_sl_pct
         "t1_premium": round(long_prem + _t1_move, 1),
         "t2_premium": round(long_prem + _t2_move, 1),
         "sell_strike": "", "sell_symbol": "", "net_debit": "", "max_value": "",
