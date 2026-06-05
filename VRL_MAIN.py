@@ -7442,27 +7442,31 @@ def _strategy_loop(kite):
                             continue
 
                         # ── HYBRID: candle-close validates breakout (spike filter) + live LTP fires ──
-                        # Gate A: last completed candle close must be above EMA9H — blocks spike entries
-                        #         where LTP briefly pokes above but the candle body never broke out.
+                        # Gate A: last completed candle close must be above EMA9H — blocks spike entries.
+                        #         EXCEPTION: if live LTP gap >= 10 pts, candle gate bypassed —
+                        #         a 10pt gap cannot be a momentary spike, it's a genuine explosive move.
                         # Gate B: live LTP must still be above EMA9H when we fire — blocks stale entries.
                         # Gate C: live LTP gap >= V10_MIN_EMA9H_GAP — momentum confirmation.
                         _sh_ltp_now   = D.get_ltp(_sh_tok) or _sh_1m_close
                         _sh_1m_gap    = round(_sh_ltp_now - _sh_ema9h_1m, 2)
                         _sh_vwap_gap  = round(_sh_ltp_now - _sh_1m_vwap, 2)
+                        _sh_explosive = _sh_1m_gap >= 10.0
                         _sh_1m_reject = None
-                        if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
+                        if not _sh_explosive and not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
                             _sh_1m_reject = f"candle_below_ema9h close={_sh_1m_close:.1f} ema9h={_sh_ema9h_1m:.1f}"
-                        elif not (_sh_ltp_now > _sh_ema9h_1m):
+                        if _sh_explosive and _sh_1m_reject is None:
+                            logger.info(f"[SHADOW-DTF] EXPLOSIVE gap={_sh_1m_gap:.1f} — candle gate bypassed ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f}")
+                        if _sh_1m_reject is None and not (_sh_ltp_now > _sh_ema9h_1m):
                             _sh_1m_reject = f"ltp_below_ema9h ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f}"
-                        elif _sh_1m_gap < V10_MIN_EMA9H_GAP:
+                        if _sh_1m_reject is None and _sh_1m_gap < V10_MIN_EMA9H_GAP:
                             _sh_1m_reject = f"ltp_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
-                        elif not (_sh_rsi_1m > _sh_rsi_1m_p):
+                        if _sh_1m_reject is None and not (_sh_rsi_1m > _sh_rsi_1m_p):
                             _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
-                        elif not (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX):
+                        if _sh_1m_reject is None and not (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX):
                             _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
-                        elif (_sh_ema9h_1m - _sh_ema9l_1m) < V10_BW_MIN:
+                        if _sh_1m_reject is None and (_sh_ema9h_1m - _sh_ema9l_1m) < V10_BW_MIN:
                             _sh_1m_reject = f"1m_bw_weak bw={round(_sh_ema9h_1m-_sh_ema9l_1m,1)}(need>={V10_BW_MIN})"
-                        elif not (_sh_ltp_now > _sh_1m_vwap):
+                        if _sh_1m_reject is None and not (_sh_ltp_now > _sh_1m_vwap):
                             _sh_1m_reject = f"ltp_below_vwap ltp={_sh_ltp_now:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap:.1f}"
                         _xl_snap_dir = "PE" if _sh_dir == "CE" else "CE"
                         _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-3:]
