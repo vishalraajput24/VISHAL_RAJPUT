@@ -334,6 +334,7 @@ def score_signal(tech, regime, opt, cfg):
     day_high = tech.get("day_high", price); day_low = tech.get("day_low", price)
     day_range = day_high - day_low
     close_pos = (price - day_low) / day_range if day_range > 0 else 0.5
+    deliv_pct = tech.get("deliv_pct", 0.0)
     pcr = opt["pcr"] if opt else 1.0
     mp = opt["max_pain"] if opt else price
 
@@ -368,7 +369,11 @@ def score_signal(tech, regime, opt, cfg):
                 pts += 1; sig.append(f"CloseWeak({close_pos:.0%})")
         # ── Volume confirmation ──
         if vol_avg > 0 and vol > vol_avg * 1.4:
-            if (price >= tech["prev_close"]) == bull: pts += 1; sig.append("VolSpike")
+            if (price >= tech["prev_close"]) == bull:
+                if deliv_pct >= 60:
+                    pts += 2; sig.append(f"DelivSpike({deliv_pct:.0f}%)")  # institutional buying confirmed
+                else:
+                    pts += 1; sig.append("VolSpike")
         # ── OI / option-chain confirmation ──
         if bull:
             if pcr >= 1.2: pts += 2; sig.append(f"PCR={pcr}")
