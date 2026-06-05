@@ -7421,15 +7421,19 @@ def _strategy_loop(kite):
                                     _save_shadow_state()
                             continue
 
-                        # ── TICK-BASED: live LTP vs EMA9H — fires during candle, not at close ──
-                        # RSI and BW: last completed candle (indicators don't change tick-by-tick)
-                        # EMA9H gap and VWAP: live LTP — fires the moment LTP breaks out above EMA9H
+                        # ── HYBRID: candle-close validates breakout (spike filter) + live LTP fires ──
+                        # Gate A: last completed candle close must be above EMA9H — blocks spike entries
+                        #         where LTP briefly pokes above but the candle body never broke out.
+                        # Gate B: live LTP must still be above EMA9H when we fire — blocks stale entries.
+                        # Gate C: live LTP gap >= V10_MIN_EMA9H_GAP — momentum confirmation.
                         _sh_ltp_now   = D.get_ltp(_sh_tok) or _sh_1m_close
                         _sh_1m_gap    = round(_sh_ltp_now - _sh_ema9h_1m, 2)
                         _sh_vwap_gap  = round(_sh_ltp_now - _sh_1m_vwap, 2)
                         _sh_1m_reject = None
-                        if not (_sh_ema9h_1m > 0 and _sh_ltp_now > _sh_ema9h_1m):
-                            _sh_1m_reject = f"ltp_below_ema9h ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f} gap={_sh_1m_gap:.1f}"
+                        if not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
+                            _sh_1m_reject = f"candle_below_ema9h close={_sh_1m_close:.1f} ema9h={_sh_ema9h_1m:.1f}"
+                        elif not (_sh_ltp_now > _sh_ema9h_1m):
+                            _sh_1m_reject = f"ltp_below_ema9h ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f}"
                         elif _sh_1m_gap < V10_MIN_EMA9H_GAP:
                             _sh_1m_reject = f"ltp_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
                         elif not (_sh_rsi_1m > _sh_rsi_1m_p):
