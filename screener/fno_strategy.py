@@ -331,6 +331,9 @@ def score_signal(tech, regime, opt, cfg):
     rsi_slope = tech.get("rsi_slope_3d", 0)
     ret5 = tech.get("ret5_pct", 0); ext = abs(tech.get("ext20_pct", 0))
     vol = tech["volume"]; vol_avg = tech["vol_avg"]
+    day_high = tech.get("day_high", price); day_low = tech.get("day_low", price)
+    day_range = day_high - day_low
+    close_pos = (price - day_low) / day_range if day_range > 0 else 0.5
     pcr = opt["pcr"] if opt else 1.0
     mp = opt["max_pain"] if opt else price
 
@@ -357,6 +360,12 @@ def score_signal(tech, regime, opt, cfg):
         else:
             return -99, sig  # RSI outside the tradable window for this side
         if (ret5 > 0) == bull and abs(ret5) >= 1.0: pts += 1; sig.append(f"5d={ret5:+.1f}%")
+        # ── Day close position: close in upper 60% of range for CALL, lower 40% for PUT ──
+        if day_range > 0:
+            if bull and close_pos >= 0.60:
+                pts += 1; sig.append(f"CloseStrong({close_pos:.0%})")
+            elif (not bull) and close_pos <= 0.40:
+                pts += 1; sig.append(f"CloseWeak({close_pos:.0%})")
         # ── Volume confirmation ──
         if vol_avg > 0 and vol > vol_avg * 1.4:
             if (price >= tech["prev_close"]) == bull: pts += 1; sig.append("VolSpike")
@@ -539,6 +548,13 @@ def build_setup(direction, tech, opt, cfg):
             "invest_per_lot": round(net_debit * lot, 0),
         })
         return base, ""
+
+    # ── ATR adequacy: skip if expected 1-ATR option move < 15% of premium ──
+    # Prevents entering expensive options where stock needs 3-4× ATR just to reach T1
+    if atr > 0 and long_prem > 0:
+        _atr_ratio = round(atr * 0.5 / long_prem, 2)
+        if _atr_ratio < cfg.get("min_atr_prem_ratio", 0.15):
+            return None, f"atr_low_vs_prem({_atr_ratio:.2f})"
 
     # ── DYNAMIC TARGETS: based on stock ATR, not fixed % on option ──
     # T1 = option value when stock moves 1× ATR in your direction
