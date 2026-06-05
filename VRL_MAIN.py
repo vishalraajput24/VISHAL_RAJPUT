@@ -6089,7 +6089,6 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _bw = float(entry_result.get("band_width", 0))
     _entry_mode_tag = entry_result.get("entry_mode", "EMA9_BREAKOUT")
 
-    # Cross-leg divergence — display only, /xleg shows weekly accuracy
     _xls = entry_result.get("xleg_signal", "NA")
     _xl_other = "PE" if option_type == "CE" else "CE"
     _xl_margin = float(entry_result.get("xleg_other_margin", 0) or 0)
@@ -6711,7 +6710,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "candle_green": True, "body_pct": 0,
                 "fired": bool(lv.get("ready")),
                 "reject_reason": lv.get("reject", ""),
-                "g4_other_falling": True,  # xleg checked in the real path
+                "g4_other_falling": bool(lv.get("xleg_ok", False)),
                 "entry_mode": "V10_P1",
             }
         ce_signal = _build_signal("CE", _v10_to_result("CE"))
@@ -7438,7 +7437,8 @@ def _strategy_loop(kite):
                             _sh_1m_reject = f"1m_bw_weak bw={round(_sh_ema9h_1m-_sh_ema9l_1m,1)}(need>={V10_BW_MIN})"
                         elif not (_sh_1m_close > _sh_1m_vwap):
                             _sh_1m_reject = f"1m_below_vwap close={_sh_1m_close:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap}"
-                        # ── live gate snapshot for dashboard (per side, every scan) ──
+                        _xl_snap_dir = "PE" if _sh_dir == "CE" else "CE"
+                        _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-5:]
                         with _v10_live_lock:
                             _v10_live[_sh_dir] = {
                                 "strike": int(_sh_info.get("strike", 0) or 0),
@@ -7447,7 +7447,10 @@ def _strategy_loop(kite):
                                 "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
                                 "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
                                 "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
+                                "ema9l": round(_sh_ema9l_1m, 2),
                                 "ready": (_sh_1m_reject is None), "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ""),
+                                "xleg_ok": len(_xl_snap_buf) >= 3 and all(not v for v in _xl_snap_buf),
+                                "xleg_n": len(_xl_snap_buf),
                             }
                         if now.second % 15 == 0:
                             _save_shadow_state()   # persist live gate snapshot for dashboard monitor
@@ -7480,8 +7483,6 @@ def _strategy_loop(kite):
                                 logger.info(f"[SHADOW-P1] REJECT {_sh_dir} sl_cooldown age={int(_sh_sl_age)}s")
                             continue
 
-                        # ── FIRE ──
-                        # Gate: XLEG_CONFIRMED — cross-leg must be below EMA9H all last 5 scans
                         _xleg_g_dir  = "PE" if _sh_dir == "CE" else "CE"
                         _xleg_g_buf  = _shadow_analysis[_xleg_g_dir].get("cross_buf", [])
                         _xleg_g_buf5 = _xleg_g_buf[-5:]
@@ -7521,6 +7522,11 @@ def _strategy_loop(kite):
                                 _sh_itm_key    = "CE_DN" if _sh_dir == "CE" else "PE_UP"
                                 _sh_nbr_otm    = D.get_ltp(dir_tokens.get(_sh_otm_key, {}).get("token", 0) or 0)
                                 _sh_nbr_itm    = D.get_ltp(dir_tokens.get(_sh_itm_key, {}).get("token", 0) or 0)
+                                with _v10_live_lock:
+                                    _xl_lv = dict(_v10_live.get(_xleg_g_dir, {}))
+                                _xl_price  = float(_xl_lv.get("price", 0) or 0)
+                                _xl_ema9l  = float(_xl_lv.get("ema9l", 0) or 0)
+                                _xl_margin = round(_xl_price - _xl_ema9l, 2) if _xl_ema9l > 0 else 0.0
                                 _v8_execute_paper_entry(
                                     direction=_sh_dir, strike=_sh_strike,
                                     symbol=_sh_info.get("symbol", ""), token=_sh_tok,
@@ -7531,7 +7537,12 @@ def _strategy_loop(kite):
                                                   "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m,
                                                   "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1),
                                                   "gap": round(_sh_1m_gap, 2),
-                                                  "rsi": round(_sh_rsi_1m, 1)},
+                                                  "rsi": round(_sh_rsi_1m, 1),
+                                                  "xleg_signal": "PASS",
+                                                  "xleg_other_dying": True,
+                                                  "xleg_other_close": round(_xl_price, 2),
+                                                  "xleg_other_ema9l": round(_xl_ema9l, 2),
+                                                  "xleg_other_margin": _xl_margin},
                                     other_token=0,
                                     spot_at_entry=_sh_spot_now,
                                     neighbor_ltp_otm=_sh_nbr_otm,
