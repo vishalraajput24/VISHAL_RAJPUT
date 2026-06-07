@@ -175,9 +175,6 @@ def is_paper() -> bool:
     return mode() == "paper"
 
 
-def is_live() -> bool:
-    return mode() == "live"
-
 
 # ── Instrument ──
 
@@ -253,9 +250,6 @@ def ws_max_reconnect_delay() -> int:
 def web_port() -> int:
     return _deep_get(get(), "web", "port", default=8080)
 
-
-def web_auth() -> bool:
-    return _deep_get(get(), "web", "auth", default=False)
 
 
 # ── Strike ──
@@ -410,35 +404,6 @@ def get_kite():
     raise RuntimeError("[AUTH] All login attempts failed")
 
 
-def force_fresh_login():
-    """v12.15: Force fresh login, ignoring cached token. For cron use."""
-    kite      = KiteConnect(api_key=D.KITE_API_KEY)
-    today_str = date.today().isoformat()
-    for attempt in range(3):
-        try:
-            token = _auto_login(kite)
-            kite.set_access_token(token)
-            _write_token({"date": today_str, "access_token": token})
-            print("[AUTH] Fresh login OK ✓ token cached for " + today_str)
-            return kite
-        except Exception as e:
-            print("[AUTH] Attempt " + str(attempt + 1) + " failed: " + str(e))
-            if attempt < 2:
-                time.sleep(5)
-    print("[AUTH] All fresh login attempts failed")
-    return None
-
-
-def _tg_alert(msg):
-    """Send auth alert to Telegram."""
-    try:
-        url = "https://api.telegram.org/bot" + D.TELEGRAM_TOKEN + "/sendMessage"
-        requests.post(url, json={
-            "chat_id": D.TELEGRAM_CHAT_ID,
-            "text": msg, "parse_mode": "HTML"
-        }, timeout=10)
-    except Exception:
-        pass
 
 
 # ===============================================================
@@ -709,24 +674,6 @@ def ms_place_sell(mc, symbol: str, qty: int,
 
 # ── Stock F&O convenience wrappers ───────────────────────────────────────────
 
-def ms_stock_buy(mc, symbol: str, qty: int, limit_price: float,
-                 positional: bool = False,
-                 timeout_secs: int = 10) -> dict:
-    """Buy a stock F&O contract (option or future) on MStock NFO."""
-    product = "NRML" if positional else "MIS"
-    return ms_place_buy(mc, symbol, qty, limit_price,
-                        timeout_secs=timeout_secs,
-                        exchange="NFO", product=product)
-
-
-def ms_stock_sell(mc, symbol: str, qty: int,
-                  positional: bool = False,
-                  timeout_secs: int = 10) -> dict:
-    """Sell/exit a stock F&O contract on MStock NFO."""
-    product = "NRML" if positional else "MIS"
-    return ms_place_sell(mc, symbol, qty,
-                         timeout_secs=timeout_secs,
-                         exchange="NFO", product=product)
 
 
 def ms_get_stock_positions(mc) -> list:
@@ -797,22 +744,6 @@ def ms_get_banner_line() -> str:
 
 
 # ── Quick connection test ─────────────────────────────────────────────────────
-
-def ms_test_connection() -> bool:
-    """Call from auth script to confirm MStock is working. Checks fund summary."""
-    try:
-        mc   = get_mstock()
-        resp = mc.get_fund_summary()
-        data = resp.json()
-        ok   = data.get("status") == "success"
-        if ok:
-            logger.info("[MSTOCK] Connection test OK")
-        else:
-            logger.warning(f"[MSTOCK] Connection test FAILED: {data}")
-        return ok
-    except Exception as e:
-        logger.error(f"[MSTOCK] Connection test error: {e}")
-        return False
 
 
 # ===============================================================
@@ -981,11 +912,6 @@ class _ErrorMirrorHandler(logging.Handler):
         except Exception:
             pass
 
-
-def _dated_log_path(log_dir: str) -> str:
-    """Returns log path like ~/logs/live/2026-04-01.log"""
-    today = date.today().strftime("%Y-%m-%d")
-    return os.path.join(log_dir, today + ".log")
 
 
 def setup_logger(name: str, log_file: str, level=logging.DEBUG) -> logging.Logger:
@@ -1223,17 +1149,6 @@ def mark_trade_taken(direction: str, ts: str = ""):
         _trade_taken_direction = direction
         _trade_taken_ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
-def consume_trade_taken(direction: str) -> bool:
-    """Called by VRL_LAB when building a fired scan row. Returns True
-    and resets the flag if a trade was taken for this direction."""
-    global _trade_taken_direction, _trade_taken_ts
-    with _trade_taken_lock:
-        if _trade_taken_direction == direction:
-            _trade_taken_direction = ""
-            _trade_taken_ts = ""
-            return True
-    return False
 
 
 # ── active trade token for LAB persistence ──
@@ -3036,46 +2951,6 @@ def update_vwap(kite) -> dict:
     return _vwap_state
 
 
-def get_vwap_state() -> dict:
-    """Return current VWAP state (for dashboard etc)."""
-    return dict(_vwap_state)
-
-
-def compute_opt_pdc(D, strike: int, opt_type: str, token: int) -> dict:
-    """
-    Yesterday's option PDC for a single strike+opt_type. Cached.
-    Returns {'opt_PDH','opt_PDL','opt_PDC'} or {} on failure.
-    """
-    key = (int(strike), opt_type)
-    with _levels_lock:
-        if key in _opt_levels:
-            return _opt_levels[key]
-    try:
-        df = D.get_historical_data(token, "minute", 800)
-        if df is None or df.empty:
-            return {}
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-        dates = sorted(set(df.index.date))
-        today_d = date.today()
-        yest = None
-        for d_ in dates[::-1]:
-            if d_ < today_d:
-                yest = d_; break
-        if not yest: return {}
-        ydf = df[df.index.date == yest].between_time("09:15", "15:30")
-        if ydf.empty: return {}
-        out = {
-            "opt_PDH": round(float(ydf["high"].max()), 2),
-            "opt_PDL": round(float(ydf["low"].min()), 2),
-            "opt_PDC": round(float(ydf["close"].iloc[-1]), 2),
-        }
-        with _levels_lock:
-            _opt_levels[key] = out
-        return out
-    except Exception as e:
-        logger.debug(f"[LEVELS] opt_pdc {strike}{opt_type} error: {e}")
-        return {}
 
 
 def evaluate_filters(direction: str, spot_px: float, entry_time_dt: datetime,
@@ -3186,10 +3061,6 @@ def log_entry(direction: str, strike: int, entry_price: float, spot_px: float,
         logger.warning(f"[SHADOW-LVL] log_entry error: {e}")
 
 
-def get_levels() -> dict:
-    """Return current daily levels (for dashboard etc)."""
-    return dict(_daily_levels)
-
 
 # ===============================================================
 # ===============================================================
@@ -3268,10 +3139,6 @@ def _csv_path_1m(d: date) -> str:
     return os.path.join(D.OPTIONS_1MIN_DIR,
                         "nifty_option_1min_" + d.strftime("%Y%m%d") + ".csv")
 
-
-def _csv_path_scan(d: date) -> str:
-    return os.path.join(D.OPTIONS_1MIN_DIR,
-                        "nifty_signal_scan_" + d.strftime("%Y%m%d") + ".csv")
 
 
 def _csv_path_spot() -> str:
@@ -3914,30 +3781,6 @@ def collect_option_1min(kite, spot_ltp: float):
 
 # ─── BACKFILL — 3-MIN ─────────────────────────────────────────
 
-
-def _read_spot_1min_map(target_date: date) -> dict:
-    result     = {}
-    paths      = [
-        os.path.join(D.SPOT_DIR, "nifty_spot_1min.csv"),
-        os.path.expanduser("~/nifty_spot_1min.csv"),
-    ]
-    target_str = target_date.strftime("%Y-%m-%d")
-    for path in paths:
-        if not os.path.isfile(path):
-            continue
-        try:
-            with open(path) as f:
-                for row in csv.DictReader(f):
-                    ts = row.get("timestamp", row.get("date", ""))
-                    if ts.startswith(target_str):
-                        key = ts[:16]
-                        try:
-                            result[key] = float(row.get("close", row.get("Close", 0)))
-                        except Exception:
-                            pass
-        except Exception as e:
-            logger.warning("[LAB] Spot map error: " + str(e))
-    return result
 
 
 # ─── EOD FORWARD FILL ─────────────────────────────────────────
@@ -5650,11 +5493,6 @@ def _now_str() -> str:
 def _mode_tag() -> str:
     return "📄 PAPER" if D.PAPER_MODE else "💰 LIVE"
 
-def _rs(pts: float) -> str:
-    rupees = round(pts * D.get_lot_size(), 0)
-    sign   = "+" if rupees >= 0 else ""
-    return sign + "₹" + str(int(rupees))
-
 def _short_sym(symbol: str, direction: str = "", strike: int = 0) -> str:
     """CE 22600 from direction+strike. Fallback to symbol suffix."""
     if direction and strike:
@@ -5671,18 +5509,6 @@ from collections import deque as _deque
 _tg_timestamps = _deque(maxlen=20)
 _TG_FLOOD_LIMIT = 15   # was 5 — Telegram allows ~30/sec; 15/10s is safe
 _TG_FLOOD_WINDOW = 10  # seconds
-
-def _tg_safe(s) -> str:
-    """Escape <, >, & in dynamic content for Telegram HTML mode.
-    Apply only to user/API-supplied strings, NOT to template literals."""
-    if s is None:
-        return ""
-    try:
-        return (str(s).replace("&", "&amp;")
-                     .replace("<", "&lt;")
-                     .replace(">", "&gt;"))
-    except Exception:
-        return ""
 
 
 def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
@@ -5756,24 +5582,6 @@ def _tg_send_file(file_path: str, caption: str = "", chat_id: str = None) -> boo
     except Exception as e:
         logger.error("[TG] send_file error: " + type(e).__name__)
         return False
-
-def _tg_inline_keyboard(text: str, keyboard: list, chat_id: str = None) -> dict:
-    if not D.TELEGRAM_TOKEN:
-        return {}
-    cid = chat_id or D.TELEGRAM_CHAT_ID
-    url = _TG_BASE + D.TELEGRAM_TOKEN + "/sendMessage"
-    try:
-        resp = requests.post(url, data={
-            "chat_id"      : cid,
-            "text"         : text,
-            "parse_mode"   : "HTML",
-            "reply_markup" : json.dumps({"inline_keyboard": keyboard}),
-        }, timeout=10)
-        if resp.ok:
-            return resp.json().get("result", {})
-    except Exception as e:
-        logger.error("[TG] keyboard error: " + type(e).__name__)
-    return {}
 
 def _tg_answer_callback(callback_query_id: str, text: str = ""):
     url = _TG_BASE + D.TELEGRAM_TOKEN + "/answerCallbackQuery"
@@ -5953,32 +5761,6 @@ def _generate_eod_report():
 # ═══════════════════════════════════════════════════════════════
 #  ENTRY + EXIT EXECUTION
 # ═══════════════════════════════════════════════════════════════
-
-def _wait_for_pullback(token: int, target_price: float, timeout_secs: int) -> tuple:
-    """Anti-spike limit-pullback: poll LTP up to timeout_secs.
-    Fill at current LTP the moment it touches target (close-buffer).
-    Returns (fill_price, elapsed_secs) on fill, (None, elapsed_secs)
-    on timeout. Aborts early if bot paused or market closes.
-
-    Hard requirement: caller must not be in_trade (entry-path only).
-    """
-    if timeout_secs <= 0 or target_price <= 0 or token <= 0:
-        return None, 0
-    deadline = time.time() + timeout_secs
-    start = time.time()
-    while time.time() < deadline:
-        if state.get("paused"):
-            return None, round(time.time() - start, 1)
-        if not D.is_market_open():
-            return None, round(time.time() - start, 1)
-        try:
-            ltp = D.get_ltp(token)
-        except Exception:
-            ltp = 0
-        if ltp and ltp > 0 and ltp <= target_price:
-            return float(ltp), round(time.time() - start, 1)
-        time.sleep(1)
-    return None, float(timeout_secs)
 
 
 def _execute_entry(kite, option_info: dict, option_type: str,
@@ -9019,11 +8801,6 @@ def _send_today_download(target_date: str = None):
     except Exception as e:
         _tg_send("Download error: " + str(e))
 
-
-def _why_blocked(st: dict) -> str:
-    if st.get("paused"):
-        return "⏸ PAUSED"
-    return "✅ Ready to enter"
 
 
 def _cmd_pulse(args):
