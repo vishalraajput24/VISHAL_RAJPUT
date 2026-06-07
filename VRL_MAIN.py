@@ -10927,11 +10927,6 @@ async function renderFno(){
       var t2=parseFloat(p.t2_premium||0);
       var pnlPct=parseFloat(p.current_return_pct||0);
       var pnlRs=parseFloat(p.pnl_rs||0);
-      var score=p.score||0;
-      var rank=p.rank||0;
-      var stockPx=parseFloat(p.stock_price||0);
-      var stockSl=parseFloat(p.stock_sl||0);
-      var pcr=parseFloat(p.pcr||0);
       var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
       var st=p.status||'';
       var isOpen=st.startsWith('OPEN');
@@ -10940,7 +10935,6 @@ async function renderFno(){
       var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
       var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
       var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
-      var scoreClr=score>=9?'var(--gn)':score>=7?'var(--am)':'#888';
       var range=t2-sl;
       var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
       var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
