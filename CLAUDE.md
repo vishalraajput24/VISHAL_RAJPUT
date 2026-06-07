@@ -67,10 +67,17 @@ Warning-only (logged + dashboard, does NOT block): **trend-align** (CE+bull / PE
 | `VRL_MAIN.py` | Everything: config accessors, Kite/m.Stock brokers, strategy loop, entry/exit, TG handler, web server, exit ladder |
 | `config.yaml` | Runtime config — `mode`, instrument, lots, EMA bands, thresholds, market hours |
 | `screener/` | Standalone stock F&O + multibagger screeners (separate processes, not imported by VRL_MAIN) |
-| `static/VRL_DASHBOARD.html` | Web dashboard served by `_WebHandler` (BaseHTTPRequestHandler) |
+| `static/VRL_DASHBOARD.html` | **Generated artifact** — regenerated from `_WEB_HTML` on every startup. NOT the source of truth (see below) |
 | `state/vrl_v8_state.json` | V10 live state (`_v8_state`) |
 | `state/vrl_shadow_state.json` | Shadow (P1/P2/P3) signal state |
 | `state/vrl_live_state.json`, `state/vrl_dashboard.json` | Live runtime + dashboard snapshot |
+
+### Dashboard source of truth
+The web UI is the `_WEB_HTML = r"""..."""` string literal in `VRL_MAIN.py` (~line 10409). The HTTP handler
+(`_WebHandler`, a daemon thread inside vrl-main on port 8080) serves it, and `_start_web_server()` **overwrites
+`static/VRL_DASHBOARD.html` from `_WEB_HTML` on every startup**. So **edit `_WEB_HTML`, never the static file** —
+a static-file edit is wiped on the next restart. Only `vrl-main.service` runs; `vrl-web.service` was retired
+2026-06-07 (it ran the deleted `VRL_WEB.py`).
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
