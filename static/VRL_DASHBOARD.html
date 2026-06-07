@@ -511,33 +511,14 @@ async function renderFno(){
     var closedPos=fno.filter(function(p){return !(p.status||'').startsWith('OPEN');}).sort(byPnl);
     var openPos=openToday.concat(openPrev);
     var totalPnl=0;var openCount=openPos.length;
-    function sigChips(raw){
-      if(!raw)return '';
-      var KEY=['DelivSpike','VolSpike','CloseStrong','CloseWeak','MaxPain pull','REGIME+','ELITE','PCR'];
-      var chips='';
-      KEY.forEach(function(k){
-        if(raw.indexOf(k)<0)return;
-        var isDeliv=k==='DelivSpike';var isElite=k==='ELITE';var isReg=k==='REGIME+';
-        var isClose=k==='CloseStrong'||k==='CloseWeak';
-        var bg=isDeliv?'rgba(251,191,36,.2)':isElite?'rgba(139,92,246,.2)':isReg?'rgba(52,211,153,.15)':isClose?'rgba(96,165,250,.15)':'rgba(255,255,255,.08)';
-        var fc=isDeliv?'#fbbf24':isElite?'#a78bfa':isReg?'var(--gn)':isClose?'var(--bl)':'var(--dm)';
-        // extract value if present e.g. DelivSpike(72%)
-        var m=raw.match(new RegExp(k.replace('+','\\+')+'\\(([^)]+)\\)'));
-        var label=m?k.replace('Spike','').replace(' pull','')+'('+m[1]+')':k;
-        chips+='<span style="background:'+bg+';color:'+fc+';padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;margin-right:2px">'+label+'</span>';
-      });
-      return chips;
-    }
     function makeCard(p){
       var ltp=parseFloat(p.current_premium||p.entry_premium||0);
       var entry=parseFloat(p.entry_premium||0);
       var sl=parseFloat(p.sl_premium||0);
       var t1=parseFloat(p.t1_premium||0);
       var t2=parseFloat(p.t2_premium||0);
-      var pnlPct=parseFloat(p['current_return_%']||p.current_return_pct||0);
+      var pnlPct=parseFloat(p.current_return_pct||0);
       var pnlRs=parseFloat(p.pnl_rs||0);
-      var score=parseInt(p.score||0);
-      var pcr=parseFloat(p.pcr||0);
       var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
       var st=p.status||'';
       var isOpen=st.startsWith('OPEN');
@@ -546,27 +527,19 @@ async function renderFno(){
       var badgeBg=isT1?'rgba(52,211,153,.15)':isSl?'rgba(248,113,113,.15)':'rgba(0,0,0,.05)';
       var badgeClr=isT1?'var(--gn)':isSl?'var(--rd)':'var(--dm)';
       var dirClr=p.direction==='CALL'?'var(--bl)':'var(--rd)';
-      var scoreClr=score>=12?'#a78bfa':score>=10?'var(--gn)':score>=8?'var(--am)':'#888';
-      var scoreBg=score>=12?'rgba(139,92,246,.15)':score>=10?'rgba(52,211,153,.12)':score>=8?'rgba(251,191,36,.12)':'rgba(255,255,255,.05)';
       var range=t2-sl;
       var pct=range>0?Math.max(0,Math.min(100,((ltp-sl)/range)*100)):0;
       var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
       var t1Pct=range>0?Math.max(0,Math.min(100,((t1-sl)/range)*100)):0;
       var dirIcon=p.direction==='CALL'?'🟢':'🔴';
-      var chips=sigChips(p.signals||'');
-      var slBuf=entry>0?((entry-sl)/entry*100).toFixed(0):'';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-left:3px solid '+dirClr+';border-radius:8px;padding:10px 10px 8px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
           '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+
           '<span style="font-size:10px;font-weight:700;color:'+dirClr+';margin-left:5px">'+esc(p.direction)+' '+(p.strike||'')+'</span>'+
-          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+(slBuf?' &nbsp;·&nbsp; SL -'+slBuf+'%':'')+'</div></div>'+
-          '<div style="text-align:right">'+
-            '<span style="background:'+scoreBg+';color:'+scoreClr+';font-size:11px;font-weight:800;padding:2px 7px;border-radius:4px;display:block;margin-bottom:2px">S'+score+'</span>'+
-            '<span style="font-weight:800;font-size:16px;color:'+clr+'">'+sign+pnlPct.toFixed(0)+'%</span>'+
-            '<div style="font-size:10px;color:'+clr+'">'+sign+'₹'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div>'+
-          '</div>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+'</div></div>'+
+          '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+sign+pnlPct.toFixed(0)+'%</span>'+
+          '<div style="font-size:10px;color:'+clr+'">'+sign+'₹'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div></div>'+
         '</div>'+
-        (chips?'<div style="margin-bottom:5px">'+chips+'</div>':'')+
         '<div style="position:relative;height:6px;background:var(--c2);border-radius:3px;overflow:visible;margin:0 0 3px">'+
           '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:3px;transition:width .5s"></div>'+
           '<div style="position:absolute;top:-4px;left:0;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL ₹'+sl.toFixed(0)+'"></div>'+
@@ -576,21 +549,13 @@ async function renderFno(){
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
           '<span>SL ₹'+sl.toFixed(0)+'</span><span>T1 ₹'+t1.toFixed(0)+'</span><span>T2 ₹'+t2.toFixed(0)+'</span>'+
         '</div>'+
-        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm);margin-top:4px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm);margin-top:3px">'+
           '<span style="background:'+badgeBg+';color:'+badgeClr+';padding:1px 6px;border-radius:3px;font-weight:600">'+esc(st)+'</span>'+
-          '<span>PCR '+pcr.toFixed(2)+' &nbsp;·&nbsp; '+esc(p.date_added)+'</span>'+
+          '<span>'+esc(p.date_added)+'</span>'+
         '</div></div>';
     }
     var allPos=openPos.concat(closedPos);
-    var wins=0,losses=0;
-    allPos.forEach(function(p){
-      var pnl=parseFloat(p.pnl_rs||0);
-      totalPnl+=pnl;
-      if(pnl>0)wins++;else if(pnl<0)losses++;
-    });
-    var totalClosed=wins+losses;
-    var wr=totalClosed>0?Math.round(wins/totalClosed*100):0;
-    var wrClr=wr>=50?'var(--gn)':wr>=35?'var(--am)':'var(--rd)';
+    allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
     var todayCards=openToday.map(makeCard).join('');
     var prevCards=openPrev.map(makeCard).join('');
     var closedCards=closedPos.map(makeCard).join('');
@@ -600,17 +565,11 @@ async function renderFno(){
       '<div style="margin:10px 8px 4px;font-size:10px;font-weight:700;color:var(--dm);text-transform:uppercase;letter-spacing:.5px;border-top:1px solid var(--bd);padding-top:8px">Closed / Target Hit ('+closedPos.length+')</div>'+closedCards:'';
     var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
     el.innerHTML=
-      '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:center">'+
-          '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
-          '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
-          '<div style="text-align:right">'+
-            (totalClosed?'<div style="font-size:13px;font-weight:800;color:'+wrClr+'">'+wr+'% WR</div>':'')+
-            '<div style="font-size:10px;color:var(--dm)">'+wins+'W / '+losses+'L &nbsp;·&nbsp; '+openCount+' open</div>'+
-          '</div>'+
-        '</div>'+
-        (totalClosed?'<div style="margin-top:6px;height:4px;background:var(--c2);border-radius:2px;overflow:hidden">'+
-          '<div style="height:100%;width:'+wr+'%;background:'+wrClr+';border-radius:2px;transition:width .5s"></div></div>':'')+'</div>'+
+      '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
+        '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
+        '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
+        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed</div>'+
+      '</div>'+
       (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s Picks ('+openToday.length+') — sorted by score</div>':'')+
       todayCards+prevSection+closedSection;
   }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
