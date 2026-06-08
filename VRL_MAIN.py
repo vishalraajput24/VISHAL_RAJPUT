@@ -9165,7 +9165,9 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       var acc=side==='CE'?'var(--gn)':'var(--rd)';
       var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
       h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-      h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+(o&&o.ltp?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">&#x20B9;'+o.ltp+'</span>':'');
+      var stk=(o&&o.strike>0)?o.strike:(side==='CE'?(mk.locked_ce||mk.atm||0):(mk.locked_pe||mk.atm||0));
+      var ltpTxt=(o&&o.ltp>0)?('&#x20B9;'+o.ltp):'&#x20B9;&#x2014;';
+      h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+(stk?' '+stk:'')+'</span>'+'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">'+ltpTxt+'</span>';
       if(!o||o.ltp===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
       if(o.fired)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px">● READY</span>';
       else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.verdict||'wait')+'</span>';
