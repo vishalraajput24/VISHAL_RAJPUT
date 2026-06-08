@@ -4193,29 +4193,38 @@ _v8_state = {
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
+    
+    # Split-lot tracking fields
+    "initial_sl": 0.0,
+    "entry_regime": "",
+    "lot1_qty": 0,
+    "lot1_entry": 0.0,
+    "lot2_qty": 0,
+    "lot2_limit": 0.0,
+    "lot2_entry": 0.0,
+    "lot2_filled": False,
+    "lot2_cancelled": False,
+    "peak_ltp": 0.0,
+    "xleg_other_margin": 0.0,
 }
 _v8_lock = threading.Lock()
 
 
-def _v8_compute_trail_sl(entry_price: float, peak_pnl: float) -> tuple:
-    """V8 SL ladder (3-min): LOCK_4 at +12, LOCK_10 at +18, then custom tiers up to LOCK_50."""
-    if peak_pnl < 12:
-        return round(entry_price - 12, 2), "INITIAL"
-    if peak_pnl >= 50:
-        lock, tier = 50, "LOCK_50"
-    elif peak_pnl >= 40:
-        lock, tier = 36, "LOCK_36"
-    elif peak_pnl >= 36:
-        lock, tier = 30, "LOCK_30"
-    elif peak_pnl >= 30:
-        lock, tier = 20, "LOCK_20"
-    elif peak_pnl >= 24:
-        lock, tier = 12, "LOCK_12"
-    elif peak_pnl >= 18:
-        lock, tier = 10, "LOCK_10"
+def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
+    """V10 dynamic exit rules:
+    - Initial SL is 1-min ema9_low at entry (passed as initial_sl).
+    - Breakeven lock at +12.0 pts.
+    - Dynamic trail at Peak - 10.0 pts once profit hits +18.0 pts.
+    """
+    if peak_pnl >= 18.0:
+        peak_ltp = entry_price + peak_pnl
+        trail_val = max(initial_sl, entry_price, peak_ltp - 10.0)
+        return round(trail_val, 2), "TRAIL_10"
+    elif peak_pnl >= 12.0:
+        trail_val = max(initial_sl, entry_price)
+        return round(trail_val, 2), "BREAKEVEN"
     else:
-        lock, tier = 4, "LOCK_4"
-    return round(entry_price + lock, 2), tier
+        return round(initial_sl, 2), "INITIAL"
 
 
 def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
@@ -4224,45 +4233,77 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
                              spot_at_entry: float = 0.0,
                              neighbor_ltp_otm: float = 0.0,
                              neighbor_ltp_itm: float = 0.0):
-    """Open a V8 paper position. Records in _v8_state, sends Telegram alert."""
+    """Open a V8/V10 paper position using the 50/50 split-lot execution model."""
     lot_count = CFG.get().get("lots", {}).get("count", 2)
     qty = lot_count * D.get_lot_size()
+    
+    # Lot 1 size: 50%, Lot 2 size: 50%
+    lot1_qty = (qty // 2)
+    lot2_qty = qty - lot1_qty
+    
     now_dt  = datetime.now()
     now_str = now_dt.strftime("%H:%M:%S")
-    is_reentry = (entry_result.get("entry_mode") == "REENTRY_XLEG")
+
+    # Midpoint of the breakout candle
+    op = entry_result.get("open", entry_price)
+    cl = entry_result.get("close", entry_price)
+    lot2_limit = round((op + cl) / 2, 2)
 
     with _v8_lock:
         if _v8_state.get("in_trade"):
-            logger.warning("[V10] Entry attempted while already in_trade — BLOCKED (duplicate guard)")
+            logger.warning("[V10] Entry attempted while already in_trade — BLOCKED")
             return
+        
         _v8_state["in_trade"]              = True
         _v8_state["symbol"]                = symbol
         _v8_state["token"]                 = token
         _v8_state["direction"]             = direction
         _v8_state["strike"]                = int(strike or 0)
-        _v8_state["entry_price"]           = float(entry_price)
         _v8_state["entry_time"]            = now_str
-        _v8_state["qty"]                   = qty
-        _v8_state["peak_pnl"]              = 0.0
-        _v8_state["active_ratchet_tier"]   = "INITIAL"
-        _v8_state["active_ratchet_sl"]     = round(entry_price - 12, 2)
         _v8_state["candles_held"]          = 0
         _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
         _v8_state["_other_token"]          = int(other_token or 0)
-        # Strike management data collection
-        _v8_state["entry_spot"]        = float(spot_at_entry)
+        
+        # Split lot tracking
+        _v8_state["lot1_qty"]              = lot1_qty
+        _v8_state["lot1_entry"]            = entry_price
+        _v8_state["lot2_qty"]              = lot2_qty
+        _v8_state["lot2_limit"]            = lot2_limit
+        _v8_state["lot2_entry"]            = 0.0
+        _v8_state["lot2_filled"]           = False
+        _v8_state["lot2_cancelled"]        = False
+        
+        # Position average entry price is initially Lot 1's entry price
+        _v8_state["entry_price"]           = entry_price
+        _v8_state["qty"]                   = lot1_qty
+        
+        # Exits and Trailing SL
+        initial_sl = entry_result.get("ema9_low", entry_price - 12)
+        # Ensure initial SL is below entry price
+        if initial_sl >= entry_price:
+            initial_sl = round(entry_price - 5.0, 2)
+        
+        _v8_state["initial_sl"]            = initial_sl
+        _v8_state["active_ratchet_sl"]     = initial_sl
+        _v8_state["active_ratchet_tier"]   = "INITIAL"
+        _v8_state["peak_ltp"]              = entry_price
+        _v8_state["peak_pnl"]              = 0.0
+        _v8_state["entry_regime"]          = entry_result.get("entry_mode", "V10_P1")
+        _v8_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
+
+        # Data collection fields
+        _v8_state["entry_spot"]            = float(spot_at_entry)
         _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
-        _v8_state["entry_atm_dist"]    = int(strike) - _true_atm
-        _v8_state["neighbor_ltp_otm"]  = float(neighbor_ltp_otm)
-        _v8_state["neighbor_ltp_itm"]  = float(neighbor_ltp_itm)
-        _v8_state["max_otm_drift"]     = 0.0
-        # Clear any pending re-entry state (fresh setup wins)
+        _v8_state["entry_atm_dist"]        = int(strike) - _true_atm
+        _v8_state["neighbor_ltp_otm"]      = float(neighbor_ltp_otm)
+        _v8_state["neighbor_ltp_itm"]      = float(neighbor_ltp_itm)
+        _v8_state["max_otm_drift"]         = 0.0
+
+        # Clear any pending re-entry state
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
 
-    logger.info("[V10] PAPER ENTRY: " + symbol + " qty=" + str(qty)
-                + " entry=" + str(entry_price) + " mode="
-                + str(entry_result.get("entry_mode", "")))
+    logger.info(f"[V10] GOLDEN ENTRY: {symbol} Lot1 Qty={lot1_qty} @ {entry_price}, Lot2 Limit={lot2_limit} Qty={lot2_qty}")
 
     # PDH/PDL proximity warning — analysis only, no gate
     try:
@@ -4285,47 +4326,45 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         pass
 
     _ce_pe = "🟢" if direction == "CE" else "🔴"
-    _gap = round(entry_result.get("close", 0) - entry_result.get("ema9_high", entry_result.get("ema9_low", 0)), 1)
     _tg_send(
-        _ce_pe + " <b>V10 " + direction + " " + str(strike) + "</b>\n"
+        f"{_ce_pe} <b>V10 GOLDEN ENTRY {direction} {strike}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry   ₹" + "{:.1f}".format(entry_price) + "  @ " + now_str + "\n"
-        "SL      ₹" + "{:.1f}".format(entry_price - 12) + "  (−12 pts)\n"
-        "Gap     " + "{:+.1f}".format(_gap) + "  |  BW " + "{:.1f}".format(
-            entry_result.get("ema9_high", 0) - entry_result.get("ema9_low", 0)) + "\n"
+        f"Lot 1 (Mkt)  ₹{entry_price:.1f} ({lot1_qty} Qty) @ {now_str}\n"
+        f"Lot 2 (Lmt)  ₹{lot2_limit:.1f} ({lot2_qty} Qty) [Pending]\n"
+        f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low)\n"
+        f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Trail  +12→lock4  +24→lock12  +30→lock20  +50→lock50",
+        "Trail: +12.0pts → Breakeven  |  +18.0pts → Trail Peak - 10.0pts",
         priority="critical"
     )
     _save_v8_state()
 
 
 def _v8_execute_paper_exit(reason: str, exit_price: float):
-    """Close V8 paper position. Logs trade to CSV, arms re-entry watcher."""
+    """Close V8/V10 paper position. Logs trade to CSV."""
     with _v8_lock:
         if not _v8_state.get("in_trade"):
             return
-        # Read all values FIRST (before clearing), then mark closed immediately.
-        # Any concurrent call (TG thread vs main loop) now sees in_trade=False and returns —
-        # eliminating the duplicate-exit race condition.
-        entry_price = float(_v8_state.get("entry_price", 0))
-        symbol      = _v8_state.get("symbol", "")
-        direction   = _v8_state.get("direction", "")
-        strike      = int(_v8_state.get("strike", 0) or 0)
-        qty         = int(_v8_state.get("qty", 0) or 0)
-        peak        = float(_v8_state.get("peak_pnl", 0))
-        entry_time  = _v8_state.get("entry_time", "")
-        candles     = int(_v8_state.get("candles_held", 0) or 0)
-        tier        = _v8_state.get("active_ratchet_tier", "")
-        token       = int(_v8_state.get("token", 0) or 0)
-        other_tok   = int(_v8_state.get("_other_token", 0) or 0)
-        dte_val        = int(_v8_state.get("dte", 0) or 0)
+        entry_price  = float(_v8_state.get("entry_price", 0))
+        symbol       = _v8_state.get("symbol", "")
+        direction    = _v8_state.get("direction", "")
+        strike       = int(_v8_state.get("strike", 0) or 0)
+        qty          = int(_v8_state.get("qty", 0) or 0)
+        peak         = float(_v8_state.get("peak_pnl", 0))
+        entry_time   = _v8_state.get("entry_time", "")
+        candles      = int(_v8_state.get("candles_held", 0) or 0)
+        tier         = _v8_state.get("active_ratchet_tier", "")
+        token        = int(_v8_state.get("token", 0) or 0)
+        other_tok    = int(_v8_state.get("_other_token", 0) or 0)
+        dte_val      = int(_v8_state.get("dte", 0) or 0)
         entry_spot_val = float(_v8_state.get("entry_spot", 0))
         entry_atm_dist = int(_v8_state.get("entry_atm_dist", 0))
-        neighbor_otm   = float(_v8_state.get("neighbor_ltp_otm", 0))
-        neighbor_itm   = float(_v8_state.get("neighbor_ltp_itm", 0))
-        max_otm_drift  = float(_v8_state.get("max_otm_drift", 0))
-        pnl_pts_now = round(exit_price - entry_price, 2)
+        neighbor_otm = float(_v8_state.get("neighbor_ltp_otm", 0))
+        neighbor_itm = float(_v8_state.get("neighbor_ltp_itm", 0))
+        max_otm_drift = float(_v8_state.get("max_otm_drift", 0))
+        entry_regime = _v8_state.get("entry_regime", "V10_P1")
+        xleg_margin  = float(_v8_state.get("xleg_other_margin", 0.0))
+        
         # Clear position state
         _v8_state["in_trade"]            = False
         _v8_state["symbol"]              = ""
@@ -4337,17 +4376,33 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["active_ratchet_tier"] = ""
         _v8_state["active_ratchet_sl"]   = 0.0
         _v8_state["candles_held"]        = 0
-        # Update daily counters and arm re-entry under the same lock
+        
+        # Reset split-lot tracking
+        _v8_state["initial_sl"]          = 0.0
+        _v8_state["lot1_qty"]            = 0
+        _v8_state["lot1_entry"]          = 0.0
+        _v8_state["lot2_qty"]            = 0
+        _v8_state["lot2_limit"]          = 0.0
+        _v8_state["lot2_entry"]          = 0.0
+        _v8_state["lot2_filled"]         = False
+        _v8_state["lot2_cancelled"]      = False
+        _v8_state["peak_ltp"]            = 0.0
+        _v8_state["xleg_other_margin"]   = 0.0
+
+        pnl_pts_now = round(exit_price - entry_price, 2)
+        # Update daily counters under lock
         _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
         _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
         if pnl_pts_now > 0:
             _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
         elif pnl_pts_now < 0:
             _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+            
         if reason == "EMERGENCY_SL":
             _v8_state["_sl_cooldown_skip_next"] = True
-            _v8_state["_sl_cooldown_direction"] = direction   # block SAME side only
-        _v8_state["_reentry_armed"]              = False  # disabled — fresh setup only
+            _v8_state["_sl_cooldown_direction"] = direction
+            
+        _v8_state["_reentry_armed"]              = False
         _v8_state["_reentry_attempts"]           = 0
         _v8_state["_reentry_last_checked_epoch"] = 0.0
         _v8_state["_reentry_direction"]          = direction
@@ -4356,7 +4411,8 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_other_token"]        = other_tok
         _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
         _v8_state["_last_trade_date"]            = date.today().isoformat()
-        # Exit candle guard: record the 3-min bucket we're exiting in
+        
+        # Exit candle guard: record 3-min bucket we are exiting in
         _now_exit = datetime.now()
         _exit_bucket_min = (_now_exit.minute // 3) * 3
         _v8_state["_last_exit_candle_ts"] = str(
@@ -4369,7 +4425,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
     exit_time = datetime.now().strftime("%H:%M:%S")
     exit_spot = round(D.get_ltp(D.NIFTY_SPOT_TOKEN), 1)
 
-    # Charges (reuse engine's calc)
+    # Charges
     charges = {}
     try:
         charges = calculate_charges(entry_price, exit_price, qty, num_exit_orders=1)
@@ -4379,7 +4435,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         net_pnl = pnl_rs
         total_charges = 0.0
 
-    # Log to CSV + DB (entry_mode tagged V8 so we can split V7/V8 in analysis)
+    # Log to CSV
     try:
         _v8_row = {
             "date": date.today().isoformat(),
@@ -4391,7 +4447,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "peak_pnl": peak, "exit_reason": reason,
             "dte": dte_val, "candles_held": candles, "session": "",
             "sl_pts": -12, "vix_at_entry": 0,
-            "entry_mode": "V10_" + tier,
+            "entry_mode": entry_regime,
             "bias": "", "hourly_rsi": 0,
             "brokerage": charges.get("brokerage", 0) if isinstance(charges, dict) else 0,
             "stt": charges.get("stt", 0) if isinstance(charges, dict) else 0,
@@ -4406,7 +4462,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "entry_band_position": "", "exit_band_position": "",
             "entry_body_pct": "",
             "xleg_signal": "", "xleg_other_close": "", "xleg_other_ema9l": "",
-            "xleg_other_dying": "", "xleg_other_margin": "",
+            "xleg_other_dying": "", "xleg_other_margin": xleg_margin,
             "spike_close": "", "spike_target": "", "spike_fill": "", "spike_wait_used": "",
             "entry_spot": entry_spot_val, "exit_spot": exit_spot,
             "entry_atm_dist": entry_atm_dist,
@@ -4425,7 +4481,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
                 + " ref=" + str(exit_price) + " reason=" + reason
                 + " pnl=" + str(pnl_pts) + "pts")
 
-    _emoji = "🟢" if pnl_pts >= 0 else "🔴"
     _tg_send(
         "⚡ <b>V10 EXIT " + direction + " " + str(strike) + "</b>\n"
         + reason + "    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
@@ -4448,66 +4503,113 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
 
 
 def _v8_check_exit():
-    """Tick-based exit check for V8 position. Called every scan cycle."""
+    """Tick-based exit check for V10 position. Called every scan cycle."""
     with _v8_lock:
         if not _v8_state.get("in_trade"):
             return
-        token       = int(_v8_state.get("token", 0) or 0)
-        entry_price = float(_v8_state.get("entry_price", 0))
-        peak        = float(_v8_state.get("peak_pnl", 0))
-        direction   = _v8_state.get("direction", "")
-        strike      = int(_v8_state.get("strike", 0) or 0)
-        # Increment candles_held once per minute (V10 equivalent of V7 line 8189)
+        token          = int(_v8_state.get("token", 0) or 0)
+        lot1_entry     = float(_v8_state.get("lot1_entry", 0.0))
+        lot1_qty       = int(_v8_state.get("lot1_qty", 0))
+        lot2_limit     = float(_v8_state.get("lot2_limit", 0.0))
+        lot2_qty       = int(_v8_state.get("lot2_qty", 0))
+        lot2_filled    = bool(_v8_state.get("lot2_filled", False))
+        lot2_cancelled = bool(_v8_state.get("lot2_cancelled", False))
+        lot2_entry     = float(_v8_state.get("lot2_entry", 0.0))
+        initial_sl     = float(_v8_state.get("initial_sl", 0.0))
+        peak_ltp       = float(_v8_state.get("peak_ltp", 0.0))
+        direction      = _v8_state.get("direction", "")
+        strike         = int(_v8_state.get("strike", 0) or 0)
+        
+        # Increment candles_held once per minute
         _cur_min = datetime.now().strftime("%H:%M")
-        if _cur_min != _v8_state.get("_last_candle_min", ""):
-            _v8_state["_last_candle_min"] = _cur_min
+        if _cur_min != _v8_state.get("_last_minute", ""):
+            _v8_state["_last_minute"] = _cur_min
             _v8_state["candles_held"] = _v8_state.get("candles_held", 0) + 1
+        
+        candles_held   = int(_v8_state.get("candles_held", 0))
 
-    if not token: return
+    if not token:
+        return
     ltp = D.get_ltp(token)
-    if ltp <= 0: return
-    pnl = round(ltp - entry_price, 2)
+    if ltp <= 0:
+        return
 
-    # Update peak
-    if pnl > peak:
-        with _v8_lock:
-            _v8_state["peak_pnl"] = pnl
-        peak = pnl
+    with _v8_lock:
+        # Check Lot 2 limit order fill/cancellation
+        if not lot2_filled and not lot2_cancelled:
+            if candles_held >= 3:
+                _v8_state["lot2_cancelled"] = True
+                lot2_cancelled = True
+                logger.info(f"[V10] Lot 2 limit order cancelled (missed trade, but zero loss on Lot 2) candles_held={candles_held}")
+                _tg_send(
+                    f"⚠️ <b>V10 Lot 2 Cancelled</b>\n"
+                    f"Reason: Limit order at ₹{lot2_limit:.1f} not filled within 3 candles.\n"
+                    f"Position now running only Lot 1 ({lot1_qty} Qty).",
+                    priority="critical"
+                )
+                _save_v8_state()
+            elif ltp <= lot2_limit:
+                _v8_state["lot2_filled"] = True
+                _v8_state["lot2_entry"] = lot2_limit
+                lot2_filled = True
+                lot2_entry = lot2_limit
+                
+                # Update average entry and total quantity in state
+                _v8_state["entry_price"] = round((lot1_entry + lot2_limit) / 2, 2)
+                _v8_state["qty"] = lot1_qty + lot2_qty
+                
+                logger.info(f"[V10] Lot 2 limit order filled at ₹{lot2_limit:.1f}. New Avg Entry: ₹{_v8_state['entry_price']:.1f}")
+                _tg_send(
+                    f"⚡ <b>V10 Lot 2 Filled</b>\n"
+                    f"Price: ₹{lot2_limit:.1f} ({lot2_qty} Qty)\n"
+                    f"New Avg Entry: ₹{_v8_state['entry_price']:.1f}",
+                    priority="critical"
+                )
+                _save_v8_state()
 
-    # Track max OTM drift (data collection for smart strike management)
-    _spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-    if _spot_now > 0 and strike > 0:
-        _otm = max(0.0, (strike - _spot_now) if direction == "CE" else (_spot_now - strike))
-        with _v8_lock:
+        # Recalculate average entry price
+        if lot2_filled:
+            avg_entry = round((lot1_entry + lot2_entry) / 2, 2)
+        else:
+            avg_entry = lot1_entry
+
+        # Update peak LTP
+        if ltp > peak_ltp:
+            peak_ltp = ltp
+            _v8_state["peak_ltp"] = peak_ltp
+            _v8_state["peak_pnl"] = round(peak_ltp - avg_entry, 2)
+
+        peak_pnl = peak_ltp - avg_entry
+
+        # Determine dynamic trail SL
+        current_sl, tier = _v8_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
+        
+        prev_tier = _v8_state.get("active_ratchet_tier", "")
+        _v8_state["active_ratchet_tier"] = tier
+        _v8_state["active_ratchet_sl"]   = round(current_sl, 2)
+        _v8_state["entry_price"]         = avg_entry
+
+        # Tier upgrade alert
+        if prev_tier and prev_tier != tier and tier != "INITIAL":
+            _tg_send(
+                f"⚡ <b>V10 SL UPGRADED → {tier}</b>\n"
+                f"Peak: +{peak_pnl:.1f} pts (LTP ₹{ltp:.1f})\n"
+                f"New Stop: ₹{current_sl:.1f} (average entry ₹{avg_entry:.1f})",
+                priority="critical"
+            )
+            _save_v8_state()
+
+        # Track max OTM drift
+        _spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        if _spot_now > 0 and strike > 0:
+            _otm = max(0.0, (strike - _spot_now) if direction == "CE" else (_spot_now - strike))
             if _otm > _v8_state.get("max_otm_drift", 0.0):
                 _v8_state["max_otm_drift"] = _otm
 
-    # Compute trail SL using V7 ladder (12-step + 30/40/50)
-    trail_sl, trail_tier = _v8_compute_trail_sl(entry_price, peak)
-    with _v8_lock:
-        prev_tier = _v8_state.get("active_ratchet_tier", "")
-        _v8_state["active_ratchet_tier"] = trail_tier
-        _v8_state["active_ratchet_sl"]   = trail_sl
-
-    # Tier upgrade alert (matches V7 style)
-    if prev_tier and prev_tier != trail_tier and trail_tier != "INITIAL":
-        _tg_send(
-            "⚡ <b>V10 SL UPGRADED → " + trail_tier + "</b>\n"
-            "Peak +{:.1f}".format(peak) + " pts\n"
-            "Prev " + str(prev_tier) + "  →  New " + trail_tier
-            + "  SL Rs" + "{:.1f}".format(trail_sl),
-            priority="critical"
-        )
-        _save_v8_state()
-
-    # Emergency SL (-12) — TICK based
-    if pnl <= -12:
-        _v8_execute_paper_exit("EMERGENCY_SL", round(entry_price - 12, 2))
-        return
-
-    # Trail SL — TICK based for locked tiers (peak ≥ 12)
-    if trail_tier != "INITIAL" and ltp <= trail_sl:
-        _v8_execute_paper_exit("VISHAL_TRAIL", float(trail_sl))
+    # Exits checking (tick-based)
+    if ltp <= current_sl:
+        exit_reason = "EMERGENCY_SL" if tier == "INITIAL" else ("BREAKEVEN" if tier == "BREAKEVEN" else "VISHAL_TRAIL")
+        _v8_execute_paper_exit(exit_reason, round(current_sl, 2))
         return
 
     # EOD exit
@@ -4533,232 +4635,15 @@ _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
 _v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
 spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
-# Shadow: dual-TF early entry tracking (1 week data collection before going live)
-_v8_shadow_dt = {
-    "active": False,       # CE shadow signal active
-    "direction": "",       # CE or PE (kept for live_entry comparison)
-    "bucket_ts": "",       # completed 3-min candle timestamp
-    "entry_price": 0.0,    "entry_time": "",
-    "peak_price": 0.0,     "peak_pts": 0.0,
-    "live_entry": 0.0,
-    "last_scan_ts": 0.0,
-    # per-direction tracking
-    "relock_ts": 0.0,   # unix ts of last ATM relock — blocks P1 signals 2 min
-    "CE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "live_entry": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "today_entry": 0.0, "today_date": "",
-           "entry_tok": 0, "entry_strike": 0,
-           "sl_ts": 0.0,  # unix ts of last SL-HIT — blocks re-entry 1 min
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-    "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "live_entry": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "today_entry": 0.0, "today_date": "",
-           "entry_tok": 0, "entry_strike": 0,
-           "sl_ts": 0.0,  # unix ts of last SL-HIT — blocks re-entry 1 min
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-}
 
-# Shadow Part 2 — buildup tracker (close > EMA9H, close < VWAP, RSI > 55 rising)
-_v8_shadow_p2 = {
-    "last_scan_ts": 0.0,
-    "CE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "today_entry": 0.0, "today_date": "",
-           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
-           "exit_ts": 0.0,
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-    "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "today_entry": 0.0, "today_date": "",
-           "p1_entry": 0.0, "entry_tok": 0, "entry_strike": 0,
-           "exit_ts": 0.0,
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-}
-
-# ── V2 shadow trackers (A/B test: same entry, new exit logic) ──
-# P1-V2: dynamic trail every 5s (LTP-8) after peak≥15, hard exit at +40
-# P2-V2: same ratchet ladder as P1-V2 (peak<15 standard, peak≥15 entry+15 then +1/5s), hard exit +40
-_v8_shadow_dt_v2 = {
-    "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
-           "dyn_trail_ts": 0.0},
-    "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
-           "dyn_trail_ts": 0.0},
-}
-_v8_shadow_p2_v2 = {
-    "CE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
-           "dyn_trail_ts": 0.0},
-    "PE": {"active": False, "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0, "entry_tok": 0,
-           "dyn_trail_ts": 0.0},
-}
-
-# Shadow P3 — extreme VWAP reversal (|fut-vwap| >= V10_P3_VWAP_EXTREME, shadow-only, no live trades)
-_v8_shadow_p3 = {
-    "last_scan_ts": 0.0,
-    "CE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "entry_tok": 0, "entry_strike": 0, "vwap_gap_at_entry": 0.0,
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-    "PE": {"active": False, "bucket_ts": "", "entry_price": 0.0, "entry_time": "",
-           "peak_price": 0.0, "peak_pts": 0.0,
-           "shadow_sl": 0.0, "shadow_level": "INITIAL",
-           "entry_tok": 0, "entry_strike": 0, "vwap_gap_at_entry": 0.0,
-           "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0},
-}
-
-_bw_scan_last_bucket: str = ""  # BW-SCAN: tracks last logged 1-min bucket
-
-# DELAY-ANALYSIS: snapshot LTP at +5s/+10s/+30s/+60s after each P1/P2 signal
-# Pure research — shadow only, no TG, no trade impact
-_delay_jobs: list = []   # list of pending snapshot dicts
-
-def _shadow_trail_sl(entry: float, peak_pts: float):
-    """Return (sl_price, level_name) for shadow signal trail ladder."""
-    if   peak_pts >= 50: return round(entry + 50, 1), "LOCK+50"
-    elif peak_pts >= 40: return round(entry + 36, 1), "LOCK+36"
-    elif peak_pts >= 36: return round(entry + 30, 1), "LOCK+30"
-    elif peak_pts >= 30: return round(entry + 20, 1), "LOCK+20"
-    elif peak_pts >= 24: return round(entry + 12, 1), "LOCK+12"
-    elif peak_pts >= 18: return round(entry + 10, 1), "LOCK+10"
-    elif peak_pts >= 12: return round(entry +  4, 1), "LOCK+4"
-    else:                return round(entry - 12, 1), "INITIAL"
-
-# ── Shadow Analysis Tracker (pure logging, zero trade impact) ──
-# Tracks last 2 peak_pts per direction for P1 and P2 to detect dead-market streaks
-_shadow_analysis = {
-    "CE": {"last_peaks": [], "last_peaks_p2": [], "cross_buf": []},
-    "PE": {"last_peaks": [], "last_peaks_p2": [], "cross_buf": []},
-}
-
-# ── v10 ENTRY GATES (derived 2026-06-02 from 79 pooled shadow signals across 6 days) ──
-# near-VWAP + non-tiny-gap flips P1/P2 from -0.6 to +3.7 pts/trade (47%->71% win).
-# Tunable on purpose — will tighten as more live days of data arrive.
-V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (gap 3.5-5 = +5.3/trade; below loses)
-V10_RSI_MIN       = 55    # RSI floor (48-55 = 26% win loser zone)
-V10_RSI_MAX       = 80    # RSI cap (raised 70→80 2026-06-03: 70 blocked a strong CE breakout, RSI 76→88 ran +20-50; no data proved 70+ loses)
-V10_BW_MIN        = 5.0   # band-width floor (BW<5 = no energy)
-V10_NEAR_VWAP_MAX = 0     # near-VWAP DISTANCE gate OFF (0 = disabled; set >0 to re-enable)
+V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V10_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
-V10_P3_VWAP_EXTREME = 75  # P3 shadow: fire reversal CE/PE when |fut-vwap| >= this (data collection only)
-# CUTOVER FLAG: True = P1/P2 (v10, 1-min) place the live paper trades.
+# CUTOVER FLAG: True = V10 Golden scanner places the live paper trades.
 V10_LIVE = True
-# Live gate snapshot for dashboard monitoring — updated every shadow scan, per side
+# Live gate snapshot for dashboard monitoring — updated every scanner cycle, per side
 _v10_live_lock = threading.Lock()
 _v10_live = {"CE": {}, "PE": {}}
-_shadow_lock = threading.Lock()  # protects _v8_shadow_dt / _v8_shadow_p2 snapshots
-
-
-def _log_shadow_analysis(signal_label, direction, fire_time, entry_price,
-                         vwap_gap, other_vwap_gap, spot_adx, last_peaks,
-                         ema9h_gap=0.0, xleg_buf=None, dte=0,
-                         fut_vwap_gap=0.0, spot_ema9=0.0, spot_ema21=0.0, bw=0.0):
-    """Log all analysis flags at signal fire — no trade impact."""
-    flags = []
-
-    # 1. Time blackout 13:00–14:15
-    _h, _m = fire_time.hour, fire_time.minute
-    if (_h == 13) or (_h == 14 and _m < 15):
-        flags.append(f"DEAD_WINDOW({fire_time.strftime('%H:%M')})")
-
-    # 2. ADX weak trend
-    if 0 < spot_adx < 18:
-        flags.append(f"WEAK_ADX({spot_adx})")
-
-    # 3. Last 2 peaks both < 5 pts
-    if len(last_peaks) >= 2 and all(p < 5 for p in last_peaks[-2:]):
-        flags.append(f"LOW_PEAK_STREAK(last2={last_peaks[-2:]}")
-
-    # 4. VWAP gap compression — both sides < 10 pts
-    if vwap_gap is not None and other_vwap_gap is not None:
-        if abs(vwap_gap) < 10 and abs(other_vwap_gap) < 10:
-            flags.append(f"VWAP_COMPRESSED(self={vwap_gap:.1f} other={other_vwap_gap:.1f})")
-
-    # 5. EMA9H gap bounds
-    if ema9h_gap > 5:
-        flags.append(f"EXTENDED_GAP({ema9h_gap:.2f})")
-    elif 0 < ema9h_gap < 0.5:
-        flags.append(f"TINY_GAP({ema9h_gap:.2f})")
-
-    _xleg_note = ""
-    if xleg_buf is not None and len(xleg_buf) >= 3:
-        _buf = xleg_buf[-5:]
-        _rejected = sum(1 for v in _buf if not v)
-        _total = len(_buf)
-        _other = "PE" if direction == "CE" else "CE"
-        if _rejected == _total:
-            _xleg_note = f"XLEG_CONFIRMED({_other} all{_total} below_ema9l)"
-        elif _rejected < _total // 2:
-            flags.append(f"XLEG_AMBIGUOUS({_other} only {_rejected}/{_total} below_ema9l)")
-
-    # 7. Futures VWAP bias vs signal direction (data collection — no trade impact)
-    if fut_vwap_gap != 0.0:
-        _fv_bias = "BULL" if fut_vwap_gap > 0 else "BEAR"
-        if (direction == "CE" and fut_vwap_gap < -15) or (direction == "PE" and fut_vwap_gap > 15):
-            flags.append(f"FUT_VWAP_MISMATCH({_fv_bias} gap={fut_vwap_gap:+.0f})")
-
-    # 8. Spot EMA9 vs EMA21 alignment — always shown as context tag
-    _ema_note = ""
-    if spot_ema9 > 0 and spot_ema21 > 0:
-        _ema_align = "BULL" if spot_ema9 > spot_ema21 else "BEAR"
-        _ema_note = f"SPOT_EMA_{_ema_align}(ema9={spot_ema9:.0f} ema21={spot_ema21:.0f})"
-
-    # ── EXCELLENT SCORE (0-100, LOG-ONLY — zero trade impact) ─────────────
-    # Composite of the confirmed winning DNA. This is a HYPOTHESIS under test,
-    # not a verdict: OI-wall proximity (~10 pts of edge) is NOT yet wired, so
-    # false positives during the open chop are EXPECTED — measuring them is the
-    # whole point of this shadow phase. Grades: A+>=80 A>=65 B>=50 C<50.
-    _es = 0
-    _es_parts = []
-    _aligned = False
-    if spot_ema9 > 0 and spot_ema21 > 0:
-        _aligned = ((direction == "CE" and spot_ema9 > spot_ema21) or
-                    (direction == "PE" and spot_ema9 < spot_ema21))
-    if _aligned:
-        _es += 28; _es_parts.append("trend")
-    if 0 < bw <= 6:
-        _es += 17; _es_parts.append("bw")
-    if 0.8 <= ema9h_gap <= 2.5:
-        _es += 17; _es_parts.append("gap+")
-    elif 2.5 < ema9h_gap <= 5.0:
-        _es += 10; _es_parts.append("gap")
-    elif ema9h_gap > 5.0 and _aligned:
-        _es += 5;  _es_parts.append("gapX")
-    elif 0 < ema9h_gap < 0.8:
-        _es += 8;  _es_parts.append("gapT")
-    if "XLEG_CONFIRMED" in _xleg_note:
-        _es += 18; _es_parts.append("xleg")
-    _trend_est = (fire_time.hour * 60 + fire_time.minute) >= 630   # past 10:30 open chop
-    _adx_ok = spot_adx >= 18
-    if _trend_est and _adx_ok:
-        _es += 10; _es_parts.append("trendOK")
-    elif _trend_est or _adx_ok:
-        _es += 5
-    if (direction == "PE" and fut_vwap_gap < 0) or (direction == "CE" and fut_vwap_gap > 0):
-        _es += 10; _es_parts.append("fut")
-    _grade = "A+" if _es >= 80 else ("A" if _es >= 65 else ("B" if _es >= 50 else "C"))
-    _es_tag = f"EXCELLENT={_es}({_grade})[{'+'.join(_es_parts)}]"
-
-    _dte_tag = f"DTE={dte}"
-    if flags:
-        logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
-                    f"FLAGS: {' | '.join(flags)}"
-                    + (f" | {_xleg_note}" if _xleg_note else "")
-                    + (f" | {_ema_note}" if _ema_note else "")
-                    + f" | {_es_tag}")
-    else:
-        logger.info(f"[ANALYSIS] {signal_label} {direction} entry={entry_price:.1f} {_dte_tag} — "
-                    f"clean (no flags)"
-                    + (f" | {_xleg_note}" if _xleg_note else "")
-                    + (f" | {_ema_note}" if _ema_note else "")
-                    + f" | {_es_tag}")
+_v10_scanner_last_ts: float = 0.0   # throttle: V10 Golden scanner runs every 3s
 
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
@@ -4913,6 +4798,11 @@ _V8_PERSIST_FIELDS = [
     "_sl_cooldown_skip_next", "_force_exit_ts",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
+    # Split-lot tracking fields
+    "initial_sl", "entry_regime",
+    "lot1_qty", "lot1_entry",
+    "lot2_qty", "lot2_limit", "lot2_entry", "lot2_filled", "lot2_cancelled",
+    "peak_ltp", "xleg_other_margin"
 ]
 
 def _save_v8_state():
@@ -4981,82 +4871,6 @@ def _load_v8_state():
             )
     except Exception as e:
         logger.error("[V10] State load error: " + str(e))
-
-
-def _save_shadow_state():
-    """Persist _v8_shadow_dt and _v8_shadow_p2 to disk so active signals survive restarts."""
-    try:
-        with _shadow_lock:
-            _p1_snap = {"CE": dict(_v8_shadow_dt["CE"]), "PE": dict(_v8_shadow_dt["PE"])}
-            _p2_snap = {"CE": dict(_v8_shadow_p2["CE"]), "PE": dict(_v8_shadow_p2["PE"])}
-            _p1v2_snap = {"CE": dict(_v8_shadow_dt_v2["CE"]), "PE": dict(_v8_shadow_dt_v2["PE"])}
-            _p2v2_snap = {"CE": dict(_v8_shadow_p2_v2["CE"]), "PE": dict(_v8_shadow_p2_v2["PE"])}
-            _p3_snap = {"CE": dict(_v8_shadow_p3["CE"]), "PE": dict(_v8_shadow_p3["PE"])}
-        with _v10_live_lock:
-            _live_snap = {k: dict(v) for k, v in _v10_live.items()}
-        payload = {
-            "p1":    _p1_snap,
-            "p2":    _p2_snap,
-            "p1_v2": _p1v2_snap,
-            "p2_v2": _p2v2_snap,
-            "p3":    _p3_snap,
-            "saved_date": date.today().isoformat(),
-            "live": _live_snap,
-        }
-        tmp = D.SHADOW_STATE_FILE_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(payload, f, indent=2, default=str)
-        os.replace(tmp, D.SHADOW_STATE_FILE_PATH)
-    except Exception as e:
-        logger.error("[SHADOW] State save error: " + str(e))
-
-
-def _load_shadow_state():
-    """Restore shadow signal state from disk on startup."""
-    global _v8_shadow_dt, _v8_shadow_p2, _v8_shadow_dt_v2, _v8_shadow_p2_v2, _v8_shadow_p3
-    if not os.path.isfile(D.SHADOW_STATE_FILE_PATH):
-        return
-    try:
-        with open(D.SHADOW_STATE_FILE_PATH) as f:
-            saved = json.load(f)
-        # Only restore if from today — stale state from yesterday is useless
-        if saved.get("saved_date") != date.today().isoformat():
-            logger.info("[SHADOW] State file is from previous day — skipping restore")
-            return
-        for _dir in ("CE", "PE"):
-            if _dir in saved.get("p1", {}):
-                _v8_shadow_dt[_dir].update(saved["p1"][_dir])
-            if _dir in saved.get("p2", {}):
-                _v8_shadow_p2[_dir].update(saved["p2"][_dir])
-            if _dir in saved.get("p1_v2", {}):
-                _v8_shadow_dt_v2[_dir].update(saved["p1_v2"][_dir])
-            if _dir in saved.get("p2_v2", {}):
-                _v8_shadow_p2_v2[_dir].update(saved["p2_v2"][_dir])
-            if _dir in saved.get("p3", {}):
-                _v8_shadow_p3[_dir].update(saved["p3"][_dir])
-        _p1_ce = _v8_shadow_dt["CE"].get("active", False)
-        _p1_pe = _v8_shadow_dt["PE"].get("active", False)
-        _p2_ce = _v8_shadow_p2["CE"].get("active", False)
-        _p2_pe = _v8_shadow_p2["PE"].get("active", False)
-        active_list = []
-        if _p1_ce: active_list.append(f"P1-CE@{_v8_shadow_dt['CE'].get('entry_price',0)}")
-        if _p1_pe: active_list.append(f"P1-PE@{_v8_shadow_dt['PE'].get('entry_price',0)}")
-        if _p2_ce: active_list.append(f"P2-CE@{_v8_shadow_p2['CE'].get('entry_price',0)}")
-        if _p2_pe: active_list.append(f"P2-PE@{_v8_shadow_p2['PE'].get('entry_price',0)}")
-        if active_list:
-            logger.info("[SHADOW] Restored active signals: " + ", ".join(active_list))
-            pass  # shadow restore TG removed
-        else:
-            logger.info("[SHADOW] State loaded — no active signals")
-        # Restore _v10_live so LIVE GATES show last-known values after restart
-        # (P1 scan is blocked while in_trade, so without this they show "— no data —")
-        with _v10_live_lock:
-            for _dir in ("CE", "PE"):
-                _saved_live = saved.get("live", {}).get(_dir, {})
-                if _saved_live and "gap" in _saved_live:
-                    _v10_live[_dir].update(_saved_live)
-    except Exception as e:
-        logger.error("[SHADOW] State load error: " + str(e))
 
 
 def _reconcile_positions(kite):
@@ -5640,26 +5454,19 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v20\n"
         ""
-        "V10 LIVE   : 1-min  | P1+P2 | PAPER trading\n"
+        "V10 LIVE   : 1-min  | Golden | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>V10 GATES (P1)</b>\n"
-        "1) ema9h_gap >= " + str(V10_MIN_EMA9H_GAP) + " pts (momentum break)\n"
-        "2) RSI " + str(V10_RSI_MIN) + "-" + str(V10_RSI_MAX) + " AND rising\n"
-        "3) Band width >= " + str(V10_BW_MIN) + " pts (energy)\n"
-        "4) XLEG_CONFIRMED (cross-leg dying)\n"
-        "5) LTP on correct side of VWAP at fire\n"
-        "   near-VWAP gate OFF · trend-align = warning only\n"
+        "<b>V10 GOLDEN GATES</b>\n"
+        "1) MOMENTUM  close > EMA9H (1-min breakout)\n"
+        "2) OPP DECAY opp close − ema9l in [−5, −4]\n"
+        "Cooldown: 9:45 blackout · same-candle guard\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
-        "peak < 12  → INITIAL  entry - 12\n"
-        "peak >= 12 → LOCK_4   entry + 4\n"
-        "peak >= 24 → LOCK_12  entry + 12\n"
-        "peak >= 30 → LOCK_20  entry + 20\n"
-        "peak >= 36 → LOCK_30  entry + 30\n"
-        "peak >= 40 → LOCK_36  entry + 36\n"
-        "peak >= 50 → LOCK_50  entry + 50\n"
+        "INITIAL    peak < 12   → ema9_low at entry\n"
+        "BREAKEVEN  peak ≥ 12   → max(ema9_low, entry)\n"
+        "TRAIL_10   peak ≥ 18   → max(ema9_low, entry, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  Emergency -12 | EOD 15:20 | Trail\n"
         "/help for commands"
@@ -6415,105 +6222,75 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 pass
             if not result:
                 return {
-                    "close": 0, "ema9_high": 0, "ema9_low": 0,
-                    "band_width": 0, "bw_pct": 0, "body_pct": 0,
+                    "close": 0.0, "ema9_high": 0.0, "ema9_low": 0.0,
                     "fired": False,
                     "verdict": "MARKET CLOSED" if not D.is_market_open() else "WARMING UP",
                     "ltp": round(_ltp_fallback, 2),
                     "strike": dir_strikes.get(opt_type, atm_strike),
-                    "g1_gap_ok": False, "g2_rsi_ok": False,
-                    "g3_bw_ok": False,
-                    "g4_other_falling": False, "g5_above_ema9l": False,
-                    "rsi": 0, "rsi_prev": 0,
-                    "ema9_low_slope": 0,
+                    "momentum_gap": 0.0,
+                    "momentum_ok": False,
+                    "decay_margin": 0.0,
+                    "decay_ok": False,
                 }
             _fired = result.get("fired", False)
-            _mode = result.get("entry_mode", "")
-            _close = float(result.get("close", result.get("entry_price", 0)))
-            _eh = float(result.get("ema9_high", 0))
-            _el = float(result.get("ema9_low", 0))
-            _bw = round(_eh - _el, 1)
-            _body = float(result.get("body_pct", 0))
-            _green = bool(result.get("candle_green", False))
+            _close = float(result.get("close", 0.0))
+            _eh = float(result.get("ema9_high", 0.0))
+            _el = float(result.get("ema9_low", 0.0))
             _reject = result.get("reject_reason", "")
-            _rsi = round(float(result.get("rsi", 0) or 0), 1)
-            _rsi_prev = round(float(result.get("rsi_prev", 0) or 0), 1)
-            _slope = round(float(result.get("ema9_low_slope", 0) or 0), 2)
-
-            # V10 gate pass/fail flags (must match the REAL v10 gates in the fire path)
-            _gap = round(_close - _eh, 2) if _eh > 0 else 0.0
-            _bw_pct = round(_bw / _close * 100, 2) if _close > 0 else 0.0
-            _g1 = (_gap >= V10_MIN_EMA9H_GAP)                        # ema9h_gap >= 3.5
-            _g2 = (V10_RSI_MIN < _rsi < V10_RSI_MAX and _rsi > _rsi_prev) if _rsi > 0 else False  # RSI 55-80 rising
-            _g3 = (_bw >= V10_BW_MIN)                                 # BW >= 5
-            _g4 = bool(result.get("g4_other_falling", result.get("xleg_other_dying", False)))  # xleg
-            _g5 = (_close > _el) if (_el > 0 and _close > 0) else False  # close > ema9l (basic trend)
+            _momentum_gap = float(result.get("momentum_gap", 0.0))
+            _momentum_ok = bool(result.get("momentum_ok", False))
+            _decay_margin = float(result.get("decay_margin", 0.0))
+            _decay_ok = bool(result.get("decay_ok", False))
 
             if _fired:
-                verdict = "✅ ALL GATES PASSED"
+                verdict = "✅ READY"
             elif _reject:
                 verdict = _reject
             else:
                 _fails = []
-                if not _g1: _fails.append(f"G1:gap={_gap:.1f}(need>={V10_MIN_EMA9H_GAP})")
-                if not _g2: _fails.append(f"G2:RSI={_rsi}(need {V10_RSI_MIN}-{V10_RSI_MAX}↑)")
-                if not _g3: _fails.append(f"G3:BW={_bw:.1f}(need>={V10_BW_MIN})")
-                if not _g4: _fails.append("G4:xleg_not_confirmed")
-                if not _g5: _fails.append(f"G5:below_ema9l({round(_close,1)}<{round(_el,1)})")
+                if not _momentum_ok: _fails.append(f"below_ema9h({_momentum_gap:+.1f})")
+                if not _decay_ok: _fails.append(f"decay_weak({_decay_margin:+.1f})")
                 verdict = _fails[0] if _fails else "scanning"
 
-            _ltp_out = round(result.get("entry_price", 0) or _ltp_fallback, 2)
+            _ltp_out = round(result.get("entry_price", 0.0) or _ltp_fallback, 2)
             if _ltp_out == 0: _ltp_out = round(_ltp_fallback, 2)
 
             return {
                 "close": round(_close, 2),
                 "ema9_high": round(_eh, 2),
                 "ema9_low": round(_el, 2),
-                "band_width": _bw,
-                "bw_pct": _bw_pct,
-                "body_pct": round(_body, 1),
                 "fired": _fired,
                 "verdict": verdict,
                 "ltp": _ltp_out,
                 "strike": result.get("_strike", dir_strikes.get(opt_type, atm_strike)),
-                "rsi": _rsi,
-                "rsi_prev": _rsi_prev,
-                "ema9_low_slope": _slope,
-                "g1_gap_ok": _g1,
-                "g2_rsi_ok": _g2,
-                "g3_bw_ok": _g3,
-                "g4_other_falling": _g4,
-                "g5_above_ema9l": _g5,
-                "g6_stochrsi": result.get("g6_stochrsi_os_cross"),
-                "g6_k": result.get("g6_k_now", 0),
+                "momentum_gap": _momentum_gap,
+                "momentum_ok": _momentum_ok,
+                "decay_margin": _decay_margin,
+                "decay_ok": _decay_ok,
             }
 
         _is_warm, _w_done, _w_need, _w_eta = _warmup_info(now, dte)
-        # Feed dashboard from the live v10 gate snapshot (updated every scan by P1/P2)
+        # Feed dashboard from the live v10 gate snapshot
         def _v10_to_result(side):
             """Convert _v10_live snapshot to a result dict that _build_signal understands."""
             if not D.is_market_open():
                 return None
             with _v10_live_lock:
                 lv = dict(_v10_live.get(side, {}))
-            if not lv or lv.get("gap") is None:
+            if not lv or lv.get("momentum_gap") is None:
                 return None
-            _gap_val = float(lv.get("gap", 0))
-            _rsi_val = float(lv.get("rsi", 0))
-            _bw_val  = float(lv.get("bw", 0))
-            _price   = float(lv.get("price", 0))
-            # Reconstruct ema9_high/low from gap+bw so _build_signal's gate math works
-            _ema9h = round(_price - _gap_val, 2) if _price > 0 else 0
-            _ema9l = round(_ema9h - _bw_val, 2) if _ema9h > 0 else 0
             return {
-                "close": _price, "entry_price": _price,
-                "ema9_high": _ema9h, "ema9_low": _ema9l,
-                "rsi": _rsi_val, "rsi_prev": _rsi_val - (1 if lv.get("rsi_rising") else -1),
-                "candle_green": True, "body_pct": 0,
+                "close": float(lv.get("price", 0.0)),
+                "entry_price": float(lv.get("price", 0.0)),
+                "ema9_high": float(lv.get("ema9h", 0.0)),
+                "ema9_low": float(lv.get("ema9l", 0.0)),
+                "momentum_gap": float(lv.get("momentum_gap", 0.0)),
+                "momentum_ok": bool(lv.get("momentum_ok", False)),
+                "decay_margin": float(lv.get("decay_margin", 0.0)),
+                "decay_ok": bool(lv.get("decay_ok", False)),
                 "fired": bool(lv.get("ready")),
                 "reject_reason": lv.get("reject", ""),
-                "g4_other_falling": bool(lv.get("xleg_ok", False)),
-                "entry_mode": "V10_P1",
+                "entry_mode": "V10_GOLDEN",
             }
         ce_signal = _build_signal("CE", _v10_to_result("CE"))
         pe_signal = _build_signal("PE", _v10_to_result("PE"))
@@ -6521,7 +6298,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         try:
             _tokens = D.get_option_tokens(None, atm_strike, expiry)
             for _sig, _side in [(ce_signal, "CE"), (pe_signal, "PE")]:
-                # Always sync ltp + close from the same live tick (no drift)
                 _live_tok = (_locked_tokens or {}).get(_side, _tokens.get(_side, {}))
                 _ltp = D.get_ltp(_live_tok.get("token", 0)) if _live_tok else 0
                 if _ltp and _ltp > 0:
@@ -6551,10 +6327,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             _ratchet_sl = float(st_v10.get("active_ratchet_sl", 0) or 0)
             if _ratchet_sl > 0:
                 _stop_price = round(_ratchet_sl, 2)
-                _stop_type = "RATCHET_" + str(st_v10.get("active_ratchet_tier", ""))
+                _stop_type = st_v10.get("active_ratchet_tier", "INITIAL")
             else:
-                _stop_price = round(entry - 12, 2)
-                _stop_type = "INITIAL_SL"
+                _stop_price = round(st_v10.get("initial_sl", entry - 12), 2)
+                _stop_type = "INITIAL"
 
             position = {
                 "in_trade": True,
@@ -6568,15 +6344,16 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "candles": st_v10.get("candles_held", 0),
                 "strike": st_v10.get("strike", 0),
                 "sl": _stop_price,
-                "active_ratchet_tier": st_v10.get("active_ratchet_tier", ""),
-                "lot_size": CFG.lot_size(),
-                "lot1_active": st_v10.get("lot1_active", True),
-                "lot2_active": st_v10.get("lot2_active", True),
-                "lots_split": st_v10.get("lots_split", False),
-                "current_floor": round(float(st_v10.get("current_floor", 0) or 0), 2),
-                "current_rsi": round(float(
-                    (_v10_live.get(st_v10.get("direction", ""), {}) or {}).get("rsi", 0) or 0
-                ), 1),
+                "active_ratchet_tier": _stop_type,
+                "lot_size": D.get_lot_size(),
+                # Split lot tracking fields
+                "lot1_qty": st_v10.get("lot1_qty", 0),
+                "lot1_entry": st_v10.get("lot1_entry", 0.0),
+                "lot2_qty": st_v10.get("lot2_qty", 0),
+                "lot2_limit": st_v10.get("lot2_limit", 0.0),
+                "lot2_entry": st_v10.get("lot2_entry", 0.0),
+                "lot2_filled": bool(st_v10.get("lot2_filled", False)),
+                "lot2_cancelled": bool(st_v10.get("lot2_cancelled", False)),
             }
         else:
             position = {"in_trade": False}
@@ -6846,227 +6623,13 @@ def _strategy_loop(kite):
             # (legacy entry scan removed — V10 P1/P2 drives all entries now)
 
 
-            # ── V2 EXIT + DYNAMIC TRAIL (A/B comparison — no real trades) ──
-            # P1-V2: standard ladder below peak 15, then entry+15→+1/5s ratchet, hard exit +40
-            # P2-V2: same ratchet as P1-V2 — standard ladder below peak 15, entry+15→+1/5s, hard exit +40
-            # NOTE: uses is_market_open() so EOD exits at 15:15 fire correctly
-            global _v8_shadow_dt_v2, _v8_shadow_p2_v2
-            if D.is_market_open():
-                # P1 V2
-                for _v2_dir in ("CE", "PE"):
-                    _v2d = _v8_shadow_dt_v2[_v2_dir]
-                    if not _v2d.get("active"):
-                        continue
-                    _v2_tok   = int(_v2d.get("entry_tok", 0) or 0)
-                    _v2_entry = float(_v2d.get("entry_price", 0))
-                    _v2_sl    = float(_v2d.get("shadow_sl", round(_v2_entry - 12, 1)))
-                    _v2_ltp   = D.get_ltp(_v2_tok) if _v2_tok else 0
-                    if not _v2_ltp:
-                        continue
-                    # Update peak
-                    _v2_pk_px  = max(float(_v2d.get("peak_price", _v2_entry)), _v2_ltp)
-                    _v2_pk_pts = round(_v2_pk_px - _v2_entry, 1)
-                    _v2d["peak_price"] = _v2_pk_px
-                    _v2d["peak_pts"]   = _v2_pk_pts
-                    # Check exits
-                    _v2_reason = _v2_exit_px = None
-                    if _v2_ltp >= _v2_entry + 40:
-                        _v2_reason, _v2_exit_px = "TARGET+40", round(_v2_entry + 40, 1)
-                    elif now.time() >= dtime(15, 15):
-                        _v2_reason, _v2_exit_px = "EOD", (_v2_ltp if _v2_ltp > 0 else _v2_entry)
-                    elif _v2_ltp <= _v2_sl:
-                        _v2_reason, _v2_exit_px = "SL-HIT", _v2_sl
-                    if _v2_reason:
-                        _v2_pnl = round(_v2_exit_px - _v2_entry, 1)
-                        logger.info(f"[SHADOW-P1-V2] {_v2_dir} {_v2_reason} "
-                                    f"entry={_v2_entry} exit={_v2_exit_px:.1f} "
-                                    f"pnl={_v2_pnl:+.1f} peak=+{_v2_pk_pts:.1f}")
-                        _v2d.update({"active": False, "entry_price": 0.0, "entry_time": "",
-                                     "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0})
-                        _save_shadow_state()
-                        continue
-                    # Trail: ratchet after peak ≥ 15 — first tick locks entry+15, then +1 every 5s
-                    # Tick 1 (SL < entry+15): jump to entry+15 (no +1, avoids immediate exit)
-                    # Tick 2+: SL += 1 each 5s tick
-                    if _v2_pk_pts >= 15 and time.time() - _v2d.get("dyn_trail_ts", 0) >= 5:
-                        _v2d["dyn_trail_ts"] = time.time()
-                        if _v2_sl < _v2_entry + 15:
-                            _v2_new_sl = round(_v2_entry + 15, 1)
-                        else:
-                            _v2_new_sl = round(_v2_sl + 1, 1)
-                        if _v2_new_sl > _v2_sl:
-                            _v2d["shadow_sl"] = _v2_new_sl
-                            logger.info(f"[SHADOW-P1-V2] {_v2_dir} dyn_trail "
-                                        f"sl={_v2_new_sl:.1f} ltp={_v2_ltp:.1f} "
-                                        f"peak=+{_v2_pk_pts:.1f}")
-                    elif _v2_pk_pts < 15:
-                        _v2_std_sl, _ = _shadow_trail_sl(_v2_entry, _v2_pk_pts)
-                        if _v2_std_sl > _v2_sl:
-                            _v2d["shadow_sl"] = _v2_std_sl
-                # P2 V2 — same ratchet as P1-V2: standard ladder below peak 15,
-                # then entry+15 on first tick, +1 every 5s after. Hard exit TARGET+40.
-                for _v2p2_dir in ("CE", "PE"):
-                    _v2p2d = _v8_shadow_p2_v2[_v2p2_dir]
-                    if not _v2p2d.get("active"):
-                        continue
-                    _v2p2_tok   = int(_v2p2d.get("entry_tok", 0) or 0)
-                    _v2p2_entry = float(_v2p2d.get("entry_price", 0))
-                    _v2p2_sl    = float(_v2p2d.get("shadow_sl", round(_v2p2_entry - 12, 1)))
-                    _v2p2_ltp   = D.get_ltp(_v2p2_tok) if _v2p2_tok else 0
-                    if not _v2p2_ltp:
-                        continue
-                    # Update peak
-                    _v2p2_pk_px  = max(float(_v2p2d.get("peak_price", _v2p2_entry)), _v2p2_ltp)
-                    _v2p2_pk_pts = round(_v2p2_pk_px - _v2p2_entry, 1)
-                    _v2p2d["peak_price"] = _v2p2_pk_px
-                    _v2p2d["peak_pts"]   = _v2p2_pk_pts
-                    # Check exits
-                    _v2p2_reason = _v2p2_exit_px = None
-                    if _v2p2_ltp >= _v2p2_entry + 40:
-                        _v2p2_reason, _v2p2_exit_px = "TARGET+40", round(_v2p2_entry + 40, 1)
-                    elif now.time() >= dtime(15, 15):
-                        _v2p2_reason, _v2p2_exit_px = "EOD", (_v2p2_ltp if _v2p2_ltp > 0 else _v2p2_entry)
-                    elif _v2p2_ltp <= _v2p2_sl:
-                        _v2p2_reason, _v2p2_exit_px = "SL-HIT", _v2p2_sl
-                    if _v2p2_reason:
-                        _v2p2_pnl = round(_v2p2_exit_px - _v2p2_entry, 1)
-                        logger.info(f"[SHADOW-P2-V2] {_v2p2_dir} {_v2p2_reason} "
-                                    f"entry={_v2p2_entry} exit={_v2p2_exit_px:.1f} "
-                                    f"pnl={_v2p2_pnl:+.1f} peak=+{_v2p2_pk_pts:.1f}")
-                        _v2p2d.update({"active": False, "entry_price": 0.0, "entry_time": "",
-                                       "peak_price": 0.0, "peak_pts": 0.0, "shadow_sl": 0.0,
-                                       "dyn_trail_ts": 0.0})
-                        _save_shadow_state()
-                        continue
-                    # Ratchet: peak ≥ 15 → first tick locks entry+15, then +1 every 5s
-                    if _v2p2_pk_pts >= 15 and time.time() - _v2p2d.get("dyn_trail_ts", 0) >= 5:
-                        _v2p2d["dyn_trail_ts"] = time.time()
-                        if _v2p2_sl < _v2p2_entry + 15:
-                            _v2p2_new_sl = round(_v2p2_entry + 15, 1)
-                        else:
-                            _v2p2_new_sl = round(_v2p2_sl + 1, 1)
-                        if _v2p2_new_sl > _v2p2_sl:
-                            _v2p2d["shadow_sl"] = _v2p2_new_sl
-                            logger.info(f"[SHADOW-P2-V2] {_v2p2_dir} dyn_trail "
-                                        f"sl={_v2p2_new_sl:.1f} ltp={_v2p2_ltp:.1f} "
-                                        f"peak=+{_v2p2_pk_pts:.1f}")
-                    elif _v2p2_pk_pts < 15:
-                        _v2p2_std_sl, _ = _shadow_trail_sl(_v2p2_entry, _v2p2_pk_pts)
-                        if _v2p2_std_sl > _v2p2_sl:
-                            _v2p2d["shadow_sl"] = _v2p2_std_sl
-
-            # ── BW-SCAN: log EMA9 band data every new 1-min candle ──
-            # Fires once per minute (second >= 35). Shows 1m + 3m band for CE + PE.
-            # Positions: ABOVE (close > ema9h) | INSIDE (ema9l <= close <= ema9h) | BELOW (close < ema9l)
-            global _bw_scan_last_bucket
-            _bw_now_key = now.strftime("%Y%m%d%H%M")
-            if (D.is_trading_window(now) and _locked_tokens
-                    and _bw_scan_last_bucket != _bw_now_key and now.second >= 35):
-                _bw_scan_last_bucket = _bw_now_key
-                try:
-                    _bw_parts = []
-                    for _bw_dir, _bw_info in [("CE", (_locked_tokens or {}).get("CE", {})),
-                                               ("PE", (_locked_tokens or {}).get("PE", {}))]:
-                        _bw_tok = int(_bw_info.get("token", 0) or 0)
-                        if not _bw_tok:
-                            continue
-                        _bw_1m = D.get_option_1min(_bw_tok, 10)
-                        _bw_3m = D.get_option_3min(_bw_tok, lookback=5)
-                        _1m_str = _3m_str = "n/a"
-                        if _bw_1m is not None and len(_bw_1m) >= 2:
-                            _bwr = _bw_1m.iloc[-2]
-                            _bwc  = float(_bwr["close"])
-                            _bwel = float(_bwr.get("ema9_low", 0))
-                            _bweh = float(_bwr.get("ema9_high", 0))
-                            _bwbw = round(_bweh - _bwel, 1) if _bweh and _bwel else 0
-                            _bwgp = round(_bwc - _bweh, 1) if _bweh else 0
-                            _bwpos = "ABOVE" if _bwc > _bweh else ("INSIDE" if _bwc >= _bwel else "BELOW")
-                            _1m_str = (f"c={_bwc:.1f} el={_bwel:.1f} eh={_bweh:.1f} "
-                                       f"bw={_bwbw:.1f} gap={_bwgp:+.1f} [{_bwpos}]")
-                        if _bw_3m is not None and len(_bw_3m) >= 2:
-                            _bwr3 = _bw_3m.iloc[-2]
-                            _bwc3  = float(_bwr3["close"])
-                            _bwel3 = float(_bwr3.get("ema9_low", 0))
-                            _bweh3 = float(_bwr3.get("ema9_high", 0))
-                            _bwbw3 = round(_bweh3 - _bwel3, 1) if _bweh3 and _bwel3 else 0
-                            _bwgp3 = round(_bwc3 - _bweh3, 1) if _bweh3 else 0
-                            _bwpos3 = "ABOVE" if _bwc3 > _bweh3 else ("INSIDE" if _bwc3 >= _bwel3 else "BELOW")
-                            _3m_str = (f"c={_bwc3:.1f} el={_bwel3:.1f} eh={_bweh3:.1f} "
-                                       f"bw={_bwbw3:.1f} gap={_bwgp3:+.1f} [{_bwpos3}]")
-                        _bw_parts.append(f"  {_bw_dir}  1m: {_1m_str}  ||  3m: {_3m_str}")
-                    if _bw_parts:
-                        logger.info(f"[BW-SCAN] {now.strftime('%H:%M')}\n" + "\n".join(_bw_parts))
-                except Exception as _bwe:
-                    logger.debug(f"[BW-SCAN] error: {_bwe}")
-
-            # ── SHADOW: 1-min entry tracker (data collection, NO live trades) ──
-            # Signal: 1-min close > EMA9_high + RSI 48-70 rising + close > 1-min VWAP
-            # Both CE and PE tracked independently. Bucket = 1-min candle ts.
-            global _v8_shadow_dt, _v8_shadow_p2
-
-            # ── EOD/SL safety: close active signals even if _locked_tokens not yet set ──
-            # Handles late restart case where strike lock hasn't happened yet
-            # NOTE: uses is_market_open() (not is_trading_window) so EOD exit at 15:15 fires
-            if D.is_market_open():
-                for _sd_early, _sd_label_e in [(_v8_shadow_dt, "P1"), (_v8_shadow_p2, "P2")]:
-                    for _sdir_e in ("CE", "PE"):
-                        _sds_e = _sd_early[_sdir_e]
-                        if not _sds_e.get("active"):
-                            continue
-                        _stok_e   = int(_sds_e.get("entry_tok", 0) or 0)
-                        _sep_e    = float(_sds_e.get("entry_price", 0) or 0)
-                        _ssl_e    = float(_sds_e.get("shadow_sl", round(_sep_e - 12, 1)) or round(_sep_e - 12, 1))
-                        _sltp_e   = D.get_ltp(_stok_e) if _stok_e else 0
-                        _speak_e  = float(_sds_e.get("peak_pts", 0) or 0)
-                        _slvl_e   = _sds_e.get("shadow_level", "INITIAL")
-                        _close_e  = None
-                        if now.time() >= dtime(15, 15):
-                            _close_e = ("EOD", _sltp_e if _sltp_e > 0 else _sep_e)
-                        elif _sltp_e > 0 and _sltp_e <= _ssl_e:
-                            _close_e = ("SL-HIT", _ssl_e)
-                        if _close_e:
-                            _reason_e, _exit_e = _close_e
-                            _pnl_e = round(_exit_e - _sep_e, 1)
-                            _icon_e = "✅" if _pnl_e >= 20 else ("🟡" if _pnl_e > 0 else "❌")
-                            logger.info(f"[SHADOW-{_sd_label_e}] {_sdir_e} {_reason_e} "
-                                        f"entry={_sep_e} exit={_exit_e:.1f} "
-                                        f"pnl={_pnl_e:+.1f} peak=+{_speak_e:.1f} trail={_slvl_e}")
-                            pass  # shadow TG alert removed (v10 live alerts only)
-                            _upd_e = {
-                                "active": False, "entry_price": 0.0, "entry_time": "",
-                                "peak_price": 0.0, "peak_pts": 0.0,
-                                "shadow_sl": 0.0, "shadow_level": "INITIAL",
-                                "last_exit_pnl": _pnl_e, "last_exit_reason": _reason_e,
-                                "last_exit_ts": time.time(),
-                            }
-                            # BUG-A fix: set sl_ts on P1 SL-HIT so cooldown blocks re-entry 60s
-                            if _reason_e == "SL-HIT" and _sd_label_e == "P1":
-                                _upd_e["sl_ts"] = time.time()
-                            # P2 exit cooldown: set exit_ts on ANY P2 exit (SL-HIT, trail, EOD)
-                            # Blocks P2 re-entry in same direction for 120s
-                            if _sd_label_e == "P2":
-                                _upd_e["exit_ts"] = time.time()
-                            _sds_e.update(_upd_e)
-                            _save_shadow_state()
-
-            # ── ALWAYS update CE/PE live price for dashboard (even during a trade) ──
-            if _locked_tokens and now.second % 5 == 0:
-                for _lp_dir, _lp_info in [("CE", (_locked_tokens or {}).get("CE", {})),
-                                           ("PE", (_locked_tokens or {}).get("PE", {}))]:
-                    _lp_tok = int(_lp_info.get("token", 0) or 0)
-                    if _lp_tok:
-                        _lp_px = D.get_ltp(_lp_tok)
-                        if _lp_px and _lp_dir in _v10_live:
-                            with _v10_live_lock:
-                                _v10_live[_lp_dir]["price"] = round(_lp_px, 1)
-                if now.second % 15 == 0:
-                    _save_shadow_state()
-
+            # ── V10 Golden Strategy Scanner ──
+            global _v10_scanner_last_ts
             if (not _v8_state.get("in_trade")
                     and D.is_trading_window(now)
                     and _locked_tokens
-                    and time.time() - _v8_shadow_dt["last_scan_ts"] >= 3):
-                _v8_shadow_dt["last_scan_ts"] = time.time()
+                    and time.time() - _v10_scanner_last_ts >= 3):
+                _v10_scanner_last_ts = time.time()
                 try:
                     for _sh_dir, _sh_info in [("CE", (_locked_tokens or {}).get("CE", {})),
                                                ("PE", (_locked_tokens or {}).get("PE", {}))]:
@@ -7074,879 +6637,108 @@ def _strategy_loop(kite):
                         if not _sh_tok:
                             continue
 
-                        # ── 1-min PRIMARY: last completed 1-min candle ──
-                        _sh_1m = get_option_1min(_sh_tok, 100)   # full session for VWAP (local, uses WS cache)
+                        # 1-min main option data
+                        _sh_1m = get_option_1min(_sh_tok, 100)
                         if _sh_1m is None or len(_sh_1m) < 4:
                             continue
-                        _sh_1m_comp   = _sh_1m.iloc[-2]   # last completed 1-min candle
+                        _sh_1m_comp   = _sh_1m.iloc[-2]
                         _sh_1m_bk_ts  = str(_sh_1m_comp.name)
                         _sh_1m_close  = float(_sh_1m_comp["close"])
                         _sh_1m_open   = float(_sh_1m_comp["open"])
                         _sh_ema9h_1m  = float(_sh_1m_comp.get("ema9_high", 0))
                         _sh_ema9l_1m  = float(_sh_1m_comp.get("ema9_low", 0))
-                        _sh_rsi_1m    = float(_sh_1m_comp.get("RSI", 0) or 0)
-                        _sh_rsi_1m_p  = float(_sh_1m.iloc[-3].get("RSI", 0) or 0)
-                        _sh_ema9l_1m_prev = float(_sh_1m.iloc[-3].get("ema9_low", 0))
 
-                        # 1-min session VWAP (cumulative from 9:15, resets daily)
-                        _sh_1m_day = _sh_1m[_sh_1m.index.date == now.date()].copy()
-                        if len(_sh_1m_day) < 3:
-                            continue
-                        _sh_1m_day["_typ"] = (_sh_1m_day["high"] + _sh_1m_day["low"] + _sh_1m_day["close"]) / 3.0
-                        _sh_1m_day["_tv"]  = _sh_1m_day["_typ"] * _sh_1m_day["volume"]
-                        _sh_cum_vol = _sh_1m_day["volume"].cumsum().replace(0, np.nan)
-                        _sh_1m_vwap = float((_sh_1m_day["_tv"].cumsum() / _sh_cum_vol).iloc[-2])
+                        # Opposite option data
+                        _opp_dir = "PE" if _sh_dir == "CE" else "CE"
+                        _opp_info = (_locked_tokens or {}).get(_opp_dir, {})
+                        _opp_tok = int(_opp_info.get("token", 0) or 0)
+                        _opp_1m = get_option_1min(_opp_tok, 10) if _opp_tok else None
 
-                        _sh_ds = _v8_shadow_dt[_sh_dir]  # per-direction state
+                        _opp_close = 0.0
+                        _opp_ema9l = 0.0
+                        _opp_margin = 0.0
+                        if _opp_1m is not None and len(_opp_1m) >= 2:
+                            _opp_comp = _opp_1m.iloc[-2]
+                            _opp_close = float(_opp_comp["close"])
+                            _opp_ema9l = float(_opp_comp.get("ema9_low", 0))
+                            _opp_margin = round(_opp_close - _opp_ema9l, 2)
 
-                        # Bucket change: update bucket_ts only — DO NOT reset active signal
-                        # Signal tracks until SL hit or EOD, independent of candle boundaries
-                        if _sh_ds["bucket_ts"] != _sh_1m_bk_ts:
-                            _sh_ds["bucket_ts"] = _sh_1m_bk_ts
+                        # Golden Setup conditions
+                        _momentum_ok = (_sh_1m_close > _sh_ema9h_1m) if _sh_ema9h_1m > 0 else False
+                        _decay_ok = (-5.0 <= _opp_margin <= -4.0) if _opp_ema9l > 0 else False
 
-                        # Always update dashboard snapshot regardless of signal active state.
-                        # Without this, _v10_live only gets a price-only update while active,
-                        # leaving gap=None → _v10_to_result returns None → dashboard shows
-                        # "WARMING UP" for the entire duration of the shadow signal.
-                        _sh_1m_gap = round(_sh_1m_close - _sh_ema9h_1m, 2)
-                        with _v10_live_lock:
-                            _v10_live[_sh_dir] = {
-                                "strike": int(_sh_info.get("strike", 0) or 0),
-                                "price": round((D.get_ltp(_sh_tok) or _sh_1m_close), 1),
-                                "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
-                                "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
-                                "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
-                                "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
-                                "ready": False, "reject": "in_trade" if _sh_ds.get("active") else "",
-                            }
+                        # Cooldown and basic guards
+                        _in_trade = bool(_v8_state.get("in_trade", False))
+                        _in_cooldown = False
+                        _cooldown_reason = ""
 
-                        # If signal active — track LTP using ORIGINAL token (not current ATM)
-                        if _sh_ds["active"]:
-                            _sh_track_tok = int(_sh_ds.get("entry_tok", 0) or _sh_tok)
-                            _sh_ltp_pk  = D.get_ltp(_sh_track_tok)
-                            if not _sh_ltp_pk:
-                                continue   # LTP unavailable, skip this cycle
-                            _sh_cur_sl  = _sh_ds.get("shadow_sl", round(_sh_ds["entry_price"] - 12, 1))
-                            _sh_entry   = _sh_ds["entry_price"]
-
-                            def _sh_close_signal(reason, exit_px):
-                                _fin_peak = _sh_ds["peak_pts"]
-                                _fin_lvl  = _sh_ds.get("shadow_level", "INITIAL")
-                                _fin_pnl  = round(exit_px - _sh_entry, 1)
-                                _fin_icon = "✅" if _fin_pnl >= 20 else ("🟡" if _fin_pnl > 0 else "❌")
-                                _fin_msg  = (
-                                    f"🔵 SHADOW P1 {_sh_dir} — {reason}\n"
-                                    f"Entry: {_sh_entry:.1f}  Exit: {exit_px:.1f}\n"
-                                    f"PnL: {_fin_icon} {_fin_pnl:+.1f}  Peak: +{_fin_peak:.1f}\n"
-                                    f"Trail reached: {_fin_lvl}\n"
-                                )
-                                _p2_e2 = _v8_shadow_p2[_sh_dir].get("today_entry", 0.0)
-                                _p2_d2 = _v8_shadow_p2[_sh_dir].get("today_date", "")
-                                if _p2_e2 > 0 and _p2_d2 == str(now.date()):
-                                    _sv2 = round(_sh_entry - _p2_e2, 1)
-                                    _fin_msg += f"P2 at {_p2_e2:.1f} → P1 saved {_sv2:+.1f}pts\n"
-                                if _sh_ds["live_entry"] > 0:
-                                    _sv3 = round(_sh_ds["live_entry"] - _sh_entry, 1)
-                                    _fin_msg += f"vs V10: {_sh_ds['live_entry']:.1f}  diff={_sv3:+.1f}pts\n"
-                                _fin_msg += f"<i>⚠️ Shadow only</i>"
-                                logger.info(
-                                    f"[SHADOW-P1] {_sh_dir} {reason} "
-                                    f"entry={_sh_entry} exit={exit_px:.1f} "
-                                    f"pnl={_fin_pnl:+.1f} peak=+{_fin_peak:.1f} trail={_fin_lvl}"
-                                )
-                                # BW+Gap study log
-                                try:
-                                    import csv as _csv_s1
-                                    _sp1 = os.path.join(D.STATE_DIR, "bw_gap_study.csv")
-                                    _sp1_new = not os.path.isfile(_sp1)
-                                    with open(_sp1, "a", newline="") as _sf1:
-                                        _sw1 = _csv_s1.writer(_sf1)
-                                        if _sp1_new:
-                                            _sw1.writerow(["date", "entry_time", "path", "direction",
-                                                           "bw", "gap", "rsi", "entry_price",
-                                                           "peak_pts", "trail_level", "pnl_pts", "exit_reason"])
-                                        _sw1.writerow([
-                                            date.today().isoformat(),
-                                            _sh_ds.get("entry_time", ""),
-                                            "P1", _sh_dir,
-                                            _sh_ds.get("study_bw", 0),
-                                            _sh_ds.get("study_gap", 0),
-                                            _sh_ds.get("study_rsi", 0),
-                                            round(_sh_entry, 1),
-                                            round(_fin_peak, 1),
-                                            _fin_lvl,
-                                            _fin_pnl,
-                                            reason,
-                                        ])
-                                except Exception as _sel1:
-                                    logger.warning(f"[STUDY] P1 log error: {_sel1}")
-                                pass  # shadow TG P1 exit alert removed
-                                # Track peak for analysis streak detection
-                                _shadow_analysis[_sh_dir]["last_peaks"].append(_fin_peak)
-                                _shadow_analysis[_sh_dir]["last_peaks"] = \
-                                    _shadow_analysis[_sh_dir]["last_peaks"][-2:]
-                                _sh_ds.update({
-                                    "active": False, "entry_price": 0.0, "entry_time": "",
-                                    "peak_price": 0.0, "peak_pts": 0.0, "live_entry": 0.0,
-                                    "shadow_sl": 0.0, "shadow_level": "INITIAL",
-                                    "bucket_ts": _sh_1m_bk_ts,  # block re-fire on same candle
-                                    "sl_ts": time.time() if reason == "SL-HIT" else _sh_ds.get("sl_ts", 0.0),
-                                    "last_exit_pnl": _fin_pnl, "last_exit_reason": reason,
-                                    "last_exit_ts": time.time(),
-                                })
-                                _save_shadow_state()
-
-                            # EOD check
-                            if now.time() >= dtime(15, 15):
-                                _sh_close_signal("EOD", _sh_ltp_pk)
-                                continue
-
-                            # SL hit check (LTP touches or goes below trail SL)
-                            if _sh_ltp_pk <= _sh_cur_sl:
-                                _sh_close_signal("SL-HIT", _sh_cur_sl)
-                                continue
-
-                            # Update peak + trail ladder
-                            if _sh_ltp_pk > _sh_ds["peak_price"]:
-                                _sh_ds["peak_price"] = _sh_ltp_pk
-                                _sh_ds["peak_pts"]   = round(_sh_ltp_pk - _sh_entry, 1)
-                                _new_sl, _new_lvl = _shadow_trail_sl(_sh_entry, _sh_ds["peak_pts"])
-                                _old_lvl = _sh_ds.get("shadow_level", "INITIAL")
-                                if _new_lvl != _old_lvl:
-                                    _sh_ds["shadow_sl"]    = _new_sl
-                                    _sh_ds["shadow_level"] = _new_lvl
-                                    logger.info(
-                                        f"[SHADOW-P1] {_sh_dir} trail ↑ {_new_lvl} "
-                                        f"peak=+{_sh_ds['peak_pts']:.1f} sl_now={_new_sl:.1f}"
-                                    )
-                                    pass  # shadow TG trail alert removed
-                                    _save_shadow_state()
-                            continue
-
-                        # ── HYBRID: candle-close validates breakout (spike filter) + live LTP fires ──
-                        # Gate A: last completed candle close must be above EMA9H — blocks spike entries.
-                        #         EXCEPTION: if live LTP gap >= 10 pts, candle gate bypassed —
-                        #         a 10pt gap cannot be a momentary spike, it's a genuine explosive move.
-                        # Gate B: live LTP must still be above EMA9H when we fire — blocks stale entries.
-                        # Gate C: live LTP gap >= V10_MIN_EMA9H_GAP — momentum confirmation.
-                        _sh_ltp_now   = D.get_ltp(_sh_tok) or _sh_1m_close
-                        _sh_1m_gap    = round(_sh_ltp_now - _sh_ema9h_1m, 2)
-                        _sh_vwap_gap  = round(_sh_ltp_now - _sh_1m_vwap, 2)
-                        _sh_explosive = _sh_1m_gap >= 10.0
-                        _sh_1m_reject = None
-                        if not _sh_explosive and not (_sh_ema9h_1m > 0 and _sh_1m_close > _sh_ema9h_1m):
-                            _sh_1m_reject = f"candle_below_ema9h close={_sh_1m_close:.1f} ema9h={_sh_ema9h_1m:.1f}"
-                        if _sh_explosive and _sh_1m_reject is None:
-                            logger.info(f"[SHADOW-DTF] EXPLOSIVE gap={_sh_1m_gap:.1f} — candle gate bypassed ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f}")
-                        if _sh_1m_reject is None and not (_sh_ltp_now > _sh_ema9h_1m):
-                            _sh_1m_reject = f"ltp_below_ema9h ltp={_sh_ltp_now:.1f} ema9h={_sh_ema9h_1m:.1f}"
-                        if _sh_1m_reject is None and _sh_1m_gap < V10_MIN_EMA9H_GAP:
-                            _sh_1m_reject = f"ltp_gap_weak gap={_sh_1m_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
-                        if _sh_1m_reject is None and not (_sh_rsi_1m > _sh_rsi_1m_p):
-                            _sh_1m_reject = f"1m_rsi_falling rsi={_sh_rsi_1m:.1f} prev={_sh_rsi_1m_p:.1f}"
-                        if _sh_1m_reject is None and not (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX):
-                            _sh_1m_reject = f"1m_rsi_outofrange rsi={_sh_rsi_1m:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
-                        if _sh_1m_reject is None and (_sh_ema9h_1m - _sh_ema9l_1m) < V10_BW_MIN:
-                            _sh_1m_reject = f"1m_bw_weak bw={round(_sh_ema9h_1m-_sh_ema9l_1m,1)}(need>={V10_BW_MIN})"
-                        if _sh_1m_reject is None and not (_sh_ltp_now > _sh_1m_vwap):
-                            _sh_1m_reject = f"ltp_below_vwap ltp={_sh_ltp_now:.1f} vwap={_sh_1m_vwap:.1f} gap={_sh_vwap_gap:.1f}"
-                        _xl_snap_dir = "PE" if _sh_dir == "CE" else "CE"
-                        _xl_snap_buf = _shadow_analysis[_xl_snap_dir].get("cross_buf", [])[-3:]
-                        _xl_snap_ok  = len(_xl_snap_buf) >= 2 and sum(1 for v in _xl_snap_buf if not v) >= 2
-                        with _v10_live_lock:
-                            _v10_live[_sh_dir] = {
-                                "strike": int(_sh_info.get("strike", 0) or 0),
-                                "price": round(_sh_ltp_now, 1),
-                                "gap": round(_sh_1m_gap, 2), "gap_ok": _sh_1m_gap >= V10_MIN_EMA9H_GAP,
-                                "rsi": round(_sh_rsi_1m, 1), "rsi_rising": _sh_rsi_1m > _sh_rsi_1m_p,
-                                "rsi_ok": (V10_RSI_MIN < _sh_rsi_1m < V10_RSI_MAX) and (_sh_rsi_1m > _sh_rsi_1m_p),
-                                "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1), "bw_ok": (_sh_ema9h_1m - _sh_ema9l_1m) >= V10_BW_MIN,
-                                "ema9l": round(_sh_ema9l_1m, 2),
-                                "ready": (_sh_1m_reject is None and _xl_snap_ok),
-                                "reject": (_sh_1m_reject.split()[0] if _sh_1m_reject else ("xleg" if not _xl_snap_ok else "")),
-                                "xleg_ok": _xl_snap_ok,
-                                "xleg_n": len(_xl_snap_buf),
-                            }
-                        if now.second % 15 == 0:
-                            _save_shadow_state()   # persist live gate snapshot for dashboard monitor
-                        if _sh_1m_reject:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-DTF] REJECT {_sh_dir} {_sh_1m_reject}")
-                            # Detailed RSI-block log — once per candle bucket
-                            if 'rsi' in _sh_1m_reject and _sh_ds.get("_rsi_block_ts") != _sh_1m_bk_ts:
-                                _sh_ds["_rsi_block_ts"] = _sh_1m_bk_ts
-                                _sh_bw_rb   = round(_sh_ema9h_1m - _sh_ema9l_1m, 1)
-                                _sh_str_rb  = int(_sh_info.get("strike", 0) or 0)
-                                logger.info(
-                                    f"[RSI-SHADOW] {_sh_dir} {_sh_str_rb} BLOCKED "
-                                    f"entry={_sh_ltp_now:.1f} ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw_rb} "
-                                    f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} "
-                                    f"rsi={_sh_rsi_1m:.1f} reason={_sh_1m_reject.split()[0]}"
-                                )
-                            continue
-
-                        # ── Hard gate: opening blackout 9:15–9:45 ──
                         if now.time() < V10_OPEN_BLACKOUT_END:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P1] REJECT {_sh_dir} open_blackout "
-                                            f"(no entries before {V10_OPEN_BLACKOUT_END})")
-                            continue
+                            _in_cooldown = True
+                            _cooldown_reason = "open_blackout"
+                        elif _v8_state.get("_last_fired_candle_ts") == _sh_1m_bk_ts:
+                            _in_cooldown = True
+                            _cooldown_reason = "same_candle"
+                        elif _v8_state.get("_last_exit_candle_ts") == _sh_1m_bk_ts:
+                            _in_cooldown = True
+                            _cooldown_reason = "exit_candle_cooldown"
 
-                        _sh_sl_age = time.time() - _sh_ds.get("sl_ts", 0)
-                        if 0 < _sh_sl_age < 60:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P1] REJECT {_sh_dir} sl_cooldown age={int(_sh_sl_age)}s")
-                            continue
+                        # Update reject reasons
+                        _reject_reason = ""
+                        if _in_trade:
+                            _reject_reason = "in_trade"
+                        elif _in_cooldown:
+                            _reject_reason = _cooldown_reason
+                        elif not _momentum_ok:
+                            _reject_reason = "below_ema9h"
+                        elif not _decay_ok:
+                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})"
 
-                        _xleg_g_dir  = "PE" if _sh_dir == "CE" else "CE"
-                        _xleg_g_buf  = _shadow_analysis[_xleg_g_dir].get("cross_buf", [])
-                        _xleg_g_buf3 = _xleg_g_buf[-3:]
-                        _xleg_g_ok   = len(_xleg_g_buf3) >= 2 and sum(1 for v in _xleg_g_buf3 if not v) >= 2
-                        if not _xleg_g_ok:
-                            logger.info(
-                                f"[SHADOW-P1] REJECT {_sh_dir} xleg_not_confirmed "
-                                f"{_xleg_g_dir} buf={_xleg_g_buf3} n={len(_xleg_g_buf3)}"
-                            )
-                            continue
-                        _sh_ltp = _sh_ltp_now  # reuse LTP already fetched above
-                        # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
-                        if V10_NEAR_VWAP_MAX > 0 and abs(_sh_vwap_gap) >= V10_NEAR_VWAP_MAX:
-                            logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_vwap_far "
-                                        f"gap_vwap={_sh_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
-                            continue
-                        # ── v10 GATE B — block tiny ema9h_gap (< V10_MIN_EMA9H_GAP) ──
-                        if _sh_1m_gap < V10_MIN_EMA9H_GAP:
-                            logger.info(f"[SHADOW-P1] REJECT {_sh_dir} v10_tiny_gap "
-                                        f"ema9h_gap={_sh_1m_gap:+.2f} (need >={V10_MIN_EMA9H_GAP})")
-                            continue
-                        _sh_strike = int(_sh_info.get("strike", 0) or 0)
-                        # ── v10 LIVE: P1 places the real paper trade via the proven v8 executor ──
-                        if V10_LIVE and not _v8_state.get("in_trade"):
+                        _ready_to_fire = (_momentum_ok and _decay_ok and not _in_trade and not _in_cooldown)
+
+                        with _v10_live_lock:
+                            _v10_live[_sh_dir] = {
+                                "strike": int(_sh_info.get("strike", 0) or 0),
+                                "price": round(D.get_ltp(_sh_tok) or _sh_1m_close, 1),
+                                "ema9h": round(_sh_ema9h_1m, 2),
+                                "ema9l": round(_sh_ema9l_1m, 2),
+                                "momentum_gap": round(_sh_1m_close - _sh_ema9h_1m, 2),
+                                "momentum_ok": _momentum_ok,
+                                "decay_margin": _opp_margin,
+                                "decay_ok": _decay_ok,
+                                "ready": _ready_to_fire,
+                                "reject": _reject_reason,
+                            }
+
+                        if _ready_to_fire and V10_LIVE:
                             try:
-                                _sh_spot_now   = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                                _sh_otm_key    = "CE_UP" if _sh_dir == "CE" else "PE_DN"
-                                _sh_itm_key    = "CE_DN" if _sh_dir == "CE" else "PE_UP"
-                                _sh_nbr_otm    = D.get_ltp(dir_tokens.get(_sh_otm_key, {}).get("token", 0) or 0)
-                                _sh_nbr_itm    = D.get_ltp(dir_tokens.get(_sh_itm_key, {}).get("token", 0) or 0)
-                                with _v10_live_lock:
-                                    _xl_lv = dict(_v10_live.get(_xleg_g_dir, {}))
-                                _xl_price  = float(_xl_lv.get("price", 0) or 0)
-                                _xl_ema9l  = float(_xl_lv.get("ema9l", 0) or 0)
-                                _xl_margin = round(_xl_price - _xl_ema9l, 2) if _xl_ema9l > 0 else 0.0
+                                _sh_spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                                _sh_nbr_otm = D.get_ltp(dir_tokens.get("CE_UP" if _sh_dir == "CE" else "PE_DN", {}).get("token", 0) or 0)
+                                _sh_nbr_itm = D.get_ltp(dir_tokens.get("CE_DN" if _sh_dir == "CE" else "PE_UP", {}).get("token", 0) or 0)
                                 _v8_execute_paper_entry(
-                                    direction=_sh_dir, strike=_sh_strike,
-                                    symbol=_sh_info.get("symbol", ""), token=_sh_tok,
-                                    entry_price=_sh_ltp,
-                                    entry_result={"entry_price": _sh_ltp, "entry_mode": "V10_P1",
-                                                  "fired_candle_ts": _sh_1m_bk_ts,
-                                                  "close": _sh_1m_close,
-                                                  "ema9_low": _sh_ema9l_1m, "ema9_high": _sh_ema9h_1m,
-                                                  "bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1),
-                                                  "gap": round(_sh_1m_gap, 2),
-                                                  "rsi": round(_sh_rsi_1m, 1),
-                                                  "xleg_signal": "PASS",
-                                                  "xleg_other_dying": True,
-                                                  "xleg_other_close": round(_xl_price, 2),
-                                                  "xleg_other_ema9l": round(_xl_ema9l, 2),
-                                                  "xleg_other_margin": _xl_margin},
-                                    other_token=0,
+                                    direction=_sh_dir,
+                                    strike=int(_sh_info.get("strike", 0) or 0),
+                                    symbol=_sh_info.get("symbol", ""),
+                                    token=_sh_tok,
+                                    entry_price=_sh_1m_close,
+                                    entry_result={
+                                        "entry_price": _sh_1m_close,
+                                        "entry_mode": f"V10_{_sh_dir}",
+                                        "fired_candle_ts": _sh_1m_bk_ts,
+                                        "close": _sh_1m_close,
+                                        "open": _sh_1m_open,
+                                        "ema9_low": _sh_ema9l_1m,
+                                        "ema9_high": _sh_ema9h_1m,
+                                        "xleg_other_margin": _opp_margin,
+                                    },
+                                    other_token=_opp_tok,
                                     spot_at_entry=_sh_spot_now,
                                     neighbor_ltp_otm=_sh_nbr_otm,
-                                    neighbor_ltp_itm=_sh_nbr_itm)
-                            except Exception as _v10p1e:
-                                logger.warning(f"[V10-LIVE] P1 execute error: {_v10p1e}")
-                        _sh_sl     = round(_sh_ltp - 12, 1)
-                        _sh_ds.update({
-                            "active": True, "bucket_ts": _sh_1m_bk_ts,
-                            "entry_price": _sh_ltp, "entry_time": now.strftime("%H:%M:%S"),
-                            "peak_price": _sh_ltp, "peak_pts": 0.0,
-                            "shadow_sl": round(_sh_ltp - 12, 1), "shadow_level": "INITIAL",
-                            "today_entry": _sh_ltp, "today_date": str(now.date()),
-                            "entry_tok": _sh_tok, "entry_strike": _sh_strike,
-                            "sl_ts": 0.0,  # clear stale cooldown/outcome from prior trade
-                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
-                            "study_bw": round(_sh_ema9h_1m - _sh_ema9l_1m, 1),
-                            "study_gap": round(_sh_1m_gap, 2),
-                            "study_rsi": round(_sh_rsi_1m, 1),
-                        })
-                        # V2 tracker: same entry, new exit (dynamic trail + hard exit +40)
-                        _v8_shadow_dt_v2[_sh_dir].update({
-                            "active": True, "entry_price": _sh_ltp,
-                            "entry_time": now.strftime("%H:%M:%S"),
-                            "peak_price": _sh_ltp, "peak_pts": 0.0,
-                            "shadow_sl": round(_sh_ltp - 12, 1), "entry_tok": _sh_tok,
-                        })
-                        # Check if Part 2 fired earlier today → compute saved pts
-                        _p2_ds      = _v8_shadow_p2[_sh_dir]
-                        _p2_today   = _p2_ds.get("today_entry", 0.0)
-                        _p2_date    = _p2_ds.get("today_date", "")
-                        _p2_line    = ""
-                        if _p2_today > 0 and _p2_date == str(now.date()):
-                            _p2_saved = round(_sh_ltp - _p2_today, 1)
-                            _p2_ds["p1_entry"] = _sh_ltp   # store P1 entry in P2 state
-                            _p2_line = (f"P2 entered: {_p2_today:.1f} → "
-                                        f"saved {_p2_saved:+.1f} pts\n")
-                            logger.info(
-                                f"[SHADOW-P1] {_sh_dir} P2 was at {_p2_today} "
-                                f"P1 now {_sh_ltp} saved={_p2_saved:+.1f}pts"
-                            )
-                        _sh_bw = round(_sh_ema9h_1m - _sh_ema9l_1m, 1)
-                        logger.info(
-                            f"[SHADOW-P1] {_sh_dir} {_sh_strike} SIGNAL "
-                            f"entry={_sh_ltp} sl={_sh_sl} "
-                            f"ema9h_gap={_sh_1m_gap:+.2f} bw={_sh_bw} "
-                            f"vwap={_sh_1m_vwap:.1f} gap_vwap={_sh_vwap_gap:+.2f} rsi={_sh_rsi_1m:.1f}↑"
-                        )
-                        # CROSS-TRADE: check if P2 is open in opposite direction
-                        _cross_opp = "PE" if _sh_dir == "CE" else "CE"
-                        _cross_p2  = _v8_shadow_p2[_cross_opp]
-                        if _cross_p2.get("active") and _cross_p2.get("today_date") == str(now.date()):
-                            logger.info(
-                                f"[CROSS-TRADE] P1-{_sh_dir} just fired vs P2-{_cross_opp} already open "
-                                f"p1_entry={_sh_ltp} p2_entry={_cross_p2['entry_price']:.1f} "
-                                f"p2_peak={_cross_p2.get('peak_pts',0):.1f} strike={_sh_strike}"
-                            )
-                        # DELAY-ANALYSIS: track LTP + spot at +5s/+10s/+30s/+60s
-                        _delay_jobs.append({
-                            "label": f"P1-{_sh_dir}", "strike": _sh_strike,
-                            "base": _sh_ltp, "tok": _sh_tok,
-                            "spot_base": D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0.0,
-                            "fire_ts": time.time(),
-                            "snaps":       {5: None, 10: None, 30: None, 60: None},
-                            "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
-                        })
-                        pass  # shadow TG P1 entry alert removed
-                        _save_shadow_state()
-                        # ── Analysis flags (no trade impact) ──
-                        _other_sh_dir = "PE" if _sh_dir == "CE" else "CE"
-                        _other_sh_vwap_gap = None
-                        try:
-                            _other_sh_info = (_locked_tokens or {}).get(_other_sh_dir, {})
-                            _other_sh_tok2 = int(_other_sh_info.get("token", 0) or 0)
-                            if _other_sh_tok2:
-                                _other_sh_1m2 = D.get_option_1min(_other_sh_tok2, 5)
-                                if _other_sh_1m2 is not None and len(_other_sh_1m2) >= 2:
-                                    _osh_day2 = _other_sh_1m2[_other_sh_1m2.index.date == now.date()]
-                                    if len(_osh_day2) >= 2:
-                                        _osh_tv2 = ((_osh_day2["high"]+_osh_day2["low"]+_osh_day2["close"])/3)*_osh_day2["volume"]
-                                        _osh_vwap2 = float((_osh_tv2.cumsum()/_osh_day2["volume"].cumsum().replace(0,float('nan'))).iloc[-2])
-                                        _other_sh_vwap_gap = round(_osh_day2["close"].iloc[-2] - _osh_vwap2, 1)
-                        except Exception:
-                            pass
-                        _xleg_sh_dir = "PE" if _sh_dir == "CE" else "CE"
-                        _log_shadow_analysis(
-                            "P1", _sh_dir, now, _sh_ltp,
-                            _sh_vwap_gap, _other_sh_vwap_gap,
-                            float(spot_3m.get("adx", 0)),
-                            _shadow_analysis[_sh_dir]["last_peaks"],
-                            ema9h_gap=_sh_1m_gap,
-                            xleg_buf=_shadow_analysis[_xleg_sh_dir]["cross_buf"],
-                            dte=dte,
-                            fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
-                            spot_ema9=float(spot_3m.get("ema9", 0)),
-                            spot_ema21=float(spot_3m.get("ema21", 0)),
-                            bw=_sh_bw,
-                        )
-                        # PDH/PDL/Pivot/VWAP filter data for this P1 shadow signal
-                        try:
-                            LEVELS.log_entry(
-                                direction=_sh_dir,
-                                strike=int(_sh_strike or 0),
-                                entry_price=float(_sh_ltp),
-                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
-                                entry_time_dt=now,
-                                dte=dte,
-                            )
-                        except Exception as _lvl_sh_e:
-                            logger.debug(f"[SHADOW-LVL] P1 hook error: {_lvl_sh_e}")
-                except Exception as _she:
-                    logger.warning(f"[SHADOW-P1] error: {_she}")
-
-            # ── SHADOW Part 2: buildup tracker (close > EMA9H, close < VWAP, RSI > 55 rising) ──
-            if (not _v8_state.get("in_trade")
-                    and D.is_trading_window(now)
-                    and _locked_tokens
-                    and time.time() - _v8_shadow_p2["last_scan_ts"] >= 3):
-                _v8_shadow_p2["last_scan_ts"] = time.time()
-                try:
-                    for _s2_dir, _s2_info in [("CE", (_locked_tokens or {}).get("CE", {})),
-                                               ("PE", (_locked_tokens or {}).get("PE", {}))]:
-                        _s2_tok = int(_s2_info.get("token", 0) or 0)
-                        if not _s2_tok:
-                            continue
-
-                        # ── 1-min last completed candle ──
-                        _s2_1m = D.get_option_1min(_s2_tok, 100)
-                        if _s2_1m is None or len(_s2_1m) < 4:
-                            continue
-                        _s2_comp     = _s2_1m.iloc[-2]
-                        _s2_bk_ts    = str(_s2_comp.name)
-                        _s2_close    = float(_s2_comp["close"])
-                        _s2_open     = float(_s2_comp["open"])
-                        _s2_ema9h    = float(_s2_comp.get("ema9_high", 0))
-                        _s2_ema9l    = float(_s2_comp.get("ema9_low", 0))
-                        _s2_bw       = round(_s2_ema9h - _s2_ema9l, 2) if _s2_ema9h > 0 and _s2_ema9l > 0 else 0.0
-                        _s2_rsi      = float(_s2_comp.get("RSI", 0) or 0)
-                        _s2_rsi_p    = float(_s2_1m.iloc[-3].get("RSI", 0) or 0)
-                        _s2_ema9l_prev = float(_s2_1m.iloc[-3].get("ema9_low", 0))
-
-                        # 1-min session VWAP
-                        _s2_day = _s2_1m[_s2_1m.index.date == now.date()].copy()
-                        if len(_s2_day) < 3:
-                            continue
-                        _s2_day["_typ"] = (_s2_day["high"] + _s2_day["low"] + _s2_day["close"]) / 3.0
-                        _s2_day["_tv"]  = _s2_day["_typ"] * _s2_day["volume"]
-                        _s2_cum_vol = _s2_day["volume"].cumsum().replace(0, np.nan)
-                        _s2_vwap    = float((_s2_day["_tv"].cumsum() / _s2_cum_vol).iloc[-2])
-
-                        _s2_ds = _v8_shadow_p2[_s2_dir]
-
-                        # Bucket change: update bucket_ts only — DO NOT reset active signal
-                        if _s2_ds["bucket_ts"] != _s2_bk_ts:
-                            _s2_ds["bucket_ts"] = _s2_bk_ts
-
-                        # If signal active — track LTP using ORIGINAL token (not current ATM)
-                        if _s2_ds["active"]:
-                            _s2_track_tok = int(_s2_ds.get("entry_tok", 0) or _s2_tok)
-                            _s2_ltp_pk  = D.get_ltp(_s2_track_tok)
-                            if not _s2_ltp_pk:
-                                continue
-                            _s2_cur_sl  = _s2_ds.get("shadow_sl", round(_s2_ds["entry_price"] - 12, 1))
-                            _s2_entry   = _s2_ds["entry_price"]
-
-                            def _s2_close_signal(reason, exit_px):
-                                _s2_fin_peak = _s2_ds["peak_pts"]
-                                _s2_fin_lvl  = _s2_ds.get("shadow_level", "INITIAL")
-                                _s2_fin_pnl  = round(exit_px - _s2_entry, 1)
-                                _s2_fin_icon = "✅" if _s2_fin_pnl >= 20 else ("🟡" if _s2_fin_pnl > 0 else "❌")
-                                _s2_fin_msg  = (
-                                    f"🟡 SHADOW P2 {_s2_dir} — {reason}\n"
-                                    f"Entry: {_s2_entry:.1f}  Exit: {exit_px:.1f}\n"
-                                    f"PnL: {_s2_fin_icon} {_s2_fin_pnl:+.1f}  Peak: +{_s2_fin_peak:.1f}\n"
-                                    f"Trail reached: {_s2_fin_lvl}\n"
+                                    neighbor_ltp_itm=_sh_nbr_itm,
                                 )
-                                _s2_p1e2 = _s2_ds.get("p1_entry", 0.0)
-                                if _s2_p1e2 > 0:
-                                    _s2_diff2 = round(_s2_p1e2 - _s2_entry, 1)
-                                    _s2_fin_msg += f"P1 at {_s2_p1e2:.1f} → P2 was {_s2_diff2:+.1f}pts earlier\n"
-                                else:
-                                    _s2_fin_msg += f"P1 not fired — VWAP never broke\n"
-                                _s2_fin_msg += f"<i>⚠️ Shadow only</i>"
-                                logger.info(
-                                    f"[SHADOW-P2] {_s2_dir} {reason} "
-                                    f"entry={_s2_entry} exit={exit_px:.1f} "
-                                    f"pnl={_s2_fin_pnl:+.1f} peak=+{_s2_fin_peak:.1f} trail={_s2_fin_lvl}"
-                                )
-                                # BW+Gap study log
-                                try:
-                                    import csv as _csv_s2
-                                    _sp2 = os.path.join(D.STATE_DIR, "bw_gap_study.csv")
-                                    _sp2_new = not os.path.isfile(_sp2)
-                                    with open(_sp2, "a", newline="") as _sf2:
-                                        _sw2 = _csv_s2.writer(_sf2)
-                                        if _sp2_new:
-                                            _sw2.writerow(["date", "entry_time", "path", "direction",
-                                                           "bw", "gap", "rsi", "entry_price",
-                                                           "peak_pts", "trail_level", "pnl_pts", "exit_reason"])
-                                        _sw2.writerow([
-                                            date.today().isoformat(),
-                                            _s2_ds.get("entry_time", ""),
-                                            "P2", _s2_dir,
-                                            _s2_ds.get("study_bw", 0),
-                                            _s2_ds.get("study_gap", 0),
-                                            _s2_ds.get("study_rsi", 0),
-                                            round(_s2_entry, 1),
-                                            round(_s2_fin_peak, 1),
-                                            _s2_fin_lvl,
-                                            _s2_fin_pnl,
-                                            reason,
-                                        ])
-                                except Exception as _sel2:
-                                    logger.warning(f"[STUDY] P2 log error: {_sel2}")
-                                pass  # shadow TG P2 exit alert removed
-                                # Track peak for analysis streak detection
-                                _shadow_analysis[_s2_dir]["last_peaks_p2"].append(_s2_fin_peak)
-                                _shadow_analysis[_s2_dir]["last_peaks_p2"] = \
-                                    _shadow_analysis[_s2_dir]["last_peaks_p2"][-2:]
-                                _s2_ds.update({
-                                    "active": False, "entry_price": 0.0, "entry_time": "",
-                                    "peak_price": 0.0, "peak_pts": 0.0,
-                                    "shadow_sl": 0.0, "shadow_level": "INITIAL", "p1_entry": 0.0,
-                                    "bucket_ts": _s2_bk_ts,  # block re-fire on same candle
-                                    "last_exit_pnl": _s2_fin_pnl, "last_exit_reason": reason,
-                                    "last_exit_ts": time.time(),
-                                })
-                                _save_shadow_state()
-
-                            # EOD check
-                            if now.time() >= dtime(15, 15):
-                                _s2_close_signal("EOD", _s2_ltp_pk)
-                                continue
-
-                            # SL hit check
-                            if _s2_ltp_pk <= _s2_cur_sl:
-                                _s2_close_signal("SL-HIT", _s2_cur_sl)
-                                continue
-
-                            # Update peak + trail ladder
-                            if _s2_ltp_pk > _s2_ds["peak_price"]:
-                                _s2_ds["peak_price"] = _s2_ltp_pk
-                                _s2_ds["peak_pts"]   = round(_s2_ltp_pk - _s2_entry, 1)
-                                _s2_new_sl, _s2_new_lvl = _shadow_trail_sl(_s2_entry, _s2_ds["peak_pts"])
-                                _s2_old_lvl = _s2_ds.get("shadow_level", "INITIAL")
-                                if _s2_new_lvl != _s2_old_lvl:
-                                    _s2_ds["shadow_sl"]    = _s2_new_sl
-                                    _s2_ds["shadow_level"] = _s2_new_lvl
-                                    logger.info(
-                                        f"[SHADOW-P2] {_s2_dir} trail ↑ {_s2_new_lvl} "
-                                        f"peak=+{_s2_ds['peak_pts']:.1f} sl_now={_s2_new_sl:.1f}"
-                                    )
-                                    pass  # shadow TG P2 trail alert removed
-                                    _save_shadow_state()
-                            continue
-
-                        # ── Part 2 gates ──
-                        _s2_ema9h_gap  = round(_s2_close - _s2_ema9h, 2)
-                        _s2_vwap_gap   = round(_s2_close - _s2_vwap, 2)
-                        _s2_reject     = None
-                        if not (_s2_ema9h > 0 and _s2_close > _s2_ema9h):
-                            _s2_reject = f"below_ema9h gap={_s2_ema9h_gap}"
-                        elif _s2_ema9h_gap < V10_MIN_EMA9H_GAP:
-                            _s2_reject = f"ema9h_gap_weak gap={_s2_ema9h_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
-                        elif not (_s2_close <= _s2_vwap):
-                            _s2_reject = f"already_above_vwap gap={_s2_vwap_gap:+.1f}"
-                        elif not (_s2_rsi > _s2_rsi_p):
-                            _s2_reject = f"rsi_falling rsi={_s2_rsi:.1f} prev={_s2_rsi_p:.1f}"
-                        elif not (V10_RSI_MIN < _s2_rsi < V10_RSI_MAX):
-                            _s2_reject = f"rsi_weak rsi={_s2_rsi:.1f}(need {V10_RSI_MIN}-{V10_RSI_MAX})"
-                        elif _s2_bw < V10_BW_MIN:
-                            _s2_reject = f"bw_weak bw={_s2_bw}(need>={V10_BW_MIN})"
-                        if now.second % 15 == 0:
-                            _s2_above_ema9l = (_s2_ema9l > 0 and _s2_close > _s2_ema9l)
-                            _shadow_analysis[_s2_dir]["cross_buf"].append(_s2_above_ema9l)
-                            _shadow_analysis[_s2_dir]["cross_buf"] = \
-                                _shadow_analysis[_s2_dir]["cross_buf"][-5:]
-                        if _s2_reject:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} {_s2_reject}")
-                            continue
-
-                        # ── Hard gate: opening blackout 9:15–9:45 ──
-                        if now.time() < V10_OPEN_BLACKOUT_END:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} open_blackout "
-                                            f"(no entries before {V10_OPEN_BLACKOUT_END})")
-                            continue
-
-                        # ── Exit cooldown: block P2 re-entry for 120s after any exit ──
-                        _s2_exit_age = time.time() - _s2_ds.get("exit_ts", 0)
-                        if 0 < _s2_exit_age < 120:
-                            if now.second % 15 == 0:
-                                logger.info(f"[SHADOW-P2] REJECT {_s2_dir} exit_cooldown age={int(_s2_exit_age)}s")
-                            continue
-
-                        _xleg_g2_dir  = "PE" if _s2_dir == "CE" else "CE"
-                        _xleg_g2_buf  = _shadow_analysis[_xleg_g2_dir].get("cross_buf", [])
-                        _xleg_g2_buf5 = _xleg_g2_buf[-5:]
-                        _xleg_g2_ok   = len(_xleg_g2_buf5) >= 3 and all(not v for v in _xleg_g2_buf5)
-                        if not _xleg_g2_ok:
-                            logger.info(
-                                f"[SHADOW-P2] REJECT {_s2_dir} xleg_not_confirmed "
-                                f"{_xleg_g2_dir} buf={_xleg_g2_buf5} n={len(_xleg_g2_buf5)}"
-                            )
-                            continue
-                        _s2_ltp    = D.get_ltp(_s2_tok)
-                        # Gate: LTP must still be below VWAP at fire time
-                        if _s2_ltp and _s2_ltp > _s2_vwap:
-                            logger.info(
-                                f"[SHADOW-P2] REJECT {_s2_dir} ltp_slipped_above_vwap "
-                                f"ltp={_s2_ltp:.1f} vwap={_s2_vwap:.1f} "
-                                f"gap={round(_s2_ltp - _s2_vwap, 1)}"
-                            )
-                            continue
-                        # ── v10 GATE A — near-VWAP DISTANCE gate (DISABLED when V10_NEAR_VWAP_MAX=0) ──
-                        if V10_NEAR_VWAP_MAX > 0 and abs(_s2_vwap_gap) >= V10_NEAR_VWAP_MAX:
-                            logger.info(f"[SHADOW-P2] REJECT {_s2_dir} v10_vwap_far "
-                                        f"gap_vwap={_s2_vwap_gap:+.2f} (need |gap|<{V10_NEAR_VWAP_MAX})")
-                            continue
-                        # ── v10 GATE B — block tiny ema9h_gap (< V10_MIN_EMA9H_GAP) ──
-                        if _s2_ema9h_gap < V10_MIN_EMA9H_GAP:
-                            logger.info(f"[SHADOW-P2] REJECT {_s2_dir} v10_tiny_gap "
-                                        f"ema9h_gap={_s2_ema9h_gap:+.2f} (need >={V10_MIN_EMA9H_GAP})")
-                            continue
-                        _s2_strike = int(_s2_info.get("strike", 0) or 0)
-                        # ── v10 LIVE: P2 places the real paper trade via the proven v8 executor ──
-                        if V10_LIVE and not _v8_state.get("in_trade"):
-                            try:
-                                _s2_spot_now  = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                                _s2_otm_key   = "CE_UP" if _s2_dir == "CE" else "PE_DN"
-                                _s2_itm_key   = "CE_DN" if _s2_dir == "CE" else "PE_UP"
-                                _s2_nbr_otm   = D.get_ltp(dir_tokens.get(_s2_otm_key, {}).get("token", 0) or 0)
-                                _s2_nbr_itm   = D.get_ltp(dir_tokens.get(_s2_itm_key, {}).get("token", 0) or 0)
-                                _v8_execute_paper_entry(
-                                    direction=_s2_dir, strike=_s2_strike,
-                                    symbol=_s2_info.get("symbol", ""), token=_s2_tok,
-                                    entry_price=_s2_ltp,
-                                    entry_result={"entry_price": _s2_ltp, "entry_mode": "V10_P2",
-                                                  "fired_candle_ts": _s2_bk_ts,
-                                                  "close": _s2_close,
-                                                  "ema9_low": _s2_ema9l, "ema9_high": _s2_ema9h,
-                                                  "bw": round(_s2_bw, 1),
-                                                  "gap": round(_s2_ema9h_gap, 2),
-                                                  "rsi": round(_s2_rsi, 1)},
-                                    other_token=0,
-                                    spot_at_entry=_s2_spot_now,
-                                    neighbor_ltp_otm=_s2_nbr_otm,
-                                    neighbor_ltp_itm=_s2_nbr_itm)
-                            except Exception as _v10p2e:
-                                logger.warning(f"[V10-LIVE] P2 execute error: {_v10p2e}")
-                        _s2_sl_px  = round(_s2_ltp - 12, 1)
-                        _s2_ds.update({
-                            "active": True, "bucket_ts": _s2_bk_ts,
-                            "entry_price": _s2_ltp, "entry_time": now.strftime("%H:%M:%S"),
-                            "peak_price": _s2_ltp, "peak_pts": 0.0,
-                            "shadow_sl": _s2_sl_px, "shadow_level": "INITIAL",
-                            "today_entry": _s2_ltp, "today_date": str(now.date()),
-                            "p1_entry": 0.0,
-                            "entry_tok": _s2_tok, "entry_strike": _s2_strike,
-                            "exit_ts": 0.0,  # clear stale cooldown/outcome from prior trade
-                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
-                            "study_bw": round(_s2_bw, 1),
-                            "study_gap": round(_s2_ema9h_gap, 2),
-                            "study_rsi": round(_s2_rsi, 1),
-                        })
-                        # V2 tracker: same entry, hard exit at +20
-                        _v8_shadow_p2_v2[_s2_dir].update({
-                            "active": True, "entry_price": _s2_ltp,
-                            "entry_time": now.strftime("%H:%M:%S"),
-                            "peak_price": _s2_ltp, "peak_pts": 0.0,
-                            "shadow_sl": _s2_sl_px, "entry_tok": _s2_tok,
-                        })
-                        # Check if P1 already fired today (rare — price jumped above VWAP directly)
-                        _s2_p1_today = _v8_shadow_dt[_s2_dir].get("today_entry", 0.0)
-                        _s2_p1_date  = _v8_shadow_dt[_s2_dir].get("today_date", "")
-                        _s2_p1_note  = ""
-                        if _s2_p1_today > 0 and _s2_p1_date == str(now.date()):
-                            _s2_diff = round(_s2_ltp - _s2_p1_today, 1)
-                            _s2_p1_note = f"⚠️ P1 already fired: {_s2_p1_today:.1f} (P2 is {_s2_diff:+.1f})\n"
-                        logger.info(
-                            f"[SHADOW-P2] {_s2_dir} {_s2_strike} SIGNAL "
-                            f"entry={_s2_ltp} sl={_s2_sl_px} "
-                            f"ema9h_gap={_s2_ema9h_gap:+.2f} bw={_s2_bw:.1f} "
-                            f"vwap={_s2_vwap:.1f} below_by={_s2_vwap_gap:.1f} rsi={_s2_rsi:.1f}↑"
-                        )
-                        # CROSS-TRADE: check if P1 is open in opposite direction
-                        _cross_opp2 = "PE" if _s2_dir == "CE" else "CE"
-                        _cross_p1   = _v8_shadow_dt[_cross_opp2]
-                        if _cross_p1.get("active") and _cross_p1.get("today_date","") == str(now.date()):
-                            logger.info(
-                                f"[CROSS-TRADE] P2-{_s2_dir} just fired vs P1-{_cross_opp2} already open "
-                                f"p2_entry={_s2_ltp} p1_entry={_cross_p1.get('entry_price',0):.1f} "
-                                f"p1_peak={_cross_p1.get('peak_pts',0):.1f} strike={_s2_strike}"
-                            )
-                        # DELAY-ANALYSIS: track LTP + spot at +5s/+10s/+30s/+60s
-                        _delay_jobs.append({
-                            "label": f"P2-{_s2_dir}", "strike": _s2_strike,
-                            "base": _s2_ltp, "tok": _s2_tok,
-                            "spot_base": D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0.0,
-                            "fire_ts": time.time(),
-                            "snaps":       {5: None, 10: None, 30: None, 60: None},
-                            "spot_snaps":  {5: None, 10: None, 30: None, 60: None},
-                        })
-                        pass  # shadow TG P2 entry alert removed
-                        _save_shadow_state()
-                        # ── Analysis flags (no trade impact) ──
-                        _other_s2_dir = "PE" if _s2_dir == "CE" else "CE"
-                        _other_s2_vwap_gap = None
-                        try:
-                            _other_s2_info = (_locked_tokens or {}).get(_other_s2_dir, {})
-                            _other_s2_tok2 = int(_other_s2_info.get("token", 0) or 0)
-                            if _other_s2_tok2:
-                                _other_s2_1m2 = D.get_option_1min(_other_s2_tok2, 5)
-                                if _other_s2_1m2 is not None and len(_other_s2_1m2) >= 2:
-                                    _os2_day = _other_s2_1m2[_other_s2_1m2.index.date == now.date()]
-                                    if len(_os2_day) >= 2:
-                                        _os2_tv = ((_os2_day["high"]+_os2_day["low"]+_os2_day["close"])/3)*_os2_day["volume"]
-                                        _os2_vwap = float((_os2_tv.cumsum()/_os2_day["volume"].cumsum().replace(0,float('nan'))).iloc[-2])
-                                        _other_s2_vwap_gap = round(_os2_day["close"].iloc[-2] - _os2_vwap, 1)
-                        except Exception:
-                            pass
-                        _xleg_s2_dir = "PE" if _s2_dir == "CE" else "CE"
-                        _log_shadow_analysis(
-                            "P2", _s2_dir, now, _s2_ltp,
-                            _s2_vwap_gap, _other_s2_vwap_gap,
-                            float(spot_3m.get("adx", 0)),
-                            _shadow_analysis[_s2_dir]["last_peaks_p2"],
-                            ema9h_gap=_s2_ema9h_gap,
-                            xleg_buf=_shadow_analysis[_xleg_s2_dir]["cross_buf"],
-                            dte=dte,
-                            fut_vwap_gap=float(LEVELS._vwap_state.get("gap", 0.0)),
-                            spot_ema9=float(spot_3m.get("ema9", 0)),
-                            spot_ema21=float(spot_3m.get("ema21", 0)),
-                            bw=_s2_bw,
-                        )
-                        # PDH/PDL/Pivot/VWAP filter data for this P2 shadow signal
-                        try:
-                            LEVELS.log_entry(
-                                direction=_s2_dir,
-                                strike=int(_s2_strike or 0),
-                                entry_price=float(_s2_ltp),
-                                spot_px=float(D.get_ltp(D.NIFTY_SPOT_TOKEN) or 0),
-                                entry_time_dt=now,
-                                dte=dte,
-                            )
-                        except Exception as _lvl_s2_e:
-                            logger.debug(f"[SHADOW-LVL] P2 hook error: {_lvl_s2_e}")
-                except Exception as _s2e:
-                    logger.warning(f"[SHADOW-P2] error: {_s2e}")
-
-            # ── SHADOW P3: extreme VWAP reversal (|fut-vwap| >= V10_P3_VWAP_EXTREME) ──
-            # CE when VWAP >> fut (price crashed far below VWAP, bouncing back)
-            # PE when fut >> VWAP (price ran far above VWAP, fading back)
-            # Shadow-only — no live trades, data collection only.
-            _p3_fut_vwap_gap = float(LEVELS._vwap_state.get("gap", 0.0))  # fut - vwap
-            if (not _v8_state.get("in_trade")
-                    and D.is_trading_window(now)
-                    and _locked_tokens
-                    and abs(_p3_fut_vwap_gap) >= V10_P3_VWAP_EXTREME
-                    and time.time() - _v8_shadow_p3["last_scan_ts"] >= 3):
-                _v8_shadow_p3["last_scan_ts"] = time.time()
-                try:
-                    # P3-CE: VWAP far above fut (fut<vwap by 75+) → bounce CE
-                    # P3-PE: fut far above VWAP (fut>vwap by 75+) → fade PE
-                    _p3_dir = "CE" if _p3_fut_vwap_gap < 0 else "PE"
-                    _p3_info = (_locked_tokens or {}).get(_p3_dir, {})
-                    _p3_tok  = int(_p3_info.get("token", 0) or 0)
-                    if _p3_tok:
-                        _p3_1m = D.get_option_1min(_p3_tok, 100)
-                        if _p3_1m is not None and len(_p3_1m) >= 4:
-                            _p3_comp   = _p3_1m.iloc[-2]
-                            _p3_bk_ts  = str(_p3_comp.name)
-                            _p3_close  = float(_p3_comp["close"])
-                            _p3_ema9h  = float(_p3_comp.get("ema9_high", 0))
-                            _p3_ema9l  = float(_p3_comp.get("ema9_low", 0))
-                            _p3_bw     = round(_p3_ema9h - _p3_ema9l, 2) if _p3_ema9h > 0 and _p3_ema9l > 0 else 0.0
-                            _p3_rsi    = float(_p3_comp.get("RSI", 0) or 0)
-                            _p3_rsi_p  = float(_p3_1m.iloc[-3].get("RSI", 0) or 0)
-                            _p3_gap    = round(_p3_close - _p3_ema9h, 2)
-                            _p3_ds     = _v8_shadow_p3[_p3_dir]
-
-                            if _p3_ds["bucket_ts"] != _p3_bk_ts:
-                                _p3_ds["bucket_ts"] = _p3_bk_ts
-
-                            # Track active P3 signal
-                            if _p3_ds["active"]:
-                                _p3_track_tok = int(_p3_ds.get("entry_tok", 0) or _p3_tok)
-                                _p3_ltp_pk = D.get_ltp(_p3_track_tok)
-                                if _p3_ltp_pk:
-                                    _p3_entry = _p3_ds["entry_price"]
-                                    _p3_cur_sl = _p3_ds.get("shadow_sl", round(_p3_entry - 12, 1))
-
-                                    def _p3_close_signal(reason, exit_px):
-                                        _p3_fin_peak = _p3_ds["peak_pts"]
-                                        _p3_fin_lvl  = _p3_ds.get("shadow_level", "INITIAL")
-                                        _p3_fin_pnl  = round(exit_px - _p3_entry, 1)
-                                        logger.info(
-                                            f"[SHADOW-P3] {_p3_dir} {reason} "
-                                            f"entry={_p3_entry} exit={exit_px:.1f} "
-                                            f"pnl={_p3_fin_pnl:+.1f} peak=+{_p3_fin_peak:.1f} "
-                                            f"trail={_p3_fin_lvl} "
-                                            f"vwap_gap_at_entry={_p3_ds.get('vwap_gap_at_entry',0):+.0f}"
-                                        )
-                                        _p3_ds.update({
-                                            "active": False, "entry_price": 0.0, "entry_time": "",
-                                            "peak_price": 0.0, "peak_pts": 0.0,
-                                            "shadow_sl": 0.0, "shadow_level": "INITIAL",
-                                            "bucket_ts": _p3_bk_ts,
-                                            "last_exit_pnl": _p3_fin_pnl, "last_exit_reason": reason,
-                                            "last_exit_ts": time.time(),
-                                        })
-                                        _save_shadow_state()
-
-                                    if now.time() >= dtime(15, 15):
-                                        _p3_close_signal("EOD", _p3_ltp_pk)
-                                    elif _p3_ltp_pk <= _p3_cur_sl:
-                                        _p3_close_signal("SL-HIT", _p3_cur_sl)
-                                    else:
-                                        if _p3_ltp_pk > _p3_ds["peak_price"]:
-                                            _p3_ds["peak_price"] = _p3_ltp_pk
-                                            _p3_ds["peak_pts"]   = round(_p3_ltp_pk - _p3_entry, 1)
-                                            _p3_new_sl, _p3_new_lvl = _shadow_trail_sl(_p3_entry, _p3_ds["peak_pts"])
-                                            if _p3_new_lvl != _p3_ds.get("shadow_level", "INITIAL"):
-                                                _p3_ds["shadow_sl"]    = _p3_new_sl
-                                                _p3_ds["shadow_level"] = _p3_new_lvl
-                                                logger.info(
-                                                    f"[SHADOW-P3] {_p3_dir} trail ↑ {_p3_new_lvl} "
-                                                    f"peak=+{_p3_ds['peak_pts']:.1f} sl_now={_p3_new_sl:.1f}"
-                                                )
-                                                _save_shadow_state()
-                            else:
-                                # ── P3 entry gates ──
-                                _p3_reject = None
-                                if not (_p3_ema9h > 0 and _p3_close > _p3_ema9h):
-                                    _p3_reject = f"below_ema9h gap={_p3_gap:.2f}"
-                                elif _p3_gap < V10_MIN_EMA9H_GAP:
-                                    _p3_reject = f"ema9h_gap_weak gap={_p3_gap:.2f}(need>={V10_MIN_EMA9H_GAP})"
-                                elif not (_p3_rsi > _p3_rsi_p):
-                                    _p3_reject = f"rsi_falling rsi={_p3_rsi:.1f} prev={_p3_rsi_p:.1f}"
-                                elif not (V10_RSI_MIN < _p3_rsi < V10_RSI_MAX):
-                                    _p3_reject = f"rsi_outofrange rsi={_p3_rsi:.1f}"
-                                elif _p3_bw < V10_BW_MIN:
-                                    _p3_reject = f"bw_weak bw={_p3_bw:.1f}"
-
-                                # XLEG_CONFIRMED: cross-leg must be below EMA9H all last 5 scans
-                                _p3_xleg_dir = "PE" if _p3_dir == "CE" else "CE"
-                                _p3_xleg_buf = _shadow_analysis[_p3_xleg_dir].get("cross_buf", [])
-                                _p3_xleg_ok  = len(_p3_xleg_buf[-5:]) >= 3 and all(not v for v in _p3_xleg_buf[-5:])
-
-                                if _p3_reject:
-                                    if now.second % 15 == 0:
-                                        logger.info(f"[SHADOW-P3] REJECT {_p3_dir} {_p3_reject} "
-                                                    f"vwap_gap={_p3_fut_vwap_gap:+.0f}")
-                                elif not _p3_xleg_ok:
-                                    if now.second % 15 == 0:
-                                        logger.info(f"[SHADOW-P3] REJECT {_p3_dir} xleg_not_confirmed "
-                                                    f"{_p3_xleg_dir} buf={_p3_xleg_buf[-5:]} "
-                                                    f"vwap_gap={_p3_fut_vwap_gap:+.0f}")
-                                else:
-                                    _p3_ltp = D.get_ltp(_p3_tok)
-                                    if _p3_ltp:
-                                        _p3_sl_px = round(_p3_ltp - 12, 1)
-                                        _p3_strike = int(_p3_info.get("strike", 0) or 0)
-                                        _p3_ds.update({
-                                            "active": True, "bucket_ts": _p3_bk_ts,
-                                            "entry_price": _p3_ltp, "entry_time": now.strftime("%H:%M:%S"),
-                                            "peak_price": _p3_ltp, "peak_pts": 0.0,
-                                            "shadow_sl": _p3_sl_px, "shadow_level": "INITIAL",
-                                            "entry_tok": _p3_tok, "entry_strike": _p3_strike,
-                                            "vwap_gap_at_entry": round(_p3_fut_vwap_gap, 1),
-                                            "last_exit_pnl": 0.0, "last_exit_reason": "", "last_exit_ts": 0.0,
-                                        })
-                                        logger.info(
-                                            f"[SHADOW-P3] {_p3_dir} {_p3_strike} SIGNAL "
-                                            f"entry={_p3_ltp} sl={_p3_sl_px} "
-                                            f"ema9h_gap={_p3_gap:+.2f} bw={_p3_bw:.1f} "
-                                            f"rsi={_p3_rsi:.1f}↑ "
-                                            f"fut_vwap_gap={_p3_fut_vwap_gap:+.0f}(extreme)"
-                                        )
-                                        _save_shadow_state()
-                except Exception as _p3e:
-                    logger.warning(f"[SHADOW-P3] error: {_p3e}")
-
-            # Capture live entry price into per-direction shadow state
-            _live_dir = _v8_state.get("direction", "")
-            if (_live_dir in ("CE", "PE")
-                    and _v8_state.get("in_trade")
-                    and _v8_shadow_dt[_live_dir]["active"]
-                    and _v8_shadow_dt[_live_dir]["live_entry"] == 0):
-                _live_px = float(_v8_state.get("entry_price", 0))
-                _v8_shadow_dt[_live_dir]["live_entry"] = _live_px
-                _saved = round(_live_px - _v8_shadow_dt[_live_dir]["entry_price"], 1)
-                logger.info(
-                    f"[SHADOW-DTF] LIVE ENTRY {_live_dir} fired "
-                    f"shadow={_v8_shadow_dt[_live_dir]['entry_price']} live={_live_px} "
-                    f"saved={_saved:+.1f}pts ({'EARLIER ✓' if _saved > 0 else 'LATER or same'})"
-                )
+                            except Exception as _e_fire:
+                                logger.error(f"[V10] Error firing entry: {_e_fire}")
+                except Exception as _scanner_e:
+                    logger.warning(f"[V10 Scanner] error: {_scanner_e}")
 
             try:
                 _wm_warm, _wm_done, _wm_need, _wm_eta = _warmup_info(now, dte)
@@ -8326,11 +7118,6 @@ def _strategy_loop(kite):
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
-                    if not _is_initial_lock:
-                        _v8_shadow_dt["relock_ts"] = time.time()
-                        _shadow_analysis["CE"]["cross_buf"] = []
-                        _shadow_analysis["PE"]["cross_buf"] = []
-                        logger.info("[SHADOW-P1] Relock — cross_buf cleared")
 
                 dir_strikes = {"CE": _locked_ce_strike, "PE": _locked_pe_strike}
                 dir_tokens = dict(_locked_tokens)
@@ -8362,163 +7149,6 @@ def _strategy_loop(kite):
 
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
-
-                # ── RE-ENTRY WATCHER (V7: 2-candle window) ──
-                _re_armed = bool(state.get("_reentry_armed", False))
-                if _re_armed and not state.get("in_trade"):
-                    _re_dir   = str(state.get("_reentry_direction", "") or "")
-                    _re_token = int(state.get("_reentry_token", 0) or 0)
-                    _re_strike = int(state.get("_reentry_strike", 0) or 0)
-                    _re_exit_epoch = float(state.get("_reentry_exit_ts", 0) or 0)
-                    _re_attempts = int(state.get("_reentry_attempts", 0) or 0)
-                    _re_last_checked = float(state.get("_reentry_last_checked_epoch", 0) or 0)
-                    if _re_dir and _re_token and _re_exit_epoch > 0:
-                        try:
-                            _re_15m = D.add_indicators(
-                                D.get_historical_data(_re_token, "15minute", 30))
-                            if _re_15m is not None and len(_re_15m) >= 16:
-                                _re_last = _re_15m.iloc[-2]
-                                _re_close_dt = _re_last.name + timedelta(minutes=15)
-                                _re_close_epoch = _re_close_dt.timestamp()
-                                # Only check this candle once: must be after exit AND newer than last check
-                                if (_re_close_epoch > _re_exit_epoch
-                                    and _re_close_epoch > _re_last_checked):
-                                    with _state_lock:
-                                        state["_reentry_attempts"] = _re_attempts + 1
-                                        state["_reentry_last_checked_epoch"] = _re_close_epoch
-                                    _re_attempts += 1
-                                    _re_result = check_entry(
-                                        token=_re_token, option_type=_re_dir,
-                                        spot_ltp=spot_ltp, dte=dte,
-                                        expiry_date=expiry, kite=kite,
-                                        silent=False, state=state)
-                                    _passed = _re_result.get("fired", False)
-                                    # Body gate for V7 re-entry: require ≥ 20% body (no doji confirmation)
-                                    if _passed:
-                                        _re_body = float(_re_result.get("body_pct", 0) or 0)
-                                        if _re_body < 20:
-                                            _passed = False
-                                            _re_result["fired"] = False
-                                            _re_result["reject_reason"] = f"reentry_weak_body_{_re_body}pct"
-                                            logger.info(f"[REENTRY-V10] {_re_dir} body={_re_body}% < 20% — rejected")
-                                    if not _passed:
-                                        _why = _re_result.get("reject_reason", "?")
-                                        if _re_attempts >= 2:
-                                            # 2-candle window exhausted → disarm
-                                            _tg_send(
-                                                "🚫 <b>RE-ENTRY DROPPED</b>\n"
-                                                + _re_dir + " " + str(_re_strike)
-                                                + " — 2/2 candles failed (V7)\n"
-                                                "Last reason: " + str(_why) + "\n"
-                                                "Waiting for fresh setup."
-                                            )
-                                            logger.info("[REENTRY] window exhausted (2/2): " + str(_why))
-                                            with _state_lock:
-                                                state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = 0.0
-                                                state["_reentry_direction"] = ""
-                                                state["_reentry_token"] = 0
-                                                state["_reentry_strike"] = 0
-                                                state["_reentry_attempts"] = 0
-                                                state["_reentry_last_checked_epoch"] = 0.0
-                                        else:
-                                            _tg_send(
-                                                "⏳ <b>RE-ENTRY ATTEMPT 1/2 FAILED</b>\n"
-                                                + _re_dir + " " + str(_re_strike)
-                                                + " — Reason: " + str(_why) + "\n"
-                                                "Waiting next 15-min candle (1 more attempt)."
-                                            )
-                                            logger.info(f"[REENTRY] attempt {_re_attempts}/2 failed: " + str(_why))
-                                    else:
-                                        _re_result["entry_mode"] = "REENTRY"
-                                        _re_result["_strike"] = _re_strike
-                                        _re_result["_strike_label"] = "REENTRY"
-                                        _re_oi = {"token": _re_token, "symbol": ""}
-                                        try:
-                                            for _k, _v in (_locked_tokens or {}).items():
-                                                if int(_v.get("token", 0) or 0) == _re_token:
-                                                    _re_oi = {"token": _re_token,
-                                                              "symbol": _v.get("symbol", "")}; break
-                                            if not _re_oi.get("symbol") and kite and expiry and _re_strike:
-                                                _re_tk = D.get_option_tokens(kite, _re_strike, expiry) or {}
-                                                _re_si = _re_tk.get(_re_dir) or {}
-                                                if _re_si.get("symbol"):
-                                                    _re_oi["symbol"] = _re_si.get("symbol", "")
-                                        except Exception:
-                                            pass
-                                        _re_result["_symbol"] = _re_oi.get("symbol", "")
-                                        try:
-                                            _other_dt_re = "PE" if _re_dir == "CE" else "CE"
-                                            _other_oi_re = (_locked_tokens or {}).get(_other_dt_re) or {}
-                                            _other_tok_re = int(_other_oi_re.get("token", 0) or 0)
-                                            if _other_tok_re:
-                                                _other_3m_re = D.get_option_3min(_other_tok_re, lookback=10)
-                                                _xl_re_info = evaluate_cross_leg(_re_dir, _other_3m_re)
-                                                _re_result.update(_xl_re_info)
-                                        except Exception as _xre:
-                                            logger.debug("[XLEG][REENTRY] " + str(_xre))
-                                        _xl_gate_re = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
-                                        _xl_sig_re = _re_result.get("xleg_signal", "NA")
-                                        if _xl_gate_re and _xl_sig_re == "FAIL":
-                                            _tg_send(
-                                                "🚫 <b>RE-ENTRY BLOCKED — X-LEG FAIL</b>\n"
-                                                + _re_dir + " " + str(_re_strike) + " confirmation candle was good but x-leg said no."
-                                            )
-                                            with _state_lock:
-                                                state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = 0.0
-                                                state["_reentry_direction"] = ""
-                                                state["_reentry_token"] = 0
-                                                state["_reentry_strike"] = 0
-                                            continue
-                                        _saved_lex = state.get("last_exit_direction", "")
-                                        with _state_lock:
-                                            state["last_exit_direction"] = ""
-                                        _re_ltp_now = D.get_ltp(_re_token)
-                                        if _re_ltp_now <= 0:
-                                            _re_ltp_now = float(_re_last["close"])
-                                        ok, why = pre_entry_checks(
-                                            kite, _re_token, state,
-                                            _re_ltp_now, profile, session,
-                                            direction=_re_dir)
-                                        if not (ok and _re_oi.get("symbol")):
-                                            with _state_lock:
-                                                state["last_exit_direction"] = _saved_lex
-                                                state["_reentry_armed"] = False
-                                                state["_reentry_exit_ts"] = 0.0
-                                            logger.info("[REENTRY] pre-entry blocked: " + str(why))
-                                            continue
-                                        _re_close = float(_re_result.get("close", 0) or 0)
-                                        _tg_send(
-                                            "🔄 <b>V10 RE-ENTRY CONFIRMED " + _re_dir + " "
-                                            + str(_re_strike) + "</b>\n"
-                                            "Confirmation candle " + _re_close_dt.strftime("%H:%M")
-                                            + ": GREEN body "
-                                            + str(int(_re_result.get("body_pct", 0))) + "%\n"
-                                            "Filling at candle close Rs" + "{:.2f}".format(_re_close)
-                                        )
-                                        # V5 CLOSE FILL — re-entry at candle close, no wait
-                                        _re_result["entry_price"] = _re_close
-                                        _re_result["entry_mode"]  = "CLOSE_FILL"
-                                        logger.info("[CLOSE_FILL] RE-ENTRY " + _re_dir
-                                                    + " at candle close Rs" + str(_re_close))
-                                        with _state_lock:
-                                            state["_reentry_armed"] = False
-                                            state["_reentry_exit_ts"] = 0.0
-                                            state["_reentry_direction"] = ""
-                                            state["_reentry_token"] = 0
-                                            state["_reentry_strike"] = 0
-                                        _execute_entry(kite, _re_oi, _re_dir,
-                                                       _re_result, profile,
-                                                       expiry, dte, session)
-                                        if state.get("in_trade"):
-                                            D.mark_trade_taken(_re_dir)
-                                            time.sleep(0.5)
-                                            continue
-                        except Exception as _ree:
-                            import traceback as _tb_re
-                            logger.error("[REENTRY] check error: " + str(_ree)
-                                         + "\n" + _tb_re.format_exc())
 
                 # V7 15-min check_entry scan removed — V10 P1/P2 handles all entries
                 # V10 entry is handled above in the 10-second scan (outside 1-min gate)
@@ -8557,58 +7187,6 @@ def _strategy_loop(kite):
                 except Exception as _de:
                     logger.debug("[DASH] " + str(_de))
 
-                if best_result and best_opt_info:
-                    # V5 CLOSE FILL — enter at candle close (body high of green candle).
-                    # No pullback wait, no midpoint, no Option-B. Instant fill at close.
-                    _entry_close_x = float(best_result.get("close", 0) or 0)
-                    best_result["entry_price"] = _entry_close_x
-                    best_result["entry_mode"]  = "CLOSE_FILL"
-                    logger.info("[CLOSE_FILL] " + best_type + " entry at candle close Rs"
-                                + str(_entry_close_x))
-
-                if best_result and best_opt_info:
-                    _xl_signal = "NA"
-                    try:
-                        _other_dt = "PE" if best_type == "CE" else "CE"
-                        _other_oi = (_locked_tokens or {}).get(_other_dt) or {}
-                        _other_tok_xl = int(_other_oi.get("token", 0) or 0)
-                        if _other_tok_xl:
-                            _other_3m_xl = D.get_option_3min(_other_tok_xl, lookback=10)
-                            _xl_info = evaluate_cross_leg(best_type, _other_3m_xl)
-                            best_result.update(_xl_info)
-                            _xl_signal = _xl_info.get("xleg_signal", "NA")
-                            logger.info(
-                                "[XLEG] " + best_type + " entry — other "
-                                + _other_dt + " close=" + str(_xl_info.get("xleg_other_close"))
-                                + " ema9l=" + str(_xl_info.get("xleg_other_ema9l"))
-                                + " margin=" + "{:+.2f}".format(_xl_info.get("xleg_other_margin", 0))
-                                + " → " + str(_xl_signal)
-                            )
-                    except Exception as _xe:
-                        logger.debug("[XLEG] " + str(_xe))
-
-                    _xl_gate = bool(CFG.entry_ema9_band("xleg_gate_enabled", True))
-                    if _xl_gate and _xl_signal == "FAIL":
-                        _xl_other_dt = "PE" if best_type == "CE" else "CE"
-                        _xl_margin = float(best_result.get("xleg_other_margin", 0) or 0)
-                        _tg_send(
-                            "🚫 <b>X-LEG GATE — entry blocked</b>\n"
-                            + best_type + " " + str(best_result.get("_strike", 0))
-                            + "  | " + _xl_other_dt + " holding "
-                            + ("+" if _xl_margin >= 0 else "")
-                            + "{:.1f}".format(_xl_margin)
-                            + " above own EMA9L\n"
-                            "Backtest: blocking FAIL trades = +56 pts/5d"
-                        )
-                        logger.info("[XLEG-GATE] " + best_type
-                            + " blocked (FAIL signal) — waiting fresh setup")
-                        best_result = None
-                        best_opt_info = None
-                    _execute_entry(kite, best_opt_info, best_type,
-                                   best_result, profile, expiry, dte, session)
-                    if state.get("in_trade"):
-                        D.mark_trade_taken(best_type)
-
             if now.second % 10 < 2:
                 _update_dashboard_ltp()
 
@@ -8626,11 +7204,10 @@ def _strategy_loop(kite):
                         "in_trade": bool(_v8_state.get("in_trade")),
                         "direction": _v8_state.get("direction", ""),
                         "entry_price": _v8_state.get("entry_price", 0),
-                        "peak_pts": _v8_state.get("last_exit_peak", 0),
-                        "daily_trades": _v8_state.get("daily_trades", 0),
-                        "daily_pnl": _v8_state.get("daily_pnl", 0.0),
-                        "daily_losses": _v8_state.get("daily_losses", 0),
-                        "consecutive_losses": _v8_state.get("consecutive_losses", 0),
+                        "peak_pnl": _v8_state.get("peak_pnl", 0),
+                        "trades_today": _v8_state.get("_trades_today", 0),
+                        "pnl_today_pts": _v8_state.get("_pnl_today_pts", 0.0),
+                        "losses_today": _v8_state.get("_losses_today", 0),
                         "CE": {
                             "strike": int(_ce_info.get("strike", 0) or 0),
                             "ltp": round(D.get_ltp(_ce_tok), 2) if _ce_tok else 0,
@@ -8669,42 +7246,6 @@ def _strategy_loop(kite):
             _tb_str = _tb.format_exc()
             logger.error("[MAIN] Loop error: " + str(e) + "\n" + _tb_str)
             time.sleep(2)
-
-        # ── DELAY-ANALYSIS: snapshot LTP at +5s/+10s/+30s/+60s after P1/P2 signals ──
-        try:
-            _done_jobs = []
-            for _dj in _delay_jobs:
-                _elapsed = time.time() - _dj["fire_ts"]
-                _tok     = _dj["tok"]
-                for _delay in (5, 10, 30, 60):
-                    if _dj["snaps"][_delay] is None and _elapsed >= _delay:
-                        _snap_ltp  = D.get_ltp(_tok)
-                        _snap_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                        _dj["snaps"][_delay]      = _snap_ltp  if _snap_ltp  else 0.0
-                        _dj["spot_snaps"][_delay] = _snap_spot if _snap_spot else 0.0
-                # Timeout: discard jobs older than 2 min (prevent memory leak if LTP fails)
-                if _elapsed > 120 and not all(v is not None for v in _dj["snaps"].values()):
-                    _done_jobs.append(_dj); continue
-                if all(v is not None for v in _dj["snaps"].values()):
-                    _b   = _dj["base"]
-                    _sb  = _dj.get("spot_base", 0.0)
-                    _s5  = _dj["snaps"][5];  _sp5  = _dj["spot_snaps"][5]
-                    _s10 = _dj["snaps"][10]; _sp10 = _dj["spot_snaps"][10]
-                    _s30 = _dj["snaps"][30]; _sp30 = _dj["spot_snaps"][30]
-                    _s60 = _dj["snaps"][60]; _sp60 = _dj["spot_snaps"][60]
-                    logger.info(
-                        f"[DELAY-ANALYSIS] {_dj['label']} {_dj['strike']} "
-                        f"base={_b:.1f} spot_base={_sb:.0f} "
-                        f"+5s=opt{_s5:.1f}({_s5-_b:+.1f})spot{_sp5:.0f}({_sp5-_sb:+.0f}) "
-                        f"+10s=opt{_s10:.1f}({_s10-_b:+.1f})spot{_sp10:.0f}({_sp10-_sb:+.0f}) "
-                        f"+30s=opt{_s30:.1f}({_s30-_b:+.1f})spot{_sp30:.0f}({_sp30-_sb:+.0f}) "
-                        f"+60s=opt{_s60:.1f}({_s60-_b:+.1f})spot{_sp60:.0f}({_sp60-_sb:+.0f})"
-                    )
-                    _done_jobs.append(_dj)
-            for _dj in _done_jobs:
-                _delay_jobs.remove(_dj)
-        except Exception as _dae:
-            logger.debug("[DELAY-ANALYSIS] error: " + str(_dae))
 
         time.sleep(1)
 
@@ -8931,22 +7472,16 @@ def _cmd_pulse(args):
                + "Bias: " + str(state.get("daily_bias", "?")) + "\n"
                if _market else "💤 awaiting market open\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>V10 CONFIG (1-min P1+P2)</b>\n"
-            "EMA9H gap ≥ " + str(V10_MIN_EMA9H_GAP) + "  "
-            + "RSI " + str(V10_RSI_MIN) + "–" + str(V10_RSI_MAX) + " rising  "
-            + "BW ≥ " + str(V10_BW_MIN) + "\n"
-            "XLEG_CONFIRMED + LTP on correct VWAP side\n"
-            "VWAP dist gate: " + ("OFF" if V10_NEAR_VWAP_MAX == 0 else "≤" + str(V10_NEAR_VWAP_MAX)) + "\n"
-            "Cooldown: " + str(_cd) + "min BOTH sides\n"
+            "<b>V10 GOLDEN CONFIG (1-min)</b>\n"
+            "Gate 1: MOMENTUM  close > EMA9H\n"
+            "Gate 2: OPP DECAY opp margin [−5, −4]\n"
+            "Entry:  50/50 split-lot (Lot1 mkt, Lot2 limit at candle midpoint)\n"
+            "Lot 2 cancelled after 3 candles if not filled\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
-            "INITIAL  peak<12   entry-12\n"
-            "LOCK_4   peak≥12   entry+4\n"
-            "LOCK_12  peak≥24   entry+12\n"
-            "LOCK_20  peak≥30   entry+20\n"
-            "LOCK_30  peak≥36   entry+30\n"
-            "LOCK_36  peak≥40   entry+36\n"
-            "LOCK_50  peak≥50   entry+50\n"
+            "INITIAL    peak<12   ema9_low at entry\n"
+            "BREAKEVEN  peak≥12   max(ema9_low, entry)\n"
+            "TRAIL_10   peak≥18   max(ema9_low, entry, peak−10)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
@@ -9165,33 +7700,7 @@ def _cmd_forceexit(args):
             _v8_entry_px = float(_v8_state.get("entry_price", 0) or 0)
             _v8_state["_force_exit_ts"] = time.time()  # BUG-C fix: arm 3-min re-entry cooldown
 
-    # Close any active shadow P1/P2 signals
-    _shadow_closed = []
-    for _sd, _sd_label in [(_v8_shadow_dt, "P1"), (_v8_shadow_p2, "P2")]:
-        for _sdir in ("CE", "PE"):
-            _sds = _sd[_sdir]
-            if _sds.get("active"):
-                _stok = int(_sds.get("entry_tok", 0) or 0)
-                _sep  = float(_sds.get("entry_price", 0) or 0)
-                _sltp = D.get_ltp(_stok) if _stok else 0
-                _exit_px = _sltp if _sltp > 0 else _sep
-                _spnl = round(_exit_px - _sep, 1)
-                _speak = round(_sds.get("peak_pts", 0), 1)
-                _slvl = _sds.get("shadow_level", "INITIAL")
-                pass  # shadow force-exit TG removed
-                _sds.update({
-                    "active": False, "entry_price": 0.0, "entry_time": "",
-                    "peak_price": 0.0, "peak_pts": 0.0,
-                    "shadow_sl": 0.0, "shadow_level": "INITIAL",
-                    "last_exit_pnl": _spnl, "last_exit_reason": "FORCE-EXIT",
-                    "last_exit_ts": time.time(),
-                })
-                _shadow_closed.append(f"{_sd_label}-{_sdir}")
-                logger.warning(f"[CTRL] Force exit shadow {_sd_label} {_sdir} pnl={_spnl:+.1f}")
-    if _shadow_closed:
-        _save_shadow_state()
-
-    if not v7_open and not v8_open and not _shadow_closed:
+    if not v7_open and not v8_open:
         _tg_send("No open trade.")
         return
     if v7_open or v8_open:
@@ -9781,7 +8290,6 @@ def main():
 
     _load_state()
     _load_v8_state()
-    _load_shadow_state()
     _reconcile_positions(kite)
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
@@ -10537,57 +9045,48 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var entry=parseFloat(pos.entry||0);
     var ltp=parseFloat(pos.ltp||0);
     var sl=parseFloat(pos.sl||0);
-    var floor=parseFloat(pos.current_floor||0);
-    var rsi=parseFloat(pos.current_rsi||0);
     var candles=pos.candles||0;
-    var lot1=pos.lot1_active;
-    var lot2=pos.lot2_active;
-    var split=pos.lots_split;
-    var activeLots=(lot1?1:0)+(lot2?1:0);
-    var pnlRs=Math.round(pnl*(pos.lot_size||65)*activeLots);
+    var tier=pos.active_ratchet_tier||'INITIAL';
+    var lot1Qty=parseInt(pos.lot1_qty||0);
+    var lot1Entry=parseFloat(pos.lot1_entry||0);
+    var lot2Qty=parseInt(pos.lot2_qty||0);
+    var lot2Limit=parseFloat(pos.lot2_limit||0);
+    var lot2Entry=parseFloat(pos.lot2_entry||0);
+    var lot2Filled=!!pos.lot2_filled;
+    var lot2Cancelled=!!pos.lot2_cancelled;
+    var totalQty=lot1Qty+(lot2Filled?lot2Qty:0);
+    var avgEntry=lot2Filled?((lot1Entry*lot1Qty+lot2Entry*lot2Qty)/(lot1Qty+lot2Qty)):lot1Entry;
+    var pnlRs=Math.round(pnl*totalQty);
     var pnlClr=pnl>=0?'var(--gn)':'var(--rd)';
-    // RSI progress bar
-    var rsiPct=Math.min(100,(rsi/80)*100);
-    var rsiBarClr=rsi>=80?'var(--rd)':rsi>=75?'var(--am)':'var(--gn)';
-    // State label
-    var stateIcon,stateLabel;
-    if(!split){stateIcon='🟢';stateLabel=sym+' IN TRADE';}
-    else if(lot1&&lot2){stateIcon='⚡';stateLabel=sym+' SPLIT';}
-    else{stateIcon='🏃';stateLabel=sym+' LOT2 RIDING';}
     var posClr=pos.direction==='CE'?'rgba(59,130,246,.1)':'rgba(239,68,68,.08)';
     var posBd=pos.direction==='CE'?'rgba(59,130,246,.25)':'rgba(239,68,68,.2)';
     ph='<div class="pos" style="background:linear-gradient(135deg,'+posClr+',transparent);border:1px solid '+posBd+'">';
-    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">'+stateIcon+' '+esc(stateLabel)+'</div>';
+    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">🟢 '+esc(sym)+' V10 GOLDEN</div>';
     ph+='<div style="margin:3px 0"><span class="big" style="color:'+pnlClr+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'pts</span>';
     ph+=' <span style="color:#888;font-size:11px">&#x20B9;'+pnlRs.toLocaleString('en-IN')+'</span>';
-    ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry+' → &#x20B9;'+ltp+'</span></div>';
-    // RSI progress bar
-    ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
-    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
-    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 80)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
-    // 3-box status grid: SL / TIER / HELD
-    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:var(--am)">'+(pos.active_ratchet_tier||'—')+'</div></div>';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
-    ph+='</div>';
+    ph+='<span style="color:#555;font-size:10px;float:right">Avg &#x20B9;'+avgEntry.toFixed(1)+' → &#x20B9;'+ltp+'</span></div>';
     // Peak-captured progress bar
     var peakPct2=peak>0?Math.min(100,Math.max(0,(pnl/peak)*100)):0;
     var peakBarClr=peakPct2>=80?'var(--gn)':peakPct2>=50?'var(--am)':'var(--rd)';
     ph+='<div class="bar-label" style="margin-bottom:3px"><span>PEAK CAPTURED</span><span style="color:'+peakBarClr+'">'+peakPct2.toFixed(0)+'%  +'+peak.toFixed(1)+'pts</span></div>';
     ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
-    // Lot status
-    if(!split){
-      ph+='<div class="pos-lot">LOT1: '+(lot1?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
-      ph+='<div class="pos-lot">LOT2: '+(lot2?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
-    } else if(lot1&&lot2){
-      ph+='<div class="pos-lot">LOT1: <span style="color:var(--am)">Floor SL</span> &#x20B9;'+sl+'</div>';
-      ph+='<div class="pos-lot">LOT2: <span style="color:var(--cy)">ATR Trail</span> &#x20B9;'+sl+'</div>';
+    // 3-box status grid: SL / TIER / HELD
+    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
+    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='BREAKEVEN'?'var(--am)':'var(--rd)';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:'+tierClr+'">'+tier+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
+    ph+='</div>';
+    // Split lot status
+    ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 1 (Mkt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot1Entry.toFixed(1)+' × '+lot1Qty+'</div>';
+    if(lot2Filled){
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot2Entry.toFixed(1)+' × '+lot2Qty+'</div>';
+    } else if(lot2Cancelled){
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:#888">✕ Cancelled</span> (missed &#x20B9;'+lot2Limit.toFixed(1)+')</div>';
     } else {
-      ph+='<div class="pos-lot">Lot1: <span style="color:#555">SOLD</span> +'+peak.toFixed(1)+'pts ✅</div>';
-      ph+='<div class="pos-lot">LOT2: <span style="color:var(--cy)">ATR Trail</span> &#x20B9;'+sl+'</div>';
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--am)">⏳ Pending</span> &#x20B9;'+lot2Limit.toFixed(1)+' × '+lot2Qty+'</div>';
     }
-    ph+='<div class="pos-meta"><span>Peak: +'+(peak||0).toFixed(1)+'</span><span>RSI: '+rsi.toFixed(0)+'</span><span>'+candles+'min</span></div>';
+    ph+='<div class="pos-meta"><span>Peak: +'+(peak||0).toFixed(1)+'</span><span>Qty: '+totalQty+'</span><span>'+candles+'min</span></div>';
     ph+='</div>';
   }
 
@@ -10655,7 +9154,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — P1/P2 (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
-    // ── LIVE GATE MONITOR — watch each side approach the thresholds ──
+    // ── LIVE GATE MONITOR — V10 Golden Strategy ──
     (function(){
       var lv=sh.live||{};
       function pill(label,val,ok){
@@ -10671,17 +9170,18 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
         h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
         h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+((o&&o.price)?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">₹'+o.price+'</span>':'');
-        if(!o||o.gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
+        if(!o||o.momentum_gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
         if(o.ready)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px;box-shadow:0 0 0 0 rgba(10,122,80,.5);animation:pulse 1.3s infinite">● READY</span>';
         else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.reject||'wait')+'</span>';
         h+='</div><div style="display:flex;gap:6px">';
-        h+=pill('GAP',(o.gap_ok?'✓ ':'')+o.gap,o.gap_ok);
-        h+=pill('RSI',o.rsi+(o.rsi_rising?' ↑':' ↓'),o.rsi_ok);
-        h+=pill('BW',(o.bw_ok?'✓ ':'')+o.bw,o.bw_ok);
+        var mg=parseFloat(o.momentum_gap||0);
+        var dm=parseFloat(o.decay_margin||0);
+        h+=pill('MOMENTUM',(o.momentum_ok?'✓ ':'')+(mg>=0?'+':'')+mg.toFixed(1),o.momentum_ok);
+        h+=pill('OPP DECAY',(o.decay_ok?'✓ ':'')+dm.toFixed(1),o.decay_ok);
         return h+'</div></div>';
       }
       html+='<div style="margin:2px 10px 9px">';
-      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ LIVE GATES &nbsp;·&nbsp; need gap≥3.5 · RSI 55-80↑ · BW≥5</div>';
+      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H · Opp Decay -5 to -4</div>';
       html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+card('CE',lv.CE)+card('PE',lv.PE)+'</div>';
       html+='</div>';
     })();
