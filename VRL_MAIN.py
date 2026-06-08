@@ -9140,85 +9140,40 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
   document.getElementById('position-area').innerHTML=ph;
 
   // ── SIGNAL TAB ──
-  document.getElementById('p-sig').innerHTML=
-    renderShadow(window._shadow||{});
-
-  function renderShadow(sh){
-    if(!sh||!sh.p1)return'';
-    function sCard(type,label,sig){
-      if(!sig)return'';
-      var act=sig.active;
-      var bclr=act?'var(--gn)':'#bbb';
-      var btxt=act?'● LIVE':'○ idle';
-      var pclr=(sig.peak_pts||0)>=0?'var(--gn)':'var(--rd)';
-      var h='<div class="sect" style="padding:8px 10px;opacity:'+(act?1:0.55)+'">';
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-      h+='<span style="font-weight:700;font-size:11px;color:var(--tx)">'+type+' '+label+'</span>';
-      h+='<span style="font-size:9px;font-weight:700;color:'+bclr+'">'+btxt+'</span></div>';
-      if(act){
-        if(sig.entry_strike)h+='<div class="row"><div class="k">STRIKE</div><div class="v">'+sig.entry_strike+'</div></div>';
-        h+='<div class="row"><div class="k">ENTRY</div><div class="v">₹'+sig.entry_price.toFixed(1)+(sig.entry_time?' @ '+sig.entry_time:'')+'</div></div>';
-        h+='<div class="row"><div class="k">PEAK</div><div class="v" style="color:'+pclr+'">'+(sig.peak_pts>=0?'+':'')+sig.peak_pts.toFixed(1)+' pts  (₹'+sig.peak_price.toFixed(1)+')</div></div>';
-        h+='<div class="row"><div class="k">SL</div><div class="v">₹'+sig.shadow_sl.toFixed(1)+'  •  '+esc(sig.shadow_level||'—')+'</div></div>';
-        if(sig.today_entry)h+='<div class="row"><div class="k">TODAY FIRST</div><div class="v">₹'+sig.today_entry.toFixed(1)+'</div></div>';
-      } else {
-        var outcome='';var outClr='#999';
-        if(sig.last_exit_reason&&sig.today_entry>0){
-          var lp=sig.last_exit_pnl||0;
-          outClr=lp>0?'var(--gn)':(lp<0?'var(--rd)':'#999');
-          var rtag=sig.last_exit_reason==='SL-HIT'?(lp>=0?'TRAIL':'SL'):sig.last_exit_reason;
-          outcome=(lp>=0?'+':'')+lp.toFixed(0)+' '+rtag;
-        } else if(sig.sl_ts>0&&sig.today_entry>0){outcome='SL-HIT';outClr='var(--rd)';}
-        else if(sig.exit_ts>0&&sig.today_entry>0){outcome='EXITED';outClr='var(--am)';}
-        if(sig.today_entry)h+='<div class="row"><div class="k">LAST ENTRY</div><div class="v" style="color:#999">₹'+sig.today_entry.toFixed(1)+(outcome?' <span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.08);color:'+outClr+'">'+outcome+'</span>':'')+'</div></div>';
-        else h+='<div style="font-size:10px;color:#aaa;padding:2px 0">No signal today</div>';
-      }
-      h+='</div>';
-      return h;
+  (function(){
+    function pill(label,val,ok){
+      var c=ok?'var(--gn)':'var(--rd)';
+      var bg=ok?'rgba(10,122,80,.10)':'rgba(192,57,43,.07)';
+      var bd=ok?'rgba(10,122,80,.30)':'rgba(192,57,43,.20)';
+      return '<div style="flex:1;text-align:center;padding:6px 2px;border-radius:10px;background:'+bg+';border:1px solid '+bd+'">'
+        +'<div style="font-size:8px;font-weight:700;color:var(--dm);letter-spacing:.6px">'+label+'</div>'
+        +'<div style="font-size:15px;font-weight:800;color:'+c+';line-height:1.25">'+val+'</div></div>';
     }
-    var p1=sh.p1||{};var p2=sh.p2||{};
-    var hasAny=(p1.CE&&p1.CE.active)||(p1.PE&&p1.PE.active)||(p2.CE&&p2.CE.active)||(p2.PE&&p2.PE.active);
-    var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
+    function gateCard(side,o){
+      var acc=side==='CE'?'var(--gn)':'var(--rd)';
+      var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+(o&&o.ltp?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">&#x20B9;'+o.ltp+'</span>':'');
+      if(!o||o.momentum_gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
+      if(o.fired)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px">● READY</span>';
+      else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.verdict||'wait')+'</span>';
+      h+='</div><div style="display:flex;gap:6px">';
+      var mg=parseFloat(o.momentum_gap||0);
+      var dm2=parseFloat(o.decay_margin||0);
+      h+=pill('MOMENTUM',(o.momentum_ok?'✓ ':'')+(mg>=0?'+':'')+mg.toFixed(1),o.momentum_ok);
+      h+=pill('OPP DECAY',(o.decay_ok?'✓ ':'')+dm2.toFixed(1),o.decay_ok);
+      return h+'</div></div>';
+    }
+    var anyReady=(ce.fired||pe.fired);
+    var dot=anyReady?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px"></span>':'';
     var html='<div style="margin:8px 8px 0">';
-    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — Golden (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
-    // ── LIVE GATE MONITOR — V10 Golden Strategy ──
-    (function(){
-      var lv=sh.live||{};
-      function pill(label,val,ok){
-        var c=ok?'var(--gn)':'var(--rd)';
-        var bg=ok?'rgba(10,122,80,.10)':'rgba(192,57,43,.07)';
-        var bd=ok?'rgba(10,122,80,.30)':'rgba(192,57,43,.20)';
-        return '<div style="flex:1;text-align:center;padding:6px 2px;border-radius:10px;background:'+bg+';border:1px solid '+bd+'">'
-          +'<div style="font-size:8px;font-weight:700;color:var(--dm);letter-spacing:.6px">'+label+'</div>'
-          +'<div style="font-size:15px;font-weight:800;color:'+c+';line-height:1.25">'+val+'</div></div>';
-      }
-      function card(side,o){
-        var acc=side==='CE'?'var(--gn)':'var(--rd)';
-        var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
-        h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-        h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+((o&&o.price)?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">₹'+o.price+'</span>':'');
-        if(!o||o.momentum_gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
-        if(o.ready)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px;box-shadow:0 0 0 0 rgba(10,122,80,.5);animation:pulse 1.3s infinite">● READY</span>';
-        else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.reject||'wait')+'</span>';
-        h+='</div><div style="display:flex;gap:6px">';
-        var mg=parseFloat(o.momentum_gap||0);
-        var dm=parseFloat(o.decay_margin||0);
-        h+=pill('MOMENTUM',(o.momentum_ok?'✓ ':'')+(mg>=0?'+':'')+mg.toFixed(1),o.momentum_ok);
-        h+=pill('OPP DECAY',(o.decay_ok?'✓ ':'')+dm.toFixed(1),o.decay_ok);
-        return h+'</div></div>';
-      }
-      html+='<div style="margin:2px 10px 9px">';
-      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H · Opp Decay -5 to -4</div>';
-      html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+card('CE',lv.CE)+card('PE',lv.PE)+'</div>';
-      html+='</div>';
-    })();
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-    html+=sCard('P1','CE',p1.CE)+sCard('P1','PE',p1.PE);
-    html+=sCard('P2','CE',p2.CE)+sCard('P2','PE',p2.PE);
-    html+='</div>';
-    html+='</div>';
-    return html;
-  }
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — Golden (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
+    html+='<div style="margin:2px 10px 9px">';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H &nbsp;·&nbsp; Opp Decay [−5, −4]</div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
+    html+='</div></div>';
+    document.getElementById('p-sig').innerHTML=html;
+  })();
 
   // ── MARKET TAB ──
   let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
@@ -9526,8 +9481,7 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t,z,mtf,sh]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]})),fetch('/api/shadow').then(r=>r.json()).catch(e=>({}))]);
-    window._shadow=sh||{};
+    const[d,t,z,mtf]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]}))]);
     render(d||{},t||[],z||{zones:[]},mtf||{});
     if(_curTab==='fno')renderFno();
     if(_curTab==='wkly')renderWeekly();
