@@ -4287,7 +4287,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["active_ratchet_tier"]   = "INITIAL"
         _v8_state["peak_ltp"]              = entry_price
         _v8_state["peak_pnl"]              = 0.0
-        _v8_state["entry_regime"]          = entry_result.get("entry_mode", "V10_P1")
+        _v8_state["entry_regime"]          = entry_result.get("entry_mode") or ("V10_CE" if direction == "CE" else "V10_PE")
         _v8_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
 
         # Data collection fields
