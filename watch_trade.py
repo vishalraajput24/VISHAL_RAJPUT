@@ -3,11 +3,13 @@
 watch_trade.py — standalone live trade alignment watcher
 Runs forever with no Claude Code dependency.
 Polls state/dashboard/log every 2s (in trade) or 10s (idle).
+Cross-checks state.json vs dashboard.json vs Telegram log.
 Logs mismatches to ~/lab_data/trade_audit_notes.md.
 
 Usage:
-    python3 watch_trade.py
-    python3 watch_trade.py &   # background
+    python3 watch_trade.py          # foreground
+    python3 watch_trade.py &        # background
+    nohup python3 watch_trade.py &  # persistent background
 """
 
 import csv
@@ -45,15 +47,18 @@ def _file_age(path):
     except Exception:
         return 9999
 
-def _last_tg_lines(n=80):
+def _tail_log(n=200):
+    """Return last n lines of vrl_live.log."""
     try:
-        result = subprocess.run(
-            ["tail", "-n", str(n), str(LOG_FILE)],
-            capture_output=True, text=True
-        )
-        return [l for l in result.stdout.splitlines() if "[TG] sent" in l]
+        r = subprocess.run(["tail", "-n", str(n), str(LOG_FILE)],
+                           capture_output=True, text=True)
+        return r.stdout.splitlines()
     except Exception:
         return []
+
+def _tg_lines(n=200):
+    """Return only [TG] sent ok lines from the last n log lines."""
+    return [l for l in _tail_log(n) if "[TG] sent" in l and "sent ok" in l]
 
 def _last_csv_row():
     try:
@@ -63,10 +68,11 @@ def _last_csv_row():
     except Exception:
         return {}
 
-def _expected_sl(peak_pnl, initial_sl, entry_price, peak_ltp=None):
+def _expected_sl(peak_pnl, initial_sl, entry_price):
+    """V10 Golden 3-tier SL formula."""
     if peak_pnl >= 18.0:
-        p = peak_ltp if peak_ltp and peak_ltp > 0 else (entry_price + peak_pnl)
-        sl = max(initial_sl, entry_price, p - 10.0)
+        peak_ltp = entry_price + peak_pnl
+        sl = max(initial_sl, entry_price, peak_ltp - 10.0)
         return round(sl, 2), "TRAIL_10"
     elif peak_pnl >= 12.0:
         sl = max(initial_sl, entry_price)
@@ -85,53 +91,100 @@ def _append_audit(lines):
 def _ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+# ── TG event parser ───────────────────────────────────────────────────────────
+
+class TGEvents:
+    """
+    Parse [TG] sent ok lines from the log.
+    Bot logs first 60 chars of each TG message (newlines replaced with spaces).
+
+    Known message prefixes:
+      Entry   : "🟢/🔴 V10 GOLDEN ENTRY CE/PE <strike>"
+      Exit    : "⚡ V10 GOLDEN EXIT CE/PE <strike>"
+      SL Up   : "⚡ V10 SL UPGRADED → BREAKEVEN/TRAIL_10"
+      Lot2 Fill: "⚡ V10 Lot 2 Filled"
+      Lot2 Cxl : "⚠️ V10 Lot 2 Cancelled"
+    """
+
+    def __init__(self, lines):
+        self.lines = lines  # all [TG] sent ok lines
+
+    def _match(self, pattern):
+        """Return all lines matching pattern (most-recent first)."""
+        return [l for l in reversed(self.lines) if re.search(pattern, l)]
+
+    def entry_sent(self, direction, strike):
+        """Was an entry TG sent for this direction+strike?"""
+        pattern = rf"V10 GOLDEN ENTRY {direction} {strike}"
+        return bool(self._match(pattern))
+
+    def exit_sent(self, direction, strike):
+        """Was an exit TG sent for this direction+strike?"""
+        pattern = rf"V10 GOLDEN EXIT {direction} {strike}"
+        return bool(self._match(pattern))
+
+    def sl_upgrade_sent(self, tier):
+        """Was an SL upgrade TG sent for this tier today?"""
+        pattern = rf"V10 SL UPGRADED.*{tier}"
+        return bool(self._match(pattern))
+
+    def lot2_filled_sent(self):
+        pattern = r"V10 Lot 2 Filled"
+        return bool(self._match(pattern))
+
+    def lot2_cancelled_sent(self):
+        pattern = r"V10 Lot 2 Cancelled"
+        return bool(self._match(pattern))
+
+    def exit_reason_from_tg(self, direction, strike):
+        """Try to extract exit reason from exit TG line."""
+        hits = self._match(rf"V10 GOLDEN EXIT {direction} {strike}")
+        if not hits:
+            return None
+        # log line: "... sent ok — ⚡ V10 GOLDEN EXIT CE 23100 ━━━━━━━━━━━━━━━━━━━━━━━━━━━ EMERGENCY_SL ..."
+        # but it's cut at 60 chars so reason may not be present
+        for reason in ("EMERGENCY_SL", "BREAKEVEN", "VISHAL_TRAIL", "EOD_EXIT", "MARKET_CLOSE"):
+            if reason in hits[0]:
+                return reason
+        return "UNKNOWN"
+
 # ── alignment audit ───────────────────────────────────────────────────────────
 
-def _audit(st, dash):
-    pos     = dash.get("position", {})
-    bugs    = []
-    summary = []
+def _audit(st, dash, tg_events):
+    pos  = dash.get("position", {})
+    bugs = []
+    info = []
 
     direction  = st.get("direction", "")
-    strike     = st.get("strike", 0)
-    symbol     = st.get("symbol", "")
+    strike     = int(st.get("strike", 0) or 0)
     entry      = float(st.get("entry_price", 0))
     peak       = float(st.get("peak_pnl", 0))
     initial_sl = float(st.get("initial_sl", 0))
     tier       = st.get("active_ratchet_tier", "")
     sl         = float(st.get("active_ratchet_sl", 0))
-    candles    = st.get("candles_held", 0)
+    candles    = int(st.get("candles_held", 0) or 0)
     lot2f      = bool(st.get("lot2_filled", False))
     lot2c      = bool(st.get("lot2_cancelled", False))
 
     # ── expected SL tier from V10 formula ──
     exp_sl, exp_tier = _expected_sl(peak, initial_sl, entry)
 
-    # ── last TG entry alert (grep for direction+strike) ──
-    tg_lines = _last_tg_lines()
-    tg_entry_price = None
-    for line in reversed(tg_lines):
-        m = re.search(r"Entry.*?(\d+\.\d+)|₹(\d+\.\d+)", line)
-        if m and (str(strike) in line or direction in line):
-            tg_entry_price = float(m.group(1) or m.group(2))
-            break
-
-    # ── dashboard age check ──
+    # ── dashboard staleness ──
     age = _file_age(DASH_FILE)
     if age > 60:
         bugs.append(f"  - STALE: dashboard.json not updated for {int(age)}s")
 
-    # ── field comparisons ──
+    # ── state vs dashboard field checks ──
     checks = [
-        ("strike",    strike,    pos.get("strike", 0),              0),
-        ("direction", direction, pos.get("direction", ""),          None),
-        ("entry",     entry,     float(pos.get("entry", 0)),        0.1),
-        ("peak_pnl",  round(peak,1), round(float(pos.get("peak",0)),1), 0.5),
-        ("sl_price",  sl,        float(pos.get("sl", 0)),           0.1),
-        ("sl_tier",   tier,      pos.get("active_ratchet_tier",""), None),
-        ("candles",   candles,   pos.get("candles", 0),             0),
-        ("lot2_filled",   lot2f, bool(pos.get("lot2_filled", False)),   None),
-        ("lot2_cancelled",lot2c, bool(pos.get("lot2_cancelled",False)), None),
+        ("strike",          strike,       int(pos.get("strike", 0) or 0),       0),
+        ("direction",       direction,    pos.get("direction", ""),              None),
+        ("entry_price",     entry,        float(pos.get("entry", 0)),            0.1),
+        ("peak_pnl",        round(peak,1),round(float(pos.get("peak",0)),1),     0.5),
+        ("sl_price",        sl,           float(pos.get("sl", 0)),               0.1),
+        ("sl_tier",         tier,         pos.get("active_ratchet_tier",""),     None),
+        ("candles_held",    candles,      int(pos.get("candles", 0) or 0),       0),
+        ("lot2_filled",     lot2f,        bool(pos.get("lot2_filled", False)),   None),
+        ("lot2_cancelled",  lot2c,        bool(pos.get("lot2_cancelled",False)), None),
     ]
 
     for field, s_val, d_val, tol in checks:
@@ -142,61 +195,88 @@ def _audit(st, dash):
                 match = abs(float(s_val) - float(d_val)) <= tol
             except Exception:
                 match = (s_val == d_val)
-        status = "✓" if match else "✗ MISMATCH"
-        summary.append(f"  {status:12} {field:20} state={s_val!r:20} dash={d_val!r}")
+        mark = "✓" if match else "✗"
+        info.append(f"  {mark} {field:22} state={str(s_val):18} dash={d_val!r}")
         if not match:
             bugs.append(f"  - BUG: {field} — state={s_val!r} dash={d_val!r}")
 
     # ── SL tier logic check ──
     if tier and tier != exp_tier:
-        bugs.append(f"  - BUG: sl_tier logic — state={tier!r} expected={exp_tier!r} (peak={peak})")
-    elif tier:
-        summary.append(f"  {'✓':12} {'sl_tier_logic':20} state={tier!r} expected={exp_tier!r}")
+        bugs.append(f"  - BUG: sl_tier logic — state={tier!r} expected={exp_tier!r} (peak={peak:.1f})")
+    else:
+        info.append(f"  ✓ {'sl_tier_logic':22} state={tier!r} expected={exp_tier!r}")
 
-    # ── TG entry price check ──
-    if tg_entry_price is not None:
-        diff = abs(tg_entry_price - entry)
-        if diff > 0.5:
-            bugs.append(f"  - BUG: entry_price — state={entry} tg_last_seen={tg_entry_price}")
+    # ── TG cross-checks ──
+    # 1. Entry alert
+    if not tg_events.entry_sent(direction, strike):
+        bugs.append(f"  - BUG: TG entry alert NOT found for {direction} {strike}")
+    else:
+        info.append(f"  ✓ {'tg_entry_alert':22} found for {direction} {strike}")
+
+    # 2. SL tier upgrade alerts
+    if tier in ("BREAKEVEN", "TRAIL_10"):
+        if not tg_events.sl_upgrade_sent(tier):
+            bugs.append(f"  - BUG: TG SL upgrade alert NOT found for {tier} (state shows {tier})")
         else:
-            summary.append(f"  {'✓':12} {'tg_entry':20} state={entry} tg={tg_entry_price}")
+            info.append(f"  ✓ {'tg_sl_upgrade':22} found for {tier}")
 
-    # ── lot2 mutual exclusion ──
+    # 3. Lot 2 events
+    if lot2f and not tg_events.lot2_filled_sent():
+        bugs.append(f"  - BUG: state lot2_filled=True but TG Lot2 Filled alert NOT found")
+    elif lot2f:
+        info.append(f"  ✓ {'tg_lot2_filled':22} alert present")
+
+    if lot2c and not tg_events.lot2_cancelled_sent():
+        bugs.append(f"  - BUG: state lot2_cancelled=True but TG Lot2 Cancelled alert NOT found")
+    elif lot2c:
+        info.append(f"  ✓ {'tg_lot2_cancelled':22} alert present")
+
+    # 4. Lot2 mutual exclusion
     if lot2f and lot2c:
         bugs.append(f"  - BUG: lot2 both filled=True AND cancelled=True simultaneously")
 
-    return summary, bugs
+    return info, bugs
 
 # ── reconcile on exit ─────────────────────────────────────────────────────────
 
-def _reconcile(prev_st):
+def _reconcile(prev_st, tg_events):
     row = _last_csv_row()
-    if not row:
-        return ["  - WARN: no CSV row found to reconcile"]
-
     lines = []
-    entry   = float(prev_st.get("entry_price", 0))
-    peak    = float(prev_st.get("peak_pnl", 0))
-    strike  = prev_st.get("strike", 0)
-    regime  = prev_st.get("entry_regime", "")
 
-    csv_entry  = float(row.get("entry_price", 0))
-    csv_exit   = float(row.get("exit_price", 0))
-    csv_pnl    = float(row.get("pnl_pts", 0))
-    csv_regime = row.get("entry_mode", "")
-    csv_reason = row.get("exit_reason", "")
+    direction = prev_st.get("direction", "")
+    strike    = int(prev_st.get("strike", 0) or 0)
+    entry     = float(prev_st.get("entry_price", 0))
+    peak      = float(prev_st.get("peak_pnl", 0))
 
-    exp_pnl = round(csv_exit - csv_entry, 2)
+    if not row:
+        lines.append("  - WARN: no CSV row found to reconcile")
+    else:
+        csv_entry  = float(row.get("entry_price", 0))
+        csv_exit   = float(row.get("exit_price", 0))
+        csv_pnl    = float(row.get("pnl_pts", 0))
+        csv_regime = row.get("entry_mode", "")
+        csv_reason = row.get("exit_reason", "")
+        exp_pnl    = round(csv_exit - csv_entry, 2)
 
-    lines.append(f"  CSV row: strike={row.get('strike')} entry={csv_entry} exit={csv_exit} pnl={csv_pnl} reason={csv_reason}")
+        lines.append(f"  CSV: strike={row.get('strike')} entry={csv_entry} "
+                     f"exit={csv_exit} pnl={csv_pnl} reason={csv_reason} mode={csv_regime}")
 
-    if abs(csv_entry - entry) > 0.5:
-        lines.append(f"  - BUG: entry mismatch — state={entry} csv={csv_entry}")
-    if abs(csv_pnl - exp_pnl) > 0.5:
-        lines.append(f"  - BUG: pnl_pts mismatch — csv_pnl={csv_pnl} calc={exp_pnl} (exit-entry)")
-    if regime and csv_regime and csv_regime not in ("V10_CE", "V10_PE"):
-        lines.append(f"  - BUG: entry_mode stale — csv={csv_regime!r} (expected V10_CE/V10_PE)")
-    if not lines[1:]:
+        if abs(csv_entry - entry) > 0.5:
+            lines.append(f"  - BUG: entry mismatch — state={entry} csv={csv_entry}")
+        if abs(csv_pnl - exp_pnl) > 0.5:
+            lines.append(f"  - BUG: pnl_pts mismatch — csv={csv_pnl} calc={exp_pnl} (exit-entry)")
+        if csv_regime and csv_regime not in ("V10_CE", "V10_PE"):
+            lines.append(f"  - BUG: entry_mode stale — csv={csv_regime!r} (expected V10_CE or V10_PE)")
+
+    # TG exit alert check
+    if not tg_events.exit_sent(direction, strike):
+        lines.append(f"  - BUG: TG exit alert NOT found for {direction} {strike}")
+    else:
+        tg_reason = tg_events.exit_reason_from_tg(direction, strike)
+        csv_reason_check = row.get("exit_reason", "") if row else ""
+        lines.append(f"  ✓ TG exit alert found — tg_reason={tg_reason!r} csv_reason={csv_reason_check!r}")
+
+    if not [l for l in lines if "BUG" in l]:
         lines.append("  RECONCILE: CLEAN — all fields match")
 
     return lines
@@ -204,13 +284,14 @@ def _reconcile(prev_st):
 # ── main loop ─────────────────────────────────────────────────────────────────
 
 def main():
-    print(f"[{_ts()}] watch_trade.py started — audit log: {AUDIT_FILE}")
+    print(f"[{_ts()}] watch_trade.py started — audit: {AUDIT_FILE}")
     prev_in_trade = False
     prev_st       = {}
 
     while True:
         st   = _read_json(STATE_FILE)
         dash = _read_json(DASH_FILE)
+        tg   = TGEvents(_tg_lines(300))
 
         in_trade = bool(st.get("in_trade", False))
 
@@ -219,24 +300,27 @@ def main():
             direction = st.get("direction", "?")
             strike    = st.get("strike", 0)
             entry     = st.get("entry_price", 0)
-            msg = f"\n## {_ts()} — ENTRY {direction} {strike} @ {entry}"
-            print(msg)
-            _append_audit([
-                msg,
+            block = [
+                f"\n## {_ts()} — ENTRY {direction} {strike} @ {entry}",
                 f"  lot1_qty={st.get('lot1_qty')}  lot1_entry={st.get('lot1_entry')}",
                 f"  lot2_qty={st.get('lot2_qty')}  lot2_limit={st.get('lot2_limit')}  lot2_filled={st.get('lot2_filled')}",
                 f"  initial_sl={st.get('initial_sl')}  entry_regime={st.get('entry_regime')}",
-            ])
+                f"  tg_entry_alert={'FOUND' if tg.entry_sent(direction, strike) else 'MISSING ← BUG'}",
+            ]
+            print("\n".join(block))
+            _append_audit(block)
 
-        # ── in trade: run alignment audit ──
+        # ── in trade: alignment audit ──
         if in_trade:
-            summary, bugs = _audit(st, dash)
+            info, bugs = _audit(st, dash, tg)
             peak = float(st.get("peak_pnl", 0))
             tier = st.get("active_ratchet_tier", "")
             sl   = float(st.get("active_ratchet_sl", 0))
-            print(f"[{_ts()}] IN TRADE {st.get('direction')} {st.get('strike')}  "
-                  f"peak={peak:+.1f}  tier={tier}  sl={sl}  "
-                  f"lot2={'FILLED' if st.get('lot2_filled') else 'CANCEL' if st.get('lot2_cancelled') else 'PENDING'}")
+            lot2_status = ("FILLED" if st.get("lot2_filled") else
+                           "CANCELLED" if st.get("lot2_cancelled") else "PENDING")
+            print(f"[{_ts()}] {st.get('direction')} {st.get('strike')}  "
+                  f"peak={peak:+.1f}  tier={tier}  sl={sl:.1f}  lot2={lot2_status}"
+                  + (f"  ⚠ {len(bugs)} BUG(s)" if bugs else "  ✓"))
 
             if bugs:
                 block = [f"\n## {_ts()} — AUDIT {st.get('direction')} {st.get('strike')}"] + bugs
@@ -248,7 +332,7 @@ def main():
         if prev_in_trade and not in_trade:
             msg = f"\n## {_ts()} — EXIT (reconcile)"
             print(msg)
-            rec = _reconcile(prev_st)
+            rec = _reconcile(prev_st, TGEvents(_tg_lines(300)))
             _append_audit([msg] + rec)
             for r in rec:
                 print(r)
@@ -257,7 +341,7 @@ def main():
         if not in_trade:
             trades = st.get("_trades_today", 0)
             pnl    = st.get("_pnl_today_pts", 0.0)
-            print(f"[{_ts()}] idle — trades_today={trades}  pnl_today={pnl:+.1f}pts")
+            print(f"[{_ts()}] idle — trades={trades}  pnl={pnl:+.1f}pts")
 
         prev_in_trade = in_trade
         prev_st       = st
