@@ -90,7 +90,7 @@ Only `vrl-main.service` runs (port 8080). `vrl-web.service` was retired 2026-06-
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
-**Trade CSV**: `~/lab_data/vrl_trade_log.csv` (`entry_mode` = `V10_CE` / `V10_PE`; paper fills tagged `PAPER_*`)
+**Trade CSV**: `~/lab_data/vrl_trade_log.csv` (`entry_mode` = `V10_CE` / `V10_PE`; paper fills tagged `PAPER_*`; `spot_regime` = 3-min EMA regime at fire time — analysis only, not a gate)
 
 ### Deploy after any main merge
 ```bash
@@ -112,7 +112,7 @@ Fields currently in `_V8_PERSIST_FIELDS`:
 `_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
 `initial_sl`, `entry_regime`, `lot1_qty`, `lot1_entry`,
 `lot2_qty`, `lot2_limit`, `lot2_entry`, `lot2_filled`, `lot2_cancelled`,
-`peak_ltp`, `xleg_other_margin`
+`peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`
 
 ---
 
