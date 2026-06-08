@@ -9167,7 +9167,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
       var stk=(o&&o.strike>0)?o.strike:(side==='CE'?(mk.locked_ce||mk.atm||0):(mk.locked_pe||mk.atm||0));
       var ltpTxt=(o&&o.ltp>0)?('&#x20B9;'+o.ltp):'&#x20B9;&#x2014;';
-      h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+(stk?' '+stk:'')+'</span>'+'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">'+ltpTxt+'</span>';
+      h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+' '+(stk||'&#x2014;')+'</span>'+'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">'+ltpTxt+'</span>';
       if(!o||o.ltp===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
       if(o.fired)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px">● READY</span>';
       else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.verdict||'wait')+'</span>';
