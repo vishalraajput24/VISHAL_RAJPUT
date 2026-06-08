@@ -4872,12 +4872,12 @@ def _load_v8_state():
                 "⚡ <b>V10 restarted mid-trade</b>\n"
                 + _emj + " " + _dir + " " + _strk + " · qty " + str(_qty) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Entry  Rs" + "{:.2f}".format(_ep) + "  @ " + _etime + "\n"
-                + ("LTP    Rs" + "{:.2f}".format(_ltp)
+                "Entry  ₹" + "{:.2f}".format(_ep) + "  @ " + _etime + "\n"
+                + ("LTP    ₹" + "{:.2f}".format(_ltp)
                    + "  (" + ("+" if _pnl >= 0 else "") + str(_pnl) + " pts)\n" if _ltp else "LTP    — (no tick yet)\n")
                 + "Peak   +" + "{:.1f}".format(_peak) + " pts\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Tier   " + _tier + " · SL Rs" + "{:.2f}".format(_sl)
+                "Tier   " + _tier + " · SL ₹" + "{:.2f}".format(_sl)
                 + ("  (Room " + ("+" if _room >= 0 else "") + str(_room) + ")" if _ltp else "") + "\n"
                 "✅ Exit monitoring resumed."
             )
@@ -5450,7 +5450,7 @@ def _alert_bot_started():
     _acct_line = ""
     if _acct.get("name"):
         _acct_line = ("Account : " + _acct["name"] + "\n"
-                      "Balance : Rs" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
+                      "Balance : ₹" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n")
     try:
         _ms_line = "Orders  : " + MSTOCK.ms_get_banner_line() + "\n"
     except Exception:
@@ -5480,7 +5480,7 @@ def _alert_bot_started():
         "BREAKEVEN  peak ≥ 12   → max(ema9_low, entry)\n"
         "TRAIL_10   peak ≥ 18   → max(ema9_low, entry, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>EXITS</b>  Emergency -12 | EOD 15:20 | Trail\n"
+        "<b>EXITS</b>  initial_sl | BREAKEVEN | TRAIL_10 | EOD 15:20\n"
         "/help for commands"
     )
     if not D.PAPER_MODE:
@@ -5565,7 +5565,7 @@ def _generate_eod_report():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + ("🟢" if total_pts >= 0 else "🔴")
         + " <b>" + sign + "{:.1f}".format(total_pts) + " pts   "
-        + ("+" if total_rs >= 0 else "-") + "Rs" + "{:,}".format(abs(int(total_rs)))
+        + ("+" if total_rs >= 0 else "-") + "₹" + "{:,}".format(abs(int(total_rs)))
         + "</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trades   " + str(n_trades) + "   (" + str(len(wins)) + "W " + str(len(losses)) + "L)\n"
@@ -5726,7 +5726,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _rsi_prev = float(entry_result.get("rsi_prev", 0) or 0)
     _rsi_arrow = "↑" if entry_result.get("rsi_rising") else "↓"
     _core = (
-        "Entry   Rs" + "{:.2f}".format(actual_price) + "   @ " + _tm + " (15-min)\n"
+        "Entry   ₹" + "{:.2f}".format(actual_price) + "   @ " + _tm + " (15-min)\n"
         "Mode    " + str(_entry_mode_tag) + "\n"
         "Close   " + "{:.1f}".format(_close) + "  &gt;  EMA9L " + "{:.1f}".format(_ema9l) + "\n"
         "RSI     " + "{:.1f}".format(_rsi) + " " + _rsi_arrow
@@ -5740,7 +5740,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
     _initial_sl = round(actual_price - _sl_pts, 1)
     _stop_block = (
         "<b>STOP</b>\n"
-        "Hard SL   -" + str(_sl_pts) + " pts (Rs"
+        "Hard SL   -" + str(_sl_pts) + " pts (₹"
         + "{:.1f}".format(_initial_sl) + ")\n"
         "Trail (V10): ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
     )
@@ -6000,8 +6000,8 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             _trig_sl = exit_info.get("trigger_sl")
             if _trig_close is not None and _trig_sl is not None:
                 _reason_line += ("Trigger " + (str(_trig_time) + " " if _trig_time else "")
-                                + "close Rs" + "{:.1f}".format(_trig_close)
-                                + " (≤ SL Rs" + "{:.1f}".format(_trig_sl) + ")\n")
+                                + "close ₹" + "{:.1f}".format(_trig_close)
+                                + " (≤ SL ₹" + "{:.1f}".format(_trig_sl) + ")\n")
         _capture_line = ""
         try:
             _peak_f = float(peak) if peak else 0
@@ -6018,17 +6018,17 @@ def _execute_exit_v13(kite, exit_info: dict, saved_entry_price: float = None):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>" + reason + "</b>    " + _sign_pnl + "{:.1f}".format(pnl) + " pts\n"
             + _reason_line +
-            "Entry   Rs" + "{:.1f}".format(entry) + "\n"
-            "Exit    Rs" + "{:.1f}".format(actual_exit) + "\n"
+            "Entry   ₹" + "{:.1f}".format(entry) + "\n"
+            "Exit    ₹" + "{:.1f}".format(actual_exit) + "\n"
             "Peak    +" + "{:.1f}".format(peak) + " pts\n"
             + _capture_line +
             "Hold    " + str(candles) + " min\n"
             "Trail   " + _tier + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Gross   " + ("+" if _ch["gross_pnl"] >= 0 else "-")
-            + "Rs" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
-            "Charges -Rs" + "{:,}".format(int(_ch["total_charges"])) + "\n"
-            "<b>Net     " + _net_sign + "Rs" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "</b>\n"
+            + "₹" + "{:,}".format(abs(int(_ch["gross_pnl"]))) + "\n"
+            "Charges -₹" + "{:,}".format(int(_ch["total_charges"])) + "\n"
+            "<b>Net     " + _net_sign + "₹" + "{:,}".format(abs(int(_ch["net_pnl"]))) + "</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "DAY " + "{:+.1f}".format(_day_pnl) + " pts"
         )
@@ -6972,7 +6972,7 @@ def _strategy_loop(kite):
                                 _icon = "🔒🔒"
                             elif _new_tier == "LOCK_DYN":
                                 _icon = "🔒🔒🔒"
-                            _sl_old_str = ("Rs" + "{:.1f}".format(_prev_sl)
+                            _sl_old_str = ("₹" + "{:.1f}".format(_prev_sl)
                                            if _prev_sl > 0 else "entry-10")
                             _tg_send(
                                 _icon + " <b>V10 SL UPGRADED → " + _new_tier + "</b>\n"
@@ -6980,7 +6980,7 @@ def _strategy_loop(kite):
                                 + _r_emoji + " " + _r_sym + "   Peak +"
                                 + "{:.1f}".format(_r_peak) + "\n"
                                 "Prev  " + _prev_tier + "   " + _sl_old_str + "\n"
-                                "New   " + _new_tier + "   Rs"
+                                "New   " + _new_tier + "   ₹"
                                 + "{:.1f}".format(_r_sl) + "   ⬆️\n"
                                 "Lock  +" + "{:.1f}".format(_r_lock) + " pts\n"
                                 "Room  " + "{:.1f}".format(_r_room) + " pts"
@@ -7021,7 +7021,7 @@ def _strategy_loop(kite):
                                     "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                                     "Peak  +" + "{:.1f}".format(_peak) + "\n"
                                     "Now   +" + "{:.1f}".format(_cur_pnl) + "\n"
-                                    "SL    Rs" + "{:.1f}".format(_r_sl)
+                                    "SL    ₹" + "{:.1f}".format(_r_sl)
                                     + "   (" + _lock_str + " locked)\n"
                                     "Room  " + "{:.1f}".format(_room) + " pts"
                                 )
@@ -7394,7 +7394,7 @@ def _cmd_pulse(args):
             _v8_pk  = float(_v8_state.get("peak_pnl", 0) or 0)
             _v8_tier = _v8_state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
             _v8_sl  = float(_v8_state.get("active_ratchet_sl", 0) or 0)
-            if _v8_sl <= 0: _v8_sl = round(_v8_ep - 12, 2)
+            if _v8_sl <= 0: _v8_sl = float(_v8_state.get("initial_sl", 0) or round(_v8_ep - 12, 2))
             _v8_lock = round(_v8_sl - _v8_ep, 1)
             _v8_room = round(_v8_ltp - _v8_sl, 1) if _v8_ltp else 0
             _v8_dir_emj = "🟢" if _v8_state.get("direction") == "CE" else "🔴"
@@ -7402,9 +7402,9 @@ def _cmd_pulse(args):
             _v8_pos_str = (
                 "[V10] " + _v8_dir_emj + " " + _v8_sym + "  "
                 + ("+" if _v8_pn >= 0 else "") + str(_v8_pn) + "pts\n"
-                + "Entry Rs" + str(_v8_ep) + " → Rs" + str(round(_v8_ltp, 2))
+                + "Entry ₹" + str(_v8_ep) + " → ₹" + str(round(_v8_ltp, 2))
                 + " · Peak +" + str(_v8_pk) + "\n"
-                + "Tier: " + _v8_tier + " @ Rs" + str(round(_v8_sl, 2))
+                + "Tier: " + _v8_tier + " @ ₹" + str(round(_v8_sl, 2))
                 + " (Lock " + ("+" if _v8_lock >= 0 else "") + str(_v8_lock)
                 + " · Room " + ("+" if _v8_room >= 0 else "") + str(_v8_room) + ")"
             )
