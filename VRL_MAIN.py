@@ -1,10 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (Vishal Clean V7+V10)
+#  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (V10 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
-#  V7 (SHADOW): 15-min | 2-gate (close>ema9l, RSI>=40 rising) | signals only
-#  V10 (LIVE):   1-min  | P1+P2 (XLEG_CONFIRMED, |gap_vwap|<5, ema9h_gap>=0.8, LTP>VWAP)
-#  V10 Exit: Emergency -12 | INITIAL(-12) → LOCK_4(@12) → LOCK_12(@24) →
-#           LOCK_20(@30) → LOCK_30(@36) → LOCK_36(@40) → LOCK_50(@50+)
+#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H  Gate2: OppDecay[-5,-4]
+#               Split-lot 50/50 (Lot1 mkt, Lot2 limit @ candle midpoint)
+#  V10 Exit:   INITIAL(ema9_low) → BREAKEVEN(@+12) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -4362,8 +4361,15 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         neighbor_otm = float(_v8_state.get("neighbor_ltp_otm", 0))
         neighbor_itm = float(_v8_state.get("neighbor_ltp_itm", 0))
         max_otm_drift = float(_v8_state.get("max_otm_drift", 0))
-        entry_regime = _v8_state.get("entry_regime", "V10_P1")
+        entry_regime = _v8_state.get("entry_regime", "V10_CE")
         xleg_margin  = float(_v8_state.get("xleg_other_margin", 0.0))
+        initial_sl   = float(_v8_state.get("initial_sl", 0.0))
+        lot1_qty     = int(_v8_state.get("lot1_qty", 0) or 0)
+        lot1_entry   = float(_v8_state.get("lot1_entry", 0.0))
+        lot2_qty     = int(_v8_state.get("lot2_qty", 0) or 0)
+        lot2_filled  = bool(_v8_state.get("lot2_filled", False))
+        lot2_cancelled = bool(_v8_state.get("lot2_cancelled", False))
+        lot2_entry   = float(_v8_state.get("lot2_entry", 0.0))
         
         # Clear position state
         _v8_state["in_trade"]            = False
@@ -4481,19 +4487,25 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
                 + " ref=" + str(exit_price) + " reason=" + reason
                 + " pnl=" + str(pnl_pts) + "pts")
 
+    _lot2_line = ""
+    if lot2_filled:
+        _lot2_line = f"Lot 2  ₹{lot2_entry:.1f} × {lot2_qty}  [filled]\n"
+    elif lot2_cancelled:
+        _lot2_line = f"Lot 2  ₹— × {lot2_qty}  [cancelled]\n"
     _tg_send(
-        "⚡ <b>V10 EXIT " + direction + " " + str(strike) + "</b>\n"
-        + reason + "    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
+        "⚡ <b>V10 GOLDEN EXIT {dir} {strike}</b>\n".format(dir=direction, strike=strike)
+        + "<b>" + reason + "</b>    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  Rs" + "{:.1f}".format(entry_price) + "\n"
-        "Exit   Rs" + "{:.1f}".format(exit_price) + "\n"
-        "Peak   +" + "{:.1f}".format(peak) + " pts  Trail " + str(tier) + "\n"
+        f"Lot 1  ₹{lot1_entry:.1f} × {lot1_qty}  [mkt]\n"
+        + _lot2_line
+        + f"Avg    ₹{entry_price:.1f}  Exit ₹{exit_price:.1f}\n"
+        f"Peak   +{peak:.1f} pts  Tier {tier}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Gross  " + ("+" if pnl_rs >= 0 else "") + "Rs" + "{:.0f}".format(pnl_rs) + "\n"
-        "Charges -Rs" + "{:.0f}".format(total_charges) + "\n"
-        "Net    " + ("+" if net_pnl >= 0 else "") + "Rs" + "{:.0f}".format(net_pnl) + "\n"
+        "Gross  " + ("+" if pnl_rs >= 0 else "") + "₹" + "{:.0f}".format(pnl_rs) + "\n"
+        "Charges -₹" + "{:.0f}".format(total_charges) + "\n"
+        "Net    " + ("+" if net_pnl >= 0 else "") + "₹" + "{:.0f}".format(net_pnl) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "V10 DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
+        "DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
         + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
         + str(_v8_state.get("_wins_today", 0)) + "W "
         + str(_v8_state.get("_losses_today", 0)) + "L)",
@@ -6620,7 +6632,7 @@ def _strategy_loop(kite):
                     and time.time() - _v8_last_entry_scan_ts >= 3):
                 _v8_last_entry_scan_ts = time.time()
                 logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
-            # (legacy entry scan removed — V10 P1/P2 drives all entries now)
+            # (legacy entry scan removed — V10 Golden scanner drives all entries now)
 
 
             # ── V10 Golden Strategy Scanner ──
@@ -7150,7 +7162,7 @@ def _strategy_loop(kite):
                 if not D.is_tick_live(D.INDIA_VIX_TOKEN):
                     D.subscribe_tokens([D.INDIA_VIX_TOKEN])
 
-                # V7 15-min check_entry scan removed — V10 P1/P2 handles all entries
+                # V7 15-min check_entry scan removed — V10 Golden handles all entries
                 # V10 entry is handled above in the 10-second scan (outside 1-min gate)
 
                 try:
@@ -7596,13 +7608,27 @@ def _cmd_status(args):
 
     _tier = st.get("active_ratchet_tier", "INITIAL")
     _rsl  = float(st.get("active_ratchet_sl", 0) or 0)
+    _isl  = float(st.get("initial_sl", 0) or round(entry - 12, 1))
     if _tier and _tier not in ("", "None", "INITIAL") and _rsl > 0:
-        _stop_line = "Trail  : " + _tier + " @ ₹" + str(round(_rsl, 1))
+        _stop_line = "SL     : " + _tier + " @ ₹" + str(round(_rsl, 1))
         _stop_dist = round(ltp - _rsl, 1) if ltp > 0 else "—"
     else:
-        _init_sl   = round(entry - 12, 1)
-        _stop_line = "Trail  : INITIAL @ ₹" + str(_init_sl)
-        _stop_dist = round(ltp - _init_sl, 1) if ltp > 0 else "—"
+        _stop_line = "SL     : INITIAL @ ₹" + str(round(_isl, 1))
+        _stop_dist = round(ltp - _isl, 1) if ltp > 0 else "—"
+
+    # Lot split summary
+    _l1q = int(st.get("lot1_qty", 0) or 0)
+    _l1e = float(st.get("lot1_entry", 0.0))
+    _l2q = int(st.get("lot2_qty", 0) or 0)
+    _l2f = bool(st.get("lot2_filled", False))
+    _l2c = bool(st.get("lot2_cancelled", False))
+    _l2e = float(st.get("lot2_entry", 0.0))
+    if _l2f:
+        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ₹{_l2e:.1f}×{_l2q} [filled]\n"
+    elif _l2c:
+        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ×{_l2q} [cancelled]\n"
+    else:
+        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ×{_l2q} [pending]\n"
 
     _day_pts = round(st.get("_pnl_today_pts", 0), 1)
     _day_w   = st.get("_wins_today", 0)
@@ -7614,13 +7640,14 @@ def _cmd_status(args):
         "Time   : " + _now_str() + "\n"
         "Symbol : " + st.get("symbol", "") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Entry  : ₹" + str(round(entry, 2)) + "\n"
+        "Avg    : ₹" + str(round(entry, 2)) + "\n"
+        + _lot_line +
         "LTP    : ₹" + str(round(ltp, 2)) + "\n"
         "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + pnl_rs_str + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
-        "Ladder : @+12→LOCK_4  @+18→LOCK_10  @+24→LOCK_12\n"
+        "Ladder : +12→BREAKEVEN  +18→TRAIL_10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
         "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
@@ -9153,7 +9180,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var hasAny=(p1.CE&&p1.CE.active)||(p1.PE&&p1.PE.active)||(p2.CE&&p2.CE.active)||(p2.PE&&p2.PE.active);
     var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
     var html='<div style="margin:8px 8px 0">';
-    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — P1/P2 (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — Golden (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
     // ── LIVE GATE MONITOR — V10 Golden Strategy ──
     (function(){
       var lv=sh.live||{};
