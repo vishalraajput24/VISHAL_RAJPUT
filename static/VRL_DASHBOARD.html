@@ -129,57 +129,48 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var entry=parseFloat(pos.entry||0);
     var ltp=parseFloat(pos.ltp||0);
     var sl=parseFloat(pos.sl||0);
-    var floor=parseFloat(pos.current_floor||0);
-    var rsi=parseFloat(pos.current_rsi||0);
     var candles=pos.candles||0;
-    var lot1=pos.lot1_active;
-    var lot2=pos.lot2_active;
-    var split=pos.lots_split;
-    var activeLots=(lot1?1:0)+(lot2?1:0);
-    var pnlRs=Math.round(pnl*(pos.lot_size||65)*activeLots);
+    var tier=pos.active_ratchet_tier||'INITIAL';
+    var lot1Qty=parseInt(pos.lot1_qty||0);
+    var lot1Entry=parseFloat(pos.lot1_entry||0);
+    var lot2Qty=parseInt(pos.lot2_qty||0);
+    var lot2Limit=parseFloat(pos.lot2_limit||0);
+    var lot2Entry=parseFloat(pos.lot2_entry||0);
+    var lot2Filled=!!pos.lot2_filled;
+    var lot2Cancelled=!!pos.lot2_cancelled;
+    var totalQty=lot1Qty+(lot2Filled?lot2Qty:0);
+    var avgEntry=lot2Filled?((lot1Entry*lot1Qty+lot2Entry*lot2Qty)/(lot1Qty+lot2Qty)):lot1Entry;
+    var pnlRs=Math.round(pnl*totalQty);
     var pnlClr=pnl>=0?'var(--gn)':'var(--rd)';
-    // RSI progress bar
-    var rsiPct=Math.min(100,(rsi/80)*100);
-    var rsiBarClr=rsi>=80?'var(--rd)':rsi>=75?'var(--am)':'var(--gn)';
-    // State label
-    var stateIcon,stateLabel;
-    if(!split){stateIcon='🟢';stateLabel=sym+' IN TRADE';}
-    else if(lot1&&lot2){stateIcon='⚡';stateLabel=sym+' SPLIT';}
-    else{stateIcon='🏃';stateLabel=sym+' LOT2 RIDING';}
     var posClr=pos.direction==='CE'?'rgba(59,130,246,.1)':'rgba(239,68,68,.08)';
     var posBd=pos.direction==='CE'?'rgba(59,130,246,.25)':'rgba(239,68,68,.2)';
     ph='<div class="pos" style="background:linear-gradient(135deg,'+posClr+',transparent);border:1px solid '+posBd+'">';
-    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">'+stateIcon+' '+esc(stateLabel)+'</div>';
+    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">🟢 '+esc(sym)+' V10 GOLDEN</div>';
     ph+='<div style="margin:3px 0"><span class="big" style="color:'+pnlClr+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'pts</span>';
     ph+=' <span style="color:#888;font-size:11px">&#x20B9;'+pnlRs.toLocaleString('en-IN')+'</span>';
-    ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry+' → &#x20B9;'+ltp+'</span></div>';
-    // RSI progress bar
-    ph+='<div class="prog"><div class="prog-fill" style="width:'+rsiPct.toFixed(0)+'%;background:'+rsiBarClr+'"></div></div>';
-    ph+='<div style="display:flex;justify-content:space-between;font-size:9px;color:#555;margin-bottom:6px">';
-    ph+='<span>RSI '+rsi.toFixed(0)+' (cap 80)</span><span>'+rsiPct.toFixed(0)+'%</span></div>';
-    // 3-box status grid: SL / TIER / HELD
-    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:var(--am)">'+(pos.active_ratchet_tier||'—')+'</div></div>';
-    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
-    ph+='</div>';
+    ph+='<span style="color:#555;font-size:10px;float:right">Avg &#x20B9;'+avgEntry.toFixed(1)+' → &#x20B9;'+ltp+'</span></div>';
     // Peak-captured progress bar
     var peakPct2=peak>0?Math.min(100,Math.max(0,(pnl/peak)*100)):0;
     var peakBarClr=peakPct2>=80?'var(--gn)':peakPct2>=50?'var(--am)':'var(--rd)';
     ph+='<div class="bar-label" style="margin-bottom:3px"><span>PEAK CAPTURED</span><span style="color:'+peakBarClr+'">'+peakPct2.toFixed(0)+'%  +'+peak.toFixed(1)+'pts</span></div>';
     ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
-    // Lot status
-    if(!split){
-      ph+='<div class="pos-lot">LOT1: '+(lot1?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
-      ph+='<div class="pos-lot">LOT2: '+(lot2?'<span style="color:var(--gn)">Active</span>':'<span style="color:#555">SOLD</span>')+' &nbsp; SL &#x20B9;'+sl+' (floor +'+floor.toFixed(0)+')</div>';
-    } else if(lot1&&lot2){
-      ph+='<div class="pos-lot">LOT1: <span style="color:var(--am)">Floor SL</span> &#x20B9;'+sl+'</div>';
-      ph+='<div class="pos-lot">LOT2: <span style="color:var(--cy)">ATR Trail</span> &#x20B9;'+sl+'</div>';
+    // 3-box status grid: SL / TIER / HELD
+    ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
+    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='BREAKEVEN'?'var(--am)':'var(--rd)';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:'+tierClr+'">'+tier+'</div></div>';
+    ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
+    ph+='</div>';
+    // Split lot status
+    ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 1 (Mkt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot1Entry.toFixed(1)+' × '+lot1Qty+'</div>';
+    if(lot2Filled){
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot2Entry.toFixed(1)+' × '+lot2Qty+'</div>';
+    } else if(lot2Cancelled){
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:#888">✕ Cancelled</span> (missed &#x20B9;'+lot2Limit.toFixed(1)+')</div>';
     } else {
-      ph+='<div class="pos-lot">Lot1: <span style="color:#555">SOLD</span> +'+peak.toFixed(1)+'pts ✅</div>';
-      ph+='<div class="pos-lot">LOT2: <span style="color:var(--cy)">ATR Trail</span> &#x20B9;'+sl+'</div>';
+      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--am)">⏳ Pending</span> &#x20B9;'+lot2Limit.toFixed(1)+' × '+lot2Qty+'</div>';
     }
-    ph+='<div class="pos-meta"><span>Peak: +'+(peak||0).toFixed(1)+'</span><span>RSI: '+rsi.toFixed(0)+'</span><span>'+candles+'min</span></div>';
+    ph+='<div class="pos-meta"><span>Peak: +'+(peak||0).toFixed(1)+'</span><span>Qty: '+totalQty+'</span><span>'+candles+'min</span></div>';
     ph+='</div>';
   }
 
@@ -247,7 +238,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var dot=hasAny?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px;animation:pulse 1.2s infinite"></span>':'';
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — P1/P2 (1-min)'+(sh.saved_date?' · '+sh.saved_date:'')+'</div>';
-    // ── LIVE GATE MONITOR — watch each side approach the thresholds ──
+    // ── LIVE GATE MONITOR — V10 Golden Strategy ──
     (function(){
       var lv=sh.live||{};
       function pill(label,val,ok){
@@ -263,17 +254,18 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
         var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
         h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
         h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+((o&&o.price)?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">₹'+o.price+'</span>':'');
-        if(!o||o.gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
+        if(!o||o.momentum_gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
         if(o.ready)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px;box-shadow:0 0 0 0 rgba(10,122,80,.5);animation:pulse 1.3s infinite">● READY</span>';
         else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.reject||'wait')+'</span>';
         h+='</div><div style="display:flex;gap:6px">';
-        h+=pill('GAP',(o.gap_ok?'✓ ':'')+o.gap,o.gap_ok);
-        h+=pill('RSI',o.rsi+(o.rsi_rising?' ↑':' ↓'),o.rsi_ok);
-        h+=pill('BW',(o.bw_ok?'✓ ':'')+o.bw,o.bw_ok);
+        var mg=parseFloat(o.momentum_gap||0);
+        var dm=parseFloat(o.decay_margin||0);
+        h+=pill('MOMENTUM',(o.momentum_ok?'✓ ':'')+(mg>=0?'+':'')+mg.toFixed(1),o.momentum_ok);
+        h+=pill('OPP DECAY',(o.decay_ok?'✓ ':'')+dm.toFixed(1),o.decay_ok);
         return h+'</div></div>';
       }
       html+='<div style="margin:2px 10px 9px">';
-      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ LIVE GATES &nbsp;·&nbsp; need gap≥3.5 · RSI 55-80↑ · BW≥5</div>';
+      html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H · Opp Decay -5 to -4</div>';
       html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+card('CE',lv.CE)+card('PE',lv.PE)+'</div>';
       html+='</div>';
     })();
