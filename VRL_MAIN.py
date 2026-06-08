@@ -4205,6 +4205,7 @@ _v8_state = {
     "lot2_cancelled": False,
     "peak_ltp": 0.0,
     "xleg_other_margin": 0.0,
+    "spot_regime_at_entry": "",
 }
 _v8_lock = threading.Lock()
 
@@ -4289,6 +4290,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["peak_pnl"]              = 0.0
         _v8_state["entry_regime"]          = entry_result.get("entry_mode") or ("V10_CE" if direction == "CE" else "V10_PE")
         _v8_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
+        _v8_state["spot_regime_at_entry"]  = entry_result.get("spot_regime", "")
 
         # Data collection fields
         _v8_state["entry_spot"]            = float(spot_at_entry)
@@ -4814,7 +4816,8 @@ _V8_PERSIST_FIELDS = [
     "initial_sl", "entry_regime",
     "lot1_qty", "lot1_entry",
     "lot2_qty", "lot2_limit", "lot2_entry", "lot2_filled", "lot2_cancelled",
-    "peak_ltp", "xleg_other_margin"
+    "peak_ltp", "xleg_other_margin",
+    "spot_regime_at_entry",
 ]
 
 def _save_v8_state():
@@ -5076,6 +5079,8 @@ TRADE_FIELDNAMES = [
     # Strike management data collection (added for smart strike analysis)
     "entry_spot", "exit_spot", "entry_atm_dist",
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
+    # Market context at entry (analysis only — not a gate)
+    "spot_regime",
 ]
 
 def _trade_csv_reader(f):
@@ -5177,6 +5182,7 @@ def _log_trade(st: dict, exit_price: float, exit_reason: str,
         "xleg_other_ema9l":    round(float(st.get("_xleg_other_ema9l", 0) or 0), 2),
         "xleg_other_dying":    bool(st.get("_xleg_other_dying", False)),
         "xleg_other_margin":   round(float(st.get("_xleg_other_margin", 0) or 0), 2),
+        "spot_regime":         st.get("spot_regime_at_entry", ""),
         # v16.7 Anti-spike pullback
         "spike_close":         round(float(st.get("_spike_close", 0) or 0), 2),
         "spike_target":        round(float(st.get("_spike_target", 0) or 0), 2),
@@ -6753,6 +6759,7 @@ def _strategy_loop(kite):
                                         "ema9_low": _sh_ema9l_1m,
                                         "ema9_high": _sh_ema9h_1m,
                                         "xleg_other_margin": _opp_margin,
+                                        "spot_regime": spot_3m.get("regime", "") if isinstance(spot_3m, dict) else "",
                                     },
                                     other_token=_opp_tok,
                                     spot_at_entry=_sh_spot_now,
