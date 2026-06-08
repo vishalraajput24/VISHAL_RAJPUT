@@ -6513,6 +6513,18 @@ def _strategy_loop(kite):
         logger.warning("[MAIN] Expiry not resolved on startup — will retry in loop")
 
     _last_health_log_ts = time.time()   # startup health already logged; first loop re-log in 30 min
+
+    # Write a fresh dashboard at startup so stale/old-format JSON is never served
+    try:
+        _startup_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+        _startup_dte  = D.calculate_dte(expiry) if expiry else 0
+        _startup_vix  = D.get_vix()
+        _write_dashboard(_startup_spot, 0, _startup_dte, _startup_vix,
+                         "STARTUP", {}, {}, expiry, datetime.now())
+        logger.info("[MAIN] Dashboard initialised at startup")
+    except Exception as _dse:
+        logger.debug("[MAIN] Startup dashboard write: " + str(_dse))
+
     while _running:
         # ── intraday Token-health refresh (every 30 min; startup check was one-shot) ──
         try:
@@ -9154,7 +9166,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
       var h='<div style="background:var(--c1);border:1px solid var(--bd);border-top:3px solid '+acc+';border-radius:13px;padding:9px 9px 10px;box-shadow:0 1px 4px rgba(0,0,0,.05)">';
       h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
       h+='<span style="font-size:13px;font-weight:800;color:'+acc+';letter-spacing:.6px">'+side+((o&&o.strike)?' '+o.strike:'')+'</span>'+(o&&o.ltp?'<span style="font-size:14px;font-weight:800;color:var(--tx);margin-left:7px">&#x20B9;'+o.ltp+'</span>':'');
-      if(!o||o.momentum_gap===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
+      if(!o||o.ltp===undefined){return h+'<span style="font-size:9px;color:var(--dm)">— no data —</span></div></div>';}
       if(o.fired)h+='<span style="background:var(--gn);color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:20px">● READY</span>';
       else h+='<span style="background:var(--c2);color:var(--am);font-size:9px;font-weight:700;padding:3px 10px;border-radius:20px">⏳ '+esc(o.verdict||'wait')+'</span>';
       h+='</div><div style="display:flex;gap:6px">';
