@@ -3,6 +3,24 @@
 > Last resynced: 2026-06-09. Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
+---
+
+## 🤖 Agent Sync Protocol (Claude Code ↔ Google Antigravity)
+
+**Both agents must read this file first before any code change.**
+
+If you are Google Antigravity reading this:
+1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
+2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
+3. **Never change locked strategy values** (OPP DECAY [−5,−4], BREAKEVEN @+12, TRAIL_10 @+18, lot sizes) without the user's explicit instruction.
+4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
+5. If you add a new `_v8_state` key that must survive restart, add it to BOTH the initial `_v8_state` dict AND `_V8_PERSIST_FIELDS`.
+6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
+
+Claude Code follows the same rules. Both agents stay in sync through this file and git history.
+
+---
+
 ## Project Overview
 NIFTY weekly-options bot. Zerodha **Kite** for market data, **m.Stock** for live order placement.
 
