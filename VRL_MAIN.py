@@ -6493,7 +6493,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         for _tt in _today_trades:
             try:
                 _p = float(_tt.get("pnl_pts", 0))
-                _r = float(_tt.get("net_pnl_rs", 0) or _tt.get("pnl_rs", 0))
+                _r = _p * D.get_lot_size()  # normalize: same direction as pnl_pts
                 _today_pnl_pts += _p
                 _today_pnl_rs += _r
                 if _p > 0:
