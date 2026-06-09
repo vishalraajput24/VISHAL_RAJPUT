@@ -6803,9 +6803,14 @@ def _strategy_loop(kite):
                         elif not _momentum_ok:
                             _reject_reason = "below_ema9h"
                         elif not _decay_ok:
-                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})"
+                            if D.PAPER_MODE:
+                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})[COLLECT]"
+                            else:
+                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})"
 
-                        _ready_to_fire = (_momentum_ok and _decay_ok and not _in_trade and not _in_cooldown)
+                        # Paper mode: fire on momentum alone (data collection — decay logged but not gated)
+                        _decay_gate = _decay_ok if not D.PAPER_MODE else True
+                        _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
 
                         with _v10_live_lock:
                             _v10_live[_sh_dir] = {
