@@ -4621,7 +4621,10 @@ def _v8_check_exit():
                 # Update average entry and total quantity in state
                 _v8_state["entry_price"] = round((lot1_entry + lot2_limit) / 2, 2)
                 _v8_state["qty"] = lot1_qty + lot2_qty
-                
+                # Recalculate peak_pnl against new avg_entry (peak_ltp recorded pre-fill uses lot1 entry)
+                if peak_ltp > 0:
+                    _v8_state["peak_pnl"] = round(peak_ltp - _v8_state["entry_price"], 2)
+
                 logger.info(f"[V10] Lot 2 limit order filled at ₹{lot2_limit:.1f}. New Avg Entry: ₹{_v8_state['entry_price']:.1f}")
                 _tg_send(
                     f"⚡ <b>V10 Lot 2 Filled</b>\n"
