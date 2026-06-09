@@ -4460,11 +4460,10 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
         _v8_state["_last_trade_date"]            = date.today().isoformat()
         
-        # Exit candle guard: record 3-min bucket we are exiting in
+        # Exit candle guard: record 1-min candle we are exiting in (matches _sh_1m_bk_ts)
         _now_exit = datetime.now()
-        _exit_bucket_min = (_now_exit.minute // 3) * 3
         _v8_state["_last_exit_candle_ts"] = str(
-            _now_exit.replace(minute=_exit_bucket_min, second=0, microsecond=0)
+            _now_exit.replace(second=0, microsecond=0)
         )
 
     # --- Lock released: safe to read captured locals for logging ---
@@ -6816,6 +6815,10 @@ def _strategy_loop(kite):
                         if now.time() < V10_OPEN_BLACKOUT_END:
                             _in_cooldown = True
                             _cooldown_reason = "open_blackout"
+                        elif _v8_state.get("_sl_cooldown_skip_next"):
+                            _in_cooldown = True
+                            _cooldown_reason = "sl_cooldown"
+                            _v8_state["_sl_cooldown_skip_next"] = False  # consume: blocks one scan, then exit_candle_cooldown takes over
                         elif _v8_state.get("_last_fired_candle_ts") == _sh_1m_bk_ts:
                             _in_cooldown = True
                             _cooldown_reason = "same_candle"
