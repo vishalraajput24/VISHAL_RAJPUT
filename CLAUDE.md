@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09 (fix/v10-scanner-while-in-trade). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-09 (feat/v10-breakout-tracker). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -132,7 +132,9 @@ Fields currently persisted:
 `lot2_qty`, `lot2_limit`, `lot2_entry`, `lot2_filled`, `lot2_cancelled`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
 `entry_spot`, `entry_atm_dist`, `neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
-`vix_at_entry`, `hourly_rsi_at_entry`, `bias_at_entry`, `session_at_entry`
+`vix_at_entry`, `hourly_rsi_at_entry`, `bias_at_entry`, `session_at_entry`,
+`first_profit_candle`, `first_profit_ltp`, `first_profit_ts`,
+`breakout_candle`, `breakout_ltp`, `breakout_ts`
 
 ---
 
