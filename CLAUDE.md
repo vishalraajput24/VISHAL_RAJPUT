@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09 (fix/v10-dashboard-csv-bugs). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-09 (fix/v10-scanner-while-in-trade). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -150,6 +150,7 @@ _v10_scanner_last_ts  — throttle: scanner runs every 3s
 _v10_live             — dict {"CE": {...}, "PE": {...}} — gate snapshot fed to dashboard
 _v10_live_lock        — threading.Lock() protecting _v10_live
 ```
+Scanner runs every 3s **regardless of `in_trade`** so `_v10_live` stays warm with live EMA9 data for the dashboard. When `in_trade=True`, the inner guard sets `reject_reason="in_trade"` and `_ready_to_fire=False` — no entry fires, but `_v10_live` is updated.
 Scanner fires `_v10_execute_paper_entry` (code: `_v8_execute_paper_entry`) when MOMENTUM + OPP DECAY both pass and no cooldowns active.
 **Expiry** is determined by the broker (Kite instrument list) at startup — never calculate it manually.
 

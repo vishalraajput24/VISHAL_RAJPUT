@@ -6685,9 +6685,11 @@ def _strategy_loop(kite):
 
 
             # ── V10 Golden Strategy Scanner ──
+            # Runs even when in_trade so _v10_live stays warm with live EMA9 data
+            # for the dashboard. The inner _in_trade check prevents any entry from
+            # firing (sets reject_reason="in_trade", _ready_to_fire=False).
             global _v10_scanner_last_ts
-            if (not _v8_state.get("in_trade")
-                    and D.is_trading_window(now)
+            if (D.is_trading_window(now)
                     and _locked_tokens
                     and time.time() - _v10_scanner_last_ts >= 3):
                 _v10_scanner_last_ts = time.time()
