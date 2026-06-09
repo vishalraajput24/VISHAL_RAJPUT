@@ -4206,6 +4206,14 @@ _v8_state = {
     "peak_ltp": 0.0,
     "xleg_other_margin": 0.0,
     "spot_regime_at_entry": "",
+
+    # Study: entry-timing markers (when did trade actually move?)
+    "first_profit_candle": 0,    # candles_held when LTP first exceeded avg_entry
+    "first_profit_ltp":    0.0,  # LTP at that tick
+    "first_profit_ts":     "",   # time string at that tick
+    "breakout_candle":     0,    # candles_held when cur_pnl first crossed V10_BREAKOUT_THRESHOLD
+    "breakout_ltp":        0.0,  # LTP at breakout
+    "breakout_ts":         "",   # time string at breakout
 }
 _v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from within exit-check block
 
@@ -4308,6 +4316,14 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["neighbor_ltp_itm"]      = float(neighbor_ltp_itm)
         _v8_state["max_otm_drift"]         = 0.0
 
+        # Reset entry-timing study markers
+        _v8_state["first_profit_candle"] = 0
+        _v8_state["first_profit_ltp"]    = 0.0
+        _v8_state["first_profit_ts"]     = ""
+        _v8_state["breakout_candle"]     = 0
+        _v8_state["breakout_ltp"]        = 0.0
+        _v8_state["breakout_ts"]         = ""
+
         # Clear any pending re-entry state
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
@@ -4374,8 +4390,14 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         entry_regime         = _v8_state.get("entry_regime", "V10_CE")
         xleg_margin          = float(_v8_state.get("xleg_other_margin", 0.0))
         initial_sl           = float(_v8_state.get("initial_sl", 0.0))
-        spot_regime_at_entry = str(_v8_state.get("spot_regime_at_entry", ""))
-        vix_at_entry         = float(_v8_state.get("vix_at_entry", 0.0))
+        spot_regime_at_entry  = str(_v8_state.get("spot_regime_at_entry", ""))
+        vix_at_entry          = float(_v8_state.get("vix_at_entry", 0.0))
+        first_profit_candle   = int(_v8_state.get("first_profit_candle", 0) or 0)
+        first_profit_ltp      = float(_v8_state.get("first_profit_ltp", 0.0))
+        first_profit_ts       = str(_v8_state.get("first_profit_ts", ""))
+        breakout_candle       = int(_v8_state.get("breakout_candle", 0) or 0)
+        breakout_ltp          = float(_v8_state.get("breakout_ltp", 0.0))
+        breakout_ts           = str(_v8_state.get("breakout_ts", ""))
         hourly_rsi_at_entry  = float(_v8_state.get("hourly_rsi_at_entry", 0.0))
         bias_at_entry        = str(_v8_state.get("bias_at_entry", ""))
         session_at_entry     = str(_v8_state.get("session_at_entry", ""))
@@ -4490,6 +4512,14 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "entry_atm_dist": entry_atm_dist,
             "neighbor_ltp_otm": neighbor_otm, "neighbor_ltp_itm": neighbor_itm,
             "max_otm_drift": round(max_otm_drift, 1),
+            # Entry-timing study: when did the trade actually move?
+            "first_profit_candle": first_profit_candle,
+            "first_profit_ltp":    first_profit_ltp,
+            "first_profit_ts":     first_profit_ts,
+            "breakout_candle":     breakout_candle,
+            "breakout_ltp":        breakout_ltp,
+            "breakout_ts":         breakout_ts,
+            "early_candles":       (breakout_candle - 1) if breakout_candle else "",
         }
         import csv as _csv
         log_path = D.TRADE_LOG_PATH
@@ -4615,6 +4645,17 @@ def _v8_check_exit():
 
         peak_pnl = peak_ltp - avg_entry
 
+        # Study: mark first-profit tick and breakout tick (every ~1s)
+        _cur_pnl = round(ltp - avg_entry, 2)
+        if _cur_pnl > 0 and not _v8_state.get("first_profit_ts"):
+            _v8_state["first_profit_candle"] = candles_held
+            _v8_state["first_profit_ltp"]    = round(ltp, 2)
+            _v8_state["first_profit_ts"]     = datetime.now().strftime("%H:%M:%S")
+        if _cur_pnl > V10_BREAKOUT_THRESHOLD and not _v8_state.get("breakout_ts"):
+            _v8_state["breakout_candle"] = candles_held
+            _v8_state["breakout_ltp"]    = round(ltp, 2)
+            _v8_state["breakout_ts"]     = datetime.now().strftime("%H:%M:%S")
+
         # Determine dynamic trail SL
         current_sl, tier = _v8_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
         
@@ -4672,6 +4713,7 @@ spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard
 
 V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V10_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
+V10_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # CUTOVER FLAG: True = V10 Golden scanner places the live paper trades.
 V10_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every scanner cycle, per side
@@ -4842,6 +4884,9 @@ _V8_PERSIST_FIELDS = [
     "entry_spot", "entry_atm_dist",
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
     "vix_at_entry", "hourly_rsi_at_entry", "bias_at_entry", "session_at_entry",
+    # Entry-timing study fields
+    "first_profit_candle", "first_profit_ltp", "first_profit_ts",
+    "breakout_candle", "breakout_ltp", "breakout_ts",
 ]
 
 def _save_v8_state():
@@ -5105,6 +5150,10 @@ TRADE_FIELDNAMES = [
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
     # Market context at entry (analysis only — not a gate)
     "spot_regime",
+    # Entry-timing study: when did the trade first go positive and when did it break out?
+    "first_profit_candle", "first_profit_ltp", "first_profit_ts",
+    "breakout_candle", "breakout_ltp", "breakout_ts",
+    "early_candles",   # breakout_candle - 1 = candles spent before real move
 ]
 
 def _trade_csv_reader(f):
