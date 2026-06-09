@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09 (feat/v10-breakout-tracker). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-09 (feat/v10-gate-refinements). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -45,13 +45,14 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 ### Entry gates (both must pass)
 | Gate | Condition | Constant |
 |------|-----------|----------|
-| **MOMENTUM** | 1-min option `close > ema9_high` | — |
-| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−5.0, −4.0]` | hardcoded in scanner |
+| **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` | `V10_MIN_EMA9H_GAP = 3.5` (hard gate) |
+| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −4.0]` | hardcoded in scanner |
 
 - `V10_OPEN_BLACKOUT_END = dtime(9, 45)` — no entries before 09:45
 - `V10_MIN_EMA9H_GAP = 3.5` — reference constant only, NOT a hard gate
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
+- **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
 
 ### Execution — split-lot 50/50
 Config: `lots_fixed: 2`, `lot_size: 65` → 130 qty total, split into two 65-qty lots.
