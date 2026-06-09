@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (V10 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
-#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H  Gate2: OppDecay[-5,-4]
+#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4]
 #               Split-lot 50/50 (Lot1 mkt, Lot2 limit @ candle midpoint)
 #  V10 Exit:   INITIAL(ema9_low) → BREAKEVEN(@+12) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
@@ -4186,6 +4186,9 @@ _v8_state = {
     "dte": 0,
     # EMERGENCY_SL direction cooldown — only blocks the side that triggered the SL
     "_sl_cooldown_direction": "",
+    # Same-side 3-min blocker: records direction + unix timestamp of last exit
+    "_last_exit_time_unix"    : 0.0,
+    "_last_exit_direction_v10": "",
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
     "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
@@ -4465,6 +4468,9 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["_last_exit_candle_ts"] = str(
             _now_exit.replace(second=0, microsecond=0)
         )
+        # Same-side 3-min blocker: stamp direction + unix time of this exit
+        _v8_state["_last_exit_time_unix"]     = time.time()
+        _v8_state["_last_exit_direction_v10"] = direction
 
     # --- Lock released: safe to read captured locals for logging ---
     pnl_pts   = round(exit_price - entry_price, 2)
@@ -4896,6 +4902,7 @@ _V8_PERSIST_FIELDS = [
     "_sl_cooldown_skip_next", "_force_exit_ts",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
+    "_last_exit_time_unix", "_last_exit_direction_v10",
     # Split-lot tracking fields
     "initial_sl", "entry_regime",
     "lot1_qty", "lot1_entry",
@@ -5572,9 +5579,9 @@ def _alert_bot_started():
         "Size    : 2 lots fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GOLDEN GATES</b>\n"
-        "1) MOMENTUM  close > EMA9H (1-min breakout)\n"
-        "2) OPP DECAY opp close − ema9l in [−5, −4]\n"
-        "Cooldown: 9:45 blackout · same-candle guard\n"
+        "1) MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
+        "2) OPP DECAY opp close − ema9l in [−8, −4]\n"
+        "Cooldown: 9:45 blackout · same-candle · same-side 3-min\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
         "INITIAL    peak < 12   → ema9_low at entry\n"
@@ -6804,8 +6811,8 @@ def _strategy_loop(kite):
                             _opp_margin = round(_opp_close - _opp_ema9l, 2)
 
                         # Golden Setup conditions
-                        _momentum_ok = (_sh_1m_close > _sh_ema9h_1m) if _sh_ema9h_1m > 0 else False
-                        _decay_ok = (-5.0 <= _opp_margin <= -4.0) if _opp_ema9l > 0 else False
+                        _momentum_ok = (_sh_1m_close >= _sh_ema9h_1m + V10_MIN_EMA9H_GAP) if _sh_ema9h_1m > 0 else False
+                        _decay_ok = (-8.0 <= _opp_margin <= -4.0) if _opp_ema9l > 0 else False
 
                         # Cooldown and basic guards
                         _in_trade = bool(_v8_state.get("in_trade", False))
@@ -6825,6 +6832,11 @@ def _strategy_loop(kite):
                         elif _v8_state.get("_last_exit_candle_ts") == _sh_1m_bk_ts:
                             _in_cooldown = True
                             _cooldown_reason = "exit_candle_cooldown"
+                        elif (_v8_state.get("_last_exit_direction_v10") == _sh_dir
+                              and time.time() - float(_v8_state.get("_last_exit_time_unix", 0)) < 180):
+                            _in_cooldown = True
+                            _remaining = int(180 - (time.time() - float(_v8_state.get("_last_exit_time_unix", 0))))
+                            _cooldown_reason = f"same_side_3min({_remaining}s)"
 
                         # Update reject reasons
                         _reject_reason = ""
@@ -6833,15 +6845,14 @@ def _strategy_loop(kite):
                         elif _in_cooldown:
                             _reject_reason = _cooldown_reason
                         elif not _momentum_ok:
-                            _reject_reason = "below_ema9h"
+                            _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V10_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
                             if D.PAPER_MODE:
                                 _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})[COLLECT]"
                             else:
                                 _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})"
 
-                        # Paper mode: fire on momentum alone (data collection — decay logged but not gated)
-                        _decay_gate = _decay_ok if not D.PAPER_MODE else True
+                        _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
 
                         with _v10_live_lock:
@@ -7623,8 +7634,8 @@ def _cmd_pulse(args):
                if _market else "💤 awaiting market open\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 GOLDEN CONFIG (1-min)</b>\n"
-            "Gate 1: MOMENTUM  close > EMA9H\n"
-            "Gate 2: OPP DECAY opp margin [−5, −4]\n"
+            "Gate 1: MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
+            "Gate 2: OPP DECAY opp margin [−8, −4]\n"
             "Entry:  50/50 split-lot (Lot1 mkt, Lot2 limit at candle midpoint)\n"
             "Lot 2 cancelled after 3 candles if not filled\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -9309,7 +9320,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — Golden (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
     html+='<div style="margin:2px 10px 9px">';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H &nbsp;·&nbsp; Opp Decay [−5, −4]</div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H+3.5 &nbsp;·&nbsp; Opp Decay [−8, −4] &nbsp;·&nbsp; Same-side 3-min</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
     document.getElementById('p-sig').innerHTML=html;
