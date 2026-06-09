@@ -6381,8 +6381,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = _reject
             else:
                 _fails = []
-                if not _momentum_ok: _fails.append(f"below_ema9h({_momentum_gap:+.1f})")
-                if not _decay_ok: _fails.append(f"decay_weak({_decay_margin:+.1f})")
+                if not _momentum_ok: _fails.append(f"below_ema9h_gap({_momentum_gap:+.1f}<3.5)")
+                if not _decay_ok: _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,-4])")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0.0) or _ltp_fallback, 2)
@@ -6847,10 +6847,7 @@ def _strategy_loop(kite):
                         elif not _momentum_ok:
                             _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V10_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            if D.PAPER_MODE:
-                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})[COLLECT]"
-                            else:
-                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f})"
+                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,-4])"
 
                         _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
