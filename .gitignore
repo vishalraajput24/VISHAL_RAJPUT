@@ -25,4 +25,6 @@ screener/multibagger_*.csv
 !screener/orion_news_filter_results.csv
 !screener/orion_news_filter_summary.csv
 !screener/orion_news_filter_report.md
+!screener/orion_strategy_results.csv
+!screener/orion_strategy_report.md
 analysis/daily/*.bak
