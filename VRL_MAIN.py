@@ -4293,6 +4293,13 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["spot_regime_at_entry"]  = entry_result.get("spot_regime", "")
         _v8_state["_last_trade_date"]      = date.today().isoformat()
 
+        # Market context at entry (for CSV analysis — bias/vix/rsi/session)
+        _now_entry = datetime.now()
+        _v8_state["vix_at_entry"]          = float(D.get_vix() or 0.0)
+        _v8_state["hourly_rsi_at_entry"]   = float(D.get_hourly_rsi() or 0.0)
+        _v8_state["bias_at_entry"]         = str(D.get_daily_bias() or "")
+        _v8_state["session_at_entry"]      = D.get_session_block(_now_entry.hour, _now_entry.minute)
+
         # Data collection fields
         _v8_state["entry_spot"]            = float(spot_at_entry)
         _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
@@ -4364,9 +4371,14 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         neighbor_otm = float(_v8_state.get("neighbor_ltp_otm", 0))
         neighbor_itm = float(_v8_state.get("neighbor_ltp_itm", 0))
         max_otm_drift = float(_v8_state.get("max_otm_drift", 0))
-        entry_regime = _v8_state.get("entry_regime", "V10_CE")
-        xleg_margin  = float(_v8_state.get("xleg_other_margin", 0.0))
-        initial_sl   = float(_v8_state.get("initial_sl", 0.0))
+        entry_regime         = _v8_state.get("entry_regime", "V10_CE")
+        xleg_margin          = float(_v8_state.get("xleg_other_margin", 0.0))
+        initial_sl           = float(_v8_state.get("initial_sl", 0.0))
+        spot_regime_at_entry = str(_v8_state.get("spot_regime_at_entry", ""))
+        vix_at_entry         = float(_v8_state.get("vix_at_entry", 0.0))
+        hourly_rsi_at_entry  = float(_v8_state.get("hourly_rsi_at_entry", 0.0))
+        bias_at_entry        = str(_v8_state.get("bias_at_entry", ""))
+        session_at_entry     = str(_v8_state.get("session_at_entry", ""))
         lot1_qty     = int(_v8_state.get("lot1_qty", 0) or 0)
         lot1_entry   = float(_v8_state.get("lot1_entry", 0.0))
         lot2_qty     = int(_v8_state.get("lot2_qty", 0) or 0)
@@ -4454,10 +4466,11 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "pnl_pts": pnl_pts, "pnl_rs": pnl_rs,
             "gross_pnl_rs": pnl_rs, "net_pnl_rs": net_pnl,
             "peak_pnl": peak, "exit_reason": reason,
-            "dte": dte_val, "candles_held": candles, "session": "",
-            "sl_pts": -12, "vix_at_entry": 0,
+            "dte": dte_val, "candles_held": candles, "session": session_at_entry,
+            "sl_pts": -12, "vix_at_entry": vix_at_entry,
             "entry_mode": entry_regime,
-            "bias": "", "hourly_rsi": 0,
+            "bias": bias_at_entry, "hourly_rsi": hourly_rsi_at_entry,
+            "spot_regime": spot_regime_at_entry,
             "brokerage": charges.get("brokerage", 0) if isinstance(charges, dict) else 0,
             "stt": charges.get("stt", 0) if isinstance(charges, dict) else 0,
             "exchange_charges": charges.get("exchange", 0) if isinstance(charges, dict) else 0,
@@ -4825,6 +4838,10 @@ _V8_PERSIST_FIELDS = [
     "lot2_qty", "lot2_limit", "lot2_entry", "lot2_filled", "lot2_cancelled",
     "peak_ltp", "xleg_other_margin",
     "spot_regime_at_entry",
+    # Data-collection fields (survive restart so CSV row is correct)
+    "entry_spot", "entry_atm_dist",
+    "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
+    "vix_at_entry", "hourly_rsi_at_entry", "bias_at_entry", "session_at_entry",
 ]
 
 def _save_v8_state():
@@ -6158,17 +6175,24 @@ def _update_dashboard_ltp():
 
         # Update V10 position if in trade (_v8_state — V7 state never has V10 trades)
         with _v8_lock:
-            _v10_it = _v8_state.get("in_trade", False)
-            _v10_tk = _v8_state.get("token", 0)
-            _v10_ep = _v8_state.get("entry_price", 0)
-            _v10_pk = _v8_state.get("peak_pnl", 0)
+            _v10_it  = _v8_state.get("in_trade", False)
+            _v10_tk  = _v8_state.get("token", 0)
+            _v10_ep  = _v8_state.get("entry_price", 0)
+            _v10_pk  = _v8_state.get("peak_pnl", 0)
+            _v10_l2f = _v8_state.get("lot2_filled", False)
+            _v10_l2e = _v8_state.get("lot2_entry", 0.0)
+            _v10_l2c = _v8_state.get("lot2_cancelled", False)
         if _v10_it and _v10_tk:
             opt_ltp = D.get_ltp(_v10_tk)
             if opt_ltp > 0:
                 pos = dash.get("position", {})
-                pos["ltp"] = round(opt_ltp, 2)
-                pos["pnl"] = round(opt_ltp - _v10_ep, 1)
-                pos["peak"] = round(_v10_pk, 1)
+                pos["ltp"]            = round(opt_ltp, 2)
+                pos["pnl"]            = round(opt_ltp - _v10_ep, 1)
+                pos["peak"]           = round(_v10_pk, 1)
+                pos["entry"]          = round(_v10_ep, 2)
+                pos["lot2_filled"]    = bool(_v10_l2f)
+                pos["lot2_entry"]     = round(_v10_l2e, 2)
+                pos["lot2_cancelled"] = bool(_v10_l2c)
         elif not _v10_it and dash.get("position", {}).get("in_trade"):
             dash["position"] = {"in_trade": False}
 
