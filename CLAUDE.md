@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09 (fix/v10-lot2-deadlock-and-state-persistence). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-09 (fix/v10-dashboard-csv-bugs). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -130,7 +130,9 @@ Fields currently persisted:
 `_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
 `initial_sl`, `entry_regime`, `lot1_qty`, `lot1_entry`,
 `lot2_qty`, `lot2_limit`, `lot2_entry`, `lot2_filled`, `lot2_cancelled`,
-`peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`
+`peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
+`entry_spot`, `entry_atm_dist`, `neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
+`vix_at_entry`, `hourly_rsi_at_entry`, `bias_at_entry`, `session_at_entry`
 
 ---
 
