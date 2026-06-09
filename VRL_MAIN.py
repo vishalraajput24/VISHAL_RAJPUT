@@ -4207,7 +4207,7 @@ _v8_state = {
     "xleg_other_margin": 0.0,
     "spot_regime_at_entry": "",
 }
-_v8_lock = threading.Lock()
+_v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from within exit-check block
 
 
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
@@ -4247,7 +4247,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
     # Midpoint of the breakout candle
     op = entry_result.get("open", entry_price)
     cl = entry_result.get("close", entry_price)
-    lot2_limit = round((op + cl) / 2, 2)
+    lot2_limit = round((op + cl) / 2, 1)  # 1 decimal prevents float-rounding surprise in .1f display
 
     with _v8_lock:
         if _v8_state.get("in_trade"):
@@ -4291,6 +4291,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["entry_regime"]          = entry_result.get("entry_mode") or ("V10_CE" if direction == "CE" else "V10_PE")
         _v8_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
         _v8_state["spot_regime_at_entry"]  = entry_result.get("spot_regime", "")
+        _v8_state["_last_trade_date"]      = date.today().isoformat()
 
         # Data collection fields
         _v8_state["entry_spot"]            = float(spot_at_entry)
@@ -4536,11 +4537,17 @@ def _v8_check_exit():
         
         # Increment candles_held once per minute
         _cur_min = datetime.now().strftime("%H:%M")
-        if _cur_min != _v8_state.get("_last_minute", ""):
+        _new_candle = _cur_min != _v8_state.get("_last_minute", "")
+        if _new_candle:
             _v8_state["_last_minute"] = _cur_min
             _v8_state["candles_held"] = _v8_state.get("candles_held", 0) + 1
-        
+
         candles_held   = int(_v8_state.get("candles_held", 0))
+
+    # Persist state once per candle so peak_pnl / candles_held survive a restart.
+    # Safe to call here: _v8_lock is RLock so re-entry from _save_v8_state() is allowed.
+    if _new_candle:
+        _save_v8_state()
 
     if not token:
         return
