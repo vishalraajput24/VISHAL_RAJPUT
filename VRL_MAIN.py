@@ -4206,6 +4206,11 @@ _v8_state = {
     "peak_ltp": 0.0,
     "xleg_other_margin": 0.0,
     "spot_regime_at_entry": "",
+    # Market context at entry — persisted so they survive restart
+    "vix_at_entry":          None,
+    "hourly_rsi_at_entry":   None,
+    "bias_at_entry":         None,
+    "session_at_entry":      None,
 
     # Study: entry-timing markers (when did trade actually move?)
     "first_profit_candle": 0,    # candles_held when LTP first exceeded avg_entry
@@ -4575,6 +4580,9 @@ def _v8_check_exit():
         lot2_entry     = float(_v8_state.get("lot2_entry", 0.0))
         initial_sl     = float(_v8_state.get("initial_sl", 0.0))
         peak_ltp       = float(_v8_state.get("peak_ltp", 0.0))
+        peak_pnl_snap  = float(_v8_state.get("peak_pnl", 0.0))
+        active_tier    = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
+        entry_price_snap = float(_v8_state.get("entry_price", 0.0))
         direction      = _v8_state.get("direction", "")
         strike         = int(_v8_state.get("strike", 0) or 0)
         
@@ -4591,6 +4599,18 @@ def _v8_check_exit():
     # Safe to call here: _v8_lock is RLock so re-entry from _save_v8_state() is allowed.
     if _new_candle:
         _save_v8_state()
+        with _v10_live_lock:
+            _ce_snap = dict(_v10_live.get("CE", {}))
+            _pe_snap = dict(_v10_live.get("PE", {}))
+        _avg_e = round((lot1_entry + lot2_entry) / 2, 2) if lot2_filled else lot1_entry
+        logger.info(
+            f"[CANDLE] c={candles_held} dir={direction} avg_entry={_avg_e:.2f}"
+            f" peak={peak_pnl_snap:+.2f} tier={active_tier}"
+            f" | CE mom={_ce_snap.get('momentum_gap', 0):+.2f}(ok={_ce_snap.get('momentum_ok', False)})"
+            f" decay={_ce_snap.get('decay_margin', 0):+.2f}(ok={_ce_snap.get('decay_ok', False)})"
+            f" | PE mom={_pe_snap.get('momentum_gap', 0):+.2f}(ok={_pe_snap.get('momentum_ok', False)})"
+            f" decay={_pe_snap.get('decay_margin', 0):+.2f}(ok={_pe_snap.get('decay_ok', False)})"
+        )
 
     if not token:
         return
