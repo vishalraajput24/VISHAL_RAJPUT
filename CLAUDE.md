@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09. Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-09 (fix/v10-lot2-deadlock-and-state-persistence). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -138,7 +138,7 @@ Fields currently persisted:
 - **Main loop** — single thread, ~1s cycle
 - **TG listener** — `TGListener` daemon thread (Telegram commands)
 - **Web server** — `ThreadingHTTPServer` + `_WebHandler` daemon (port 8080)
-- **`_v10_lock`** (code: `_v8_lock`) — protects all `_v10_state` reads/writes
+- **`_v10_lock`** (code: `_v8_lock`) — `threading.RLock()` — protects all `_v10_state` reads/writes; RLock allows `_save_v8_state()` to re-enter from within exit-check block
 - **`_state_lock`** — protects legacy `state` dict
 - **Rule**: any function callable from both main loop and TG/web thread must hold `_v10_lock` for the full check-and-act section. Never check under lock, release, then act.
 
