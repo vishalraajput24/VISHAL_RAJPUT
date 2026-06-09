@@ -6224,24 +6224,30 @@ def _update_dashboard_ltp():
 
         # Update V10 position if in trade (_v8_state — V7 state never has V10 trades)
         with _v8_lock:
-            _v10_it  = _v8_state.get("in_trade", False)
-            _v10_tk  = _v8_state.get("token", 0)
-            _v10_ep  = _v8_state.get("entry_price", 0)
-            _v10_pk  = _v8_state.get("peak_pnl", 0)
-            _v10_l2f = _v8_state.get("lot2_filled", False)
-            _v10_l2e = _v8_state.get("lot2_entry", 0.0)
-            _v10_l2c = _v8_state.get("lot2_cancelled", False)
+            _v10_it   = _v8_state.get("in_trade", False)
+            _v10_tk   = _v8_state.get("token", 0)
+            _v10_ep   = _v8_state.get("entry_price", 0)
+            _v10_pk   = _v8_state.get("peak_pnl", 0)
+            _v10_sl   = _v8_state.get("active_ratchet_sl", 0)
+            _v10_tier = _v8_state.get("active_ratchet_tier", "INITIAL")
+            _v10_can  = _v8_state.get("candles_held", 0)
+            _v10_l2f  = _v8_state.get("lot2_filled", False)
+            _v10_l2e  = _v8_state.get("lot2_entry", 0.0)
+            _v10_l2c  = _v8_state.get("lot2_cancelled", False)
         if _v10_it and _v10_tk:
             opt_ltp = D.get_ltp(_v10_tk)
             if opt_ltp > 0:
                 pos = dash.get("position", {})
-                pos["ltp"]            = round(opt_ltp, 2)
-                pos["pnl"]            = round(opt_ltp - _v10_ep, 1)
-                pos["peak"]           = round(_v10_pk, 1)
-                pos["entry"]          = round(_v10_ep, 2)
-                pos["lot2_filled"]    = bool(_v10_l2f)
-                pos["lot2_entry"]     = round(_v10_l2e, 2)
-                pos["lot2_cancelled"] = bool(_v10_l2c)
+                pos["ltp"]                = round(opt_ltp, 2)
+                pos["pnl"]                = round(opt_ltp - _v10_ep, 1)
+                pos["peak"]               = round(_v10_pk, 1)
+                pos["entry"]              = round(_v10_ep, 2)
+                pos["sl"]                 = round(_v10_sl, 2)
+                pos["active_ratchet_tier"] = _v10_tier
+                pos["candles"]            = _v10_can
+                pos["lot2_filled"]        = bool(_v10_l2f)
+                pos["lot2_entry"]         = round(_v10_l2e, 2)
+                pos["lot2_cancelled"]     = bool(_v10_l2c)
         elif not _v10_it and dash.get("position", {}).get("in_trade"):
             dash["position"] = {"in_trade": False}
 
@@ -6469,7 +6475,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 _today_pnl_rs += _r
                 if _p > 0:
                     _today_wins += 1
-                else:
+                elif _p < 0:
                     _today_losses += 1
             except Exception:
                 pass
