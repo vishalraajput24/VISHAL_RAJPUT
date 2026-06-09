@@ -22,4 +22,7 @@ screener/inst_cache_*
 screener/fno_tech_cache*
 screener/archive/
 screener/multibagger_*.csv
+!screener/orion_news_filter_results.csv
+!screener/orion_news_filter_summary.csv
+!screener/orion_news_filter_report.md
 analysis/daily/*.bak
