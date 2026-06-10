@@ -691,17 +691,23 @@ def ms_get_stock_positions(mc) -> list:
         return []
 
 
-# ── Startup banner helper ────────────────────────────────────────────────────
+# ── Fund summary (cached) ────────────────────────────────────────────────────
 
-def ms_get_banner_line() -> str:
-    """Return a one-liner for the bot startup Telegram banner."""
+_ms_funds_cache = {"ts": 0.0, "ok": False, "name": "", "available": 0.0, "used": 0.0}
+
+def ms_get_funds(max_age_secs: int = 300) -> dict:
+    """m.Stock client name + fund summary, cached (one REST call / 5 min).
+    Returns {"ok", "name", "available", "used"} — ok=False means the numbers
+    are unavailable (login pending, API error) and should not be trusted."""
     import base64
-    client_id = os.getenv("MSTOCK_CLIENT_ID", "MStock")
+    now_ts = time.time()
+    if now_ts - _ms_funds_cache["ts"] < max_age_secs:
+        return dict(_ms_funds_cache)
+    _ms_funds_cache["ts"] = now_ts  # even on failure, don't hammer the API
     try:
         mc = get_mstock()
 
-        # ── Name from JWT payload ──────────────────────────────────────
-        name = ""
+        # Name from JWT payload
         try:
             saved = _ms_read_token()
             jwt   = saved.get("access_token", "")
@@ -711,32 +717,42 @@ def ms_get_banner_line() -> str:
                 if padding != 4:
                     payload_b64 += "=" * padding
                 payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-                name = str(payload.get("CLIENTNAME", "")).strip().title()
+                _ms_funds_cache["name"] = str(payload.get("CLIENTNAME", "")).strip().title()
         except Exception:
             pass
 
-        # ── Fund summary (balance) ─────────────────────────────────────
-        avail_str = ""
-        used_str  = ""
-        try:
-            f  = mc.get_fund_summary()
-            fd = f.json()
-            if fd.get("status") == "success":
-                rows = fd.get("data") or []
-                row = next(
-                    (r for r in rows if str(r.get("SEG", "")).upper() in ("A", "E", "EQUITY")),
-                    rows[0] if rows else {}
-                )
-                avail = float(row.get("AVAILABLE_BALANCE") or row.get("NET") or 0)
-                used  = float(row.get("AMOUNT_UTILIZED") or row.get("LIMIT_SOD") or 0)
-                avail_str = " | Avail: ₹{:,.0f}".format(avail)
-                used_str  = " | Used: ₹{:,.0f}".format(used)
-        except Exception:
-            pass
+        f  = mc.get_fund_summary()
+        fd = f.json()
+        if fd.get("status") == "success":
+            rows = fd.get("data") or []
+            row = next(
+                (r for r in rows if str(r.get("SEG", "")).upper() in ("A", "E", "EQUITY")),
+                rows[0] if rows else {}
+            )
+            _ms_funds_cache["available"] = float(row.get("AVAILABLE_BALANCE") or row.get("NET") or 0)
+            _ms_funds_cache["used"]      = float(row.get("AMOUNT_UTILIZED") or row.get("LIMIT_SOD") or 0)
+            _ms_funds_cache["ok"] = True
+        else:
+            _ms_funds_cache["ok"] = False
+    except Exception as e:
+        _ms_funds_cache["ok"] = False
+        logger.debug(f"[MSTOCK] ms_get_funds: {e}")
+    return dict(_ms_funds_cache)
 
-        label = name if name else client_id
-        return f"MStock: {label}{avail_str}{used_str}"
 
+# ── Startup banner helper ────────────────────────────────────────────────────
+
+def ms_get_banner_line() -> str:
+    """Return a one-liner for the bot startup Telegram banner."""
+    client_id = os.getenv("MSTOCK_CLIENT_ID", "MStock")
+    try:
+        funds = ms_get_funds(max_age_secs=0)  # force fresh at startup
+        label = funds.get("name") or client_id
+        if funds.get("ok"):
+            return ("MStock: " + label
+                    + " | Avail: ₹{:,.0f}".format(funds["available"])
+                    + " | Used: ₹{:,.0f}".format(funds["used"]))
+        return f"MStock: {label} (funds unavailable)"
     except Exception as e:
         logger.warning(f"[MSTOCK] banner_line error: {e}")
         return f"MStock: {client_id} (login pending)"
@@ -6245,6 +6261,28 @@ def _warmup_info(now, dte):
     return is_warm, int(done), needed, eta
 
 
+def _account_block():
+    """Dashboard account section. Orders go via m.Stock, so show the m.Stock
+    funds (cached 5-min); fall back to the Kite margins (data-feed account)
+    only when m.Stock is unavailable, labelled so the source is obvious."""
+    try:
+        funds = MSTOCK.ms_get_funds()
+        if funds.get("ok"):
+            return {
+                "name": funds.get("name", "") or "m.Stock",
+                "balance": round(funds.get("available", 0), 2),
+                "used": round(funds.get("used", 0), 2),
+            }
+    except Exception:
+        pass
+    acct = D.get_account_info()
+    return {
+        "name": (acct.get("name", "") + " (Kite)").strip(),
+        "balance": acct.get("total_balance", 0),
+        "used": acct.get("used_margin", 0),
+    }
+
+
 def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                      profile, all_results, expiry, now,
                      dir_strikes=None):
@@ -6485,11 +6523,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "pe": pe_signal,
             "position": position,
             "today": today_block,
-            "account": {
-                "name": D.get_account_info().get("name", ""),
-                "balance": D.get_account_info().get("total_balance", 0),
-                "used": D.get_account_info().get("used_margin", 0),
-            },
+            "account": _account_block(),
             "rolling": rolling_block,
             "cooldown": {},
         }
@@ -7710,13 +7744,25 @@ def _cmd_account(args):
         _tg_send("Account info not available. Bot may not have fetched it yet.")
         return
 
+    _ms_block = ""
+    try:
+        _msf = MSTOCK.ms_get_funds(max_age_secs=0)  # user asked — fetch fresh
+        if _msf.get("ok"):
+            _ms_block = (
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "💰 <b>m.Stock (orders)</b>" + ((" — " + _msf["name"]) if _msf.get("name") else "") + "\n"
+                "Available: ₹" + "{:,}".format(int(_msf.get("available", 0))) + "\n"
+                "Used     : ₹" + "{:,}".format(int(_msf.get("used", 0))) + "\n"
+            )
+    except Exception:
+        pass
+
     _tg_send(
         "👤 <b>ACCOUNT</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Name     : " + _acct.get("name", "") + "\n"
-        "User ID  : " + _acct.get("user_id", "") + "\n"
-        "Broker   : " + _acct.get("broker", "Zerodha") + "\n"
+        + _ms_block +
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📡 <b>Kite (data)</b> — " + _acct.get("name", "") + "\n"
         "Balance  : ₹" + "{:,}".format(int(_acct.get("total_balance", 0))) + "\n"
         "Available: ₹" + "{:,}".format(int(_acct.get("available_margin", 0))) + "\n"
         "Used     : ₹" + "{:,}".format(int(_acct.get("used_margin", 0)))
