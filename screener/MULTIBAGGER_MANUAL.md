@@ -512,3 +512,34 @@ ROE > 20% | ROCE > 20% | D/E < 0.5 | Promoter > 45% | Pledge < 5%
 ---
 
 *Manual v1.0 — Keep this file alongside multibagger_screener.py*
+
+---
+
+## 12. Technical Entry Gate (added 2026-06-10)
+
+Fundamental score alone showed **zero correlation** with forward returns on the
+first tracked cohort (31 picks, May–June 2026). What did separate winners from
+losers was trend position at entry. So after the fundamental filter, every
+passed stock must also clear a Stage-2 trend gate (`apply_technical_gate`,
+needs Kite):
+
+| # | Condition | Why |
+|---|-----------|-----|
+| 1 | Close > 150-session (~30-week) MA | Uptrend only — Weinstein stage 2 |
+| 2 | Within 25% of 52-week high | No falling knives |
+| 3 | 21-session return > −3% | Not in a sharp pullback |
+
+Validation on the cohort: gated entries averaged **+3.1% (69% win-rate)** vs
+**−2.8% (22% win-rate)** for rejected ones, while keeping the best pick
+(CEMPRO +31%). 63-session relative strength vs NIFTY (`_rs63`, correlation
++0.43 with returns) is added to the ranking composite at weight 0.3.
+If Kite history is unavailable a stock is kept and flagged `no-data` — an API
+outage never empties the pick list.
+
+## 13. Corporate-Action Auto-Rebase (added 2026-06-10)
+
+Kite back-adjusts history after a split/bonus, but the tracker stored the
+unadjusted entry — ANANDRATHI's 1:1 bonus showed a fake −51% "SL-HIT" (real
+return: −2.8%). `portfolio_monitor.py` now compares the stored entry with the
+adjusted close on the entry date; if they differ by more than 15%, it rebases
+entry/SL/targets/peak by the ratio and logs a `CORP-ACTION` event.
