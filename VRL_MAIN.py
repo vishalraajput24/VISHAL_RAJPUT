@@ -4191,7 +4191,7 @@ _v8_state = {
     "_last_exit_direction_v10": "",
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
-    "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: - = ITM, + = OTM; PE: + = ITM, - = OTM)
+    "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
@@ -4621,6 +4621,19 @@ def _v8_check_exit():
         return
     ltp = D.get_ltp(token)
     if ltp <= 0:
+        # No live tick (feed down / token never subscribed after a restart).
+        # SL/trail checks need a real price, but the EOD hard-close must
+        # still fire — fall back to average entry, same as /forceexit
+        # (2026-06-10: stuck trade after a post-15:00 restart).
+        _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20") if hasattr(CFG, "exit_ema9_band") else "15:20"
+        try:
+            _eh, _em = _eod_str.split(":")
+            _eod_mins = int(_eh) * 60 + int(_em)
+        except Exception:
+            _eod_mins = 15 * 60 + 20
+        if datetime.now().hour * 60 + datetime.now().minute >= _eod_mins:
+            logger.warning("[V10] EOD reached with no live tick — force-closing at entry price")
+            _v8_execute_paper_exit("EOD_EXIT", round(entry_price_snap, 2))
         return
 
     with _v8_lock:
@@ -8552,6 +8565,21 @@ def main():
         logger.warning("[MAIN] Trade log restore failed: " + str(e))
     D.start_websocket()
     D.subscribe_tokens([D.NIFTY_SPOT_TOKEN, D.INDIA_VIX_TOKEN])
+    # Restart with an open trade: option tokens are normally subscribed only
+    # via _lock_strikes(), which runs inside is_trading_window() (09:15-15:00).
+    # A restart outside that window left the position with ltp=0, and
+    # _v8_check_exit()'s ltp<=0 guard then disabled SL/trail/EOD exits
+    # entirely (2026-06-10: EOD_EXIT never fired on a stuck PE trade).
+    # Subscribe the in-trade token + opposite leg unconditionally.
+    with _v8_lock:
+        _boot_trade_tokens = [
+            int(_v8_state.get("token", 0) or 0),
+            int(_v8_state.get("_other_token", 0) or 0),
+        ] if _v8_state.get("in_trade") else []
+    if _boot_trade_tokens:
+        D.subscribe_tokens(_boot_trade_tokens)
+        logger.info("[MAIN] Open trade restored — resubscribed trade tokens: "
+                    + str([t for t in _boot_trade_tokens if t]))
     time.sleep(2)
 
     # Phase 2 health: WS tick check (runs after WS is started + subscribed)

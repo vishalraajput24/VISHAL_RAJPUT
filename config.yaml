@@ -100,7 +100,7 @@ entry:
 exit:
   ema9_band:
     emergency_sl_pts: -12
-    eod_exit_time: "15:20"
+    eod_exit_time: "15:15"
 
 # ── Strike selection ───────────────────────────────────────────
 strike:
