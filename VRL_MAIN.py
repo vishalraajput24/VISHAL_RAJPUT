@@ -9511,11 +9511,14 @@ async function renderWeekly(){
     if(!data||!data.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No weekly picks yet — runs every Sunday</div>';return;}
     const open=data.filter(d=>(d.status||'').includes('OPEN'));
     const closed=data.filter(d=>!(d.status||'').includes('OPEN'));
-    // summary
-    var totRet=0;var wins=0;
-    open.forEach(function(p){var r=parseFloat(p.current_return_pct||0);totRet+=r;if(r>0)wins++;});
+    // summary — model portfolio: 1 share bought in every open pick
+    var totRet=0;var wins=0;var pfInv=0;var pfVal=0;
+    open.forEach(function(p){var r=parseFloat(p.current_return_pct||0);totRet+=r;if(r>0)wins++;
+      var e=parseFloat(p.entry_price||0);var c=parseFloat(p.current_price||0)||e;pfInv+=e;pfVal+=c;});
     var avgRet=open.length?totRet/open.length:0;
     var avgClr=avgRet>=0?'var(--gn)':'var(--rd)';
+    var pfPnl=pfVal-pfInv;var pfPct=pfInv>0?pfPnl/pfInv*100:0;
+    var pfClr=pfPnl>=0?'var(--gn)':'var(--rd)';var pfSign=pfPnl>=0?'+':'';
     // cards
     var cards=open.sort(function(a,b){return parseFloat(b.current_return_pct||0)-parseFloat(a.current_return_pct||0);}).map(function(p){
       var ret=parseFloat(p.current_return_pct||0);
@@ -9530,8 +9533,9 @@ async function renderWeekly(){
       return '<div style="margin:5px 8px;background:var(--c1);border:1px solid var(--bd);border-left:3px solid '+clr+';border-radius:8px;padding:9px 10px 7px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'+
           '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+esc(p.symbol)+'</span>'+
-          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+(cur||entry).toFixed(0)+'</div></div>'+
-          '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+(w?'+':'')+ret.toFixed(1)+'%</span></div>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">1 sh · Inv ₹'+entry.toFixed(0)+' → ₹'+(cur||entry).toFixed(0)+'</div></div>'+
+          '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+(w?'+':'')+ret.toFixed(1)+'%</span>'+
+          '<div style="font-size:10px;color:'+clr+'">'+(w?'+':'−')+'₹'+Math.abs(Math.round((cur||entry)-entry)).toLocaleString('en-IN')+'</div></div>'+
         '</div>'+
         '<div style="display:flex;gap:4px;margin-bottom:4px">'+
           '<div style="flex:1;text-align:center;padding:4px;border-radius:6px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.15)"><div style="font-size:7px;color:var(--dm)">SL</div><div style="font-size:10px;font-weight:700;color:var(--rd)">₹'+sl.toFixed(0)+'</div></div>'+
@@ -9558,9 +9562,11 @@ async function renderWeekly(){
     }
     el.innerHTML=
       '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
-        '<div><div style="font-size:9px;color:var(--dm)">MULTIBAGGER PICKS</div>'+
-        '<div style="font-weight:700;font-size:14px">'+open.length+' Open · '+wins+'W/'+( open.length-wins)+'L</div></div>'+
-        '<div style="text-align:right"><div style="font-size:9px;color:var(--dm)">AVG RETURN</div>'+
+        '<div><div style="font-size:9px;color:var(--dm)">MULTIBAGGER PORTFOLIO (1 share each)</div>'+
+        '<div style="font-weight:800;font-size:16px;color:'+pfClr+'">'+pfSign+'₹'+Math.abs(Math.round(pfPnl)).toLocaleString('en-IN')+' <span style="font-size:11px">('+pfSign+pfPct.toFixed(1)+'%)</span></div>'+
+        '<div style="font-size:9px;color:var(--dm);margin-top:1px">Inv ₹'+Math.round(pfInv).toLocaleString('en-IN')+' → ₹'+Math.round(pfVal).toLocaleString('en-IN')+'</div></div>'+
+        '<div style="text-align:right"><div style="font-size:9px;color:var(--dm)">'+open.length+' OPEN · '+wins+'W/'+(open.length-wins)+'L</div>'+
+        '<div style="font-size:9px;color:var(--dm);margin-top:2px">AVG RETURN</div>'+
         '<div style="font-weight:800;font-size:16px;color:'+avgClr+'">'+(avgRet>=0?'+':'')+avgRet.toFixed(1)+'%</div></div>'+
       '</div>'+cards+closedHtml;
   }catch(e){document.getElementById('p-wkly').innerHTML='<div style="color:var(--dm);padding:16px">Error loading weekly data</div>';console.error(e);}
