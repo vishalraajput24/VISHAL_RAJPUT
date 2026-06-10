@@ -4191,7 +4191,7 @@ _v8_state = {
     "_last_exit_direction_v10": "",
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
-    "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
+    "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: - = ITM, + = OTM; PE: + = ITM, - = OTM)
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
