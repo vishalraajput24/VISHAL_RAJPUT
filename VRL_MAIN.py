@@ -1050,11 +1050,6 @@ def collect_logs_for_date(target_date: str = None) -> list:
     if os.path.isfile(config_path):
         files.append((config_path, "state/config.yaml"))
 
-    # Zones
-    zones_path = os.path.join(STATE_DIR, "vrl_zones.json")
-    if os.path.isfile(zones_path):
-        files.append((zones_path, "state/vrl_zones.json"))
-
     return files
 
 
@@ -1990,46 +1985,10 @@ def get_spot_indicators(interval: str = "3minute") -> dict:
 #  Entry fire: 9:30-15:10 | Scan from 9:15
 # ═══════════════════════════════════════════════════════════════
 
-_straddle_open     = 0.0
-_straddle_captured = False
 _daily_bias        = "UNKNOWN"
 _daily_bias_done   = False
 _hourly_rsi        = 0.0
 _hourly_rsi_ts     = 0
-
-
-def capture_straddle(kite, strike, expiry):
-    global _straddle_open, _straddle_captured
-    if _straddle_captured:
-        return
-    try:
-        tokens = get_option_tokens(kite, strike, expiry)
-        if not tokens:
-            return
-        ce_ltp = pe_ltp = 0.0
-        for side in ("CE", "PE"):
-            info = tokens.get(side)
-            if not info:
-                continue
-            ltp = get_ltp(info["token"])
-            if ltp <= 0 and kite:
-                try:
-                    q = kite.ltp(["NFO:" + info["symbol"]])
-                    ltp = float(list(q.values())[0]["last_price"])
-                except Exception:
-                    pass
-            if side == "CE":
-                ce_ltp = ltp
-            else:
-                pe_ltp = ltp
-        if ce_ltp > 0 and pe_ltp > 0:
-            _straddle_open = round(ce_ltp + pe_ltp, 2)
-            _straddle_captured = True
-            logger.info("[STRADDLE] CE=" + str(round(ce_ltp, 1))
-                        + " PE=" + str(round(pe_ltp, 1))
-                        + " Sum=" + str(_straddle_open))
-    except Exception as e:
-        logger.warning("[STRADDLE] Capture: " + str(e))
 
 
 def compute_daily_bias(kite):
@@ -2140,18 +2099,6 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
             upd["_bias_done"] = True
         except Exception as _e:
             logger.warning("[WARN] Bias: " + str(_e))
-    # 2. Straddle capture 9:30
-    if (now.hour == 9 and now.minute >= 30 and not state.get("_straddle_done")
-            and spot_ltp > 0 and expiry is not None):
-        try:
-            _ss = get_active_strike_step(dte)
-            _sa = resolve_atm_strike(spot_ltp, _ss)
-            if _sa > 0:
-                capture_straddle(kite, _sa, expiry)
-                upd["_straddle_done"] = True
-                pass  # straddle value captured internally, no Telegram alert
-        except Exception as _e:
-            logger.warning("[WARN] Straddle: " + str(_e))
     # 4. Hourly RSI (every hour — only during market hours)
     if (is_market_open() and now.minute == 0 and now.second < 35
             and (_t.time() - state.get("_hourly_rsi_ts", 0)) > 3000):
@@ -2165,10 +2112,8 @@ def run_warnings(kite, state, expiry, dte, spot_ltp, now):
 
 
 def reset_daily_warnings():
-    global _straddle_open, _straddle_captured, _daily_bias, _daily_bias_done
+    global _daily_bias, _daily_bias_done
     global _hourly_rsi, _hourly_rsi_ts
-    _straddle_open = 0.0
-    _straddle_captured = False
     _daily_bias = "UNKNOWN"
     _daily_bias_done = False
     _hourly_rsi = 0.0
@@ -4114,9 +4059,7 @@ DEFAULT_STATE = {
     "_eod_reported"      : False,
     "_eod_exited"        : False,
     "_bias_done"         : False,
-    "_straddle_done"     : False,
     "_hourly_rsi_ts"     : 0,
-    "_straddle_alerted"  : False,
     # ── Loop bookkeeping ───────────────────────────────────
     "_last_1min_candle"  : "",
     "_last_dash_scan_min": "",
@@ -5080,12 +5023,9 @@ def _reset_daily(today_str: str):
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
         state["_eod_exited"]           = False
-        state["aggressive_mode"]       = False
         state["paused"]                = False
         state["_bias_done"]            = False
-        state["_straddle_done"]        = False
         state["_hourly_rsi_ts"]        = 0
-        state["_straddle_alerted"]     = False
         state["_or_refreshed_today"]   = False  # reset OR refresh flag
         # Clear persisted scan dedup key so a crash-restart landing at
         # 09:30:45 (after the loop already scanned 09:30) doesn't treat
@@ -6356,8 +6296,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             bias = ""
 
-        straddle_open = getattr(D, "_straddle_open", 0)
-        straddle_captured = getattr(D, "_straddle_captured", False)
 
         def _build_signal(opt_type, result):
             _ltp_fallback = 0
@@ -6538,11 +6476,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
 
-        straddle_block = {
-            "open": round(straddle_open, 1) if straddle_captured else 0,
-            "captured": straddle_captured,
-        }
-
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
@@ -6573,7 +6506,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "pe": pe_signal,
             "position": position,
             "today": today_block,
-            "straddle": straddle_block,
             "account": {
                 "name": D.get_account_info().get("name", ""),
                 "balance": D.get_account_info().get("total_balance", 0),
@@ -6634,16 +6566,6 @@ def _strategy_loop(kite):
 
     expiry = D.get_nearest_expiry(kite)
 
-    try:
-        _now = datetime.now()
-        if expiry and _now.hour >= 9 and _now.minute >= 30:
-            _ss = D.get_active_strike_step(D.calculate_dte(expiry))
-            _sa = D.resolve_atm_strike(D.get_ltp(D.NIFTY_SPOT_TOKEN), _ss)
-            if _sa > 0:
-                D.capture_straddle(kite, _sa, expiry)
-                logger.info("[MAIN] Straddle captured at startup")
-    except Exception as _se:
-        logger.debug("[MAIN] Straddle: " + str(_se))
     if expiry:
         logger.info("[MAIN] Expiry on startup: " + str(expiry))
     else:
@@ -6954,27 +6876,6 @@ def _strategy_loop(kite):
                     _tg_send(_wm)
             except Exception as _we:
                 logger.warning("[MAIN] Warnings: " + str(_we))
-
-            _strad_open = getattr(D, "_straddle_open", 0)
-            _strad_capt = getattr(D, "_straddle_captured", False)
-            if (_strad_capt and _strad_open > 0
-                    and not state.get("aggressive_mode")
-                    and now.minute % 5 == 0 and now.second < 5):
-                try:
-                    _strad_curr = D.get_straddle_sum(kite, _locked_ce_strike, expiry) if hasattr(D, "get_straddle_sum") else 0
-                    if _strad_curr > 0:
-                        _decay_pct = (_strad_open - _strad_curr) / _strad_open
-                        if _decay_pct >= 0.20:
-                            with _state_lock:
-                                state["aggressive_mode"] = True
-                            _save_state()
-                            logger.info("[MAIN] Aggressive mode ON — straddle decay "
-                                        + str(round(_decay_pct * 100, 1)) + "%")
-                            _tg_send("⚡ Aggressive mode activated\n"
-                                     "Straddle decay " + str(round(_decay_pct * 100, 0))
-                                     + "% — directional day confirmed")
-                except Exception:
-                    pass
 
             with _state_lock:
                 _eod_done = state.get("_eod_reported")
@@ -8912,74 +8813,6 @@ def _web_list_files(folder=""):
     return {"files": files[:30], "folder": folder, "folder_name": info[0]}
 
 
-def _web_read_multitf():
-    spot_dir = os.path.join(_WEB_BASE, "lab_data", "spot")
-    opt3_dir = os.path.join(_WEB_BASE, "lab_data", "options_3min")
-    opt1_dir = os.path.join(_WEB_BASE, "lab_data", "options_1min")
-    def _latest(d, p):
-        fs = sorted(_web_glob.glob(os.path.join(d, p + "*.csv")))
-        if fs: return fs[-1]
-        a = os.path.join(d, p + ".csv")
-        return a if os.path.isfile(a) else None
-    def _last(path):
-        if not path or not os.path.isfile(path): return None
-        try:
-            with open(path) as f: rows = list(csv.DictReader(f))
-            return rows[-1] if rows else None
-        except Exception: return None
-    def _lasttype(path, t):
-        if not path or not os.path.isfile(path): return None
-        try:
-            with open(path) as f: rows = list(csv.DictReader(f))
-            for r in reversed(rows):
-                if r.get("type") == t: return r
-            return None
-        except Exception: return None
-    def _f(r, k, d=0):
-        try: return round(float(r.get(k, d)), 1)
-        except (TypeError, ValueError): return d
-    def _f3(r, k, d=0):
-        try: return round(float(r.get(k, d)), 3)
-        except (TypeError, ValueError): return d
-    spot = []
-    for label, prefix in [("1m","nifty_spot_1min"),("5m","nifty_spot_5min_"),("15m","nifty_spot_15min_"),("60m","nifty_spot_60min_"),("D","nifty_spot_daily")]:
-        r = _last(_latest(spot_dir, prefix))
-        if r: spot.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"spread":_f(r,"ema_spread",_f(r,"spread")),"regime":r.get("regime","")})
-        else: spot.append({"tf":label,"adx":0,"rsi":0,"spread":0,"regime":""})
-    try:
-        _d = _web_read_dash()
-        _mk = _d.get("market", {})
-        spot.insert(1, {
-            "tf": "3m",
-            "adx": round(float(_mk.get("spot_adx_3m", 0)), 1),
-            "rsi": round(float(_mk.get("spot_rsi", 0)), 1),
-            "spread": round(float(_mk.get("spot_spread", 0)), 1),
-            "regime": _mk.get("regime", ""),
-        })
-    except Exception:
-        spot.insert(1, {"tf": "3m", "adx": 0, "rsi": 0, "spread": 0, "regime": ""})
-    ce = []; pe = []; ce_strike = 0; pe_strike = 0
-    for label, d, prefix in [("1m",opt1_dir,"nifty_option_1min_"),("3m",opt3_dir,"nifty_option_3min_")]:
-        p = _latest(d, prefix)
-        for side, arr in [("CE",ce),("PE",pe)]:
-            r = _lasttype(p, side)
-            if r:
-                arr.append({"tf":label,"adx":_f(r,"adx"),"rsi":_f(r,"rsi"),"iv":_f(r,"iv_pct"),"delta":_f3(r,"delta"),"ltp":_f(r,"close"),"body":_f(r,"body_pct"),"spread":_f(r,"ema_spread",_f(r,"ema9_gap")),"strike":r.get("strike","")})
-                if side == "CE" and not ce_strike: ce_strike = r.get("strike", "")
-                if side == "PE" and not pe_strike: pe_strike = r.get("strike", "")
-            else: arr.append({"tf":label,"adx":0,"rsi":0,"iv":0,"delta":0,"ltp":0,"body":0,"spread":0,"strike":""})
-    try:
-        d = _web_read_dash()
-        ce_live = d.get("ce", {}).get("ltp", 0)
-        pe_live = d.get("pe", {}).get("ltp", 0)
-        if ce_live:
-            for row in ce: row["ltp"] = round(ce_live, 1)
-        if pe_live:
-            for row in pe: row["ltp"] = round(pe_live, 1)
-    except Exception:
-        pass
-    return {"spot":spot,"ce":ce,"pe":pe,"ce_strike":ce_strike,"pe_strike":pe_strike}
-
 def _web_read_trades():
     if not os.path.isfile(_WEB_TRADE_LOG): return []
     today = date.today().isoformat()
@@ -9083,41 +8916,6 @@ def _web_read_weekly():
     except Exception: pass
     return rows
 
-def _web_read_shadow():
-    """Read shadow state JSON — atomic file, safe read with fallback."""
-    try:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "vrl_shadow_state.json")
-        if not os.path.isfile(path): return {}
-        with open(path) as f:
-            d = json.load(f)
-        def _sig(d, key, side):
-            s = d.get(key, {}).get(side, {})
-            return {
-                "active":       bool(s.get("active", False)),
-                "entry_price":  float(s.get("entry_price", 0) or 0),
-                "entry_time":   s.get("entry_time", ""),
-                "peak_price":   float(s.get("peak_price", 0) or 0),
-                "peak_pts":     float(s.get("peak_pts", 0) or 0),
-                "shadow_sl":    float(s.get("shadow_sl", 0) or 0),
-                "shadow_level": s.get("shadow_level", ""),
-                "entry_strike": int(s.get("entry_strike", 0) or 0),
-                "today_entry":  float(s.get("today_entry", 0) or 0),
-                "bucket_ts":    str(s.get("bucket_ts", "")),
-                "sl_ts":        float(s.get("sl_ts", 0) or 0),
-                "exit_ts":      float(s.get("exit_ts", 0) or 0),
-                "today_date":   s.get("today_date", ""),
-                "last_exit_pnl":    float(s.get("last_exit_pnl", 0) or 0),
-                "last_exit_reason": s.get("last_exit_reason", ""),
-                "last_exit_ts":     float(s.get("last_exit_ts", 0) or 0),
-            }
-        return {
-            "saved_date": d.get("saved_date", ""),
-            "p1": {"CE": _sig(d,"p1","CE"), "PE": _sig(d,"p1","PE")},
-            "p2": {"CE": _sig(d,"p2","CE"), "PE": _sig(d,"p2","PE")},
-            "live": d.get("live", {}),
-        }
-    except Exception: return {}
-
 _WEB_HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -9187,7 +8985,6 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 
 <div class="tabs">
   <div class="tab on" data-t="sig" onclick="st('sig')">⚡ SIG</div>
-  <div class="tab" data-t="mkt" onclick="st('mkt')">📈 MKT</div>
   <div class="tab" data-t="fno" onclick="st('fno')">📊 F&amp;O</div>
   <div class="tab" data-t="trd" onclick="st('trd')">📒 TRD</div>
   <div class="tab" data-t="wkly" onclick="st('wkly')">📅 WEEKLY</div>
@@ -9195,7 +8992,6 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 </div>
 
 <div id="p-sig"></div>
-<div id="p-mkt" class="H"></div>
 <div id="p-fno" class="H"></div>
 <div id="p-trd" class="H"></div>
 <div id="p-wkly" class="H"></div>
@@ -9206,7 +9002,7 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSyst
 
 <script>
 var _curTab='sig';
-function st(t){_curTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','mkt','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
+function st(t){_curTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.dataset.t===t));['sig','fno','trd','wkly','fil'].forEach(i=>document.getElementById('p-'+i).classList.toggle('H',i!==t));if(t==='fno')renderFno();if(t==='wkly')renderWeekly();if(t==='fil')loadFiles('');}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -9222,9 +9018,9 @@ function shortSym(sym, dir, strike){
   return sym;
 }
 
-function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
+function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig').innerHTML='<div style="text-align:center;color:#555;padding:20px">Waiting for bot data... (FILES tab works)</div>';document.getElementById('position-area').innerHTML='';return}
 
-  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},str=d.straddle||{},rl=d.rolling||{};
+  const mk=d.market,ce=d.ce||{},pe=d.pe||{},pos=d.position||{},td=d.today||{},rl=d.rolling||{};
   // streak lives in rolling block, not today block — map it for the day-bar
   if(!td.streak&&rl.streak)td.streak=rl.streak;
 
@@ -9351,127 +9147,36 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H+3.5 &nbsp;·&nbsp; Opp Decay [−8, −4] &nbsp;·&nbsp; Same-side 3-min</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
+    // ── Account + rolling performance (moved from retired MKT tab) ──
+    var acct=d.account||{};
+    var balAmt=Math.round(parseFloat(acct.balance||0));
+    var usedAmt=Math.round(parseFloat(acct.used||0));
+    var balClr=balAmt>=0?'var(--gn)':'var(--rd)';
+    var balStr=(balAmt<0?'-₹':'₹')+Math.abs(balAmt).toLocaleString('en-IN')+(balAmt<0?' !':'');
+    html+='<div class="sect"><div class="sh">MSTOCK · '+esc(acct.name||'—')+'</div>'+
+      '<div class="ctx-row">'+
+      '<div class="ctx"><div class="k">AVAILABLE</div><div class="v" style="color:'+balClr+';font-size:11px">'+balStr+'</div></div>'+
+      '<div class="ctx"><div class="k">USED MARGIN</div><div class="v" style="color:var(--am);font-size:11px">₹'+usedAmt.toLocaleString('en-IN')+'</div></div>'+
+      '<div class="ctx"><div class="k">MODE</div><div class="v" style="color:'+(d.mode==='LIVE'?'var(--gn)':'var(--bl)')+'">'+esc(d.mode||'PAPER')+'</div></div>'+
+      '<div class="ctx"><div class="k">VERSION</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.version||'—')+'</div></div>'+
+      '</div></div>';
+    var l10c=rl.last10_wr>=60?'var(--gn)':rl.last10_wr>=40?'var(--am)':'var(--rd)';
+    var l20c=rl.last20_wr>=60?'var(--gn)':rl.last20_wr>=40?'var(--am)':'var(--rd)';
+    var ptsc=(rl.last10_pts||0)>=0?'var(--gn)':'var(--rd)';
+    var strk=rl.streak||0;
+    var strkTxt=strk>=2?(''+strk+'-WIN STREAK'):strk<=-2?(''+Math.abs(strk)+'-LOSS STREAK'):'No streak';
+    var strkClr=strk>=2?'var(--gn)':strk<=-2?'var(--rd)':'var(--dm)';
+    html+='<div class="sect"><div class="sh">ROLLING PERFORMANCE</div>'+
+      '<div class="ctx-row">'+
+      '<div class="ctx"><div class="k">LAST 10 WR</div><div class="v" style="color:'+l10c+'">'+(rl.last10_wr||0)+'%</div></div>'+
+      '<div class="ctx"><div class="k">LAST 20 WR</div><div class="v" style="color:'+l20c+'">'+(rl.last20_wr||0)+'%</div></div>'+
+      '<div class="ctx"><div class="k">L10 PTS</div><div class="v" style="color:'+ptsc+'">'+(rl.last10_pts>=0?'+':'')+(rl.last10_pts||0)+'</div></div>'+
+      '<div class="ctx"><div class="k">STREAK</div><div class="v" style="color:'+strkClr+';font-size:9px">'+strkTxt+'</div></div>'+
+      '</div></div>';
     document.getElementById('p-sig').innerHTML=html;
   })();
 
-  // ── MARKET TAB ──
-  let mh='<div class="sect"><div class="sh">📈 SPOT NIFTY (3-MIN) · '+mk.spot+'</div>'+
-    '<div class="row"><div class="k">EMA 9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
-    '<div class="row"><div class="k">EMA 21</div><div class="v" style="color:var(--am)">'+mk.spot_ema21+'</div></div>'+
-    '<div class="row"><div class="k">EMA SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'pts</div></div>'+
-    '<div class="row"><div class="k">RSI (3m)</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
-    '<div class="row"><div class="k">REGIME</div><div class="v" style="color:'+((mk.regime||'').includes('TREND')?'var(--gn)':'var(--am)')+'">'+esc(mk.regime||'')+'</div></div>'+
-    '<div class="row"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'pts</div></div>'+
-    '<div style="padding:6px 10px;font-size:10px;color:'+(mk.spot_spread>5?'var(--gn)':mk.spot_spread<-5?'var(--rd)':'var(--am)')+'">'+
-    (mk.spot_spread>10?'Strong uptrend — EMA9 pulling away from EMA21':
-     mk.spot_spread>5?'Uptrend — spot above both EMAs':
-     mk.spot_spread>0?'Weak up — EMAs close, trend unclear':
-     mk.spot_spread>-5?'Weak down — EMAs close, choppy':
-     mk.spot_spread>-10?'Downtrend — spot below both EMAs':
-     'Strong downtrend — EMA9 falling hard')+'</div>'+
-    '<div style="padding:2px 10px 6px;font-size:9px;color:#555">'+
-    'RSI '+(mk.spot_rsi>=70?'OVERBOUGHT — reversal likely':mk.spot_rsi>=60?'STRONG — momentum with bulls':mk.spot_rsi<=30?'OVERSOLD — reversal likely':mk.spot_rsi<=40?'WEAK — bears in control':'NEUTRAL — no clear direction')+'</div></div>';
-  mh+='<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">SPOT</div><div class="v" style="color:var(--bl)">'+mk.spot+'</div></div>'+
-    '<div class="ctx"><div class="k">VWAP</div><div class="v" style="color:'+(mk.vwap>0?(mk.spot>mk.vwap?'var(--gn)':'var(--rd)'):'var(--dm)')+'">'+((mk.vwap>0)?mk.vwap:'—')+'</div></div>'+
-    '<div class="ctx"><div class="k">EMA9</div><div class="v" style="color:var(--gn)">'+mk.spot_ema9+'</div></div>'+
-    '<div class="ctx"><div class="k">SPREAD</div><div class="v" style="color:'+(mk.spot_spread>0?'var(--gn)':'var(--rd)')+'">'+(mk.spot_spread>0?'+':'')+mk.spot_spread+'</div></div></div>';
-  mh+='<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">RSI</div><div class="v" style="color:'+(mk.spot_rsi>60?'var(--gn)':mk.spot_rsi<40?'var(--rd)':'var(--am)')+'">'+mk.spot_rsi+'</div></div>'+
-    '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
-    '<div class="ctx"><div class="k">GAP</div><div class="v">'+(mk.gap>0?'+':'')+mk.gap+'</div></div>'+
-    '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
-  // Multi-TF Alignment
-  var sp=mtf.spot||[],ceo=mtf.ce||[],peo=mtf.pe||[];
-  function ac(v){return v>=25?'var(--gn)':v>=18?'var(--am)':'var(--rd)'}
-  function al(v){return v>=25?'TR':v>=18?'WK':'FL'}
-  function rc(v){return v>=60?'var(--gn)':v<=40?'var(--rd)':'var(--am)'}
-  function sc(v){return v>0?'var(--gn)':v<0?'var(--rd)':'var(--dm)'}
-  function gr(cols){return 'display:grid;grid-template-columns:repeat('+cols+',1fr);padding:4px 10px;font-size:11px;border-bottom:1px solid rgba(30,30,48,.5)'}
-  function hdr(cols,names){var h='<div style="'+gr(names.length)+';font-size:8px;color:#555;font-weight:700">';names.forEach(function(n){h+='<div style="text-align:'+(n==='TF'?'left':'right')+'">'+n+'</div>'});return h+'</div>'}
-  if(sp.some(function(s){return s.adx>0||s.rsi>0})){
-    mh+='<div class="sect"><div class="sh">SPOT MULTI-TF</div>';
-    mh+=hdr(4,['TF','ADX','RSI','SPREAD']);
-    sp.forEach(function(t){if(!t.adx&&!t.rsi&&!t.spread)return;mh+='<div style="'+gr(4)+'"><div style="font-weight:700;color:var(--bl)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+' <span style="font-size:7px">'+al(t.adx)+'</span></div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right;color:'+sc(t.spread)+'">'+(t.spread>0?'+':'')+t.spread+'</div></div>'});
-    var trn=sp.filter(function(t){return t.adx>=25}).length,tot=sp.filter(function(t){return t.adx>0||t.rsi>0}).length;
-    var up=sp.filter(function(t){return t.spread>0&&(t.adx>0||t.rsi>0)}).length,dn=sp.filter(function(t){return t.spread<0&&(t.adx>0||t.rsi>0)}).length;
-    var vc=trn>=3?'var(--gn)':trn>=2?'var(--am)':'var(--rd)';
-    mh+='<div style="padding:5px 10px;font-size:10px;font-weight:700;color:'+vc+'">'+(trn>=3?'STRONG':trn>=2?'MODERATE':'WEAK')+' '+trn+'/'+tot+(up>=3?' BULLISH':dn>=3?' BEARISH':'')+'</div></div>'}
-  var ceStk=mtf.ce_strike||'',peStk=mtf.pe_strike||'';
-  if(ceo.some(function(c){return c.rsi>0||c.ltp>0})){
-    mh+='<div class="sect"><div class="sh">CE '+(ceStk||'')+' OPTION MULTI-TF</div>';
-    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
-    ceo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--gn)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--gn)">₹'+t.ltp+'</div></div>'});
-    mh+='</div>'}
-  if(peo.some(function(p){return p.rsi>0||p.ltp>0})){
-    mh+='<div class="sect"><div class="sh">PE '+(peStk||'')+' OPTION MULTI-TF</div>';
-    mh+=hdr(7,['TF','ADX','RSI','BODY%','SPREAD','IV','LTP']);
-    peo.forEach(function(t){if(!t.rsi&&!t.ltp)return;mh+='<div style="'+gr(7)+'"><div style="font-weight:700;color:var(--rd)">'+t.tf+'</div><div style="text-align:right;color:'+ac(t.adx)+'">'+t.adx+'</div><div style="text-align:right;color:'+rc(t.rsi)+'">'+t.rsi+'</div><div style="text-align:right">'+(t.body||0)+'%</div><div style="text-align:right;color:'+sc(t.spread||0)+'">'+(t.spread>0?'+':'')+(t.spread||0)+'</div><div style="text-align:right">'+t.iv+'%</div><div style="text-align:right;color:var(--rd)">₹'+t.ltp+'</div></div>'});
-    mh+='</div>'}
-
-  // Fib Pivot Section — only render when data present
-  var fp=mk.fib_pivots||{};
-  if(fp.R3||fp.pivot){
-    mh+='<div class="sect"><div class="sh">FIB PIVOTS · Nearest: '+(mk.fib_nearest||'—')+' ('+(mk.fib_distance>0?'+':'')+mk.fib_distance+'pts)</div>';
-    var spot=mk.spot;
-    function flvl(name,price){
-      var dist=spot-price;var near=Math.abs(dist)<20;
-      var clr=name.startsWith('R')?'var(--gn)':name.startsWith('S')?'var(--rd)':'var(--bl)';
-      return '<div class="row" style="'+(near?'background:rgba(59,130,246,.08)':'')+'"><div class="k" style="color:'+clr+'">'+name+'</div><div class="v" style="font-size:11px">'+price+(near?' NEAR':' <span style=\'color:#555;font-size:9px\'>'+(dist>0?'+':'')+dist.toFixed(0)+'pts</span>')+'</div></div>';}
-    mh+=flvl('R3',fp.R3||0)+flvl('R2',fp.R2||0)+flvl('R1',fp.R1||0)+flvl('PIVOT',fp.pivot||0)+flvl('S1',fp.S1||0)+flvl('S2',fp.S2||0)+flvl('S3',fp.S3||0);
-    mh+='<div style="padding:5px 10px;font-size:9px;color:#555">Prev: H='+fp.prev_high+' L='+fp.prev_low+' C='+fp.prev_close+' Range='+fp.range+'pts</div>';
-    mh+='</div>';
-  }
-  // Straddle + context
-  mh+='<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">H.RSI</div><div class="v" style="color:'+(mk.hourly_rsi>70?'var(--rd)':mk.hourly_rsi<30?'var(--gn)':'')+'">'+mk.hourly_rsi+'</div></div>'+
-    '<div class="ctx"><div class="k">STRADDLE</div><div class="v">'+(str.captured?'₹'+str.open:'—')+'</div></div>'+
-    '<div class="ctx"><div class="k">EXPIRY</div><div class="v" style="font-size:10px">'+esc(mk.expiry||'—')+'</div></div>'+
-    '<div class="ctx"><div class="k">SESSION</div><div class="v" style="font-size:10px">'+esc(mk.session)+'</div></div></div>';
-  // Zones
-  var zl=zones.zones||[];
-  if(zl.length>0){
-    var near=zl.filter(function(z){return Math.abs(z.distance_from_spot||999)<=100});
-    mh+='<div class="sect"><div class="sh">DEMAND/SUPPLY ZONES</div>';
-    if(near.length>0){
-      near.forEach(function(z){
-        var clr=z.zone_type==='DEMAND'?'var(--gn)':'var(--rd)';
-        var icon=z.zone_type==='DEMAND'?'D':'S';
-        mh+='<div class="row"><div class="k" style="color:'+clr+'">'+icon+' '+z.zone_type+'</div><div class="v" style="font-size:11px">'+z.zone_low+' - '+z.zone_high+' ['+z.strength+']'+(z.multi_tf?' MTF':'')+'</div></div>';
-        mh+='<div class="row"><div class="k">Distance</div><div class="v" style="font-size:11px">'+(z.distance_from_spot>0?'+':'')+z.distance_from_spot+'pts · '+z.proximity+' · tested '+z.times_tested+'x</div></div>';
-      });
-    } else {
-      mh+='<div style="padding:8px 10px;color:#555;font-size:10px">No zones within 100pts — open territory</div>';
-    }
-    mh+='<div style="padding:4px 10px;font-size:9px;color:#444">Total: '+zl.length+' active zones</div></div>';
-  }
-  // ── ACCOUNT + ROLLING ──
-  var acct=d.account||{};
-  var balAmt=Math.round(parseFloat(acct.balance||0));
-  var usedAmt=Math.round(parseFloat(acct.used||0));
-  var balClr=balAmt>=0?'var(--gn)':'var(--rd)';
-  var balStr=(balAmt<0?'-₹':'₹')+Math.abs(balAmt).toLocaleString('en-IN')+(balAmt<0?' !':'');
-  mh+='<div class="sect"><div class="sh">MSTOCK · '+esc(acct.name||'—')+'</div>'+
-    '<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">AVAILABLE</div><div class="v" style="color:'+balClr+';font-size:11px">'+balStr+'</div></div>'+
-    '<div class="ctx"><div class="k">USED MARGIN</div><div class="v" style="color:var(--am);font-size:11px">₹'+usedAmt.toLocaleString('en-IN')+'</div></div>'+
-    '<div class="ctx"><div class="k">MODE</div><div class="v" style="color:'+(d.mode==='LIVE'?'var(--gn)':'var(--bl)')+'">'+esc(d.mode||'PAPER')+'</div></div>'+
-    '<div class="ctx"><div class="k">VERSION</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.version||'—')+'</div></div>'+
-    '</div></div>';
-  var l10c=rl.last10_wr>=60?'var(--gn)':rl.last10_wr>=40?'var(--am)':'var(--rd)';
-  var l20c=rl.last20_wr>=60?'var(--gn)':rl.last20_wr>=40?'var(--am)':'var(--rd)';
-  var ptsc=(rl.last10_pts||0)>=0?'var(--gn)':'var(--rd)';
-  var strk=rl.streak||0;
-  var strkTxt=strk>=2?(''+strk+'-WIN STREAK'):strk<=-2?(''+Math.abs(strk)+'-LOSS STREAK'):'No streak';
-  var strkClr=strk>=2?'var(--gn)':strk<=-2?'var(--rd)':'var(--dm)';
-  mh+='<div class="sect"><div class="sh">ROLLING PERFORMANCE</div>'+
-    '<div class="ctx-row">'+
-    '<div class="ctx"><div class="k">LAST 10 WR</div><div class="v" style="color:'+l10c+'">'+(rl.last10_wr||0)+'%</div></div>'+
-    '<div class="ctx"><div class="k">LAST 20 WR</div><div class="v" style="color:'+l20c+'">'+(rl.last20_wr||0)+'%</div></div>'+
-    '<div class="ctx"><div class="k">L10 PTS</div><div class="v" style="color:'+ptsc+'">'+(rl.last10_pts>=0?'+':'')+( rl.last10_pts||0)+'</div></div>'+
-    '<div class="ctx"><div class="k">STREAK</div><div class="v" style="color:'+strkClr+';font-size:9px">'+strkTxt+'</div></div>'+
-    '</div></div>';
-  document.getElementById('p-mkt').innerHTML=mh;
+  // (MKT tab retired 2026-06-10 — account/rolling moved to SIG)
 
   // ── TRADES TAB ──
   var th='';
@@ -9671,8 +9376,8 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t,z,mtf]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[]),fetch('/api/zones').then(r=>r.json()).catch(e=>({zones:[]})),fetch('/api/multitf').then(r=>r.json()).catch(e=>({spot:[],ce:[],pe:[]}))]);
-    render(d||{},t||[],z||{zones:[]},mtf||{});
+    const[d,t]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[])]);
+    render(d||{},t||[]);
     if(_curTab==='fno')renderFno();
     if(_curTab==='wkly')renderWeekly();
   }catch(e){console.error(e)}
@@ -10076,10 +9781,8 @@ class _WebHandler(BaseHTTPRequestHandler):
                 self.wfile.write(_WEB_HTML.encode())
         elif p=="/api/dashboard":self._j(_web_read_dash())
         elif p=="/api/trades":self._j(_web_read_trades())
-        elif p=="/api/multitf":self._j(_web_read_multitf())
         elif p=="/api/fno":self._j(_web_read_fno())
         elif p=="/api/weekly":self._j(_web_read_weekly())
-        elif p=="/api/shadow":self._j(_web_read_shadow())
         elif p.startswith("/static/"):
             _allowed = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
                         ".webp":"image/webp",".svg":"image/svg+xml",
@@ -10101,13 +9804,6 @@ class _WebHandler(BaseHTTPRequestHandler):
             with open(_path, "rb") as _sf:
                 self.wfile.write(_sf.read())
             return
-        elif p=="/api/zones":
-            zp = os.path.join(_WEB_STATE_DIR, "vrl_zones.json")
-            if os.path.isfile(zp):
-                with open(zp) as _zf:
-                    self._j(json.load(_zf))
-            else:
-                self._j({"zones":[]})
         elif p=="/api/files":
             q = _web_urlparse(self.path).query
             folder = ''

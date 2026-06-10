@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-10 (fix/eod-exit-resubscribe). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-10 (refactor/remove-mkt-tab-dead-code). Single-file bot: `VRL_MAIN.py` (~10,138 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -106,12 +106,23 @@ Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FOR
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale
 - `vrl_v10_state.json` — orphaned file; active state is in `vrl_v8_state.json` (rename pending)
 - `bw_gap_study.csv` — BW/RSI study; gates removed in V10 Golden
+- `vrl_zones.json` — zones engine removed; `/api/zones` route deleted 2026-06-10
 
 ### Dashboard source of truth
 `_WEB_HTML = r"""..."""` string in `VRL_MAIN.py` (~line 8956). `_start_web_server()` overwrites
 `static/VRL_DASHBOARD.html` from this string on every startup.
 **Always edit `_WEB_HTML` — never the static file.**
 Only `vrl-main.service` runs (port 8080). `vrl-web.service` was retired 2026-06-07.
+
+Tabs: **SIG** (V10 gates + position + MSTOCK account + rolling performance) · **F&O** (stock
+options portfolio, lots/invested/P&L) · **TRD** (trade log) · **WKLY** (multibagger model
+portfolio, 1 share each) · **FILES**. The MKT tab was retired 2026-06-10 — it showed V7-era
+analytics (spot/option multi-TF tables, fib pivots, zones, straddle) that no V10 gate uses;
+its MSTOCK + ROLLING sections moved to SIG. Removed with it (dead code): straddle capture /
+`aggressive_mode` (set but never read; `get_straddle_sum` never existed), `_web_read_multitf`,
+`_web_read_shadow`, and the `/api/multitf`, `/api/shadow`, `/api/zones` routes.
+Note: `lab_data/spot/` + `lab_data/options_*` CSV collectors were NOT removed — they feed
+backtests/analysis, only their dashboard reader is gone.
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
