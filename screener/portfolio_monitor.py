@@ -152,6 +152,29 @@ def run():
             df.at[idx, "mon_status"] = "no-data"
             continue
 
+        # Corporate-action (split/bonus) auto-rebase. Kite history is
+        # back-adjusted, so the adjusted close on the entry date should match
+        # the stored entry; a large mismatch means a split/bonus happened after
+        # entry — rebase entry/SL/targets so returns and stops stay true.
+        # (Caught live 2026-06: ANANDRATHI 1:1 bonus showed a fake -51% SL-HIT.)
+        try:
+            upto = hist[hist.index.date <= pd.to_datetime(added).date()]
+            adj_entry = float(upto["close"].iloc[-1]) if len(upto) else 0.0
+            if adj_entry > 0 and abs(entry / adj_entry - 1) > 0.15:
+                ratio = entry / adj_entry
+                for col in ("entry_price", "sl", "target_1y", "target_3y",
+                            "target_5y", "peak_price", "trail_sl"):
+                    try:
+                        df.at[idx, col] = round(float(df.at[idx, col]) / ratio, 2)
+                    except (TypeError, ValueError):
+                        pass
+                entry = round(entry / ratio, 2)
+                alerts += 1
+                _log_event(f"CORP-ACTION | {sym} ({added}) | history adjusted ~{ratio:.2f}x "
+                           f"(split/bonus) — entry/SL/targets rebased, entry now {entry}")
+        except Exception:
+            pass
+
         cur  = float(hist["close"].iloc[-1])
         prev = float(hist["close"].iloc[-2])
         since = _since_entry(hist, added)
