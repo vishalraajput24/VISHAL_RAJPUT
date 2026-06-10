@@ -9588,6 +9588,8 @@ async function renderFno(){
       var t2=parseFloat(p.t2_premium||0);
       var pnlPct=parseFloat(p.current_return_pct||0);
       var pnlRs=parseFloat(p.pnl_rs||0);
+      var lots=parseInt(p.lots||1);var lotSize=parseInt(p.lot_size||0);var qty=lots*lotSize;
+      var invest=parseFloat(p.investment||0);var curVal=invest+pnlRs;
       var w=pnlPct>=0;var clr=w?'var(--gn)':'var(--rd)';var sign=w?'+':'';
       var st=p.status||'';
       var isOpen=st.startsWith('OPEN');
@@ -9605,7 +9607,8 @@ async function renderFno(){
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
           '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+
           '<span style="font-size:10px;font-weight:700;color:'+dirClr+';margin-left:5px">'+esc(p.direction)+' '+(p.strike||'')+'</span>'+
-          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+'</div></div>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+' · '+lots+' lot × '+lotSize+' = '+qty+' qty</div>'+
+          '<div style="font-size:9px;color:var(--dm);margin-top:1px">Inv ₹'+Math.round(invest).toLocaleString('en-IN')+' → ₹'+Math.round(curVal).toLocaleString('en-IN')+'</div></div>'+
           '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+sign+pnlPct.toFixed(0)+'%</span>'+
           '<div style="font-size:10px;color:'+clr+'">'+sign+'₹'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div></div>'+
         '</div>'+
@@ -9625,6 +9628,7 @@ async function renderFno(){
     }
     var allPos=openPos.concat(closedPos);
     allPos.forEach(function(p){totalPnl+=parseFloat(p.pnl_rs||0);});
+    var openInvest=0;openPos.forEach(function(p){openInvest+=parseFloat(p.investment||0);});
     var todayCards=openToday.map(makeCard).join('');
     var prevCards=openPrev.map(makeCard).join('');
     var closedCards=closedPos.map(makeCard).join('');
@@ -9637,7 +9641,8 @@ async function renderFno(){
       '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
         '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
         '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
-        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed</div>'+
+        '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed'+
+        '<div style="margin-top:2px">Deployed ₹'+Math.round(openInvest).toLocaleString('en-IN')+'</div></div>'+
       '</div>'+
       (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s Picks ('+openToday.length+') — sorted by score</div>':'')+
       todayCards+prevSection+closedSection;
