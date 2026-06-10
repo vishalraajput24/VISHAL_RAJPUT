@@ -6429,7 +6429,10 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         pe_signal = _build_signal("PE", _v10_to_result("PE"))
 
         try:
-            _tokens = D.get_option_tokens(None, atm_strike, expiry)
+            # First cycle after startup can pass atm_strike=0 (spot LTP cache
+            # not warm yet) — a strike-0 lookup scans every NFO instrument,
+            # finds nothing and logs "Token resolve incomplete".
+            _tokens = D.get_option_tokens(None, atm_strike, expiry) if atm_strike else {}
             for _sig, _side in [(ce_signal, "CE"), (pe_signal, "PE")]:
                 _live_tok = (_locked_tokens or {}).get(_side, _tokens.get(_side, {}))
                 _ltp = D.get_ltp(_live_tok.get("token", 0)) if _live_tok else 0
