@@ -794,12 +794,9 @@ REPO_DIR         = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR         = os.path.join(BASE_DIR, "logs")
 LIVE_LOG_DIR     = os.path.join(LOGS_DIR, "live")
 LAB_LOG_DIR      = os.path.join(LOGS_DIR, "lab")
-FLOW_LOG_DIR     = os.path.join(LOGS_DIR, "flow")
 AUTH_LOG_DIR     = os.path.join(LOGS_DIR, "auth")
 WEB_LOG_DIR      = os.path.join(LOGS_DIR, "web")
 HEALTH_LOG_DIR   = os.path.join(LOGS_DIR, "health")
-ZONES_LOG_DIR    = os.path.join(LOGS_DIR, "zones")
-ML_LOG_DIR       = os.path.join(LOGS_DIR, "ml")
 ERROR_LOG_DIR    = os.path.join(LOGS_DIR, "errors")
 # STATE_DIR lives next to the code (inside the repo) so AUTH and MAIN
 # always agree on the token location..
@@ -809,8 +806,6 @@ BACKUP_DIR       = os.path.join(BASE_DIR, "backups")
 OPTIONS_3MIN_DIR = os.path.join(LAB_DIR, "options_3min")
 OPTIONS_1MIN_DIR = os.path.join(LAB_DIR, "options_1min")
 SPOT_DIR         = os.path.join(LAB_DIR, "spot")
-REPORTS_DIR      = os.path.join(LAB_DIR, "reports")
-SESSIONS_DIR     = os.path.join(LAB_DIR, "sessions")
 
 LIVE_LOG_FILE    = os.path.join(LIVE_LOG_DIR, "vrl_live.log")
 LAB_LOG_FILE     = os.path.join(LAB_LOG_DIR,  "vrl_lab.log")
@@ -885,11 +880,9 @@ def get_session_block(hour: int, minute: int) -> str:
     else:                return "LATE"
 
 def ensure_dirs():
-    for d in [LIVE_LOG_DIR, LAB_LOG_DIR, FLOW_LOG_DIR, STATE_DIR,
-              OPTIONS_3MIN_DIR, OPTIONS_1MIN_DIR, SPOT_DIR,
-              REPORTS_DIR, SESSIONS_DIR, BACKUP_DIR,
-              AUTH_LOG_DIR, WEB_LOG_DIR, HEALTH_LOG_DIR,
-              ZONES_LOG_DIR, ML_LOG_DIR, ERROR_LOG_DIR]:
+    for d in [LIVE_LOG_DIR, LAB_LOG_DIR, STATE_DIR,
+              OPTIONS_3MIN_DIR, OPTIONS_1MIN_DIR, SPOT_DIR, BACKUP_DIR,
+              AUTH_LOG_DIR, WEB_LOG_DIR, HEALTH_LOG_DIR, ERROR_LOG_DIR]:
         os.makedirs(d, exist_ok=True)
 
 
@@ -951,10 +944,7 @@ def audit_log_paths() -> dict:
         "auth":   AUTH_LOG_DIR,
         "web":    WEB_LOG_DIR,
         "health": HEALTH_LOG_DIR,
-        "zones":  ZONES_LOG_DIR,
-        "ml":     ML_LOG_DIR,
         "errors": ERROR_LOG_DIR,
-        "flow":   FLOW_LOG_DIR,
     }
     result = {}
     for cat, path in categories.items():
@@ -996,10 +986,7 @@ def collect_logs_for_date(target_date: str = None) -> list:
         "auth": AUTH_LOG_DIR,
         "web": WEB_LOG_DIR,
         "health": HEALTH_LOG_DIR,
-        "zones": ZONES_LOG_DIR,
-        "ml": ML_LOG_DIR,
         "errors": ERROR_LOG_DIR,
-        "flow": FLOW_LOG_DIR,
     }
     for category, dirpath in log_dirs.items():
         if not os.path.isdir(dirpath):
@@ -1032,14 +1019,6 @@ def collect_logs_for_date(target_date: str = None) -> list:
         fpath = os.path.join(dirpath, fname)
         if os.path.isfile(fpath):
             files.append((fpath, arc_prefix + fname))
-
-    # Reports
-    if os.path.isdir(REPORTS_DIR):
-        for fname in os.listdir(REPORTS_DIR):
-            if date_compact in fname or target_date in fname:
-                fpath = os.path.join(REPORTS_DIR, fname)
-                if os.path.isfile(fpath):
-                    files.append((fpath, "data/reports/" + fname))
 
     # State snapshot
     if os.path.isfile(STATE_FILE_PATH):
@@ -2129,7 +2108,7 @@ def cleanup_old_lab_data(retention_days: int = None):
     if retention_days is None:
         retention_days = CFG.lab("retention_days", 30)
     cutoff = datetime.now() - timedelta(days=retention_days)
-    dirs_to_clean = [OPTIONS_1MIN_DIR, OPTIONS_3MIN_DIR, SPOT_DIR, REPORTS_DIR]
+    dirs_to_clean = [OPTIONS_1MIN_DIR, OPTIONS_3MIN_DIR, SPOT_DIR]
     removed = 0
     for d in dirs_to_clean:
         if not os.path.isdir(d):
@@ -8785,7 +8764,6 @@ def _web_read_dash():
 
 _WEB_FOLDERS = {
     "trade_log":    ("Trade Log",            os.path.join(_WEB_BASE, "lab_data")),
-    "reports":      ("Daily Summary",        os.path.join(_WEB_BASE, "lab_data", "reports")),
     "spot":         ("Spot Data",            os.path.join(_WEB_BASE, "lab_data", "spot")),
     "options_3min": ("Options 3-Min CE+PE",  os.path.join(_WEB_BASE, "lab_data", "options_3min")),
     "options_1min": ("Options 1-Min + Scan", os.path.join(_WEB_BASE, "lab_data", "options_1min")),
@@ -9507,7 +9485,6 @@ class _WebHandler(BaseHTTPRequestHandler):
                 ("spot", "Spot (1m/5m/15m/D)"),
                 ("options_3min", "Options 3-Min CE+PE"),
                 ("options_1min", "Options 1m/5m/15m/Scan"),
-                ("reports", "Daily Summary Reports"),
             ]
             for fkey, label in hist_items:
                 info = _WEB_FOLDERS.get(fkey)
@@ -9521,15 +9498,14 @@ class _WebHandler(BaseHTTPRequestHandler):
                 html += '<a href="/files?f=' + fkey + '" class="f">' + label + cnt + '</a>'
             html += '<div class="sh">ANALYSIS</div>'
             analysis_items = [
-                ("research", "Demand/Supply Zones"),
                 ("trade_log", "Full Trade History"),
             ]
             for fkey, label in analysis_items:
                 html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
             html += '<div class="sh">SYSTEM</div>'
             system_items = [
-                ("state", "State + Config"),
-                ("logs", "Logs"),
+                ("logs_live", "Live Logs"),
+                ("logs_errors", "Error Logs"),
             ]
             for fkey, label in system_items:
                 html += '<a href="/files?f=' + fkey + '" class="f">' + label + '</a>'
