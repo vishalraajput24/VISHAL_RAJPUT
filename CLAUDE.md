@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-10 (refactor/remove-mkt-tab-dead-code). Single-file bot: `VRL_MAIN.py` (~10,138 lines).
+> Last resynced: 2026-06-10 (chore/files-tab-dead-dirs). Single-file bot: `VRL_MAIN.py` (~10,114 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -123,6 +123,12 @@ its MSTOCK + ROLLING sections moved to SIG. Removed with it (dead code): straddl
 `_web_read_shadow`, and the `/api/multitf`, `/api/shadow`, `/api/zones` routes.
 Note: `lab_data/spot/` + `lab_data/options_*` CSV collectors were NOT removed — they feed
 backtests/analysis, only their dashboard reader is gone.
+
+FILES tab folders = `_WEB_FOLDERS`: trade_log, spot, options_3min, options_1min, logs_live,
+logs_errors. Dead dirs removed 2026-06-10 (created but never written to): `lab_data/reports`,
+`lab_data/sessions`, `logs/zones`, `logs/ml`, `logs/flow` — their constants, ensure_dirs
+entries, zip-inventory map entries, and the `/files` page links (research/state/logs) that
+pointed at non-existent folder keys are all gone.
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
