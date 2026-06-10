@@ -3,7 +3,7 @@
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
 #  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4]
 #               Split-lot 50/50 (Lot1 mkt, Lot2 limit @ candle midpoint)
-#  V10 Exit:   INITIAL(ema9_low) → BREAKEVEN(@+12) → TRAIL_10(@+18, peak-10)
+#  V10 Exit:   INITIAL(ema9_low) → LOCK_4(@+12, entry+4) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -4229,16 +4229,16 @@ _v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
     """V10 dynamic exit rules:
     - Initial SL is 1-min ema9_low at entry (passed as initial_sl).
-    - Breakeven lock at +12.0 pts.
+    - Lock entry+4.0 once profit hits +12.0 pts (capture a small win, not a scratch).
     - Dynamic trail at Peak - 10.0 pts once profit hits +18.0 pts.
     """
     if peak_pnl >= 18.0:
         peak_ltp = entry_price + peak_pnl
-        trail_val = max(initial_sl, entry_price, peak_ltp - 10.0)
+        trail_val = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
         return round(trail_val, 2), "TRAIL_10"
     elif peak_pnl >= 12.0:
-        trail_val = max(initial_sl, entry_price)
-        return round(trail_val, 2), "BREAKEVEN"
+        trail_val = max(initial_sl, entry_price + 4.0)
+        return round(trail_val, 2), "LOCK_4"
     else:
         return round(initial_sl, 2), "INITIAL"
 
@@ -4711,7 +4711,7 @@ def _v8_check_exit():
 
     # Exits checking (tick-based)
     if ltp <= current_sl:
-        exit_reason = "EMERGENCY_SL" if tier == "INITIAL" else ("BREAKEVEN" if tier == "BREAKEVEN" else "VISHAL_TRAIL")
+        exit_reason = "EMERGENCY_SL" if tier == "INITIAL" else ("LOCK_4" if tier == "LOCK_4" else "VISHAL_TRAIL")
         _v8_execute_paper_exit(exit_reason, round(current_sl, 2))
         return
 
@@ -5585,10 +5585,10 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
         "INITIAL    peak < 12   → ema9_low at entry\n"
-        "BREAKEVEN  peak ≥ 12   → max(ema9_low, entry)\n"
-        "TRAIL_10   peak ≥ 18   → max(ema9_low, entry, peak − 10)\n"
+        "LOCK_4     peak ≥ 12   → max(ema9_low, entry + 4)\n"
+        "TRAIL_10   peak ≥ 18   → max(ema9_low, entry + 4, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>EXITS</b>  initial_sl | BREAKEVEN | TRAIL_10 | EOD 15:20\n"
+        "<b>EXITS</b>  initial_sl | LOCK_4 | TRAIL_10 | EOD 15:20\n"
         "/help for commands"
     )
     if not D.PAPER_MODE:
@@ -7638,8 +7638,8 @@ def _cmd_pulse(args):
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
             "INITIAL    peak<12   ema9_low at entry\n"
-            "BREAKEVEN  peak≥12   max(ema9_low, entry)\n"
-            "TRAIL_10   peak≥18   max(ema9_low, entry, peak−10)\n"
+            "LOCK_4     peak≥12   max(ema9_low, entry+4)\n"
+            "TRAIL_10   peak≥18   max(ema9_low, entry+4, peak−10)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
@@ -7793,7 +7793,7 @@ def _cmd_status(args):
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
-        "Ladder : +12→BREAKEVEN  +18→TRAIL_10\n"
+        "Ladder : +12→LOCK_4  +18→TRAIL_10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
         "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
@@ -9245,7 +9245,7 @@ function render(d, trades, zones, mtf){ if(!d || !d.market){document.getElementB
     ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
     // 3-box status grid: SL / TIER / HELD
     ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
-    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='BREAKEVEN'?'var(--am)':'var(--rd)';
+    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='LOCK_4'?'var(--am)':'var(--rd)';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:'+tierClr+'">'+tier+'</div></div>';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';

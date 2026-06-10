@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-09 (feat/v10-gate-refinements). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-10 (feat/lock4-exit-tier). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−5,−4], BREAKEVEN @+12, TRAIL_10 @+18, lot sizes) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−4], LOCK_4 @+12 → entry+4, TRAIL_10 @+18, lot sizes) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v10_state` key that must survive restart, add it to BOTH the initial `_v10_state` dict AND `_V10_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -71,11 +71,12 @@ Tick-based (~1s), runs BEFORE the candle gate (BUG-01):
 
 ```
 peak < 12 pts  → INITIAL    : SL = initial_sl
-peak ≥ 12 pts  → BREAKEVEN  : SL = max(initial_sl, entry)
-peak ≥ 18 pts  → TRAIL_10   : SL = max(initial_sl, entry, peak_ltp − 10.0)
+peak ≥ 12 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
+peak ≥ 18 pts  → TRAIL_10   : SL = max(initial_sl, entry + 4.0, peak_ltp − 10.0)
 ```
 
-Exit reasons: `EMERGENCY_SL` · `BREAKEVEN` · `VISHAL_TRAIL` · `EOD_EXIT`
+Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT`
+(LOCK_4 replaced BREAKEVEN on 2026-06-10 — a trade reaching +12 now exits with at least +4 pts instead of scratch.)
 
 ### Per-day counters
 `_v10_state`: `_trades_today`, `_wins_today`, `_losses_today`, `_pnl_today_pts` — reset at midnight. No hard daily cap.
@@ -190,7 +191,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 ### Locked design decisions
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **Lot 2 cancel window = 3 candles**: if limit doesn't fill in 3 minutes, cancel and run Lot 1 only.
-- **All strategy parameters are locked** — OPP DECAY [−5,−4], BREAKEVEN @+12, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation.
+- **All strategy parameters are locked** — OPP DECAY [−8,−4], LOCK_4 @+12 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation.
 
 ---
 
