@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-10 (chore/files-tab-dead-dirs). Single-file bot: `VRL_MAIN.py` (~10,114 lines).
+> Last resynced: 2026-06-10 (refactor/single-lot-entry). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−4], LOCK_4 @+12 → entry+4, TRAIL_10 @+18, lot sizes) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−4], LOCK_4 @+12 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v10_state` key that must survive restart, add it to BOTH the initial `_v10_state` dict AND `_V10_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -54,16 +54,10 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
 - **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
 
-### Execution — split-lot 50/50
-Config: `lots_fixed: 2`, `lot_size: 65` → 130 qty total, split into two 65-qty lots.
+### Execution — single lot
+Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the last 1-min candle close.
+(Split-lot 50/50 with a Lot 2 limit order was removed 2026-06-10 — user found Lot 2 added complexity with no edge; trades often hit SL before the limit mattered.)
 
-| Lot | Fill | Price |
-|-----|------|-------|
-| **Lot 1** (65 qty) | Market | Last 1-min candle close |
-| **Lot 2** (65 qty) | Limit | `(candle_open + candle_close) / 2` |
-
-- Lot 2 auto-cancelled after **3 candles** if not filled → Telegram alert
-- Average entry and qty updated in `_v10_state` when Lot 2 fills
 - **Initial SL**: `ema9_low` of breakout candle (`_v10_state["initial_sl"]`). Fallback: `entry − 5.0` if ema9_low ≥ entry
 
 ### Exit ladder — `_v10_compute_trail_sl(entry_price, peak_pnl, initial_sl)`
@@ -98,7 +92,7 @@ Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FOR
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
 | `screener/` | Stock F&O + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
-| `state/vrl_v8_state.json` | **Primary V10 engine state** — `_v10_state` including all split-lot fields (filename uses legacy `v8` prefix — rename pending) |
+| `state/vrl_v8_state.json` | **Primary V10 engine state** — `_v10_state` (filename uses legacy `v8` prefix — rename pending) |
 | `state/vrl_live_state.json` | Legacy V7 state — still written by bot, not used by V10 strategy logic |
 | `state/vrl_dashboard.json` | Dashboard snapshot — written every main-loop cycle |
 
@@ -152,8 +146,8 @@ Fields currently persisted:
 `_sl_cooldown_skip_next`, `_force_exit_ts`,
 `_pnl_today_pts`, `_trades_today`, `_wins_today`, `_losses_today`,
 `_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
-`initial_sl`, `entry_regime`, `lot1_qty`, `lot1_entry`,
-`lot2_qty`, `lot2_limit`, `lot2_entry`, `lot2_filled`, `lot2_cancelled`,
+`_last_exit_time_unix`, `_last_exit_direction_v10`,
+`initial_sl`, `entry_regime`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
 `entry_spot`, `entry_atm_dist`, `neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
 `vix_at_entry`, `hourly_rsi_at_entry`, `bias_at_entry`, `session_at_entry`,
@@ -192,12 +186,11 @@ nohup python3 watch_trade.py &  # background
 Polls every 2s (in trade) / 10s (idle). Cross-checks:
 - `state/vrl_v8_state.json` (V10 engine state) vs `state/vrl_dashboard.json` (9 fields)
 - V10 SL tier formula (peak < 12 / ≥ 12 / ≥ 18)
-- Telegram log: entry alert, SL upgrade alert, lot2 fill/cancel alert, exit alert
+- Telegram log: entry alert, SL upgrade alert, exit alert
 Mismatches appended to `~/lab_data/trade_audit_notes.md`.
 
 ### trace_trade.py
 Post-trade reconciler. Reads state + dashboard + CSV and flags:
-- Lot 2 consistency (filled vs cancelled mutual exclusion, avg entry)
 - SL tier vs peak_pnl formula
 - CSV pnl_pts vs exit_price − entry_price
 - entry_mode must be `V10_CE` or `V10_PE`
@@ -212,7 +205,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 
 ### Locked design decisions
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
-- **Lot 2 cancel window = 3 candles**: if limit doesn't fill in 3 minutes, cancel and run Lot 1 only.
+- **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
 - **All strategy parameters are locked** — OPP DECAY [−8,−4], LOCK_4 @+12 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation.
 
 ---

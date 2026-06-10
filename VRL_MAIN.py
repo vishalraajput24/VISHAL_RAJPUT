@@ -2,7 +2,7 @@
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (V10 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
 #  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4]
-#               Split-lot 50/50 (Lot1 mkt, Lot2 limit @ candle midpoint)
+#               Single-lot entry (market fill @ candle close)
 #  V10 Exit:   INITIAL(ema9_low) → LOCK_4(@+12, entry+4) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
 
@@ -4133,17 +4133,9 @@ _v8_state = {
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
-    
-    # Split-lot tracking fields
+
     "initial_sl": 0.0,
     "entry_regime": "",
-    "lot1_qty": 0,
-    "lot1_entry": 0.0,
-    "lot2_qty": 0,
-    "lot2_limit": 0.0,
-    "lot2_entry": 0.0,
-    "lot2_filled": False,
-    "lot2_cancelled": False,
     "peak_ltp": 0.0,
     "xleg_other_margin": 0.0,
     "spot_regime_at_entry": "",
@@ -4187,21 +4179,12 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
                              spot_at_entry: float = 0.0,
                              neighbor_ltp_otm: float = 0.0,
                              neighbor_ltp_itm: float = 0.0):
-    """Open a V8/V10 paper position using the 50/50 split-lot execution model."""
-    lot_count = CFG.get().get("lots", {}).get("count", 2)
+    """Open a V8/V10 paper position — single lot, market fill at candle close."""
+    lot_count = CFG.get().get("lots", {}).get("count", 1)
     qty = lot_count * D.get_lot_size()
-    
-    # Lot 1 size: 50%, Lot 2 size: 50%
-    lot1_qty = (qty // 2)
-    lot2_qty = qty - lot1_qty
-    
+
     now_dt  = datetime.now()
     now_str = now_dt.strftime("%H:%M:%S")
-
-    # Midpoint of the breakout candle
-    op = entry_result.get("open", entry_price)
-    cl = entry_result.get("close", entry_price)
-    lot2_limit = round((op + cl) / 2, 1)  # 1 decimal prevents float-rounding surprise in .1f display
 
     with _v8_lock:
         if _v8_state.get("in_trade"):
@@ -4218,18 +4201,8 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
         _v8_state["_other_token"]          = int(other_token or 0)
         
-        # Split lot tracking
-        _v8_state["lot1_qty"]              = lot1_qty
-        _v8_state["lot1_entry"]            = entry_price
-        _v8_state["lot2_qty"]              = lot2_qty
-        _v8_state["lot2_limit"]            = lot2_limit
-        _v8_state["lot2_entry"]            = 0.0
-        _v8_state["lot2_filled"]           = False
-        _v8_state["lot2_cancelled"]        = False
-        
-        # Position average entry price is initially Lot 1's entry price
         _v8_state["entry_price"]           = entry_price
-        _v8_state["qty"]                   = lot1_qty
+        _v8_state["qty"]                   = qty
         
         # Exits and Trailing SL
         initial_sl = entry_result.get("ema9_low", entry_price - 12)
@@ -4274,7 +4247,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["_reentry_armed"]        = False
         _v8_state["_reentry_attempts"]     = 0
 
-    logger.info(f"[V10] GOLDEN ENTRY: {symbol} Lot1 Qty={lot1_qty} @ {entry_price}, Lot2 Limit={lot2_limit} Qty={lot2_qty}")
+    logger.info(f"[V10] GOLDEN ENTRY: {symbol} Qty={qty} @ {entry_price}")
 
     # PDH/PDL proximity warning — analysis only, no gate
     try:
@@ -4300,12 +4273,11 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
     _tg_send(
         f"{_ce_pe} <b>V10 GOLDEN ENTRY {direction} {strike}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Lot 1 (Mkt)  ₹{entry_price:.1f} ({lot1_qty} Qty) @ {now_str}\n"
-        f"Lot 2 (Lmt)  ₹{lot2_limit:.1f} ({lot2_qty} Qty) [Pending]\n"
+        f"Entry (Mkt)  ₹{entry_price:.1f} ({qty} Qty) @ {now_str}\n"
         f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low)\n"
         f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Trail: +12.0pts → Breakeven  |  +18.0pts → Trail Peak - 10.0pts",
+        "Trail: +12.0pts → Lock entry+4  |  +18.0pts → Trail Peak - 10.0pts",
         priority="critical"
     )
     _save_v8_state()
@@ -4347,13 +4319,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         hourly_rsi_at_entry  = float(_v8_state.get("hourly_rsi_at_entry", 0.0))
         bias_at_entry        = str(_v8_state.get("bias_at_entry", ""))
         session_at_entry     = str(_v8_state.get("session_at_entry", ""))
-        lot1_qty     = int(_v8_state.get("lot1_qty", 0) or 0)
-        lot1_entry   = float(_v8_state.get("lot1_entry", 0.0))
-        lot2_qty     = int(_v8_state.get("lot2_qty", 0) or 0)
-        lot2_filled  = bool(_v8_state.get("lot2_filled", False))
-        lot2_cancelled = bool(_v8_state.get("lot2_cancelled", False))
-        lot2_entry   = float(_v8_state.get("lot2_entry", 0.0))
-        
+
         # Clear position state
         _v8_state["in_trade"]            = False
         _v8_state["symbol"]              = ""
@@ -4366,15 +4332,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         _v8_state["active_ratchet_sl"]   = 0.0
         _v8_state["candles_held"]        = 0
         
-        # Reset split-lot tracking
         _v8_state["initial_sl"]          = 0.0
-        _v8_state["lot1_qty"]            = 0
-        _v8_state["lot1_entry"]          = 0.0
-        _v8_state["lot2_qty"]            = 0
-        _v8_state["lot2_limit"]          = 0.0
-        _v8_state["lot2_entry"]          = 0.0
-        _v8_state["lot2_filled"]         = False
-        _v8_state["lot2_cancelled"]      = False
         _v8_state["peak_ltp"]            = 0.0
         _v8_state["xleg_other_margin"]   = 0.0
 
@@ -4481,18 +4439,11 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
                 + " ref=" + str(exit_price) + " reason=" + reason
                 + " pnl=" + str(pnl_pts) + "pts")
 
-    _lot2_line = ""
-    if lot2_filled:
-        _lot2_line = f"Lot 2  ₹{lot2_entry:.1f} × {lot2_qty}  [filled]\n"
-    elif lot2_cancelled:
-        _lot2_line = f"Lot 2  ₹— × {lot2_qty}  [cancelled]\n"
     _tg_send(
         "⚡ <b>V10 GOLDEN EXIT {dir} {strike}</b>\n".format(dir=direction, strike=strike)
         + "<b>" + reason + "</b>    " + ("+" if pnl_pts >= 0 else "") + "{:.1f}".format(pnl_pts) + " pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Lot 1  ₹{lot1_entry:.1f} × {lot1_qty}  [mkt]\n"
-        + _lot2_line
-        + f"Avg    ₹{entry_price:.1f}  Exit ₹{exit_price:.1f}\n"
+        + f"Entry  ₹{entry_price:.1f} × {qty}  Exit ₹{exit_price:.1f}\n"
         f"Peak   +{peak:.1f} pts  Tier {tier}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Gross  " + ("+" if pnl_rs >= 0 else "") + "₹" + "{:.0f}".format(pnl_rs) + "\n"
@@ -4514,13 +4465,6 @@ def _v8_check_exit():
         if not _v8_state.get("in_trade"):
             return
         token          = int(_v8_state.get("token", 0) or 0)
-        lot1_entry     = float(_v8_state.get("lot1_entry", 0.0))
-        lot1_qty       = int(_v8_state.get("lot1_qty", 0))
-        lot2_limit     = float(_v8_state.get("lot2_limit", 0.0))
-        lot2_qty       = int(_v8_state.get("lot2_qty", 0))
-        lot2_filled    = bool(_v8_state.get("lot2_filled", False))
-        lot2_cancelled = bool(_v8_state.get("lot2_cancelled", False))
-        lot2_entry     = float(_v8_state.get("lot2_entry", 0.0))
         initial_sl     = float(_v8_state.get("initial_sl", 0.0))
         peak_ltp       = float(_v8_state.get("peak_ltp", 0.0))
         peak_pnl_snap  = float(_v8_state.get("peak_pnl", 0.0))
@@ -4545,9 +4489,8 @@ def _v8_check_exit():
         with _v10_live_lock:
             _ce_snap = dict(_v10_live.get("CE", {}))
             _pe_snap = dict(_v10_live.get("PE", {}))
-        _avg_e = round((lot1_entry + lot2_entry) / 2, 2) if lot2_filled else lot1_entry
         logger.info(
-            f"[CANDLE] c={candles_held} dir={direction} avg_entry={_avg_e:.2f}"
+            f"[CANDLE] c={candles_held} dir={direction} entry={entry_price_snap:.2f}"
             f" peak={peak_pnl_snap:+.2f} tier={active_tier}"
             f" | CE mom={_ce_snap.get('momentum_gap', 0):+.2f}(ok={_ce_snap.get('momentum_ok', False)})"
             f" decay={_ce_snap.get('decay_margin', 0):+.2f}(ok={_ce_snap.get('decay_ok', False)})"
@@ -4561,7 +4504,7 @@ def _v8_check_exit():
     if ltp <= 0:
         # No live tick (feed down / token never subscribed after a restart).
         # SL/trail checks need a real price, but the EOD hard-close must
-        # still fire — fall back to average entry, same as /forceexit
+        # still fire — fall back to entry price, same as /forceexit
         # (2026-06-10: stuck trade after a post-15:00 restart).
         _eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20") if hasattr(CFG, "exit_ema9_band") else "15:20"
         try:
@@ -4575,46 +4518,7 @@ def _v8_check_exit():
         return
 
     with _v8_lock:
-        # Check Lot 2 limit order fill/cancellation
-        if not lot2_filled and not lot2_cancelled:
-            if candles_held >= 3:
-                _v8_state["lot2_cancelled"] = True
-                lot2_cancelled = True
-                logger.info(f"[V10] Lot 2 limit order cancelled (missed trade, but zero loss on Lot 2) candles_held={candles_held}")
-                _tg_send(
-                    f"⚠️ <b>V10 Lot 2 Cancelled</b>\n"
-                    f"Reason: Limit order at ₹{lot2_limit:.1f} not filled within 3 candles.\n"
-                    f"Position now running only Lot 1 ({lot1_qty} Qty).",
-                    priority="critical"
-                )
-                _save_v8_state()
-            elif ltp <= lot2_limit:
-                _v8_state["lot2_filled"] = True
-                _v8_state["lot2_entry"] = lot2_limit
-                lot2_filled = True
-                lot2_entry = lot2_limit
-                
-                # Update average entry and total quantity in state
-                _v8_state["entry_price"] = round((lot1_entry + lot2_limit) / 2, 2)
-                _v8_state["qty"] = lot1_qty + lot2_qty
-                # Recalculate peak_pnl against new avg_entry (peak_ltp recorded pre-fill uses lot1 entry)
-                if peak_ltp > 0:
-                    _v8_state["peak_pnl"] = round(peak_ltp - _v8_state["entry_price"], 2)
-
-                logger.info(f"[V10] Lot 2 limit order filled at ₹{lot2_limit:.1f}. New Avg Entry: ₹{_v8_state['entry_price']:.1f}")
-                _tg_send(
-                    f"⚡ <b>V10 Lot 2 Filled</b>\n"
-                    f"Price: ₹{lot2_limit:.1f} ({lot2_qty} Qty)\n"
-                    f"New Avg Entry: ₹{_v8_state['entry_price']:.1f}",
-                    priority="critical"
-                )
-                _save_v8_state()
-
-        # Recalculate average entry price
-        if lot2_filled:
-            avg_entry = round((lot1_entry + lot2_entry) / 2, 2)
-        else:
-            avg_entry = lot1_entry
+        avg_entry = entry_price_snap
 
         # Update peak LTP
         if ltp > peak_ltp:
@@ -4641,14 +4545,13 @@ def _v8_check_exit():
         prev_tier = _v8_state.get("active_ratchet_tier", "")
         _v8_state["active_ratchet_tier"] = tier
         _v8_state["active_ratchet_sl"]   = round(current_sl, 2)
-        _v8_state["entry_price"]         = avg_entry
 
         # Tier upgrade alert
         if prev_tier and prev_tier != tier and tier != "INITIAL":
             _tg_send(
                 f"⚡ <b>V10 SL UPGRADED → {tier}</b>\n"
                 f"Peak: +{peak_pnl:.1f} pts (LTP ₹{ltp:.1f})\n"
-                f"New Stop: ₹{current_sl:.1f} (average entry ₹{avg_entry:.1f})",
+                f"New Stop: ₹{current_sl:.1f} (entry ₹{avg_entry:.1f})",
                 priority="critical"
             )
             _save_v8_state()
@@ -4854,10 +4757,7 @@ _V8_PERSIST_FIELDS = [
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction_v10",
-    # Split-lot tracking fields
     "initial_sl", "entry_regime",
-    "lot1_qty", "lot1_entry",
-    "lot2_qty", "lot2_limit", "lot2_entry", "lot2_filled", "lot2_cancelled",
     "peak_ltp", "xleg_other_margin",
     "spot_regime_at_entry",
     # Data-collection fields (survive restart so CSV row is correct)
@@ -5524,7 +5424,7 @@ def _alert_bot_started():
         ""
         "V10 LIVE   : 1-min  | Golden | PAPER trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
-        "Size    : 2 lots fixed\n"
+        "Size    : 1 lot fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GOLDEN GATES</b>\n"
         "1) MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
@@ -6208,9 +6108,6 @@ def _update_dashboard_ltp():
             _v10_sl   = _v8_state.get("active_ratchet_sl", 0)
             _v10_tier = _v8_state.get("active_ratchet_tier", "INITIAL")
             _v10_can  = _v8_state.get("candles_held", 0)
-            _v10_l2f  = _v8_state.get("lot2_filled", False)
-            _v10_l2e  = _v8_state.get("lot2_entry", 0.0)
-            _v10_l2c  = _v8_state.get("lot2_cancelled", False)
         if _v10_it and _v10_tk:
             opt_ltp = D.get_ltp(_v10_tk)
             if opt_ltp > 0:
@@ -6222,9 +6119,6 @@ def _update_dashboard_ltp():
                 pos["sl"]                 = round(_v10_sl, 2)
                 pos["active_ratchet_tier"] = _v10_tier
                 pos["candles"]            = _v10_can
-                pos["lot2_filled"]        = bool(_v10_l2f)
-                pos["lot2_entry"]         = round(_v10_l2e, 2)
-                pos["lot2_cancelled"]     = bool(_v10_l2c)
         elif not _v10_it and dash.get("position", {}).get("in_trade"):
             dash["position"] = {"in_trade": False}
 
@@ -6450,14 +6344,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 "sl": _stop_price,
                 "active_ratchet_tier": _stop_type,
                 "lot_size": D.get_lot_size(),
-                # Split lot tracking fields
-                "lot1_qty": st_v10.get("lot1_qty", 0),
-                "lot1_entry": st_v10.get("lot1_entry", 0.0),
-                "lot2_qty": st_v10.get("lot2_qty", 0),
-                "lot2_limit": st_v10.get("lot2_limit", 0.0),
-                "lot2_entry": st_v10.get("lot2_entry", 0.0),
-                "lot2_filled": bool(st_v10.get("lot2_filled", False)),
-                "lot2_cancelled": bool(st_v10.get("lot2_cancelled", False)),
+                "qty": int(st_v10.get("qty", 0) or 0),
             }
         else:
             position = {"in_trade": False}
@@ -7521,7 +7408,7 @@ def _cmd_pulse(args):
             "<b>BOT</b>\n"
             + _ok(True) + " v" + D.VERSION.replace("v", "") + " · uptime " + _up_str + "\n"
             + _ok(True) + " " + ("PAPER" if D.PAPER_MODE else "LIVE")
-            + " · " + str(_lot) + " × 2 lots\n"
+            + " · " + str(_lot) + " × 1 lot\n"
             + _market_icon + " market " + _market_str + "\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>DATA</b>\n"
@@ -7563,8 +7450,7 @@ def _cmd_pulse(args):
             "<b>V10 GOLDEN CONFIG (1-min)</b>\n"
             "Gate 1: MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
             "Gate 2: OPP DECAY opp margin [−8, −4]\n"
-            "Entry:  50/50 split-lot (Lot1 mkt, Lot2 limit at candle midpoint)\n"
-            "Lot 2 cancelled after 3 candles if not filled\n"
+            "Entry:  single lot, market fill at candle close\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
             "INITIAL    peak<12   ema9_low at entry\n"
@@ -7608,7 +7494,7 @@ def _cmd_help(args):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v20 — V10 live 1-min P1+P2, "
         "exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
-        + ("PAPER" if D.PAPER_MODE else "LIVE") + " 2 lots.\n"
+        + ("PAPER" if D.PAPER_MODE else "LIVE") + " 1 lot.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
     )
@@ -7692,20 +7578,6 @@ def _cmd_status(args):
         _stop_line = "SL     : INITIAL @ ₹" + str(round(_isl, 1))
         _stop_dist = round(ltp - _isl, 1) if ltp > 0 else "—"
 
-    # Lot split summary
-    _l1q = int(st.get("lot1_qty", 0) or 0)
-    _l1e = float(st.get("lot1_entry", 0.0))
-    _l2q = int(st.get("lot2_qty", 0) or 0)
-    _l2f = bool(st.get("lot2_filled", False))
-    _l2c = bool(st.get("lot2_cancelled", False))
-    _l2e = float(st.get("lot2_entry", 0.0))
-    if _l2f:
-        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ₹{_l2e:.1f}×{_l2q} [filled]\n"
-    elif _l2c:
-        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ×{_l2q} [cancelled]\n"
-    else:
-        _lot_line = f"Lots   : L1 ₹{_l1e:.1f}×{_l1q}  L2 ×{_l2q} [pending]\n"
-
     _day_pts = round(st.get("_pnl_today_pts", 0), 1)
     _day_w   = st.get("_wins_today", 0)
     _day_l   = st.get("_losses_today", 0)
@@ -7716,8 +7588,7 @@ def _cmd_status(args):
         "Time   : " + _now_str() + "\n"
         "Symbol : " + st.get("symbol", "") + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Avg    : ₹" + str(round(entry, 2)) + "\n"
-        + _lot_line +
+        "Entry  : ₹" + str(round(entry, 2)) + " × " + str(qty) + "\n"
         "LTP    : ₹" + str(round(ltp, 2)) + "\n"
         "PNL    : " + ("+" if pnl >= 0 else "") + str(pnl) + "pts  " + pnl_rs_str + "\n"
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
@@ -9071,15 +8942,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     var sl=parseFloat(pos.sl||0);
     var candles=pos.candles||0;
     var tier=pos.active_ratchet_tier||'INITIAL';
-    var lot1Qty=parseInt(pos.lot1_qty||0);
-    var lot1Entry=parseFloat(pos.lot1_entry||0);
-    var lot2Qty=parseInt(pos.lot2_qty||0);
-    var lot2Limit=parseFloat(pos.lot2_limit||0);
-    var lot2Entry=parseFloat(pos.lot2_entry||0);
-    var lot2Filled=!!pos.lot2_filled;
-    var lot2Cancelled=!!pos.lot2_cancelled;
-    var totalQty=lot1Qty+(lot2Filled?lot2Qty:0);
-    var avgEntry=lot2Filled?((lot1Entry*lot1Qty+lot2Entry*lot2Qty)/(lot1Qty+lot2Qty)):lot1Entry;
+    var totalQty=parseInt(pos.qty||0);
     var pnlRs=Math.round(pnl*totalQty);
     var pnlClr=pnl>=0?'var(--gn)':'var(--rd)';
     var posClr=pos.direction==='CE'?'rgba(59,130,246,.1)':'rgba(239,68,68,.08)';
@@ -9088,7 +8951,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">🟢 '+esc(sym)+' V10 GOLDEN</div>';
     ph+='<div style="margin:3px 0"><span class="big" style="color:'+pnlClr+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'pts</span>';
     ph+=' <span style="color:#888;font-size:11px">&#x20B9;'+pnlRs.toLocaleString('en-IN')+'</span>';
-    ph+='<span style="color:#555;font-size:10px;float:right">Avg &#x20B9;'+avgEntry.toFixed(1)+' → &#x20B9;'+ltp+'</span></div>';
+    ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry.toFixed(1)+' → &#x20B9;'+ltp+'</span></div>';
     // Peak-captured progress bar
     var peakPct2=peak>0?Math.min(100,Math.max(0,(pnl/peak)*100)):0;
     var peakBarClr=peakPct2>=80?'var(--gn)':peakPct2>=50?'var(--am)':'var(--rd)';
@@ -9101,15 +8964,6 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:'+tierClr+'">'+tier+'</div></div>';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
     ph+='</div>';
-    // Split lot status
-    ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 1 (Mkt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot1Entry.toFixed(1)+' × '+lot1Qty+'</div>';
-    if(lot2Filled){
-      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--gn)">● Filled</span> &#x20B9;'+lot2Entry.toFixed(1)+' × '+lot2Qty+'</div>';
-    } else if(lot2Cancelled){
-      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:#888">✕ Cancelled</span> (missed &#x20B9;'+lot2Limit.toFixed(1)+')</div>';
-    } else {
-      ph+='<div style="font-size:10px;margin-bottom:3px"><span style="font-weight:700;color:var(--dm)">LOT 2 (Lmt)</span> <span style="color:var(--am)">⏳ Pending</span> &#x20B9;'+lot2Limit.toFixed(1)+' × '+lot2Qty+'</div>';
-    }
     ph+='<div class="pos-meta"><span>Peak: +'+(peak||0).toFixed(1)+'</span><span>Qty: '+totalQty+'</span><span>'+candles+'min</span></div>';
     ph+='</div>';
   }

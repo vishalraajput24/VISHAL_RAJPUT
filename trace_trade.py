@@ -137,13 +137,7 @@ def run_audit_cycle():
     v_tier   = st.get("active_ratchet_tier", "—")
     v_cndl   = int(st.get("candles_held", 0))
     v_isl    = float(st.get("initial_sl", 0))
-    v_l1_qty = int(st.get("lot1_qty", 0))
-    v_l1_ent = float(st.get("lot1_entry", 0))
-    v_l2_qty = int(st.get("lot2_qty", 0))
-    v_l2_lim = float(st.get("lot2_limit", 0))
-    v_l2_ent = float(st.get("lot2_entry", 0))
-    v_l2_fil = bool(st.get("lot2_filled", False))
-    v_l2_can = bool(st.get("lot2_cancelled", False))
+    v_qty    = int(st.get("qty", 0))
 
     # Pull dashboard position fields
     d_sym    = pos.get("symbol", "—")
@@ -155,28 +149,10 @@ def run_audit_cycle():
     d_sl     = float(pos.get("sl", 0))
     d_tier   = pos.get("active_ratchet_tier", "—")
     d_cndl   = int(pos.get("candles", 0))
-    d_l1_qty = int(pos.get("lot1_qty", 0))
-    d_l1_ent = float(pos.get("lot1_entry", 0))
-    d_l2_qty = int(pos.get("lot2_qty", 0))
-    d_l2_lim = float(pos.get("lot2_limit", 0))
-    d_l2_ent = float(pos.get("lot2_entry", 0))
-    d_l2_fil = bool(pos.get("lot2_filled", False))
-    d_l2_can = bool(pos.get("lot2_cancelled", False))
+    d_qty    = int(pos.get("qty", 0))
 
     # V10 Golden SL/tier expected from engine truth
     exp_sl, exp_tier = _expected_sl_tier(v_peak, v_isl, v_entry)
-
-    # Lot 2 consistency check (engine-side only)
-    l2_ok = True
-    l2_note = ""
-    if v_l2_fil and v_l2_can:
-        l2_ok = False; l2_note = "lot2_filled AND lot2_cancelled both True — impossible"
-    elif v_l2_fil and v_l2_ent == 0:
-        l2_ok = False; l2_note = "lot2_filled=True but lot2_entry=0"
-    elif v_l2_fil:
-        exp_avg = round((v_l1_ent + v_l2_ent) / 2, 2)
-        if not _match(v_entry, exp_avg):
-            l2_ok = False; l2_note = f"avg entry should be ₹{exp_avg} but state has ₹{v_entry}"
 
     mismatches = []
 
@@ -209,19 +185,10 @@ def run_audit_cycle():
         mismatches.append(f"SL logic: state tier={v_tier} SL={v_sl} but expected {exp_tier} SL={exp_sl}")
     _log(f"  {'SL rule check':<22} peak={v_peak:.1f}  initial_sl=₹{v_isl}  {tier_flag}")
 
-    # Split lot status
+    # Position size
     _log("-" * 80)
-    l2_status = "FILLED" if v_l2_fil else ("CANCELLED" if v_l2_can else "PENDING")
-    _log(f"  Lot 1  ₹{v_l1_ent} × {v_l1_qty} qty  (market fill)")
-    _log(f"  Lot 2  ₹{v_l2_lim} limit × {v_l2_qty} qty  [{l2_status}]" +
-         (f"  filled@₹{v_l2_ent}" if v_l2_fil else ""))
-    l2_row = _ok(v_l2_fil, d_l2_fil, 0)
-    if "❌" in l2_row:
-        mismatches.append(f"lot2_filled: state={v_l2_fil} dash={d_l2_fil}")
-    _log(f"  {'Lot2 filled match':<22} state={v_l2_fil}  dash={d_l2_fil}  {l2_row}")
-    if not l2_ok:
-        mismatches.append(f"Lot2 internal: {l2_note}")
-        _log(f"  ❌ LOT2 CONSISTENCY: {l2_note}")
+    _log(f"  Entry  ₹{v_entry} × {v_qty} qty  (market fill)")
+    _log(row("Qty", v_qty, d_qty, 0))
 
     # Telegram
     _log("-" * 80)
@@ -358,8 +325,7 @@ def main():
                 _log(f"🚀 ENTRY DETECTED  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 _log(f"   {st.get('direction','?')} {st.get('strike','?')}  entry=₹{st.get('entry_price',0)}"
                      f"  initial_sl=₹{st.get('initial_sl',0)}"
-                     f"  lot1={st.get('lot1_qty',0)}qty@₹{st.get('lot1_entry',0)}"
-                     f"  lot2_limit=₹{st.get('lot2_limit',0)}")
+                     f"  qty={st.get('qty',0)}")
                 _log("#" * 80)
                 run_audit_cycle()
                 time.sleep(1)

@@ -7,7 +7,7 @@
 version: "v17"
 bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
-lots_fixed: 2
+lots_fixed: 1
 
 # ── v15.2.5 BUG-Q: verify_order_fill timeouts (seconds) ─────────
 # Previously hardcoded in VRL_TRADE.place_entry / place_exit.
@@ -27,7 +27,7 @@ instrument:
 
 # Legacy compat for existing accessors (lots.count / lots.size)
 lots:
-  count: 2
+  count: 1
   size: 65
 
 # ── V6 Entry configuration (Vishal Clean V6 — 3 gates) ────────

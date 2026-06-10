@@ -102,8 +102,6 @@ class TGEvents:
       Entry   : "🟢/🔴 V10 GOLDEN ENTRY CE/PE <strike>"
       Exit    : "⚡ V10 GOLDEN EXIT CE/PE <strike>"
       SL Up   : "⚡ V10 SL UPGRADED → LOCK_4/TRAIL_10"
-      Lot2 Fill: "⚡ V10 Lot 2 Filled"
-      Lot2 Cxl : "⚠️ V10 Lot 2 Cancelled"
     """
 
     def __init__(self, lines):
@@ -126,14 +124,6 @@ class TGEvents:
     def sl_upgrade_sent(self, tier):
         """Was an SL upgrade TG sent for this tier today?"""
         pattern = rf"V10 SL UPGRADED.*{tier}"
-        return bool(self._match(pattern))
-
-    def lot2_filled_sent(self):
-        pattern = r"V10 Lot 2 Filled"
-        return bool(self._match(pattern))
-
-    def lot2_cancelled_sent(self):
-        pattern = r"V10 Lot 2 Cancelled"
         return bool(self._match(pattern))
 
     def exit_reason_from_tg(self, direction, strike):
@@ -163,8 +153,6 @@ def _audit(st, dash, tg_events):
     tier       = st.get("active_ratchet_tier", "")
     sl         = float(st.get("active_ratchet_sl", 0))
     candles    = int(st.get("candles_held", 0) or 0)
-    lot2f      = bool(st.get("lot2_filled", False))
-    lot2c      = bool(st.get("lot2_cancelled", False))
 
     # ── expected SL tier from V10 formula ──
     exp_sl, exp_tier = _expected_sl(peak, initial_sl, entry)
@@ -183,8 +171,6 @@ def _audit(st, dash, tg_events):
         ("sl_price",        sl,           float(pos.get("sl", 0)),               0.1),
         ("sl_tier",         tier,         pos.get("active_ratchet_tier",""),     None),
         ("candles_held",    candles,      int(pos.get("candles", 0) or 0),       0),
-        ("lot2_filled",     lot2f,        bool(pos.get("lot2_filled", False)),   None),
-        ("lot2_cancelled",  lot2c,        bool(pos.get("lot2_cancelled",False)), None),
     ]
 
     for field, s_val, d_val, tol in checks:
@@ -219,21 +205,6 @@ def _audit(st, dash, tg_events):
             bugs.append(f"  - BUG: TG SL upgrade alert NOT found for {tier} (state shows {tier})")
         else:
             info.append(f"  ✓ {'tg_sl_upgrade':22} found for {tier}")
-
-    # 3. Lot 2 events
-    if lot2f and not tg_events.lot2_filled_sent():
-        bugs.append(f"  - BUG: state lot2_filled=True but TG Lot2 Filled alert NOT found")
-    elif lot2f:
-        info.append(f"  ✓ {'tg_lot2_filled':22} alert present")
-
-    if lot2c and not tg_events.lot2_cancelled_sent():
-        bugs.append(f"  - BUG: state lot2_cancelled=True but TG Lot2 Cancelled alert NOT found")
-    elif lot2c:
-        info.append(f"  ✓ {'tg_lot2_cancelled':22} alert present")
-
-    # 4. Lot2 mutual exclusion
-    if lot2f and lot2c:
-        bugs.append(f"  - BUG: lot2 both filled=True AND cancelled=True simultaneously")
 
     return info, bugs
 
@@ -302,8 +273,7 @@ def main():
             entry     = st.get("entry_price", 0)
             block = [
                 f"\n## {_ts()} — ENTRY {direction} {strike} @ {entry}",
-                f"  lot1_qty={st.get('lot1_qty')}  lot1_entry={st.get('lot1_entry')}",
-                f"  lot2_qty={st.get('lot2_qty')}  lot2_limit={st.get('lot2_limit')}  lot2_filled={st.get('lot2_filled')}",
+                f"  qty={st.get('qty')}",
                 f"  initial_sl={st.get('initial_sl')}  entry_regime={st.get('entry_regime')}",
                 f"  tg_entry_alert={'FOUND' if tg.entry_sent(direction, strike) else 'MISSING ← BUG'}",
             ]
@@ -316,10 +286,8 @@ def main():
             peak = float(st.get("peak_pnl", 0))
             tier = st.get("active_ratchet_tier", "")
             sl   = float(st.get("active_ratchet_sl", 0))
-            lot2_status = ("FILLED" if st.get("lot2_filled") else
-                           "CANCELLED" if st.get("lot2_cancelled") else "PENDING")
             print(f"[{_ts()}] {st.get('direction')} {st.get('strike')}  "
-                  f"peak={peak:+.1f}  tier={tier}  sl={sl:.1f}  lot2={lot2_status}"
+                  f"peak={peak:+.1f}  tier={tier}  sl={sl:.1f}"
                   + (f"  ⚠ {len(bugs)} BUG(s)" if bugs else "  ✓"))
 
             if bugs:
