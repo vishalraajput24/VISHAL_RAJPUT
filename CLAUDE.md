@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-10 (feat/lock4-exit-tier). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
+> Last resynced: 2026-06-10 (fix/eod-exit-resubscribe). Single-file bot: `VRL_MAIN.py` (~10,266 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -75,8 +75,13 @@ peak ≥ 12 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
 peak ≥ 18 pts  → TRAIL_10   : SL = max(initial_sl, entry + 4.0, peak_ltp − 10.0)
 ```
 
-Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT`
+Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
 (LOCK_4 replaced BREAKEVEN on 2026-06-10 — a trade reaching +12 now exits with at least +4 pts instead of scratch.)
+
+- **EOD hard-close**: `config.yaml` → `exit.ema9_band.eod_exit_time` = **"15:15"** (changed from 15:20 on 2026-06-10). Checked tick-based inside `_v8_check_exit()`.
+- **No-tick safeguards** (PR #210, 2026-06-10 incident — restart after 15:00 left the open trade blind, EOD never fired):
+  1. Startup resubscribes the in-trade token + `_other_token` unconditionally (option tokens are otherwise only subscribed via `_lock_strikes()`, which is gated to the 09:15–15:00 trading window).
+  2. If `ltp <= 0` when EOD time is reached, the trade is force-closed at average entry price (same fallback as `/forceexit`) instead of silently skipping the exit check.
 
 ### Per-day counters
 `_v10_state`: `_trades_today`, `_wins_today`, `_losses_today`, `_pnl_today_pts` — reset at midnight. No hard daily cap.
