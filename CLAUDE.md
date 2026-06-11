@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/smi-paper-engine). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/watch-smi-fno). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -208,9 +208,14 @@ nohup python3 watch_trade.py &  # background
 ```
 Polls every 2s (in trade) / 10s (idle). Cross-checks:
 - `state/vrl_v8_state.json` (V10 engine state) vs `state/vrl_dashboard.json` (9 fields)
-- V10 SL tier formula (peak < 12 / ≥ 12 / ≥ 18)
+- V10 SL tier formula (peak < 9 / ≥ 9 / ≥ 11 / ≥ 18)
 - Telegram log: entry alert, SL upgrade alert, exit alert
 Mismatches appended to `~/lab_data/trade_audit_notes.md`.
+
+Also watches the SMI stock F&O paper engine every 60s (PR #235):
+- `screener/smi_paper_state.json` open trades — SL formula (stock entry ∓1%), trail armed at +1.5% peak, matching OPEN row in `fno_tracker.csv` (structure=SMI)
+- Stale-state alarm if state file >22 min old during 09:47–15:31 (dead cron detector)
+- Exit reconciliation vs `screener/smi_paper_log.csv` (pnl_rs math, exit reason ∈ SL-HIT/TRAIL-SMA8/EOD-CLOSE/EOD-LATE, tracker status)
 
 ### trace_trade.py
 Post-trade reconciler. Reads state + dashboard + CSV and flags:
