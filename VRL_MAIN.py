@@ -240,10 +240,6 @@ def ws_tick_stale_secs() -> int:
     return _deep_get(get(), "websocket", "tick_stale_secs", default=8)
 
 
-def ws_max_reconnect_delay() -> int:
-    return _deep_get(get(), "websocket", "max_reconnect_delay", default=300)
-
-
 # ── Web ──
 
 def web_port() -> int:
@@ -1090,13 +1086,6 @@ _tick_lock        = threading.Lock()
 _subscribed       = set()
 _subscribed_lock  = threading.Lock()
 _ws_connected     = False
-_ws_reconnect_attempts = 0
-_ws_reconnect_delay = 1
-# Cap on the exponential-backoff reconnect delay. Configurable via
-# websocket.max_reconnect_delay so extended Kite outages don't hammer
-# the server every 60s. Defaults to 300s (5 min) — comfortable for
-# Kite's rate limits while still recovering quickly.
-_ws_max_delay = CFG.ws_max_reconnect_delay()
 
 # ── auth-rejection backoff ───────────────────
 # When Kite's nightly 03:30 session invalidation kills the token,
@@ -1278,10 +1267,8 @@ def _on_ticks(ws, ticks):
                 _ticks[token] = {"ltp": float(ltp), "ts": time.time()}
 
 def _on_connect(ws, response):
-    global _ws_connected, _ws_reconnect_attempts, _ws_reconnect_delay
+    global _ws_connected
     _ws_connected = True
-    _ws_reconnect_attempts = 0
-    _ws_reconnect_delay = 1
     logger.info("[WS] Connected")
     with _subscribed_lock:
         if _subscribed:
@@ -1289,7 +1276,9 @@ def _on_connect(ws, response):
             ws.set_mode(ws.MODE_FULL, list(_subscribed))
     return
 def _on_close(ws, code, reason):
-    global _ws_connected, _ticker, _ws_reconnect_attempts, _ws_reconnect_delay
+    global _ws_connected
+    if ws is not _ticker:
+        return  # callback from an orphaned ticker being torn down — ignore
     _ws_connected = False
     reason_str = str(reason or "")
     logger.warning("[WS] Closed: " + str(code) + " " + reason_str)
@@ -1297,41 +1286,64 @@ def _on_close(ws, code, reason):
         logger.warning("[WS] 403 Forbidden — auth required")
         _set_auth_rejected()
         try:
-            if _ticker: _ticker.close()
+            if _ticker:
+                _ticker.stop_retry()
+                _ticker.close()
         except Exception as _ce:
             logger.debug("[WS] ticker.close() on 403 failed: " + str(_ce))
-        return
-    if _ws_reconnect_attempts < 10:
-        delay = min(_ws_reconnect_delay * (2 ** _ws_reconnect_attempts), _ws_max_delay)
-        _ws_reconnect_attempts += 1
-        logger.info(f"[WS] Reconnecting in {delay}s (attempt {_ws_reconnect_attempts})")
-        time.sleep(delay)
-        try:
-            start_websocket()
-        except Exception as e:
-            logger.error("[WS] Reconnect failed: " + str(e))
-    else:
-        logger.critical("[WS] Max reconnect attempts reached")
+    # Non-403 drops (e.g. 1006 unclean close): KiteTicker's built-in
+    # auto-reconnect takes over — _on_connect resubscribes, _on_noreconnect
+    # fires if it gives up. Never start a second ticker from here (it ran
+    # in parallel with the built-in reconnect and leaked WS connections).
     return
 def _on_error(ws, code, reason):
+    if ws is not _ticker:
+        return
     reason_str = str(reason or "")
-    logger.error("[WS] Error: " + str(code) + " " + reason_str)
+    logger.warning("[WS] Error: " + str(code) + " " + reason_str)
     if "403" in reason_str or "Forbidden" in reason_str:
         _set_auth_rejected()
 
 def _on_reconnect(ws, attempts):
     logger.info("[WS] Reconnecting attempt " + str(attempts))
 
+def _on_noreconnect(ws):
+    if ws is not _ticker:
+        return
+    logger.critical("[WS] Built-in reconnect exhausted — starting fresh ticker")
+    try:
+        if _ws_autoheal_callback:
+            _ws_autoheal_callback("⚠️ WS reconnect exhausted — starting fresh ticker")
+    except Exception:
+        pass
+    try:
+        start_websocket()
+    except Exception as e:
+        logger.error("[WS] Fresh ticker start failed: " + str(e))
+
 def start_websocket():
-    global _ticker
+    global _ticker, _ws_connected
     if _kite is None:
         raise RuntimeError("Call init(kite) before start_websocket()")
+    old = _ticker
+    _ticker = None
+    _ws_connected = False
+    if old is not None:
+        try:
+            old.stop_retry()
+        except Exception:
+            pass
+        try:
+            old.close()
+        except Exception:
+            pass
     _ticker = KiteTicker(KITE_API_KEY, _kite.access_token)
-    _ticker.on_ticks     = _on_ticks
-    _ticker.on_connect   = _on_connect
-    _ticker.on_close     = _on_close
-    _ticker.on_error     = _on_error
-    _ticker.on_reconnect = _on_reconnect
+    _ticker.on_ticks       = _on_ticks
+    _ticker.on_connect     = _on_connect
+    _ticker.on_close       = _on_close
+    _ticker.on_error       = _on_error
+    _ticker.on_reconnect   = _on_reconnect
+    _ticker.on_noreconnect = _on_noreconnect
     _ticker.connect(threaded=True, disable_ssl_verification=False)
     logger.info("[WS] Ticker started")
 
@@ -1409,7 +1421,7 @@ def check_and_reconnect():
     market hours, re-authenticate Kite and restart WebSocket. Rate limited to 1 per 10min.
     Called from strategy loop every cycle.
     """
-    global _last_reconnect_attempt, _kite, _ticker
+    global _last_reconnect_attempt, _kite
     if not is_market_open():
         return
     if _is_auth_rejected():
@@ -1440,16 +1452,7 @@ def check_and_reconnect():
             logger.error("[DATA] Re-auth returned None")
             return
         _kite = new_kite
-        # Stop old ticker safely
-        try:
-            if _ticker:
-                _ticker.close()
-                time.sleep(1)
-        except Exception:
-            pass
-        _ticker = None
-        time.sleep(2)
-        # Start fresh ticker with new token
+        # start_websocket() tears down the old ticker itself (stop_retry + close)
         try:
             start_websocket()
         except Exception as _ws_err:
