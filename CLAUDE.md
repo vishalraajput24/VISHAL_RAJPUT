@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/midday-deep-decay). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/smi-paper-engine). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -95,11 +95,28 @@ validated by `sl_replay_study.py`: +31.5 pts over 54 replayed trades, 0 trades m
 | `trace_trade.py` | Post-trade audit script (standalone, no Claude dependency) |
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
 | `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
-| `screener/` | Stock F&O + multibagger screeners (separate processes, not imported by VRL_MAIN) |
+| `screener/` | Stock F&O SMI paper engine + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
 | `state/vrl_v8_state.json` | **Primary V10 engine state** — `_v10_state` (filename uses legacy `v8` prefix — rename pending) |
 | `state/vrl_live_state.json` | Legacy V7 state — still written by bot, not used by V10 strategy logic |
 | `state/vrl_dashboard.json` | Dashboard snapshot — full rebuild (`_write_dashboard`) once per 1-min candle + after every exit (V10 and V7 paths); fast path `_update_dashboard_ltp` every 5–10s only refreshes ts/LTP/position, never the `today` block |
+
+### Stock F&O — SMI paper engine (since 2026-06-12)
+Old daily-pick screener strategy **retired 2026-06-11** (crons removed: `vishal_fno_screener.py`
+15:40 + `fno_collector.py --tick`; files kept on disk for rollback; final book +₹18,709,
+archived to `fno_tracker_archive.csv`). `fno_collector.py --morning` still runs (universe/OHLCV cache).
+
+New engine: `screener/smi_paper.py` — cron every 15m bar close +2min (09:47–15:31 Mon–Fri),
+log `~/logs/smi_paper.log`. **2-week paper validation — strategy constants FROZEN, no tuning
+before ~2026-06-25.** Spec (evidence: `smi_backtest.py`, `smi_pe_tuning.py`, `smi_single_filter.py`):
+- SMI RMA(Wilder) 14/3/3 on 15m + 1h. CE: cross up −40 same-bar, SMI>signal, 1h SMI>signal+5,
+  1h SMI in (0,50). PE: cross down +45 entry within 6 bars (first confirm), SMI<signal,
+  1h SMI<signal−5, 1h SMI in (0,50), stock below day VWAP. NIFTY 1h SMI bear = PE conviction tag.
+- Entries on bars labelled 09:30–14:30; paper fill = 1 lot nearest-expiry ATM option at LTP.
+- Exits (stock-price driven): SL 1% of entry, trail arms at +1.5% peak → exit close vs SMA8,
+  force close at 15:15 bar. Backtest: ~66% win, ~+0.49%/trade stock-level (40 days, 119 stocks).
+- State `smi_paper_state.json` · dashboard rows in `fno_tracker.csv` (`structure=SMI`) ·
+  clean trade log `smi_paper_log.csv` for the review.
 
 ### Stale artifacts in state/ (do not rely on)
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale
