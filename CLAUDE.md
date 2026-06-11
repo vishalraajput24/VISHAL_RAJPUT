@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/initial-sl-max10-cap). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/protect-tier-lock11). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−4], LOCK_4 @+12 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v10_state` key that must survive restart, add it to BOTH the initial `_v10_state` dict AND `_V10_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -64,13 +64,15 @@ Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the la
 Tick-based (~1s), runs BEFORE the candle gate (BUG-01):
 
 ```
-peak < 12 pts  → INITIAL    : SL = initial_sl
-peak ≥ 12 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
+peak < 9 pts   → INITIAL    : SL = initial_sl  (ema9_low capped at entry − 10)
+peak ≥ 9 pts   → PROTECT    : SL = max(initial_sl, entry − 2.0)
+peak ≥ 11 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
 peak ≥ 18 pts  → TRAIL_10   : SL = max(initial_sl, entry + 4.0, peak_ltp − 10.0)
 ```
 
-Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
-(LOCK_4 replaced BREAKEVEN on 2026-06-10 — a trade reaching +12 now exits with at least +4 pts instead of scratch.)
+Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
+(LOCK_4 replaced BREAKEVEN on 2026-06-10. PROTECT tier + LOCK_4 trigger 12→11 added 2026-06-11, owner-approved,
+validated by `sl_replay_study.py`: +31.5 pts over 54 replayed trades, 0 trades made worse.)
 
 - **EOD hard-close**: `config.yaml` → `exit.ema9_band.eod_exit_time` = **"15:15"** (changed from 15:20 on 2026-06-10). Checked tick-based inside `_v8_check_exit()`.
 - **No-tick safeguards** (PR #210, 2026-06-10 incident — restart after 15:00 left the open trade blind, EOD never fired):
@@ -207,7 +209,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 ### Locked design decisions
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−4], LOCK_4 @+12 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation.
+- **All strategy parameters are locked** — OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
 
 ---
 

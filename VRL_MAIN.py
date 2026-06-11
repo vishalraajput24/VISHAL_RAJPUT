@@ -4160,18 +4160,22 @@ _v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from
 
 
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
-    """V10 dynamic exit rules:
-    - Initial SL is 1-min ema9_low at entry (passed as initial_sl).
-    - Lock entry+4.0 once profit hits +12.0 pts (capture a small win, not a scratch).
+    """V10 dynamic exit rules (owner-approved 2026-06-11, validated by sl_replay_study.py):
+    - Initial SL is 1-min ema9_low at entry (passed as initial_sl), capped at entry-10.
+    - Protect entry-2.0 once profit hits +9.0 pts (giveback never exceeds 2 pts).
+    - Lock entry+4.0 once profit hits +11.0 pts (capture a small win, not a scratch).
     - Dynamic trail at Peak - 10.0 pts once profit hits +18.0 pts.
     """
     if peak_pnl >= 18.0:
         peak_ltp = entry_price + peak_pnl
         trail_val = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
         return round(trail_val, 2), "TRAIL_10"
-    elif peak_pnl >= 12.0:
+    elif peak_pnl >= 11.0:
         trail_val = max(initial_sl, entry_price + 4.0)
         return round(trail_val, 2), "LOCK_4"
+    elif peak_pnl >= 9.0:
+        trail_val = max(initial_sl, entry_price - 2.0)
+        return round(trail_val, 2), "PROTECT"
     else:
         return round(initial_sl, 2), "INITIAL"
 
@@ -4284,7 +4288,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low, max 10 pts)\n"
         f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Trail: +12.0pts → Lock entry+4  |  +18.0pts → Trail Peak - 10.0pts",
+        "Trail: +9 → Protect entry-2  |  +11 → Lock entry+4  |  +18 → Trail Peak-10",
         priority="critical"
     )
     _save_v8_state()
@@ -4591,7 +4595,8 @@ def _v8_check_exit():
 
     # Exits checking (tick-based)
     if ltp <= current_sl:
-        exit_reason = "EMERGENCY_SL" if tier == "INITIAL" else ("LOCK_4" if tier == "LOCK_4" else "VISHAL_TRAIL")
+        exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
+                       "LOCK_4": "LOCK_4"}.get(tier, "VISHAL_TRAIL")
         _v8_execute_paper_exit(exit_reason, round(current_sl, 2))
         return
 
@@ -5458,9 +5463,10 @@ def _alert_bot_started():
         "Cooldown: 9:45 blackout · same-candle · same-side 3-min\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
-        "INITIAL    peak < 12   → ema9_low at entry\n"
-        "LOCK_4     peak ≥ 12   → max(ema9_low, entry + 4)\n"
-        "TRAIL_10   peak ≥ 18   → max(ema9_low, entry + 4, peak − 10)\n"
+        "INITIAL    peak < 9    → max(ema9_low, entry − 10)\n"
+        "PROTECT    peak ≥ 9    → max(initial, entry − 2)\n"
+        "LOCK_4     peak ≥ 11   → max(initial, entry + 4)\n"
+        "TRAIL_10   peak ≥ 18   → max(initial, entry + 4, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  initial_sl | LOCK_4 | TRAIL_10 | EOD 15:20\n"
         "/help for commands"
@@ -7479,9 +7485,10 @@ def _cmd_pulse(args):
             "Entry:  single lot, market fill at candle close\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
-            "INITIAL    peak<12   ema9_low at entry\n"
-            "LOCK_4     peak≥12   max(ema9_low, entry+4)\n"
-            "TRAIL_10   peak≥18   max(ema9_low, entry+4, peak−10)\n"
+            "INITIAL    peak<9    max(ema9_low, entry−10)\n"
+            "PROTECT    peak≥9    max(initial, entry−2)\n"
+            "LOCK_4     peak≥11   max(initial, entry+4)\n"
+            "TRAIL_10   peak≥18   max(initial, entry+4, peak−10)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
@@ -7620,7 +7627,7 @@ def _cmd_status(args):
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
-        "Ladder : +12→LOCK_4  +18→TRAIL_10\n"
+        "Ladder : +9→PROTECT  +11→LOCK_4  +18→TRAIL_10\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
         "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
@@ -8985,7 +8992,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     ph+='<div class="bar" style="margin-bottom:6px"><div class="bar-fill" style="width:'+peakPct2.toFixed(0)+'%;background:'+peakBarClr+'"></div></div>';
     // 3-box status grid: SL / TIER / HELD
     ph+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">';
-    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='LOCK_4'?'var(--am)':'var(--rd)';
+    var tierClr=tier==='TRAIL_10'?'var(--gn)':tier==='LOCK_4'?'var(--am)':tier==='PROTECT'?'var(--am)':'var(--rd)';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">SL</div><div style="font-size:12px;font-weight:700;color:var(--rd)">&#x20B9;'+sl.toFixed(1)+'</div></div>';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">TIER</div><div style="font-size:12px;font-weight:700;color:'+tierClr+'">'+tier+'</div></div>';
     ph+='<div style="background:rgba(0,0,0,.35);border:1px solid var(--bd);border-radius:5px;padding:5px 4px;text-align:center"><div style="font-size:8px;color:#555;margin-bottom:2px">HELD</div><div style="font-size:12px;font-weight:700;color:var(--cy)">'+candles+'m</div></div>';
