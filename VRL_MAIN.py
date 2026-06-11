@@ -5525,7 +5525,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>STRATEGY</b>  Vishal Clean v20\n"
         ""
-        "V10 LIVE   : 1-min  | Golden | PAPER trading\n"
+        "V10 LIVE   : 1-min  | Golden | " + ("PAPER" if D.PAPER_MODE else "LIVE") + " trading\n"
         "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 1 lot fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -5540,7 +5540,7 @@ def _alert_bot_started():
         "LOCK_4     peak ≥ 11   → max(initial, entry + 4)\n"
         "TRAIL_10   peak ≥ 18   → max(initial, entry + 4, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>EXITS</b>  initial_sl | LOCK_4 | TRAIL_10 | EOD 15:20\n"
+        "<b>EXITS</b>  initial_sl | LOCK_4 | TRAIL_10 | EOD " + CFG.exit_ema9_band("eod_exit_time", "15:15") + "\n"
         "/help for commands"
     )
     if not D.PAPER_MODE:
@@ -7613,7 +7613,7 @@ def _cmd_help(args):
         "/restart    — restart bot (no pull)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "VISHAL RAJPUT TRADE v20 — V10 live 1-min P1+P2, "
-        "exit chain (Emergency SL / EOD 15:20 / Vishal Trail), "
+        "exit chain (Emergency SL / EOD " + CFG.exit_ema9_band("eod_exit_time", "15:15") + " / Vishal Trail), "
         + ("PAPER" if D.PAPER_MODE else "LIVE") + " 1 lot.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🌐 Dashboard: http://" + _WEB_IP + ":8080"
