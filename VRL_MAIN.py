@@ -4130,6 +4130,10 @@ _v8_state = {
     # Same-side 3-min blocker: records direction + unix timestamp of last exit
     "_last_exit_time_unix"    : 0.0,
     "_last_exit_direction_v10": "",
+    # Exhausted-loss re-entry block: {"<strike>_<dir>": "<why>"} — strike+dir combos
+    # blocked rest of day after a loss that ran (peak >= 5) or scratched (> -8 pts).
+    # A clean failed breakout (pnl <= -8, peak < 5) stays re-enterable. Cleared on new day.
+    "_reentry_blocked_keys": {},
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
     "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
@@ -4359,6 +4363,18 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         if reason == "EMERGENCY_SL":
             _v8_state["_sl_cooldown_skip_next"] = True
             _v8_state["_sl_cooldown_direction"] = direction
+
+        # Exhausted-loss re-entry block (owner-approved 2026-06-11): a losing attempt
+        # that ran (peak >= 5) or scratched out (loss > -8) means the move on this
+        # strike+direction is spent — block it for the rest of the day. A clean failed
+        # breakout (pnl <= -8 AND peak < 5) stays re-enterable: the next breakout can
+        # still be the real one. Validated on 76 trades: +28.5 pts vs baseline.
+        if pnl_pts_now <= 0 and not (pnl_pts_now <= -8.0 and peak < 5.0):
+            _blk = dict(_v8_state.get("_reentry_blocked_keys") or {})
+            _blk[str(strike) + "_" + direction] = (
+                reason + " pnl=" + "{:+.1f}".format(pnl_pts_now)
+                + " peak=" + "{:.1f}".format(peak))
+            _v8_state["_reentry_blocked_keys"] = _blk
             
         _v8_state["_reentry_armed"]              = False
         _v8_state["_reentry_attempts"]           = 0
@@ -4788,6 +4804,7 @@ _V8_PERSIST_FIELDS = [
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction_v10",
+    "_reentry_blocked_keys",
     "initial_sl", "entry_regime",
     "peak_ltp", "xleg_other_margin",
     "spot_regime_at_entry",
@@ -4833,6 +4850,7 @@ def _load_v8_state():
                 _v8_state["_losses_today"]  = 0
                 _v8_state["_v8_both_rejected_ts"] = 0.0
                 _v8_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
+                _v8_state["_reentry_blocked_keys"] = {}      # exhausted-loss blocks are per-day
             logger.info("[V10] New trading day — daily counters reset (last_date=" + _last_date + ")")
         if _v8_state.get("in_trade"):
             _sym  = str(_v8_state.get("symbol", ""))
@@ -6707,6 +6725,12 @@ def _strategy_loop(kite):
                             _in_cooldown = True
                             _remaining = int(180 - (time.time() - float(_v8_state.get("_last_exit_time_unix", 0))))
                             _cooldown_reason = f"same_side_3min({_remaining}s)"
+                        elif (str(int(_sh_info.get("strike", 0) or 0)) + "_" + _sh_dir
+                              in (_v8_state.get("_reentry_blocked_keys") or {})):
+                            # Exhausted-loss block: this strike+dir already ran-then-died
+                            # or scratched today — fresh setups only on other strikes/sides
+                            _in_cooldown = True
+                            _cooldown_reason = "reentry_exhausted"
 
                         # Update reject reasons
                         _reject_reason = ""
