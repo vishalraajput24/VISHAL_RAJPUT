@@ -2,12 +2,18 @@
   "_README": "Stock F&O strategy config. Picked up on next scan/tick — no restart needed.",
   "mode": "naked",
   "min_score": 8,
-  "elite_score": 12,
+  "elite_score": 99,
   "max_new_per_day": 20,
   "max_open_total": 30,
   "require_regime_align": false,
   "max_pcr": 1.0,
   "max_pain_dist_pct": 3.0,
   "max_5d_move_pct": 2.0,
-  "min_atr_prem_ratio": 0.15
+  "min_atr_prem_ratio": 0.15,
+  "rsi_call_lo": 52,
+  "rsi_call_hi": 64,
+  "rsi_put_lo": 38,
+  "rsi_put_hi": 44,
+  "sl_memory_hits": 2,
+  "sl_memory_days": 14
 }
