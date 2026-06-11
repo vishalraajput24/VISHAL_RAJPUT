@@ -212,7 +212,7 @@ Polls every 2s (in trade) / 10s (idle). Cross-checks:
 - Telegram log: entry alert, SL upgrade alert, exit alert
 Mismatches appended to `~/lab_data/trade_audit_notes.md`.
 
-Also watches the SMI stock F&O paper engine every 60s (PR #235):
+Also watches the SMI stock F&O paper engine every 15m, matching its cron (PR #235, #237):
 - `screener/smi_paper_state.json` open trades — SL formula (stock entry ∓1%), trail armed at +1.5% peak, matching OPEN row in `fno_tracker.csv` (structure=SMI)
 - Stale-state alarm if state file >22 min old during 09:47–15:31 (dead cron detector)
 - Exit reconciliation vs `screener/smi_paper_log.csv` (pnl_rs math, exit reason ∈ SL-HIT/TRAIL-SMA8/EOD-CLOSE/EOD-LATE, tracker status)
