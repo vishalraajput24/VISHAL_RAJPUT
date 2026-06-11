@@ -69,14 +69,17 @@ def _last_csv_row():
         return {}
 
 def _expected_sl(peak_pnl, initial_sl, entry_price):
-    """V10 Golden 3-tier SL formula."""
+    """V10 Golden 4-tier SL formula."""
     if peak_pnl >= 18.0:
         peak_ltp = entry_price + peak_pnl
         sl = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
         return round(sl, 2), "TRAIL_10"
-    elif peak_pnl >= 12.0:
+    elif peak_pnl >= 11.0:
         sl = max(initial_sl, entry_price + 4.0)
         return round(sl, 2), "LOCK_4"
+    elif peak_pnl >= 9.0:
+        sl = max(initial_sl, entry_price - 2.0)
+        return round(sl, 2), "PROTECT"
     else:
         return round(initial_sl, 2), "INITIAL"
 
@@ -101,7 +104,7 @@ class TGEvents:
     Known message prefixes:
       Entry   : "🟢/🔴 V10 GOLDEN ENTRY CE/PE <strike>"
       Exit    : "⚡ V10 GOLDEN EXIT CE/PE <strike>"
-      SL Up   : "⚡ V10 SL UPGRADED → LOCK_4/TRAIL_10"
+      SL Up   : "⚡ V10 SL UPGRADED → PROTECT/LOCK_4/TRAIL_10"
     """
 
     def __init__(self, lines):
@@ -133,7 +136,7 @@ class TGEvents:
             return None
         # log line: "... sent ok — ⚡ V10 GOLDEN EXIT CE 23100 ━━━━━━━━━━━━━━━━━━━━━━━━━━━ EMERGENCY_SL ..."
         # but it's cut at 60 chars so reason may not be present
-        for reason in ("EMERGENCY_SL", "LOCK_4", "VISHAL_TRAIL", "EOD_EXIT", "MARKET_CLOSE"):
+        for reason in ("EMERGENCY_SL", "PROTECT_2", "LOCK_4", "VISHAL_TRAIL", "EOD_EXIT", "MARKET_CLOSE"):
             if reason in hits[0]:
                 return reason
         return "UNKNOWN"
@@ -200,7 +203,7 @@ def _audit(st, dash, tg_events):
         info.append(f"  ✓ {'tg_entry_alert':22} found for {direction} {strike}")
 
     # 2. SL tier upgrade alerts
-    if tier in ("LOCK_4", "TRAIL_10"):
+    if tier in ("PROTECT", "LOCK_4", "TRAIL_10"):
         if not tg_events.sl_upgrade_sent(tier):
             bugs.append(f"  - BUG: TG SL upgrade alert NOT found for {tier} (state shows {tier})")
         else:

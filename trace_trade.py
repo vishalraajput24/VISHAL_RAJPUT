@@ -58,9 +58,12 @@ def _expected_sl_tier(peak_pnl, initial_sl, entry_price):
         peak_ltp = entry_price + peak_pnl
         sl = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
         return round(sl, 2), "TRAIL_10"
-    elif peak_pnl >= 12.0:
+    elif peak_pnl >= 11.0:
         sl = max(initial_sl, entry_price + 4.0)
         return round(sl, 2), "LOCK_4"
+    elif peak_pnl >= 9.0:
+        sl = max(initial_sl, entry_price - 2.0)
+        return round(sl, 2), "PROTECT"
     else:
         return round(initial_sl, 2), "INITIAL"
 
