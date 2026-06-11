@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/protect-tier-lock11). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/reentry-exhausted-block). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -53,6 +53,7 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
 - **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
+- **Exhausted-loss re-entry block** (`_reentry_blocked_keys`, owner-approved 2026-06-11) — after a losing trade that *ran then died* (peak ≥ 5) or *scratched out* (loss > −8 pts), that strike+direction is blocked for the rest of the day (reject reason `reentry_exhausted`). A clean failed breakout (pnl ≤ −8 AND peak < 5) stays re-enterable. Validated on 76 trades: +28.5 pts vs baseline, kills chop-day churn (2026-06-09 pattern), keeps all big recoveries. Cleared on new trading day.
 
 ### Execution — single lot
 Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the last 1-min candle close.
@@ -149,7 +150,7 @@ Fields currently persisted:
 `_sl_cooldown_skip_next`, `_force_exit_ts`,
 `_pnl_today_pts`, `_trades_today`, `_wins_today`, `_losses_today`,
 `_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
-`_last_exit_time_unix`, `_last_exit_direction_v10`,
+`_last_exit_time_unix`, `_last_exit_direction_v10`, `_reentry_blocked_keys`,
 `initial_sl`, `entry_regime`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
 `entry_spot`, `entry_atm_dist`, `neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
@@ -208,6 +209,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 
 ### Locked design decisions
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
+- **Exhausted-loss block (2026-06-11)**: ran-then-died / scratch losses block their strike+direction for the day (see Entry gates). Do NOT add broader time/streak/daily-cap re-entry blockers — 15+ variants tested 2026-06-11 all reduced net P&L (big winners are themselves re-entries after clean SLs).
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
 - **All strategy parameters are locked** — OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
 
