@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/reentry-exhausted-block). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/midday-deep-decay). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -46,14 +46,15 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 | Gate | Condition | Constant |
 |------|-----------|----------|
 | **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` | `V10_MIN_EMA9H_GAP = 3.5` (hard gate) |
-| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −4.0]` | hardcoded in scanner |
+| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −4.0]`; **11:30–14:30 deep band `[−8.0, −6.0]`** | `V10_DECAY_DEEP_START/END`, `V10_DECAY_HIGH_DEEP/NORM` |
+
+- **Midday deep-decay window (paper test, 2026-06-12)**: 11:30–14:30 entries need opposite-leg decay ≤ −6 (shallow-decay midday entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`). Owner will review accuracy after the paper day before any live decision.
 
 - `V10_OPEN_BLACKOUT_END = dtime(9, 45)` — no entries before 09:45
-- `V10_MIN_EMA9H_GAP = 3.5` — reference constant only, NOT a hard gate
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
 - **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
-- **Exhausted-loss re-entry block** (`_reentry_blocked_keys`, owner-approved 2026-06-11) — after a losing trade that *ran then died* (peak ≥ 5) or *scratched out* (loss > −8 pts), that strike+direction is blocked for the rest of the day (reject reason `reentry_exhausted`). A clean failed breakout (pnl ≤ −8 AND peak < 5) stays re-enterable. Validated on 76 trades: +28.5 pts vs baseline, kills chop-day churn (2026-06-09 pattern), keeps all big recoveries. Cleared on new trading day.
+- ~~Exhausted-loss re-entry block~~ — **removed 2026-06-11 (owner instruction)**: live counterfactual showed it skipped only 1 of 10 losers while blocking recovery winners (incl. a +32). Replaced by the midday deep-decay window above.
 
 ### Execution — single lot
 Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the last 1-min candle close.
@@ -150,7 +151,7 @@ Fields currently persisted:
 `_sl_cooldown_skip_next`, `_force_exit_ts`,
 `_pnl_today_pts`, `_trades_today`, `_wins_today`, `_losses_today`,
 `_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
-`_last_exit_time_unix`, `_last_exit_direction_v10`, `_reentry_blocked_keys`,
+`_last_exit_time_unix`, `_last_exit_direction_v10`,
 `initial_sl`, `entry_regime`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
 `entry_spot`, `entry_atm_dist`, `pdh_prev`, `pdl_prev`, `entry_range_pos`,
@@ -210,7 +211,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 
 ### Locked design decisions
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
-- **Exhausted-loss block (2026-06-11)**: ran-then-died / scratch losses block their strike+direction for the day (see Entry gates). Do NOT add broader time/streak/daily-cap re-entry blockers — 15+ variants tested 2026-06-11 all reduced net P&L (big winners are themselves re-entries after clean SLs).
+- **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
 - **All strategy parameters are locked** — OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
 
