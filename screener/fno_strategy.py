@@ -52,8 +52,8 @@ DEFAULT_CONFIG = {
     # ── Entry gate (new multi-factor score; max ~12) ──────────────────────
     "min_score": 8,             # was 6 of 9 -> raise the bar
     "require_regime_align": True,  # block CALLs in a bear tape, PUTs in a bull tape
-    "rsi_call_lo": 52, "rsi_call_hi": 68,   # tightened from 55-75
-    "rsi_put_lo": 38,  "rsi_put_hi": 52,    # avoid buying PUTs into deep-oversold (<38)
+    "rsi_call_lo": 52, "rsi_call_hi": 64,   # RSI>=65 CALL chases: 0/2 wins (BANKBARODA/VBL -7.2k)
+    "rsi_put_lo": 38,  "rsi_put_hi": 44,    # PUT RSI 45-55 = loser zone (23% win, dead-zone 45-50 didn't cover 51-52)
     "rsi_slope_min": 3,         # RSI must move ≥ 3 pts in 3 days to confirm momentum
     "max_ext_from_ema20_pct": 6.0,  # skip chasing: price too far from EMA20
 
@@ -70,7 +70,15 @@ DEFAULT_CONFIG = {
     # An "elite" setup (score >= this) gets an EXTRA slot: it bypasses ONLY the
     # daily-count cap, so a best-trade-in-between is never blocked by 4 lesser
     # fills that merely came first. It still obeys every HARD limit above.
-    "elite_score": 12,                # near the ~14 ceiling = genuine A+ setup
+    "elite_score": 99,                # elite slot DISABLED 2026-06-11: elite trades ran 20% win / -9.6k
+    # Bank PUTs mean-revert against the entry: 0/5 natural wins, -27.6k incl. forced closes.
+    "no_put_symbols": ["HDFCBANK","ICICIBANK","SBIN","BANKBARODA","INDUSINDBK","AXISBANK",
+                       "KOTAKBANK","FEDERALBNK","PNB","CANBK","IDFCFIRSTB","BANDHANBNK",
+                       "AUBANK","BANKINDIA"],
+    # Loss memory: a symbol that hit SL >= sl_memory_hits times in the trailing
+    # sl_memory_days (archive) is blocked — stops re-picking serial losers (SBIN x2 in 2 days).
+    "sl_memory_hits": 2,
+    "sl_memory_days": 14,
 
     # ── Naked structure targets/SL ────────────────────────────────────────
     "naked_t1_pct": 30.0,       # was 50 (hit 2% of time) -> realistic
@@ -406,10 +414,6 @@ def score_signal(tech, regime, opt, cfg):
     if _max_pcr and pcr > _max_pcr:
         return direction, score, sig, f"pcr_high({pcr})"
 
-    # ── RSI DEAD ZONE: skip 45-50 (0% win in data) ──
-    if 45 <= rsi <= 50:
-        return direction, score, sig, f"rsi_dead_zone({rsi:.0f})"
-
     # ── MAX PAIN PROXIMITY: stock must be within 2% of max pain ──
     if mp > 0 and price > 0:
         _mp_dist = abs(price - mp) / price * 100
@@ -603,6 +607,28 @@ def is_open_dup(tracker_df, symbol, direction):
     return bool(((o["symbol"] == symbol) & (o["direction"] == direction)).any())
 
 
+_SL_MEMO = {"mtime": None, "df": None}
+
+
+def recent_sl_hits(symbol, days):
+    """Count SL-HIT exits for `symbol` in fno_tracker_archive.csv within the last
+    `days` days (by last_checked). Archive is cached on mtime; 0 on any failure."""
+    path = os.path.join(BASE_DIR, "fno_tracker_archive.csv")
+    try:
+        mtime = os.path.getmtime(path)
+        if _SL_MEMO["df"] is None or _SL_MEMO["mtime"] != mtime:
+            _SL_MEMO["df"] = pd.read_csv(path, usecols=["symbol", "status", "last_checked"])
+            _SL_MEMO["mtime"] = mtime
+        df = _SL_MEMO["df"]
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        m = ((df["symbol"] == symbol)
+             & df["status"].astype(str).str.contains("SL-HIT")
+             & (df["last_checked"].astype(str) >= cutoff))
+        return int(m.sum())
+    except Exception:
+        return 0
+
+
 def can_add_entry(tracker_df, symbol, direction, invest, cfg, today=None, score=0):
     """Returns (ok, reason). Enforces cross-day dedup + portfolio caps.
 
@@ -611,6 +637,16 @@ def can_add_entry(tracker_df, symbol, direction, invest, cfg, today=None, score=
     fills that merely came first. It still obeys every HARD limit (dedup,
     max_open_total, capital). tracker_df may be None/empty."""
     today = today or date.today().isoformat()
+
+    # 0) BANK PUT BLOCK — applies even on an empty tracker
+    if direction == "PUT" and symbol in cfg.get("no_put_symbols", []):
+        return False, "bank_put_block"
+
+    # 0b) LOSS MEMORY — serial SL-hitters stay blocked across tracker resets
+    _hits = recent_sl_hits(symbol, cfg.get("sl_memory_days", 14))
+    if _hits >= cfg.get("sl_memory_hits", 2):
+        return False, f"sl_memory({_hits}x{cfg.get('sl_memory_days', 14)}d)"
+
     if tracker_df is None or len(tracker_df) == 0:
         return True, ""
     df = tracker_df
