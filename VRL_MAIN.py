@@ -4212,6 +4212,10 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         # Ensure initial SL is below entry price
         if initial_sl >= entry_price:
             initial_sl = round(entry_price - 5.0, 2)
+        # Max-risk cap (2026-06-11, owner-approved): never risk more than 10 pts —
+        # use ema9_low or entry-10, whichever is closer. Replay over 53 trades
+        # (sl_replay_study.py) clipped zero winners and saved ~14 pts.
+        initial_sl = max(initial_sl, round(entry_price - 10.0, 2))
         
         _v8_state["initial_sl"]            = initial_sl
         _v8_state["active_ratchet_sl"]     = initial_sl
@@ -4277,7 +4281,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         f"{_ce_pe} <b>V10 GOLDEN ENTRY {direction} {strike}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry (Mkt)  ₹{entry_price:.1f} ({qty} Qty) @ {now_str}\n"
-        f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low)\n"
+        f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low, max 10 pts)\n"
         f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trail: +12.0pts → Lock entry+4  |  +18.0pts → Trail Peak - 10.0pts",

@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (fix/dashboard-today-stale-after-exit). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (feat/initial-sl-max10-cap). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -58,7 +58,7 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the last 1-min candle close.
 (Split-lot 50/50 with a Lot 2 limit order was removed 2026-06-10 — user found Lot 2 added complexity with no edge; trades often hit SL before the limit mattered.)
 
-- **Initial SL**: `ema9_low` of breakout candle (`_v10_state["initial_sl"]`). Fallback: `entry − 5.0` if ema9_low ≥ entry
+- **Initial SL**: `ema9_low` of breakout candle (`_v10_state["initial_sl"]`), **capped at `entry − 10.0`** (max-risk cap, owner-approved 2026-06-11, validated by `sl_replay_study.py`: 0 winners clipped over 53 replays). Fallback: `entry − 5.0` if ema9_low ≥ entry
 
 ### Exit ladder — `_v10_compute_trail_sl(entry_price, peak_pnl, initial_sl)`
 Tick-based (~1s), runs BEFORE the candle gate (BUG-01):
@@ -90,6 +90,7 @@ Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FOR
 | `config.yaml` | Runtime config — `mode`, instrument, lots, EMA bands, thresholds, market hours |
 | `trace_trade.py` | Post-trade audit script (standalone, no Claude dependency) |
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
+| `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
 | `screener/` | Stock F&O + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
 | `state/vrl_v8_state.json` | **Primary V10 engine state** — `_v10_state` (filename uses legacy `v8` prefix — rename pending) |
