@@ -43,6 +43,19 @@ Compare the OPEN position across the three surfaces and emit a table:
 
 Flag a mismatch when values disagree beyond rounding (>0.05 pt or any categorical difference).
 
+## PDH/PDL context (every cycle while in_trade, and in the waiting report)
+Always report where spot sits relative to the previous day's range — owner wants this visible
+on every watch cycle (chop/dead-zone awareness):
+- Read `pdh_prev`, `pdl_prev`, `entry_range_pos` from `state/vrl_v8_state.json` (logged at entry).
+  If missing/zero (e.g. trade predates the field), compute from the newest
+  `~/lab_data/spot/nifty_spot_1min_<YYYYMMDD>.csv` BEFORE today: PDH = max(high), PDL = min(low).
+- Also compute the LIVE position using current spot if available (dashboard or spot CSV last row):
+  `range_pos = (spot − PDL) / (PDH − PDL)` → 0 = at PDL, 1 = at PDH.
+- Report one line, e.g.: `PDH/PDL: 23459.7 / 23151.5 — entry at 0.42 (inside MID), now 0.51`
+  Label zones: `> 1` ABOVE PDH (breakout zone) · `0.67–1` upper third · `0.33–0.67` inside MID
+  (dead zone — historically worst for PE entries) · `< 0.33` lower third · `< 0` BELOW PDL.
+- This is context, not a bug check — never flag it as a mismatch; just surface it.
+
 ## Bug logging (append-only, no fixes)
 For every mismatch or anomaly, append a dated entry to `~/lab_data/trade_audit_notes.md`:
 ```
