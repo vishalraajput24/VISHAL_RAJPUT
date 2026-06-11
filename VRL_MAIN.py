@@ -5544,13 +5544,22 @@ def _alert_bot_started():
         "/help for commands"
     )
     if not D.PAPER_MODE:
+        # Live orders go through m.Stock — show m.Stock funds, not the Kite ledger
+        _ms_funds = MSTOCK.ms_get_funds()
+        if _ms_funds.get("ok"):
+            _bal_line = ("Account: " + str(_ms_funds.get("name") or "MStock") + "\n"
+                         "MStock Avail: ₹" + "{:,.0f}".format(_ms_funds.get("available", 0))
+                         + " | Used: ₹" + "{:,.0f}".format(_ms_funds.get("used", 0)) + "\n")
+        else:
+            _bal_line = ("Account: " + str(_ms_funds.get("name") or "MStock") + "\n"
+                         "MStock funds unavailable\n")
+        _lot_count = CFG.get().get("lots", {}).get("count", 1)
         _tg_send(
             "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
             "⚡ <b>LIVE MODE — REAL MONEY</b> ⚡\n"
             "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
-            "Account: " + str(D.get_account_info().get("name", "")) + "\n"
-            "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
-            "Lots: " + str(CFG.get().get("lots", {}).get("count", 1)) + " × " + str(D.get_lot_size()) + " = " + str(CFG.get().get("lots", {}).get("count", 1) * D.get_lot_size()) + " qty\n"
+            + _bal_line +
+            "Lots: " + str(_lot_count) + " × " + str(D.get_lot_size()) + " = " + str(_lot_count * D.get_lot_size()) + " qty\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Every order uses REAL money.\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
