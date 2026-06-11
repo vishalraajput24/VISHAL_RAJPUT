@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-10 (refactor/single-lot-entry). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-11 (fix/dashboard-today-stale-after-exit). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -94,7 +94,7 @@ Exit reasons: `EMERGENCY_SL` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FOR
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
 | `state/vrl_v8_state.json` | **Primary V10 engine state** — `_v10_state` (filename uses legacy `v8` prefix — rename pending) |
 | `state/vrl_live_state.json` | Legacy V7 state — still written by bot, not used by V10 strategy logic |
-| `state/vrl_dashboard.json` | Dashboard snapshot — written every main-loop cycle |
+| `state/vrl_dashboard.json` | Dashboard snapshot — full rebuild (`_write_dashboard`) once per 1-min candle + after every exit (V10 and V7 paths); fast path `_update_dashboard_ltp` every 5–10s only refreshes ts/LTP/position, never the `today` block |
 
 ### Stale artifacts in state/ (do not rely on)
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale

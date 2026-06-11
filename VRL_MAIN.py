@@ -4461,6 +4461,25 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
     )
     _save_v8_state()
 
+    # Refresh the full dashboard snapshot now (same as the V7 exit path) —
+    # _update_dashboard_ltp() re-stamps ts but never recomputes the today
+    # block, so without this the snapshot shows stale day counters until
+    # the next 1-min candle triggers _write_dashboard.
+    try:
+        _da = _last_dash_args
+        if _da:
+            _write_dashboard(
+                _da.get("spot_ltp", D.get_ltp(D.NIFTY_SPOT_TOKEN)),
+                _da.get("atm_strike", 0), _da.get("dte", 0),
+                _da.get("vix_ltp", D.get_vix()),
+                _da.get("session", ""), _da.get("profile", {}),
+                {}, _da.get("expiry"), datetime.now())
+        else:
+            _write_dashboard(D.get_ltp(D.NIFTY_SPOT_TOKEN), 0, 0,
+                             D.get_vix(), "", {}, {}, None, datetime.now())
+    except Exception as _de:
+        logger.debug("[DASH] Post-exit refresh: " + str(_de))
+
 
 def _v8_check_exit():
     """Tick-based exit check for V10 position. Called every scan cycle."""
