@@ -5550,7 +5550,7 @@ def _alert_bot_started():
             "🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴\n"
             "Account: " + str(D.get_account_info().get("name", "")) + "\n"
             "Balance: ₹" + "{:,}".format(int(D.get_account_info().get("total_balance", 0))) + "\n"
-            "Lots: 2 × " + str(D.get_lot_size()) + " = " + str(D.get_lot_size() * 2) + " qty\n"
+            "Lots: " + str(CFG.get().get("lots", {}).get("count", 1)) + " × " + str(D.get_lot_size()) + " = " + str(CFG.get().get("lots", {}).get("count", 1) * D.get_lot_size()) + " qty\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Every order uses REAL money.\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
