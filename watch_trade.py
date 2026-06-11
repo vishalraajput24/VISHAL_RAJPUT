@@ -4,7 +4,7 @@ watch_trade.py — standalone live trade alignment watcher
 Runs forever with no Claude Code dependency.
 Polls state/dashboard/log every 2s (in trade) or 10s (idle).
 Cross-checks state.json vs dashboard.json vs Telegram log.
-Also watches the stock F&O SMI paper engine (every 60s):
+Also watches the stock F&O SMI paper engine (every 15m, matching its cron):
 state vs fno_tracker.csv vs smi_paper_log.csv + SL formula + freshness.
 Logs mismatches to ~/lab_data/trade_audit_notes.md.
 
@@ -39,7 +39,7 @@ SMI_STATE_FILE = BASE / "screener/smi_paper_state.json"
 SMI_TRACKER    = BASE / "screener/fno_tracker.csv"
 SMI_LOG_CSV    = BASE / "screener/smi_paper_log.csv"
 SMI_SL_PCT     = 1.0          # stock SL = entry -/+ 1%
-SMI_POLL       = 60           # engine runs on 15m cron — check once a minute
+SMI_POLL       = 15 * 60      # engine runs on 15m cron — match its cadence
 SMI_STALE_SEC  = 22 * 60      # state older than ~1.5 cron cycles during market hours
 SMI_EXIT_REASONS = ("SL-HIT", "TRAIL-SMA8", "EOD-CLOSE", "EOD-LATE")
 
