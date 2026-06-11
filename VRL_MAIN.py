@@ -9133,7 +9133,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V10 LIVE — Golden (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
     html+='<div style="margin:2px 10px 9px">';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H+3.5 &nbsp;·&nbsp; Opp Decay [−8, −4] &nbsp;·&nbsp; Same-side 3-min</div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V10 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H+3.5 &nbsp;·&nbsp; Opp Decay [−8, −4] (11:30–14:30 deep [−8, −6]) &nbsp;·&nbsp; Same-side 3-min</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
     // ── Account + rolling performance (moved from retired MKT tab) ──
