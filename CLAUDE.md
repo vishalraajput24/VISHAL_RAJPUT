@@ -130,7 +130,7 @@ pointed at non-existent folder keys are all gone.
 
 **Service**: `sudo systemctl restart vrl-main.service`
 **Logs**: `~/logs/live/vrl_live.log`
-**Trade CSV**: `~/lab_data/vrl_trade_log.csv` (`entry_mode` = `V10_CE` / `V10_PE`; paper fills tagged `PAPER_*`; `spot_regime` = 3-min EMA regime at fire time — analysis only, not a gate)
+**Trade CSV**: `~/lab_data/vrl_trade_log.csv` (`entry_mode` = `V10_CE` / `V10_PE`; paper fills tagged `PAPER_*`; `spot_regime` = 3-min EMA regime at fire time — analysis only, not a gate; `pdh_prev`/`pdl_prev`/`entry_range_pos` = prev-day high/low + spot position in that range at entry, added 2026-06-11 — analysis only, candidate gate after 2–3 weeks of data: PE entries mid-range ran 23% win rate)
 
 ### Deploy after any main merge
 ```bash
@@ -153,7 +153,8 @@ Fields currently persisted:
 `_last_exit_time_unix`, `_last_exit_direction_v10`, `_reentry_blocked_keys`,
 `initial_sl`, `entry_regime`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
-`entry_spot`, `entry_atm_dist`, `neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
+`entry_spot`, `entry_atm_dist`, `pdh_prev`, `pdl_prev`, `entry_range_pos`,
+`neighbor_ltp_otm`, `neighbor_ltp_itm`, `max_otm_drift`,
 `vix_at_entry`, `hourly_rsi_at_entry`, `bias_at_entry`, `session_at_entry`,
 `first_profit_candle`, `first_profit_ltp`, `first_profit_ts`,
 `breakout_candle`, `breakout_ltp`, `breakout_ts`

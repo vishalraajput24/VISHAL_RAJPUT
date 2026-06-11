@@ -4137,6 +4137,10 @@ _v8_state = {
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
     "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
+    # PDH/PDL context at entry (analysis only — not a gate)
+    "pdh_prev": 0.0,
+    "pdl_prev": 0.0,
+    "entry_range_pos": "",    # (spot-PDL)/(PDH-PDL): 0=PDL 1=PDH >1=breakout above
     "neighbor_ltp_otm": 0.0,  # LTP of 1-strike-OTM neighbor at entry
     "neighbor_ltp_itm": 0.0,  # LTP of 1-strike-ITM neighbor at entry
     "max_otm_drift": 0.0,     # max pts the position went OTM during trade
@@ -4182,6 +4186,40 @@ def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float)
         return round(trail_val, 2), "PROTECT"
     else:
         return round(initial_sl, 2), "INITIAL"
+
+
+_PDHL_CACHE = {"date": "", "pdh": 0.0, "pdl": 0.0}
+
+
+def _get_prev_day_hl():
+    """Previous trading day's NIFTY spot high/low from lab_data/spot 1-min CSVs.
+    Cached per calendar day (one file read/day). Returns (pdh, pdl); (0.0, 0.0)
+    if no prior-day file exists. Analysis-only — never a gate."""
+    _today = date.today().strftime("%Y%m%d")
+    if _PDHL_CACHE["date"] == _today:
+        return _PDHL_CACHE["pdh"], _PDHL_CACHE["pdl"]
+    try:
+        import glob as _g
+        files = sorted(_g.glob(os.path.join(D.SPOT_DIR, "nifty_spot_1min_*.csv")))
+        # basename format: nifty_spot_1min_YYYYMMDD.csv — date at chars [16:24]
+        prev = [p for p in files if os.path.basename(p)[16:24] < _today]
+        if not prev:
+            return 0.0, 0.0
+        pdh, pdl = 0.0, 0.0
+        with open(prev[-1]) as f:
+            for row in csv.DictReader(f):
+                h = float(row.get("high", 0) or 0)
+                l = float(row.get("low", 0) or 0)
+                if h > pdh:
+                    pdh = h
+                if l and (pdl == 0.0 or l < pdl):
+                    pdl = l
+        _PDHL_CACHE["date"] = _today
+        _PDHL_CACHE["pdh"] = round(pdh, 2)
+        _PDHL_CACHE["pdl"] = round(pdl, 2)
+        return _PDHL_CACHE["pdh"], _PDHL_CACHE["pdl"]
+    except Exception:
+        return 0.0, 0.0
 
 
 def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
@@ -4246,6 +4284,14 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         _v8_state["entry_spot"]            = float(spot_at_entry)
         _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
         _v8_state["entry_atm_dist"]        = int(strike) - _true_atm
+        # PDH/PDL context (analysis only — not a gate): where is spot vs yesterday's range?
+        # range_pos: 0=at PDL, 1=at PDH, >1=above PDH, <0=below PDL
+        _pdh, _pdl = _get_prev_day_hl()
+        _v8_state["pdh_prev"] = _pdh
+        _v8_state["pdl_prev"] = _pdl
+        _v8_state["entry_range_pos"] = (
+            round((spot_at_entry - _pdl) / (_pdh - _pdl), 3)
+            if _pdh > _pdl > 0 and spot_at_entry > 0 else "")
         _v8_state["neighbor_ltp_otm"]      = float(neighbor_ltp_otm)
         _v8_state["neighbor_ltp_itm"]      = float(neighbor_ltp_itm)
         _v8_state["max_otm_drift"]         = 0.0
@@ -4317,6 +4363,9 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         dte_val      = int(_v8_state.get("dte", 0) or 0)
         entry_spot_val = float(_v8_state.get("entry_spot", 0))
         entry_atm_dist = int(_v8_state.get("entry_atm_dist", 0))
+        pdh_prev_val   = float(_v8_state.get("pdh_prev", 0) or 0)
+        pdl_prev_val   = float(_v8_state.get("pdl_prev", 0) or 0)
+        entry_range_pos_val = _v8_state.get("entry_range_pos", "")
         neighbor_otm = float(_v8_state.get("neighbor_ltp_otm", 0))
         neighbor_itm = float(_v8_state.get("neighbor_ltp_itm", 0))
         max_otm_drift = float(_v8_state.get("max_otm_drift", 0))
@@ -4442,6 +4491,8 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             "xleg_other_dying": "", "xleg_other_margin": xleg_margin,
             "spike_close": "", "spike_target": "", "spike_fill": "", "spike_wait_used": "",
             "entry_spot": entry_spot_val, "exit_spot": exit_spot,
+            "pdh_prev": pdh_prev_val, "pdl_prev": pdl_prev_val,
+            "entry_range_pos": entry_range_pos_val,
             "entry_atm_dist": entry_atm_dist,
             "neighbor_ltp_otm": neighbor_otm, "neighbor_ltp_itm": neighbor_itm,
             "max_otm_drift": round(max_otm_drift, 1),
@@ -4810,6 +4861,7 @@ _V8_PERSIST_FIELDS = [
     "spot_regime_at_entry",
     # Data-collection fields (survive restart so CSV row is correct)
     "entry_spot", "entry_atm_dist",
+    "pdh_prev", "pdl_prev", "entry_range_pos",
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
     "vix_at_entry", "hourly_rsi_at_entry", "bias_at_entry", "session_at_entry",
     # Entry-timing study fields
@@ -5076,6 +5128,8 @@ TRADE_FIELDNAMES = [
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
     # Market context at entry (analysis only — not a gate)
     "spot_regime",
+    # PDH/PDL context at entry (analysis only — not a gate)
+    "pdh_prev", "pdl_prev", "entry_range_pos",
     # Entry-timing study: when did the trade first go positive and when did it break out?
     "first_profit_candle", "first_profit_ltp", "first_profit_ts",
     "breakout_candle", "breakout_ltp", "breakout_ts",
