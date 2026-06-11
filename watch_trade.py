@@ -4,6 +4,8 @@ watch_trade.py — standalone live trade alignment watcher
 Runs forever with no Claude Code dependency.
 Polls state/dashboard/log every 2s (in trade) or 10s (idle).
 Cross-checks state.json vs dashboard.json vs Telegram log.
+Also watches the stock F&O SMI paper engine (every 60s):
+state vs fno_tracker.csv vs smi_paper_log.csv + SL formula + freshness.
 Logs mismatches to ~/lab_data/trade_audit_notes.md.
 
 Usage:
@@ -31,6 +33,15 @@ AUDIT_FILE  = Path.home() / "lab_data/trade_audit_notes.md"
 
 POLL_IDLE   = 10   # seconds when no trade
 POLL_TRADE  = 2    # seconds while in trade
+
+# ── SMI paper engine (stock F&O) ──
+SMI_STATE_FILE = BASE / "screener/smi_paper_state.json"
+SMI_TRACKER    = BASE / "screener/fno_tracker.csv"
+SMI_LOG_CSV    = BASE / "screener/smi_paper_log.csv"
+SMI_SL_PCT     = 1.0          # stock SL = entry -/+ 1%
+SMI_POLL       = 60           # engine runs on 15m cron — check once a minute
+SMI_STALE_SEC  = 22 * 60      # state older than ~1.5 cron cycles during market hours
+SMI_EXIT_REASONS = ("SL-HIT", "TRAIL-SMA8", "EOD-CLOSE", "EOD-LATE")
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -255,12 +266,110 @@ def _reconcile(prev_st, tg_events):
 
     return lines
 
+# ── SMI paper engine watcher ─────────────────────────────────────────────────
+
+def _smi_market_hours():
+    now = datetime.now()
+    return now.weekday() < 5 and "09:47" <= now.strftime("%H:%M") <= "15:31"
+
+def _smi_tracker_rows():
+    """fno_tracker.csv rows with structure=SMI, keyed by option_symbol."""
+    try:
+        with open(SMI_TRACKER) as f:
+            return {r["option_symbol"]: r for r in csv.DictReader(f)
+                    if r.get("structure") == "SMI"}
+    except Exception:
+        return {}
+
+def _smi_log_rows():
+    try:
+        with open(SMI_LOG_CSV) as f:
+            return list(csv.DictReader(f))
+    except Exception:
+        return []
+
+def _smi_audit(open_trades):
+    """Audit each open SMI trade. Returns (info, bugs)."""
+    info, bugs = [], []
+    tracker = _smi_tracker_rows()
+
+    if _smi_market_hours():
+        age = _file_age(SMI_STATE_FILE)
+        if age > SMI_STALE_SEC:
+            bugs.append(f"  - STALE: smi_paper_state.json not updated for {int(age // 60)}m "
+                        f"(cron runs every 15m — engine may be down)")
+
+    for sym, tr in open_trades.items():
+        sgn    = 1 if tr.get("direction") == "CE" else -1
+        entry  = float(tr.get("stock_entry", 0))
+        sl     = float(tr.get("sl_price", 0))
+        peak   = float(tr.get("peak", 0))
+        armed  = bool(tr.get("armed", False))
+        opt    = tr.get("option_symbol", "")
+
+        # SL formula: stock entry -/+ 1%
+        exp_sl = round(entry * (1 - sgn * SMI_SL_PCT / 100), 2)
+        if abs(sl - exp_sl) > 0.05:
+            bugs.append(f"  - BUG: {sym} sl_price={sl} expected={exp_sl} (entry {entry} ∓1%)")
+        else:
+            info.append(f"  ✓ {sym:14} {tr.get('direction')} entry={entry} sl={sl} "
+                        f"peak={peak:+.2f}% armed={armed}")
+
+        # trail must be armed once peak >= +1.5%
+        if peak >= 1.5 and not armed:
+            bugs.append(f"  - BUG: {sym} peak={peak:+.2f}% >= +1.5% but trail not armed")
+
+        # tracker row must exist and be OPEN
+        row = tracker.get(opt)
+        if not row:
+            bugs.append(f"  - BUG: {sym} open in state but no SMI row in fno_tracker.csv ({opt})")
+        elif not str(row.get("status", "")).startswith("OPEN"):
+            bugs.append(f"  - BUG: {sym} open in state but tracker status={row.get('status')!r}")
+
+    return info, bugs
+
+def _smi_reconcile(closed_trades):
+    """Symbols that left open_trades — verify they landed in smi_paper_log.csv."""
+    lines = []
+    log_rows = _smi_log_rows()
+    tracker = _smi_tracker_rows()
+
+    for sym, tr in closed_trades.items():
+        hits = [r for r in log_rows
+                if r.get("symbol") == sym and r.get("entry_time") == tr.get("entry_time")]
+        if not hits:
+            lines.append(f"  - BUG: {sym} left state but no row in smi_paper_log.csv")
+            continue
+        row = hits[-1]
+        reason = row.get("exit_reason", "")
+        lines.append(f"  {sym}: stock {float(row.get('pnl_pct_stock', 0)):+.2f}% "
+                     f"₹{float(row.get('pnl_rs', 0)):+,.0f} reason={reason} "
+                     f"opt {row.get('entry_premium')}→{row.get('exit_premium')}")
+        if reason not in SMI_EXIT_REASONS:
+            lines.append(f"  - BUG: {sym} unknown exit_reason={reason!r}")
+        try:
+            exp_rs = (float(row["exit_premium"]) - float(row["entry_premium"])) \
+                     * float(row["lot_size"])
+            if abs(float(row["pnl_rs"]) - exp_rs) > 1.0:
+                lines.append(f"  - BUG: {sym} pnl_rs={row['pnl_rs']} calc={exp_rs:.0f}")
+        except Exception:
+            lines.append(f"  - WARN: {sym} could not verify pnl_rs from log row")
+        trow = tracker.get(tr.get("option_symbol", ""))
+        if trow and str(trow.get("status", "")).startswith("OPEN"):
+            lines.append(f"  - BUG: {sym} closed in log but tracker still {trow.get('status')!r}")
+
+    if not [l for l in lines if "BUG" in l]:
+        lines.append("  SMI RECONCILE: CLEAN")
+    return lines
+
 # ── main loop ─────────────────────────────────────────────────────────────────
 
 def main():
     print(f"[{_ts()}] watch_trade.py started — audit: {AUDIT_FILE}")
     prev_in_trade = False
     prev_st       = {}
+    smi_last_poll = 0.0
+    smi_prev_open = None   # None = not read yet (avoid false EXITs on startup)
 
     while True:
         st   = _read_json(STATE_FILE)
@@ -313,6 +422,47 @@ def main():
             trades = st.get("_trades_today", 0)
             pnl    = st.get("_pnl_today_pts", 0.0)
             print(f"[{_ts()}] idle — trades={trades}  pnl={pnl:+.1f}pts")
+
+        # ── SMI paper engine (stock F&O) — every SMI_POLL seconds ──
+        if time.time() - smi_last_poll >= SMI_POLL:
+            smi_last_poll = time.time()
+            smi_open = _read_json(SMI_STATE_FILE).get("open_trades", {})
+
+            if smi_prev_open is not None:
+                # new entries
+                for sym in smi_open.keys() - smi_prev_open.keys():
+                    tr = smi_open[sym]
+                    block = [
+                        f"\n## {_ts()} — SMI ENTRY {sym} {tr.get('direction')} "
+                        f"@ {tr.get('stock_entry')}",
+                        f"  {tr.get('option_symbol')} prem={tr.get('entry_premium')} "
+                        f"sl={tr.get('sl_price')} {tr.get('conviction', '')}",
+                    ]
+                    print("\n".join(block))
+                    _append_audit(block)
+                # exits — reconcile against smi_paper_log.csv
+                closed = {s: smi_prev_open[s]
+                          for s in smi_prev_open.keys() - smi_open.keys()}
+                if closed:
+                    msg = f"\n## {_ts()} — SMI EXIT ({', '.join(closed)})"
+                    rec = _smi_reconcile(closed)
+                    print(msg)
+                    _append_audit([msg] + rec)
+                    for r in rec:
+                        print(r)
+
+            info, bugs = _smi_audit(smi_open)
+            if smi_open:
+                print(f"[{_ts()}] SMI — {len(smi_open)} open: "
+                      + ", ".join(f"{s} {t.get('direction')} {float(t.get('peak', 0)):+.1f}%"
+                                  for s, t in smi_open.items())
+                      + (f"  ⚠ {len(bugs)} BUG(s)" if bugs else "  ✓"))
+            if bugs:
+                block = [f"\n## {_ts()} — SMI AUDIT"] + bugs
+                _append_audit(block)
+                for b in bugs:
+                    print(f"  {b.strip()}")
+            smi_prev_open = smi_open
 
         prev_in_trade = in_trade
         prev_st       = st
