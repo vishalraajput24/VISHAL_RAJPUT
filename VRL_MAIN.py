@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (V10 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
-#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4]
+#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4] (deep [-8,-6] 11:30-14:30)
 #               Single-lot entry (market fill @ candle close)
 #  V10 Exit:   INITIAL(ema9_low) → LOCK_4(@+12, entry+4) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
@@ -4130,10 +4130,6 @@ _v8_state = {
     # Same-side 3-min blocker: records direction + unix timestamp of last exit
     "_last_exit_time_unix"    : 0.0,
     "_last_exit_direction_v10": "",
-    # Exhausted-loss re-entry block: {"<strike>_<dir>": "<why>"} — strike+dir combos
-    # blocked rest of day after a loss that ran (peak >= 5) or scratched (> -8 pts).
-    # A clean failed breakout (pnl <= -8, peak < 5) stays re-enterable. Cleared on new day.
-    "_reentry_blocked_keys": {},
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
     "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
@@ -4413,18 +4409,6 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
             _v8_state["_sl_cooldown_skip_next"] = True
             _v8_state["_sl_cooldown_direction"] = direction
 
-        # Exhausted-loss re-entry block (owner-approved 2026-06-11): a losing attempt
-        # that ran (peak >= 5) or scratched out (loss > -8) means the move on this
-        # strike+direction is spent — block it for the rest of the day. A clean failed
-        # breakout (pnl <= -8 AND peak < 5) stays re-enterable: the next breakout can
-        # still be the real one. Validated on 76 trades: +28.5 pts vs baseline.
-        if pnl_pts_now <= 0 and not (pnl_pts_now <= -8.0 and peak < 5.0):
-            _blk = dict(_v8_state.get("_reentry_blocked_keys") or {})
-            _blk[str(strike) + "_" + direction] = (
-                reason + " pnl=" + "{:+.1f}".format(pnl_pts_now)
-                + " peak=" + "{:.1f}".format(peak))
-            _v8_state["_reentry_blocked_keys"] = _blk
-            
         _v8_state["_reentry_armed"]              = False
         _v8_state["_reentry_attempts"]           = 0
         _v8_state["_reentry_last_checked_epoch"] = 0.0
@@ -4693,6 +4677,12 @@ spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard
 
 V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V10_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
+# OPP DECAY band — midday window requires deeper opposite-leg decay (owner-approved
+# 2026-06-12 paper test): shallow decay (-6,-4] + midday was 2W/9L over 06-10..06-11.
+V10_DECAY_DEEP_START = dtime(11, 30)  # deep-decay window start
+V10_DECAY_DEEP_END   = dtime(14, 30)  # deep-decay window end
+V10_DECAY_HIGH_DEEP  = -6.0           # upper bound inside window  → band [-8, -6]
+V10_DECAY_HIGH_NORM  = -4.0           # upper bound outside window → band [-8, -4]
 V10_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # CUTOVER FLAG: True = V10 Golden scanner places the live paper trades.
 V10_LIVE = True
@@ -4855,7 +4845,6 @@ _V8_PERSIST_FIELDS = [
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction_v10",
-    "_reentry_blocked_keys",
     "initial_sl", "entry_regime",
     "peak_ltp", "xleg_other_margin",
     "spot_regime_at_entry",
@@ -4902,7 +4891,6 @@ def _load_v8_state():
                 _v8_state["_losses_today"]  = 0
                 _v8_state["_v8_both_rejected_ts"] = 0.0
                 _v8_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
-                _v8_state["_reentry_blocked_keys"] = {}      # exhausted-loss blocks are per-day
             logger.info("[V10] New trading day — daily counters reset (last_date=" + _last_date + ")")
         if _v8_state.get("in_trade"):
             _sym  = str(_v8_state.get("symbol", ""))
@@ -5531,7 +5519,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GOLDEN GATES</b>\n"
         "1) MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
-        "2) OPP DECAY opp close − ema9l in [−8, −4]\n"
+        "2) OPP DECAY opp close − ema9l in [−8, −4] (deep [−8, −6] 11:30-14:30)\n"
         "Cooldown: 9:45 blackout · same-candle · same-side 3-min\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
@@ -6357,7 +6345,11 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             else:
                 _fails = []
                 if not _momentum_ok: _fails.append(f"below_ema9h_gap({_momentum_gap:+.1f}<3.5)")
-                if not _decay_ok: _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,-4])")
+                if not _decay_ok:
+                    _dh = (V10_DECAY_HIGH_DEEP
+                           if V10_DECAY_DEEP_START <= now.time() < V10_DECAY_DEEP_END
+                           else V10_DECAY_HIGH_NORM)
+                    _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,{_dh:.0f}])")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0.0) or _ltp_fallback, 2)
@@ -6763,7 +6755,12 @@ def _strategy_loop(kite):
 
                         # Golden Setup conditions
                         _momentum_ok = (_sh_1m_close >= _sh_ema9h_1m + V10_MIN_EMA9H_GAP) if _sh_ema9h_1m > 0 else False
-                        _decay_ok = (-8.0 <= _opp_margin <= -4.0) if _opp_ema9l > 0 else False
+                        # Midday (11:30-14:30) requires deep opposite-leg decay [-8,-6];
+                        # outside the window the normal band [-8,-4] applies
+                        _decay_high = (V10_DECAY_HIGH_DEEP
+                                       if V10_DECAY_DEEP_START <= now.time() < V10_DECAY_DEEP_END
+                                       else V10_DECAY_HIGH_NORM)
+                        _decay_ok = (-8.0 <= _opp_margin <= _decay_high) if _opp_ema9l > 0 else False
 
                         # Cooldown and basic guards
                         _in_trade = bool(_v8_state.get("in_trade", False))
@@ -6788,12 +6785,6 @@ def _strategy_loop(kite):
                             _in_cooldown = True
                             _remaining = int(180 - (time.time() - float(_v8_state.get("_last_exit_time_unix", 0))))
                             _cooldown_reason = f"same_side_3min({_remaining}s)"
-                        elif (str(int(_sh_info.get("strike", 0) or 0)) + "_" + _sh_dir
-                              in (_v8_state.get("_reentry_blocked_keys") or {})):
-                            # Exhausted-loss block: this strike+dir already ran-then-died
-                            # or scratched today — fresh setups only on other strikes/sides
-                            _in_cooldown = True
-                            _cooldown_reason = "reentry_exhausted"
 
                         # Update reject reasons
                         _reject_reason = ""
@@ -6804,7 +6795,7 @@ def _strategy_loop(kite):
                         elif not _momentum_ok:
                             _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V10_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,-4])"
+                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{_decay_high:.0f}])"
 
                         _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
@@ -7568,7 +7559,7 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 GOLDEN CONFIG (1-min)</b>\n"
             "Gate 1: MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
-            "Gate 2: OPP DECAY opp margin [−8, −4]\n"
+            "Gate 2: OPP DECAY opp margin [−8, −4] (deep [−8, −6] 11:30-14:30)\n"
             "Entry:  single lot, market fill at candle close\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
