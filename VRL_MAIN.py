@@ -6235,6 +6235,26 @@ def _update_dashboard_ltp():
         pass
 
 
+def _dashboard_set_paused(flag):
+    """Flip today.paused in the dashboard JSON immediately. The today block
+    is otherwise only rebuilt once per 1-min candle, so without this a
+    pause/resume outside market hours shows stale until the next candle."""
+    try:
+        dash_path = os.path.join(D.STATE_DIR, 'vrl_dashboard.json')
+        if not os.path.isfile(dash_path):
+            return
+        with open(dash_path) as f:
+            dash = json.load(f)
+        dash.setdefault("today", {})["paused"] = bool(flag)
+        dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tmp = dash_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dash, f, default=str)
+        os.replace(tmp, dash_path)
+    except Exception:
+        pass
+
+
 def _warmup_info(now, dte):
     """Returns (is_warm, candles_done, candles_needed, eta_hhmm)."""
     needed = 14
@@ -6675,6 +6695,8 @@ def _strategy_loop(kite):
                     _tg_send('\U0001f6a8 <b>CRITICAL: Expiry resolution failed. Bot paused.</b>\nUse /resume after market opens.')
                     with _state_lock:
                         state['paused'] = True
+                    _save_state()
+                    _dashboard_set_paused(True)
                     time.sleep(60)
                     continue
             dte     = D.calculate_dte(expiry) if expiry else 0
@@ -7770,6 +7792,8 @@ def _cmd_download(args):
 def _cmd_pause(args):
     with _state_lock:
         state["paused"] = True
+    _save_state()
+    _dashboard_set_paused(True)
     _tg_send("⏸ Paused. No new entries.")
     logger.info("[CTRL] Paused")
 
@@ -7777,6 +7801,8 @@ def _cmd_pause(args):
 def _cmd_resume(args):
     with _state_lock:
         state["paused"] = False
+    _save_state()
+    _dashboard_set_paused(False)
     _tg_send("▶️ Resumed.")
     logger.info("[CTRL] Resumed")
 
