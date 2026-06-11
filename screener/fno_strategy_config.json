@@ -5,7 +5,7 @@
   "elite_score": 99,
   "max_new_per_day": 20,
   "max_open_total": 30,
-  "require_regime_align": false,
+  "require_regime_align": true,
   "max_pcr": 1.0,
   "max_pain_dist_pct": 3.0,
   "max_5d_move_pct": 2.0,
