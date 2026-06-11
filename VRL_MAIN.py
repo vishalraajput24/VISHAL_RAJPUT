@@ -9296,7 +9296,7 @@ async function renderFno(){
   try{
     const fno=await fetch('/api/fno').then(r=>r.json()).catch(e=>[]);
     const el=document.getElementById('p-fno');
-    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">No F&O positions</div>';return;}
+    if(!fno||!fno.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">SMI paper engine live — no trades yet<div style="font-size:9px;margin-top:4px">entries 09:30–14:30 · 15m bars · 2-week validation</div></div>';return;}
     // Split today vs prev days; open sorted by score desc (all pnl=0 initially); closed by pnl
     var today=new Date().toISOString().slice(0,10);
     var byScore=function(a,b){return (b.score||0)-(a.score||0)||((b.rank||99)-(a.rank||99))*-1;};
@@ -9338,6 +9338,7 @@ async function renderFno(){
           '<div style="text-align:right"><span style="font-weight:800;font-size:18px;color:'+clr+'">'+sign+pnlPct.toFixed(0)+'%</span>'+
           '<div style="font-size:10px;color:'+clr+'">'+sign+'₹'+Math.abs(Math.round(pnlRs)).toLocaleString('en-IN')+'</div></div>'+
         '</div>'+
+        (range>0?
         '<div style="position:relative;height:6px;background:var(--c2);border-radius:3px;overflow:visible;margin:0 0 3px">'+
           '<div style="height:100%;width:'+pct.toFixed(0)+'%;background:'+barClr+';border-radius:3px;transition:width .5s"></div>'+
           '<div style="position:absolute;top:-4px;left:0;width:2px;height:14px;background:var(--rd);border-radius:1px" title="SL ₹'+sl.toFixed(0)+'"></div>'+
@@ -9346,7 +9347,13 @@ async function renderFno(){
         '</div>'+
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
           '<span>SL ₹'+sl.toFixed(0)+'</span><span>T1 ₹'+t1.toFixed(0)+'</span><span>T2 ₹'+t2.toFixed(0)+'</span>'+
-        '</div>'+
+        '</div>'
+        :
+        '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm)">'+
+          '<span>Stock '+esc(String(p.stock_price||'—'))+' · SL '+esc(String(p.stock_sl||'—'))+' (1%)</span>'+
+          '<span style="color:var(--bl);font-weight:600">'+esc(p.structure||'')+(p.regime&&p.regime!=='NORMAL'?' · '+esc(p.regime):'')+'</span>'+
+        '</div>'
+        )+
         '<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--dm);margin-top:3px">'+
           '<span style="background:'+badgeBg+';color:'+badgeClr+';padding:1px 6px;border-radius:3px;font-weight:600">'+esc(st)+'</span>'+
           '<span>'+esc(p.date_added)+'</span>'+
@@ -9365,12 +9372,12 @@ async function renderFno(){
     var totSign=totalPnl>=0?'+':'';var totClr=totalPnl>=0?'var(--gn)':'var(--rd)';
     el.innerHTML=
       '<div style="margin:8px;padding:10px 12px;background:var(--c1);border:1px solid var(--bd);border-radius:8px;display:flex;justify-content:space-between;align-items:center">'+
-        '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">TOTAL F&amp;O P&amp;L</div>'+
+        '<div><div style="font-size:9px;color:var(--dm);margin-bottom:2px">SMI PAPER TEST &mdash; TOTAL P&amp;L</div>'+
         '<div style="font-weight:700;font-size:18px;color:'+totClr+'">'+totSign+'&#x20B9;'+Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')+'</div></div>'+
         '<div style="text-align:right;font-size:10px;color:var(--dm)">'+openCount+' open &nbsp;\xb7&nbsp; '+closedPos.length+' closed'+
         '<div style="margin-top:2px">Deployed ₹'+Math.round(openInvest).toLocaleString('en-IN')+'</div></div>'+
       '</div>'+
-      (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s Picks ('+openToday.length+') — sorted by score</div>':'')+
+      (openToday.length?'<div style="margin:4px 8px;font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px">Today\'s SMI Trades ('+openToday.length+')</div>':'')+
       todayCards+prevSection+closedSection;
   }catch(e){document.getElementById('p-fno').innerHTML='<div style="color:var(--dm);padding:16px">Error loading F&O data</div>';console.error(e);}
 }
