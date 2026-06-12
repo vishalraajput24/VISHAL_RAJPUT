@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v20 (V10 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
-#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-4] (deep [-8,-6] 11:30-14:30)
+#  V10 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-6] all day
 #               Single-lot entry (market fill @ candle close)
 #  V10 Exit:   INITIAL(ema9_low) → LOCK_4(@+12, entry+4) → TRAIL_10(@+18, peak-10)
 # ═══════════════════════════════════════════════════════════════
@@ -4677,12 +4677,9 @@ spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard
 
 V10_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V10_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
-# OPP DECAY band — midday window requires deeper opposite-leg decay (owner-approved
-# 2026-06-12 paper test): shallow decay (-6,-4] + midday was 2W/9L over 06-10..06-11.
-V10_DECAY_DEEP_START = dtime(11, 30)  # deep-decay window start
-V10_DECAY_DEEP_END   = dtime(14, 30)  # deep-decay window end
-V10_DECAY_HIGH_DEEP  = -6.0           # upper bound inside window  → band [-8, -6]
-V10_DECAY_HIGH_NORM  = -4.0           # upper bound outside window → band [-8, -4]
+# OPP DECAY band [-8, -6] all day (owner final, 2026-06-12): shallow decay (-6,-4]
+# ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
+V10_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
 V10_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # CUTOVER FLAG: True = V10 Golden scanner places the live paper trades.
 V10_LIVE = True
@@ -5519,7 +5516,7 @@ def _alert_bot_started():
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GOLDEN GATES</b>\n"
         "1) MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
-        "2) OPP DECAY opp close − ema9l in [−8, −4] (deep [−8, −6] 11:30-14:30)\n"
+        "2) OPP DECAY opp close − ema9l in [−8, −6] (all day)\n"
         "Cooldown: 9:45 blackout · same-candle · same-side 3-min\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 SL LADDER</b>\n"
@@ -6366,10 +6363,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 _fails = []
                 if not _momentum_ok: _fails.append(f"below_ema9h_gap({_momentum_gap:+.1f}<3.5)")
                 if not _decay_ok:
-                    _dh = (V10_DECAY_HIGH_DEEP
-                           if V10_DECAY_DEEP_START <= now.time() < V10_DECAY_DEEP_END
-                           else V10_DECAY_HIGH_NORM)
-                    _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,{_dh:.0f}])")
+                    _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,{V10_DECAY_HIGH:.0f}])")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0.0) or _ltp_fallback, 2)
@@ -6777,12 +6771,7 @@ def _strategy_loop(kite):
 
                         # Golden Setup conditions
                         _momentum_ok = (_sh_1m_close >= _sh_ema9h_1m + V10_MIN_EMA9H_GAP) if _sh_ema9h_1m > 0 else False
-                        # Midday (11:30-14:30) requires deep opposite-leg decay [-8,-6];
-                        # outside the window the normal band [-8,-4] applies
-                        _decay_high = (V10_DECAY_HIGH_DEEP
-                                       if V10_DECAY_DEEP_START <= now.time() < V10_DECAY_DEEP_END
-                                       else V10_DECAY_HIGH_NORM)
-                        _decay_ok = (-8.0 <= _opp_margin <= _decay_high) if _opp_ema9l > 0 else False
+                        _decay_ok = (-8.0 <= _opp_margin <= V10_DECAY_HIGH) if _opp_ema9l > 0 else False
 
                         # Cooldown and basic guards
                         _in_trade = bool(_v8_state.get("in_trade", False))
@@ -6817,7 +6806,7 @@ def _strategy_loop(kite):
                         elif not _momentum_ok:
                             _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V10_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{_decay_high:.0f}])"
+                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{V10_DECAY_HIGH:.0f}])"
 
                         _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
@@ -7581,7 +7570,7 @@ def _cmd_pulse(args):
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 GOLDEN CONFIG (1-min)</b>\n"
             "Gate 1: MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
-            "Gate 2: OPP DECAY opp margin [−8, −4] (deep [−8, −6] 11:30-14:30)\n"
+            "Gate 2: OPP DECAY opp margin [−8, −6] (all day)\n"
             "Entry:  single lot, market fill at candle close\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>V10 SL LADDER</b>\n"
