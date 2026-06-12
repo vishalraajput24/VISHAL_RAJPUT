@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-11 (feat/watch-smi-fno). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-12 (feat/smi-confirm-bars-column). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -117,6 +117,11 @@ before ~2026-06-25.** Spec (evidence: `smi_backtest.py`, `smi_pe_tuning.py`, `sm
   force close at 15:15 bar. Backtest: ~66% win, ~+0.49%/trade stock-level (40 days, 119 stocks).
 - State `smi_paper_state.json` · dashboard rows in `fno_tracker.csv` (`structure=SMI`) ·
   clean trade log `smi_paper_log.csv` for the review.
+- `confirm_bars` column in the trade log (added 2026-06-12, data collection only): bars between
+  the SMI cross and the entry (CE always 0 — same-bar; PE 0–6 — first confirm in the window).
+  Entries fire on the FIRST confirming bar, so the 6-bar window is a ceiling, not a delay.
+  At the ~06-25 review, bucket PE results by `confirm_bars` to decide the optimal window
+  (backtest: window 3 = 22 trades +9.4% total, window 6 = 36 trades +15.0% — late confirms paid).
 
 ### Stale artifacts in state/ (do not rely on)
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale

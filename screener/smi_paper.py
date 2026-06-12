@@ -96,7 +96,8 @@ TRACKER_COLS = [
 LOG_COLS = [
     "entry_time","exit_time","symbol","direction","option_symbol","lot_size",
     "stock_entry","stock_exit","stock_sl","entry_premium","exit_premium",
-    "pnl_pct_stock","pnl_rs","exit_reason","peak_pnl_pct","conviction","signal_detail",
+    "pnl_pct_stock","pnl_rs","exit_reason","peak_pnl_pct","conviction","confirm_bars",
+    "signal_detail",
 ]
 
 
@@ -288,6 +289,7 @@ def log_exit(trade: dict, exit_ts, stock_exit: float, exit_prem: float, reason: 
         "pnl_pct_stock": round(pnl_stock, 3), "pnl_rs": round(pnl_rs, 0),
         "exit_reason": reason, "peak_pnl_pct": round(trade.get("peak", 0.0), 3),
         "conviction": trade.get("conviction", ""),
+        "confirm_bars": trade.get("confirm_bars", 0),
         "signal_detail": trade.get("signal_detail", ""),
     }
     new = pd.DataFrame([row])
@@ -326,6 +328,7 @@ def scan_entry(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
         key = f"{sym}:CE:{ts.isoformat()}"
         if key not in fired:
             return {"direction": "CE", "ts": ts, "key": key, "conviction": "NORMAL",
+                    "confirm_bars": 0,
                     "detail": (f"SMI v1 | CE cross {OS_CE:+.0f} | smi15={sv[last]:.1f} "
                                f"| 1h={smi1h:.1f}/sig{sig1h:.1f}")}
 
@@ -356,6 +359,7 @@ def scan_entry(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
             if key not in fired:
                 conv = "PE-HIGH (NIFTY 1h bear)" if nifty_bear else "NORMAL"
                 return {"direction": "PE", "ts": ts, "key": key, "conviction": conv,
+                        "confirm_bars": back,
                         "detail": (f"SMI v1 | PE cross +{OB_PE:.0f} (bar -{back}) "
                                    f"| smi15={sv[last]:.1f} | 1h={smi1h:.1f}/sig{sig1h:.1f} "
                                    f"| below VWAP")}
@@ -502,6 +506,7 @@ def main():
             "sl_price": spot * (1 - sgn * SL_PCT / 100),
             "peak": 0.0, "armed": False, "last_bar_checked": str(e["ts"]),
             "entry_premium": prem, "conviction": e["conviction"],
+            "confirm_bars": e.get("confirm_bars", 0),
             "signal_detail": e["detail"], **opt,
         }
         open_trades[sym] = tr
