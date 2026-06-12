@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-12 (feat/smi-confirm-bars-column). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-12 (feat/v10-deep-decay-all-day). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v10_state` key that must survive restart, add it to BOTH the initial `_v10_state` dict AND `_V10_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -46,9 +46,9 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 | Gate | Condition | Constant |
 |------|-----------|----------|
 | **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` | `V10_MIN_EMA9H_GAP = 3.5` (hard gate) |
-| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −4.0]`; **11:30–14:30 deep band `[−8.0, −6.0]`** | `V10_DECAY_DEEP_START/END`, `V10_DECAY_HIGH_DEEP/NORM` |
+| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −6.0]` — all day | `V10_DECAY_HIGH = -6.0` |
 
-- **Midday deep-decay window (paper test, 2026-06-12)**: 11:30–14:30 entries need opposite-leg decay ≤ −6 (shallow-decay midday entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`). Owner will review accuracy after the paper day before any live decision.
+- **Deep decay all day (owner final, 2026-06-12)**: band widened from a midday-only (11:30–14:30) deep window to `[−8, −6]` for the whole session — shallow-decay band `(−6, −4]` removed entirely (shallow entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`).
 
 - `V10_OPEN_BLACKOUT_END = dtime(9, 45)` — no entries before 09:45
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
@@ -240,7 +240,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−4], initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
+- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
 
 ---
 
