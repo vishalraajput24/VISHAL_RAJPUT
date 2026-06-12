@@ -5511,7 +5511,7 @@ def _alert_bot_started():
         "<b>STRATEGY</b>  Vishal Clean v20\n"
         ""
         "V10 LIVE   : 1-min  | Golden | " + ("PAPER" if D.PAPER_MODE else "LIVE") + " trading\n"
-        "Entry   : " + CFG.entry_ema9_band("warmup_until_v8", "09:35") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
+        "Entry   : " + V10_OPEN_BLACKOUT_END.strftime("%H:%M") + " - " + CFG.entry_ema9_band("cutoff_after", "15:00") + " IST\n"
         "Size    : 1 lot fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V10 GOLDEN GATES</b>\n"
