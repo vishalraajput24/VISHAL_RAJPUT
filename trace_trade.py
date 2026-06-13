@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-trace_trade.py — V10 Golden live alignment tracer.
+trace_trade.py — V11 Golden live alignment tracer.
 Compares engine state vs dashboard every 1s while in a trade.
 Logs all mismatches to ~/lab_data/trade_audit_trace.log.
 
@@ -53,7 +53,7 @@ def _ok(a, b, tol=0.05):
     return "✅" if _match(a, b, tol) else "❌ MISMATCH"
 
 def _expected_sl_tier(peak_pnl, initial_sl, entry_price):
-    """Compute the expected SL and tier from V10 Golden rules."""
+    """Compute the expected SL and tier from V11 Golden rules."""
     if peak_pnl >= 18.0:
         peak_ltp = entry_price + peak_pnl
         sl = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
@@ -85,7 +85,7 @@ def _last_tg_lines(n=4):
 
 # ── Pre-trade buildup monitor ─────────────────────────────────────────────────
 def print_buildup():
-    """Show V10 Golden gate status while waiting for a trade."""
+    """Show V11 Golden gate status while waiting for a trade."""
     dash = _read_dash()
     now  = datetime.now().strftime("%H:%M:%S")
 
@@ -98,7 +98,7 @@ def print_buildup():
         ltp    = sd.get("ltp", 0)
         verdict = sd.get("verdict", "—")
 
-        # V10 Golden gates — prefer new field names, fall back to old if absent
+        # V11 Golden gates — prefer new field names, fall back to old if absent
         if "momentum_ok" in sd:
             mom_ok  = bool(sd["momentum_ok"])
             mom_gap = float(sd.get("momentum_gap", 0))
@@ -154,7 +154,7 @@ def run_audit_cycle():
     d_cndl   = int(pos.get("candles", 0))
     d_qty    = int(pos.get("qty", 0))
 
-    # V10 Golden SL/tier expected from engine truth
+    # V11 Golden SL/tier expected from engine truth
     exp_sl, exp_tier = _expected_sl_tier(v_peak, v_isl, v_entry)
 
     mismatches = []
@@ -181,7 +181,7 @@ def run_audit_cycle():
     _log(row("SL tier",       v_tier,   d_tier,   0))
     _log(row("Candles held",  v_cndl,   d_cndl,   0))
 
-    # SL tier correctness vs V10 Golden rules
+    # SL tier correctness vs V11 Golden rules
     tier_correct = (v_tier == exp_tier) and _match(v_sl, exp_sl)
     tier_flag = "✅" if tier_correct else f"❌  expected tier={exp_tier} SL=₹{exp_sl}"
     if not tier_correct:
@@ -274,10 +274,10 @@ def post_exit_reconciliation(entry_snapshot):
             if not _match(csv_pnl, exp_pnl, 0.1):
                 mismatches.append(f"PnL calc: CSV pnl_pts={csv_pnl} but exit({csv_exit})-entry({csv_entry})={exp_pnl}")
 
-        # entry_mode should be V10_CE or V10_PE
+        # entry_mode should be V11_CE/V11_PE (V10_* tolerated for pre-rename rows)
         em = last_row.get("entry_mode", "")
-        if em and "V10" not in em:
-            mismatches.append(f"entry_mode={em} — expected V10_CE or V10_PE")
+        if em and "V11" not in em and "V10" not in em:
+            mismatches.append(f"entry_mode={em} — expected V11_CE or V11_PE")
     else:
         _log("  CSV row  : not found")
         mismatches.append("CSV row missing after exit")
@@ -305,7 +305,7 @@ def post_exit_reconciliation(entry_snapshot):
 def main():
     os.system("clear")
     _log("=" * 80)
-    _log(f"🚀 V10 Golden Alignment Tracer  —  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    _log(f"🚀 V11 Golden Alignment Tracer  —  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     _log(f"   State   : {STATE_FILE}")
     _log(f"   Dashboard: {DASH_FILE}")
     _log(f"   Audit log: {AUDIT_LOG}")

@@ -80,7 +80,7 @@ def _last_csv_row():
         return {}
 
 def _expected_sl(peak_pnl, initial_sl, entry_price):
-    """V10 Golden 4-tier SL formula."""
+    """V11 Golden 4-tier SL formula."""
     if peak_pnl >= 18.0:
         peak_ltp = entry_price + peak_pnl
         sl = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
@@ -113,9 +113,9 @@ class TGEvents:
     Bot logs first 60 chars of each TG message (newlines replaced with spaces).
 
     Known message prefixes:
-      Entry   : "🟢/🔴 V10 GOLDEN ENTRY CE/PE <strike>"
-      Exit    : "⚡ V10 GOLDEN EXIT CE/PE <strike>"
-      SL Up   : "⚡ V10 SL UPGRADED → PROTECT/LOCK_4/TRAIL_10"
+      Entry   : "🟢/🔴 V11 GOLDEN ENTRY CE/PE <strike>"
+      Exit    : "⚡ V11 GOLDEN EXIT CE/PE <strike>"
+      SL Up   : "⚡ V11 SL UPGRADED → PROTECT/LOCK_4/TRAIL_10"
     """
 
     def __init__(self, lines):
@@ -127,25 +127,25 @@ class TGEvents:
 
     def entry_sent(self, direction, strike):
         """Was an entry TG sent for this direction+strike?"""
-        pattern = rf"V10 GOLDEN ENTRY {direction} {strike}"
+        pattern = rf"V11 GOLDEN ENTRY {direction} {strike}"
         return bool(self._match(pattern))
 
     def exit_sent(self, direction, strike):
         """Was an exit TG sent for this direction+strike?"""
-        pattern = rf"V10 GOLDEN EXIT {direction} {strike}"
+        pattern = rf"V11 GOLDEN EXIT {direction} {strike}"
         return bool(self._match(pattern))
 
     def sl_upgrade_sent(self, tier):
         """Was an SL upgrade TG sent for this tier today?"""
-        pattern = rf"V10 SL UPGRADED.*{tier}"
+        pattern = rf"V11 SL UPGRADED.*{tier}"
         return bool(self._match(pattern))
 
     def exit_reason_from_tg(self, direction, strike):
         """Try to extract exit reason from exit TG line."""
-        hits = self._match(rf"V10 GOLDEN EXIT {direction} {strike}")
+        hits = self._match(rf"V11 GOLDEN EXIT {direction} {strike}")
         if not hits:
             return None
-        # log line: "... sent ok — ⚡ V10 GOLDEN EXIT CE 23100 ━━━━━━━━━━━━━━━━━━━━━━━━━━━ EMERGENCY_SL ..."
+        # log line: "... sent ok — ⚡ V11 GOLDEN EXIT CE 23100 ━━━━━━━━━━━━━━━━━━━━━━━━━━━ EMERGENCY_SL ..."
         # but it's cut at 60 chars so reason may not be present
         for reason in ("EMERGENCY_SL", "PROTECT_2", "LOCK_4", "VISHAL_TRAIL", "EOD_EXIT", "MARKET_CLOSE"):
             if reason in hits[0]:
@@ -168,7 +168,7 @@ def _audit(st, dash, tg_events):
     sl         = float(st.get("active_ratchet_sl", 0))
     candles    = int(st.get("candles_held", 0) or 0)
 
-    # ── expected SL tier from V10 formula ──
+    # ── expected SL tier from V11 formula ──
     exp_sl, exp_tier = _expected_sl(peak, initial_sl, entry)
 
     # ── dashboard staleness ──
@@ -250,8 +250,8 @@ def _reconcile(prev_st, tg_events):
             lines.append(f"  - BUG: entry mismatch — state={entry} csv={csv_entry}")
         if abs(csv_pnl - exp_pnl) > 0.5:
             lines.append(f"  - BUG: pnl_pts mismatch — csv={csv_pnl} calc={exp_pnl} (exit-entry)")
-        if csv_regime and csv_regime not in ("V10_CE", "V10_PE"):
-            lines.append(f"  - BUG: entry_mode stale — csv={csv_regime!r} (expected V10_CE or V10_PE)")
+        if csv_regime and csv_regime not in ("V11_CE", "V11_PE"):
+            lines.append(f"  - BUG: entry_mode stale — csv={csv_regime!r} (expected V11_CE or V11_PE)")
 
     # TG exit alert check
     if not tg_events.exit_sent(direction, strike):
