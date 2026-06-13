@@ -823,7 +823,7 @@ LIVE_LOG_FILE    = os.path.join(LIVE_LOG_DIR, "vrl_live.log")
 LAB_LOG_FILE     = os.path.join(LAB_LOG_DIR,  "vrl_lab.log")
 TRADE_LOG_PATH   = os.path.join(LAB_DIR,      "vrl_trade_log.csv")
 STATE_FILE_PATH        = os.path.join(STATE_DIR, "vrl_live_state.json")
-V8_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v8_state.json")
+V11_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v11_state.json")
 SHADOW_STATE_FILE_PATH = os.path.join(STATE_DIR, "vrl_shadow_state.json")
 PID_FILE_PATH          = os.path.join(STATE_DIR, "vrl_live.pid")
 TOKEN_FILE_PATH     = os.path.join(STATE_DIR, "access_token.json")
@@ -3601,7 +3601,7 @@ DEFAULT_STATE = {
     # rejects re-entry when current candle == this, stops the
     # 2026-05-07 same-candle re-fire bug.
     "_last_fired_candle_ts": "",
-    # V8 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
+    # V11 EMERGENCY_SL 1-candle cooldown: set True when SL fires,
     # entry scan skips the very next candle then clears the flag.
     "_sl_cooldown_skip_next": False,
     "_force_exit_ts"        : 0.0,
@@ -3641,7 +3641,7 @@ state   = deepcopy(DEFAULT_STATE)
 _running = True
 _last_health_log_ts = 0.0   # throttle for intraday [MAIN] Token health re-log
 
-_v8_state = {
+_v11_state = {
     "_last_fired_candle_ts": "",     # same-candle guard
     "_signals_today": 0,             # count for /pulse
     "_last_signal_time": "",
@@ -3680,7 +3680,7 @@ _v8_state = {
     # Exit candle guard: block re-entry on same 3-min candle we just exited from
     "_last_exit_candle_ts"  : "",
     # Both-sides rejection cooldown: unix timestamp of last scan where both CE+PE failed
-    "_v8_both_rejected_ts": 0.0,
+    "_v11_both_rejected_ts": 0.0,
     # Date of last trade — used to detect new day and reset daily counters on restart
     "_last_trade_date": "",
     # Current expiry / DTE — synced from main loop every iteration so entry/exit always sees correct value
@@ -3721,10 +3721,10 @@ _v8_state = {
     "breakout_ltp":        0.0,  # LTP at breakout
     "breakout_ts":         "",   # time string at breakout
 }
-_v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from within exit-check block
+_v11_lock = threading.RLock()  # RLock: _save_v11_state() re-enters this lock from within exit-check block
 
 
-def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
+def _v11_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
     """V11 dynamic exit rules (owner-approved 2026-06-13, validated by sl_replay_study.py):
     - Initial SL is 1-min ema9_low at entry (passed as initial_sl), capped at entry-10.
     - Protect entry-2.0 once profit hits +9.0 pts (giveback never exceeds 2 pts).
@@ -3782,36 +3782,36 @@ def _get_prev_day_hl():
         return 0.0, 0.0
 
 
-def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
+def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: int,
                              entry_price: float, entry_result: dict,
                              other_token: int = 0,
                              spot_at_entry: float = 0.0,
                              neighbor_ltp_otm: float = 0.0,
                              neighbor_ltp_itm: float = 0.0):
-    """Open a V8/V11 paper position — single lot, market fill at candle close."""
+    """Open a V11 paper position — single lot, market fill at candle close."""
     lot_count = CFG.get().get("lots", {}).get("count", 1)
     qty = lot_count * D.get_lot_size()
 
     now_dt  = datetime.now()
     now_str = now_dt.strftime("%H:%M:%S")
 
-    with _v8_lock:
-        if _v8_state.get("in_trade"):
+    with _v11_lock:
+        if _v11_state.get("in_trade"):
             logger.warning("[V11] Entry attempted while already in_trade — BLOCKED")
             return
         
-        _v8_state["in_trade"]              = True
-        _v8_state["symbol"]                = symbol
-        _v8_state["token"]                 = token
-        _v8_state["direction"]             = direction
-        _v8_state["strike"]                = int(strike or 0)
-        _v8_state["entry_time"]            = now_str
-        _v8_state["candles_held"]          = 0
-        _v8_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
-        _v8_state["_other_token"]          = int(other_token or 0)
+        _v11_state["in_trade"]              = True
+        _v11_state["symbol"]                = symbol
+        _v11_state["token"]                 = token
+        _v11_state["direction"]             = direction
+        _v11_state["strike"]                = int(strike or 0)
+        _v11_state["entry_time"]            = now_str
+        _v11_state["candles_held"]          = 0
+        _v11_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
+        _v11_state["_other_token"]          = int(other_token or 0)
         
-        _v8_state["entry_price"]           = entry_price
-        _v8_state["qty"]                   = qty
+        _v11_state["entry_price"]           = entry_price
+        _v11_state["qty"]                   = qty
         
         # Exits and Trailing SL
         initial_sl = entry_result.get("ema9_low", entry_price - 12)
@@ -3823,50 +3823,50 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         # (sl_replay_study.py) clipped zero winners and saved ~14 pts.
         initial_sl = max(initial_sl, round(entry_price - 10.0, 2))
         
-        _v8_state["initial_sl"]            = initial_sl
-        _v8_state["active_ratchet_sl"]     = initial_sl
-        _v8_state["active_ratchet_tier"]   = "INITIAL"
-        _v8_state["peak_ltp"]              = entry_price
-        _v8_state["peak_pnl"]              = 0.0
-        _v8_state["entry_regime"]          = entry_result.get("entry_mode") or ("V11_CE" if direction == "CE" else "V11_PE")
-        _v8_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
-        _v8_state["spot_regime_at_entry"]  = entry_result.get("spot_regime", "")
-        _v8_state["_last_trade_date"]      = date.today().isoformat()
+        _v11_state["initial_sl"]            = initial_sl
+        _v11_state["active_ratchet_sl"]     = initial_sl
+        _v11_state["active_ratchet_tier"]   = "INITIAL"
+        _v11_state["peak_ltp"]              = entry_price
+        _v11_state["peak_pnl"]              = 0.0
+        _v11_state["entry_regime"]          = entry_result.get("entry_mode") or ("V11_CE" if direction == "CE" else "V11_PE")
+        _v11_state["xleg_other_margin"]     = entry_result.get("xleg_other_margin", 0.0)
+        _v11_state["spot_regime_at_entry"]  = entry_result.get("spot_regime", "")
+        _v11_state["_last_trade_date"]      = date.today().isoformat()
 
         # Market context at entry (for CSV analysis — bias/vix/rsi/session)
         _now_entry = datetime.now()
-        _v8_state["vix_at_entry"]          = float(D.get_vix() or 0.0)
-        _v8_state["hourly_rsi_at_entry"]   = float(D.get_hourly_rsi() or 0.0)
-        _v8_state["bias_at_entry"]         = str(D.get_daily_bias() or "")
-        _v8_state["session_at_entry"]      = D.get_session_block(_now_entry.hour, _now_entry.minute)
+        _v11_state["vix_at_entry"]          = float(D.get_vix() or 0.0)
+        _v11_state["hourly_rsi_at_entry"]   = float(D.get_hourly_rsi() or 0.0)
+        _v11_state["bias_at_entry"]         = str(D.get_daily_bias() or "")
+        _v11_state["session_at_entry"]      = D.get_session_block(_now_entry.hour, _now_entry.minute)
 
         # Data collection fields
-        _v8_state["entry_spot"]            = float(spot_at_entry)
+        _v11_state["entry_spot"]            = float(spot_at_entry)
         _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
-        _v8_state["entry_atm_dist"]        = int(strike) - _true_atm
+        _v11_state["entry_atm_dist"]        = int(strike) - _true_atm
         # PDH/PDL context (analysis only — not a gate): where is spot vs yesterday's range?
         # range_pos: 0=at PDL, 1=at PDH, >1=above PDH, <0=below PDL
         _pdh, _pdl = _get_prev_day_hl()
-        _v8_state["pdh_prev"] = _pdh
-        _v8_state["pdl_prev"] = _pdl
-        _v8_state["entry_range_pos"] = (
+        _v11_state["pdh_prev"] = _pdh
+        _v11_state["pdl_prev"] = _pdl
+        _v11_state["entry_range_pos"] = (
             round((spot_at_entry - _pdl) / (_pdh - _pdl), 3)
             if _pdh > _pdl > 0 and spot_at_entry > 0 else "")
-        _v8_state["neighbor_ltp_otm"]      = float(neighbor_ltp_otm)
-        _v8_state["neighbor_ltp_itm"]      = float(neighbor_ltp_itm)
-        _v8_state["max_otm_drift"]         = 0.0
+        _v11_state["neighbor_ltp_otm"]      = float(neighbor_ltp_otm)
+        _v11_state["neighbor_ltp_itm"]      = float(neighbor_ltp_itm)
+        _v11_state["max_otm_drift"]         = 0.0
 
         # Reset entry-timing study markers
-        _v8_state["first_profit_candle"] = 0
-        _v8_state["first_profit_ltp"]    = 0.0
-        _v8_state["first_profit_ts"]     = ""
-        _v8_state["breakout_candle"]     = 0
-        _v8_state["breakout_ltp"]        = 0.0
-        _v8_state["breakout_ts"]         = ""
+        _v11_state["first_profit_candle"] = 0
+        _v11_state["first_profit_ltp"]    = 0.0
+        _v11_state["first_profit_ts"]     = ""
+        _v11_state["breakout_candle"]     = 0
+        _v11_state["breakout_ltp"]        = 0.0
+        _v11_state["breakout_ts"]         = ""
 
         # Clear any pending re-entry state
-        _v8_state["_reentry_armed"]        = False
-        _v8_state["_reentry_attempts"]     = 0
+        _v11_state["_reentry_armed"]        = False
+        _v11_state["_reentry_attempts"]     = 0
 
     logger.info(f"[V11] GOLDEN ENTRY: {symbol} Qty={qty} @ {entry_price}")
 
@@ -3896,101 +3896,101 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry (Mkt)  ₹{entry_price:.1f} ({qty} Qty) @ {now_str}\n"
         f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low, max 10 pts)\n"
-        f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
+        f"XLeg Margin  {_v11_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Trail: +9 → Protect entry-2  |  +11 → Lock entry+4  |  +15 → max(entry+9, Peak-10)",
         priority="critical"
     )
-    _save_v8_state()
+    _save_v11_state()
 
 
-def _v8_execute_paper_exit(reason: str, exit_price: float):
-    """Close V8/V11 paper position. Logs trade to CSV."""
-    with _v8_lock:
-        if not _v8_state.get("in_trade"):
+def _v11_execute_paper_exit(reason: str, exit_price: float):
+    """Close V11 paper position. Logs trade to CSV."""
+    with _v11_lock:
+        if not _v11_state.get("in_trade"):
             return
-        entry_price  = float(_v8_state.get("entry_price", 0))
-        symbol       = _v8_state.get("symbol", "")
-        direction    = _v8_state.get("direction", "")
-        strike       = int(_v8_state.get("strike", 0) or 0)
-        qty          = int(_v8_state.get("qty", 0) or 0)
-        peak         = float(_v8_state.get("peak_pnl", 0))
-        entry_time   = _v8_state.get("entry_time", "")
-        candles      = int(_v8_state.get("candles_held", 0) or 0)
-        tier         = _v8_state.get("active_ratchet_tier", "")
-        token        = int(_v8_state.get("token", 0) or 0)
-        other_tok    = int(_v8_state.get("_other_token", 0) or 0)
-        dte_val      = int(_v8_state.get("dte", 0) or 0)
-        entry_spot_val = float(_v8_state.get("entry_spot", 0))
-        entry_atm_dist = int(_v8_state.get("entry_atm_dist", 0))
-        pdh_prev_val   = float(_v8_state.get("pdh_prev", 0) or 0)
-        pdl_prev_val   = float(_v8_state.get("pdl_prev", 0) or 0)
-        entry_range_pos_val = _v8_state.get("entry_range_pos", "")
-        neighbor_otm = float(_v8_state.get("neighbor_ltp_otm", 0))
-        neighbor_itm = float(_v8_state.get("neighbor_ltp_itm", 0))
-        max_otm_drift = float(_v8_state.get("max_otm_drift", 0))
-        entry_regime         = _v8_state.get("entry_regime", "V11_CE")
-        xleg_margin          = float(_v8_state.get("xleg_other_margin", 0.0))
-        initial_sl           = float(_v8_state.get("initial_sl", 0.0))
-        spot_regime_at_entry  = str(_v8_state.get("spot_regime_at_entry", ""))
-        vix_at_entry          = float(_v8_state.get("vix_at_entry", 0.0))
-        first_profit_candle   = int(_v8_state.get("first_profit_candle", 0) or 0)
-        first_profit_ltp      = float(_v8_state.get("first_profit_ltp", 0.0))
-        first_profit_ts       = str(_v8_state.get("first_profit_ts", ""))
-        breakout_candle       = int(_v8_state.get("breakout_candle", 0) or 0)
-        breakout_ltp          = float(_v8_state.get("breakout_ltp", 0.0))
-        breakout_ts           = str(_v8_state.get("breakout_ts", ""))
-        hourly_rsi_at_entry  = float(_v8_state.get("hourly_rsi_at_entry", 0.0))
-        bias_at_entry        = str(_v8_state.get("bias_at_entry", ""))
-        session_at_entry     = str(_v8_state.get("session_at_entry", ""))
+        entry_price  = float(_v11_state.get("entry_price", 0))
+        symbol       = _v11_state.get("symbol", "")
+        direction    = _v11_state.get("direction", "")
+        strike       = int(_v11_state.get("strike", 0) or 0)
+        qty          = int(_v11_state.get("qty", 0) or 0)
+        peak         = float(_v11_state.get("peak_pnl", 0))
+        entry_time   = _v11_state.get("entry_time", "")
+        candles      = int(_v11_state.get("candles_held", 0) or 0)
+        tier         = _v11_state.get("active_ratchet_tier", "")
+        token        = int(_v11_state.get("token", 0) or 0)
+        other_tok    = int(_v11_state.get("_other_token", 0) or 0)
+        dte_val      = int(_v11_state.get("dte", 0) or 0)
+        entry_spot_val = float(_v11_state.get("entry_spot", 0))
+        entry_atm_dist = int(_v11_state.get("entry_atm_dist", 0))
+        pdh_prev_val   = float(_v11_state.get("pdh_prev", 0) or 0)
+        pdl_prev_val   = float(_v11_state.get("pdl_prev", 0) or 0)
+        entry_range_pos_val = _v11_state.get("entry_range_pos", "")
+        neighbor_otm = float(_v11_state.get("neighbor_ltp_otm", 0))
+        neighbor_itm = float(_v11_state.get("neighbor_ltp_itm", 0))
+        max_otm_drift = float(_v11_state.get("max_otm_drift", 0))
+        entry_regime         = _v11_state.get("entry_regime", "V11_CE")
+        xleg_margin          = float(_v11_state.get("xleg_other_margin", 0.0))
+        initial_sl           = float(_v11_state.get("initial_sl", 0.0))
+        spot_regime_at_entry  = str(_v11_state.get("spot_regime_at_entry", ""))
+        vix_at_entry          = float(_v11_state.get("vix_at_entry", 0.0))
+        first_profit_candle   = int(_v11_state.get("first_profit_candle", 0) or 0)
+        first_profit_ltp      = float(_v11_state.get("first_profit_ltp", 0.0))
+        first_profit_ts       = str(_v11_state.get("first_profit_ts", ""))
+        breakout_candle       = int(_v11_state.get("breakout_candle", 0) or 0)
+        breakout_ltp          = float(_v11_state.get("breakout_ltp", 0.0))
+        breakout_ts           = str(_v11_state.get("breakout_ts", ""))
+        hourly_rsi_at_entry  = float(_v11_state.get("hourly_rsi_at_entry", 0.0))
+        bias_at_entry        = str(_v11_state.get("bias_at_entry", ""))
+        session_at_entry     = str(_v11_state.get("session_at_entry", ""))
 
         # Clear position state
-        _v8_state["in_trade"]            = False
-        _v8_state["symbol"]              = ""
-        _v8_state["token"]               = 0
-        _v8_state["direction"]           = ""
-        _v8_state["strike"]              = 0
-        _v8_state["entry_price"]         = 0.0
-        _v8_state["peak_pnl"]            = 0.0
-        _v8_state["active_ratchet_tier"] = ""
-        _v8_state["active_ratchet_sl"]   = 0.0
-        _v8_state["candles_held"]        = 0
+        _v11_state["in_trade"]            = False
+        _v11_state["symbol"]              = ""
+        _v11_state["token"]               = 0
+        _v11_state["direction"]           = ""
+        _v11_state["strike"]              = 0
+        _v11_state["entry_price"]         = 0.0
+        _v11_state["peak_pnl"]            = 0.0
+        _v11_state["active_ratchet_tier"] = ""
+        _v11_state["active_ratchet_sl"]   = 0.0
+        _v11_state["candles_held"]        = 0
         
-        _v8_state["initial_sl"]          = 0.0
-        _v8_state["peak_ltp"]            = 0.0
-        _v8_state["xleg_other_margin"]   = 0.0
+        _v11_state["initial_sl"]          = 0.0
+        _v11_state["peak_ltp"]            = 0.0
+        _v11_state["xleg_other_margin"]   = 0.0
 
         pnl_pts_now = round(exit_price - entry_price, 2)
         # Update daily counters under lock
-        _v8_state["_pnl_today_pts"] = round(_v8_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
-        _v8_state["_trades_today"]  = _v8_state.get("_trades_today", 0) + 1
+        _v11_state["_pnl_today_pts"] = round(_v11_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
+        _v11_state["_trades_today"]  = _v11_state.get("_trades_today", 0) + 1
         if pnl_pts_now > 0:
-            _v8_state["_wins_today"]   = _v8_state.get("_wins_today", 0) + 1
+            _v11_state["_wins_today"]   = _v11_state.get("_wins_today", 0) + 1
         elif pnl_pts_now < 0:
-            _v8_state["_losses_today"] = _v8_state.get("_losses_today", 0) + 1
+            _v11_state["_losses_today"] = _v11_state.get("_losses_today", 0) + 1
             
         if reason == "EMERGENCY_SL":
-            _v8_state["_sl_cooldown_skip_next"] = True
-            _v8_state["_sl_cooldown_direction"] = direction
+            _v11_state["_sl_cooldown_skip_next"] = True
+            _v11_state["_sl_cooldown_direction"] = direction
 
-        _v8_state["_reentry_armed"]              = False
-        _v8_state["_reentry_attempts"]           = 0
-        _v8_state["_reentry_last_checked_epoch"] = 0.0
-        _v8_state["_reentry_direction"]          = direction
-        _v8_state["_reentry_token"]              = token
-        _v8_state["_reentry_strike"]             = strike
-        _v8_state["_reentry_other_token"]        = other_tok
-        _v8_state["_reentry_exit_price"]         = round(exit_price, 2)
-        _v8_state["_last_trade_date"]            = date.today().isoformat()
+        _v11_state["_reentry_armed"]              = False
+        _v11_state["_reentry_attempts"]           = 0
+        _v11_state["_reentry_last_checked_epoch"] = 0.0
+        _v11_state["_reentry_direction"]          = direction
+        _v11_state["_reentry_token"]              = token
+        _v11_state["_reentry_strike"]             = strike
+        _v11_state["_reentry_other_token"]        = other_tok
+        _v11_state["_reentry_exit_price"]         = round(exit_price, 2)
+        _v11_state["_last_trade_date"]            = date.today().isoformat()
         
         # Exit candle guard: record 1-min candle we are exiting in (matches _sh_1m_bk_ts)
         _now_exit = datetime.now()
-        _v8_state["_last_exit_candle_ts"] = str(
+        _v11_state["_last_exit_candle_ts"] = str(
             _now_exit.replace(second=0, microsecond=0)
         )
         # Same-side 3-min blocker: stamp direction + unix time of this exit
-        _v8_state["_last_exit_time_unix"]     = time.time()
-        _v8_state["_last_exit_direction_v10"] = direction
+        _v11_state["_last_exit_time_unix"]     = time.time()
+        _v11_state["_last_exit_direction_v10"] = direction
 
     # --- Lock released: safe to read captured locals for logging ---
     pnl_pts   = round(exit_price - entry_price, 2)
@@ -4010,7 +4010,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
 
     # Log to CSV
     try:
-        _v8_row = {
+        _v11_row = {
             "date": date.today().isoformat(),
             "entry_time": entry_time, "exit_time": exit_time,
             "symbol": symbol, "direction": direction, "strike": strike,
@@ -4057,7 +4057,7 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         log_path = D.TRADE_LOG_PATH
         with open(log_path, "a", newline="") as f:
             w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
-            w.writerow(_v8_row)
+            w.writerow(_v11_row)
     except Exception as _le:
         logger.warning("[V11] Trade log write error: " + str(_le))
 
@@ -4076,13 +4076,13 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         "Charges -₹" + "{:.0f}".format(total_charges) + "\n"
         "Net    " + ("+" if net_pnl >= 0 else "") + "₹" + "{:.0f}".format(net_pnl) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "DAY " + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
-        + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts ("
-        + str(_v8_state.get("_wins_today", 0)) + "W "
-        + str(_v8_state.get("_losses_today", 0)) + "L)",
+        "DAY " + ("+" if _v11_state.get("_pnl_today_pts", 0) >= 0 else "")
+        + "{:.1f}".format(_v11_state.get("_pnl_today_pts", 0)) + " pts ("
+        + str(_v11_state.get("_wins_today", 0)) + "W "
+        + str(_v11_state.get("_losses_today", 0)) + "L)",
         priority="critical"
     )
-    _save_v8_state()
+    _save_v11_state()
 
     # Refresh the full dashboard snapshot now (same as the V7 exit path) —
     # _update_dashboard_ltp() re-stamps ts but never recomputes the today
@@ -4104,33 +4104,33 @@ def _v8_execute_paper_exit(reason: str, exit_price: float):
         logger.debug("[DASH] Post-exit refresh: " + str(_de))
 
 
-def _v8_check_exit():
+def _v11_check_exit():
     """Tick-based exit check for V11 position. Called every scan cycle."""
-    with _v8_lock:
-        if not _v8_state.get("in_trade"):
+    with _v11_lock:
+        if not _v11_state.get("in_trade"):
             return
-        token          = int(_v8_state.get("token", 0) or 0)
-        initial_sl     = float(_v8_state.get("initial_sl", 0.0))
-        peak_ltp       = float(_v8_state.get("peak_ltp", 0.0))
-        peak_pnl_snap  = float(_v8_state.get("peak_pnl", 0.0))
-        active_tier    = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
-        entry_price_snap = float(_v8_state.get("entry_price", 0.0))
-        direction      = _v8_state.get("direction", "")
-        strike         = int(_v8_state.get("strike", 0) or 0)
+        token          = int(_v11_state.get("token", 0) or 0)
+        initial_sl     = float(_v11_state.get("initial_sl", 0.0))
+        peak_ltp       = float(_v11_state.get("peak_ltp", 0.0))
+        peak_pnl_snap  = float(_v11_state.get("peak_pnl", 0.0))
+        active_tier    = str(_v11_state.get("active_ratchet_tier", "INITIAL"))
+        entry_price_snap = float(_v11_state.get("entry_price", 0.0))
+        direction      = _v11_state.get("direction", "")
+        strike         = int(_v11_state.get("strike", 0) or 0)
         
         # Increment candles_held once per minute
         _cur_min = datetime.now().strftime("%H:%M")
-        _new_candle = _cur_min != _v8_state.get("_last_minute", "")
+        _new_candle = _cur_min != _v11_state.get("_last_minute", "")
         if _new_candle:
-            _v8_state["_last_minute"] = _cur_min
-            _v8_state["candles_held"] = _v8_state.get("candles_held", 0) + 1
+            _v11_state["_last_minute"] = _cur_min
+            _v11_state["candles_held"] = _v11_state.get("candles_held", 0) + 1
 
-        candles_held   = int(_v8_state.get("candles_held", 0))
+        candles_held   = int(_v11_state.get("candles_held", 0))
 
     # Persist state once per candle so peak_pnl / candles_held survive a restart.
-    # Safe to call here: _v8_lock is RLock so re-entry from _save_v8_state() is allowed.
+    # Safe to call here: _v11_lock is RLock so re-entry from _save_v11_state() is allowed.
     if _new_candle:
-        _save_v8_state()
+        _save_v11_state()
         with _v11_live_lock:
             _ce_snap = dict(_v11_live.get("CE", {}))
             _pe_snap = dict(_v11_live.get("PE", {}))
@@ -4159,37 +4159,37 @@ def _v8_check_exit():
             _eod_mins = 15 * 60 + 20
         if datetime.now().hour * 60 + datetime.now().minute >= _eod_mins:
             logger.warning("[V11] EOD reached with no live tick — force-closing at entry price")
-            _v8_execute_paper_exit("EOD_EXIT", round(entry_price_snap, 2))
+            _v11_execute_paper_exit("EOD_EXIT", round(entry_price_snap, 2))
         return
 
-    with _v8_lock:
+    with _v11_lock:
         avg_entry = entry_price_snap
 
         # Update peak LTP
         if ltp > peak_ltp:
             peak_ltp = ltp
-            _v8_state["peak_ltp"] = peak_ltp
-            _v8_state["peak_pnl"] = round(peak_ltp - avg_entry, 2)
+            _v11_state["peak_ltp"] = peak_ltp
+            _v11_state["peak_pnl"] = round(peak_ltp - avg_entry, 2)
 
         peak_pnl = peak_ltp - avg_entry
 
         # Study: mark first-profit tick and breakout tick (every ~1s)
         _cur_pnl = round(ltp - avg_entry, 2)
-        if _cur_pnl > 0 and not _v8_state.get("first_profit_ts"):
-            _v8_state["first_profit_candle"] = candles_held
-            _v8_state["first_profit_ltp"]    = round(ltp, 2)
-            _v8_state["first_profit_ts"]     = datetime.now().strftime("%H:%M:%S")
-        if _cur_pnl > V11_BREAKOUT_THRESHOLD and not _v8_state.get("breakout_ts"):
-            _v8_state["breakout_candle"] = candles_held
-            _v8_state["breakout_ltp"]    = round(ltp, 2)
-            _v8_state["breakout_ts"]     = datetime.now().strftime("%H:%M:%S")
+        if _cur_pnl > 0 and not _v11_state.get("first_profit_ts"):
+            _v11_state["first_profit_candle"] = candles_held
+            _v11_state["first_profit_ltp"]    = round(ltp, 2)
+            _v11_state["first_profit_ts"]     = datetime.now().strftime("%H:%M:%S")
+        if _cur_pnl > V11_BREAKOUT_THRESHOLD and not _v11_state.get("breakout_ts"):
+            _v11_state["breakout_candle"] = candles_held
+            _v11_state["breakout_ltp"]    = round(ltp, 2)
+            _v11_state["breakout_ts"]     = datetime.now().strftime("%H:%M:%S")
 
         # Determine dynamic trail SL
-        current_sl, tier = _v8_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
+        current_sl, tier = _v11_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
         
-        prev_tier = _v8_state.get("active_ratchet_tier", "")
-        _v8_state["active_ratchet_tier"] = tier
-        _v8_state["active_ratchet_sl"]   = round(current_sl, 2)
+        prev_tier = _v11_state.get("active_ratchet_tier", "")
+        _v11_state["active_ratchet_tier"] = tier
+        _v11_state["active_ratchet_sl"]   = round(current_sl, 2)
 
         # Tier upgrade alert
         if prev_tier and prev_tier != tier and tier != "INITIAL":
@@ -4199,20 +4199,20 @@ def _v8_check_exit():
                 f"New Stop: ₹{current_sl:.1f} (entry ₹{avg_entry:.1f})",
                 priority="critical"
             )
-            _save_v8_state()
+            _save_v11_state()
 
         # Track max OTM drift
         _spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
         if _spot_now > 0 and strike > 0:
             _otm = max(0.0, (strike - _spot_now) if direction == "CE" else (_spot_now - strike))
-            if _otm > _v8_state.get("max_otm_drift", 0.0):
-                _v8_state["max_otm_drift"] = _otm
+            if _otm > _v11_state.get("max_otm_drift", 0.0):
+                _v11_state["max_otm_drift"] = _otm
 
     # Exits checking (tick-based)
     if ltp <= current_sl:
         exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
                        "LOCK_4": "LOCK_4"}.get(tier, "VISHAL_TRAIL")
-        _v8_execute_paper_exit(exit_reason, round(current_sl, 2))
+        _v11_execute_paper_exit(exit_reason, round(current_sl, 2))
         return
 
     # EOD exit
@@ -4224,7 +4224,7 @@ def _v8_check_exit():
         eod_mins = 15 * 60 + 20
     now_mins = datetime.now().hour * 60 + datetime.now().minute
     if now_mins >= eod_mins:
-        _v8_execute_paper_exit("EOD_EXIT", float(ltp))
+        _v11_execute_paper_exit("EOD_EXIT", float(ltp))
 
 # ═══════════════════════════════════════════════════════════════
 #  STRIKE LOCKING — stable scanning, no flickering
@@ -4236,7 +4236,7 @@ _locked_at_spot   = None
 _locked_tokens    = {}
 _LOCK_SHIFT_THRESHOLD = 150  # relock if spot moves 150+ pts
 _last_dash_args = {}  # cached dashboard args for post-exit refresh
-_v8_last_entry_scan_ts = 0.0  # throttle V8 entry scan to every 3s
+_v11_last_entry_scan_ts = 0.0  # throttle V11 entry scan to every 3s
 spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
 
 V11_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
@@ -4272,7 +4272,7 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
             _tk = D.get_option_tokens(kite, _strike, expiry)
             if _tk.get(_dt):
                 _locked_tokens[_dt] = _tk[_dt]
-                _locked_tokens[_dt]["strike"] = _strike  # ensure strike survives into V8 entry display
+                _locked_tokens[_dt]["strike"] = _strike  # ensure strike survives into V11 entry display
 
         # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
         # Keys: CE_UP / CE_DN / PE_UP / PE_DN
@@ -4397,14 +4397,14 @@ def _load_state():
         logger.error("[MAIN] State load error: " + str(e))
 
 
-_V8_PERSIST_FIELDS = [
+_V11_PERSIST_FIELDS = [
     "in_trade", "symbol", "token", "direction", "strike",
     "entry_price", "entry_time", "qty",
     "peak_pnl", "active_ratchet_tier", "active_ratchet_sl",
     "candles_held", "_other_token",
     "_sl_cooldown_skip_next", "_force_exit_ts",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
-    "_v8_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
+    "_v11_both_rejected_ts", "_last_trade_date", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction_v10",
     "initial_sl", "entry_regime",
     "peak_ltp", "xleg_other_margin",
@@ -4419,55 +4419,55 @@ _V8_PERSIST_FIELDS = [
     "breakout_candle", "breakout_ltp", "breakout_ts",
 ]
 
-def _save_v8_state():
+def _save_v11_state():
     try:
-        with _v8_lock:
-            subset = {k: _v8_state.get(k) for k in _V8_PERSIST_FIELDS}
-        tmp = D.V8_STATE_FILE_PATH + ".tmp"
+        with _v11_lock:
+            subset = {k: _v11_state.get(k) for k in _V11_PERSIST_FIELDS}
+        tmp = D.V11_STATE_FILE_PATH + ".tmp"
         with open(tmp, "w") as f:
             json.dump(subset, f, indent=2, default=str)
-        os.replace(tmp, D.V8_STATE_FILE_PATH)
+        os.replace(tmp, D.V11_STATE_FILE_PATH)
     except Exception as e:
         logger.error("[V11] State save error: " + str(e))
 
-def _load_v8_state():
-    if not os.path.isfile(D.V8_STATE_FILE_PATH):
+def _load_v11_state():
+    if not os.path.isfile(D.V11_STATE_FILE_PATH):
         return
     try:
-        with open(D.V8_STATE_FILE_PATH) as f:
+        with open(D.V11_STATE_FILE_PATH) as f:
             saved = json.load(f)
-        with _v8_lock:
+        with _v11_lock:
             for k, v in saved.items():
-                if k in _v8_state:
-                    _v8_state[k] = v
+                if k in _v11_state:
+                    _v11_state[k] = v
         logger.info("[V11] State loaded from disk")
         # Reset daily counters if state file is from a previous day
         _today = date.today().isoformat()
         _last_date = str(saved.get("_last_trade_date", ""))
         if _last_date != _today:
-            with _v8_lock:
-                _v8_state["_pnl_today_pts"] = 0.0
-                _v8_state["_trades_today"]  = 0
-                _v8_state["_wins_today"]    = 0
-                _v8_state["_losses_today"]  = 0
-                _v8_state["_v8_both_rejected_ts"] = 0.0
-                _v8_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
+            with _v11_lock:
+                _v11_state["_pnl_today_pts"] = 0.0
+                _v11_state["_trades_today"]  = 0
+                _v11_state["_wins_today"]    = 0
+                _v11_state["_losses_today"]  = 0
+                _v11_state["_v11_both_rejected_ts"] = 0.0
+                _v11_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
             logger.info("[V11] New trading day — daily counters reset (last_date=" + _last_date + ")")
-        if _v8_state.get("in_trade"):
-            _sym  = str(_v8_state.get("symbol", ""))
-            _ep   = float(_v8_state.get("entry_price", 0))
-            _peak = float(_v8_state.get("peak_pnl", 0))
-            _tier  = str(_v8_state.get("active_ratchet_tier", "INITIAL"))
-            _sl    = float(_v8_state.get("active_ratchet_sl", 0) or 0)
+        if _v11_state.get("in_trade"):
+            _sym  = str(_v11_state.get("symbol", ""))
+            _ep   = float(_v11_state.get("entry_price", 0))
+            _peak = float(_v11_state.get("peak_pnl", 0))
+            _tier  = str(_v11_state.get("active_ratchet_tier", "INITIAL"))
+            _sl    = float(_v11_state.get("active_ratchet_sl", 0) or 0)
             if _sl <= 0: _sl = round(_ep - 12, 2)
-            _tok   = int(_v8_state.get("token", 0) or 0)
+            _tok   = int(_v11_state.get("token", 0) or 0)
             _ltp   = D.get_ltp(_tok) if _tok else 0
             _pnl   = round(_ltp - _ep, 1) if _ltp else 0
             _room  = round(_ltp - _sl, 1) if _ltp else 0
-            _dir   = str(_v8_state.get("direction", ""))
-            _strk  = str(_v8_state.get("strike", ""))
-            _qty   = int(_v8_state.get("qty", 0) or 0)
-            _etime = str(_v8_state.get("entry_time", ""))
+            _dir   = str(_v11_state.get("direction", ""))
+            _strk  = str(_v11_state.get("strike", ""))
+            _qty   = int(_v11_state.get("qty", 0) or 0)
+            _etime = str(_v11_state.get("entry_time", ""))
             _emj   = "🟢" if _dir == "CE" else "🔴"
             logger.info("[V11] Was in trade on last shutdown — " + _sym + " monitoring resumed")
             _tg_send(
@@ -4558,12 +4558,12 @@ def _reconcile_positions(kite):
 
 
 def _reset_daily(today_str: str):
-    # V8 shadow daily counters
-    _v8_state["_signals_today"]    = 0
-    _v8_state["_last_signal_time"] = ""
-    _v8_state["_last_fired_candle_ts"] = ""
-    with _v8_lock:
-        _v8_state["_sl_cooldown_skip_next"] = False  # BUG-FIX: clear stale ESL flag on new day
+    # V11 shadow daily counters
+    _v11_state["_signals_today"]    = 0
+    _v11_state["_last_signal_time"] = ""
+    _v11_state["_last_fired_candle_ts"] = ""
+    with _v11_lock:
+        _v11_state["_sl_cooldown_skip_next"] = False  # BUG-FIX: clear stale ESL flag on new day
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
@@ -5250,15 +5250,15 @@ def _update_dashboard_ltp():
                 if ltp > 0:
                     sig["ltp"] = round(ltp, 2)
 
-        # Update V11 position if in trade (_v8_state — V7 state never has V11 trades)
-        with _v8_lock:
-            _v11_it   = _v8_state.get("in_trade", False)
-            _v11_tk   = _v8_state.get("token", 0)
-            _v11_ep   = _v8_state.get("entry_price", 0)
-            _v11_pk   = _v8_state.get("peak_pnl", 0)
-            _v11_sl   = _v8_state.get("active_ratchet_sl", 0)
-            _v11_tier = _v8_state.get("active_ratchet_tier", "INITIAL")
-            _v11_can  = _v8_state.get("candles_held", 0)
+        # Update V11 position if in trade (_v11_state — V7 state never has V11 trades)
+        with _v11_lock:
+            _v11_it   = _v11_state.get("in_trade", False)
+            _v11_tk   = _v11_state.get("token", 0)
+            _v11_ep   = _v11_state.get("entry_price", 0)
+            _v11_pk   = _v11_state.get("peak_pnl", 0)
+            _v11_sl   = _v11_state.get("active_ratchet_sl", 0)
+            _v11_tier = _v11_state.get("active_ratchet_tier", "INITIAL")
+            _v11_can  = _v11_state.get("candles_held", 0)
         if _v11_it and _v11_tk:
             opt_ltp = D.get_ltp(_v11_tk)
             if opt_ltp > 0:
@@ -5358,8 +5358,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
     try:
         with _state_lock:
             st = dict(state)
-        with _v8_lock:
-            st_v10 = dict(_v8_state)
+        with _v11_lock:
+            st_v10 = dict(_v11_state)
 
         spot_3m = {}
         spot_3m = D.get_spot_indicators("3minute")
@@ -5747,11 +5747,11 @@ def _strategy_loop(kite):
                     time.sleep(60)
                     continue
             dte     = D.calculate_dte(expiry) if expiry else 0
-            # Keep _v8_state expiry/dte in sync — entry/exit functions read from here
+            # Keep _v11_state expiry/dte in sync — entry/exit functions read from here
             try:
-                with _v8_lock:
-                    _v8_state["expiry"] = expiry.isoformat() if expiry else ""
-                    _v8_state["dte"]    = dte
+                with _v11_lock:
+                    _v11_state["expiry"] = expiry.isoformat() if expiry else ""
+                    _v11_state["dte"]    = dte
             except Exception:
                 pass
             profile = {"conv_sl_pts": 12}
@@ -5760,23 +5760,23 @@ def _strategy_loop(kite):
 
             D.check_and_reconnect()
 
-            # ── V8 tick-based exit: runs every 1-second scan cycle ──
+            # ── V11 tick-based exit: runs every 1-second scan cycle ──
             # Must be OUTSIDE the _is_new_1min_candle gate — exits need to
             # fire on every tick, not once per minute at candle close.
-            _v8_check_exit()
+            _v11_check_exit()
 
-            # ── V8 entry: scan every 10 seconds (outside 1-min gate) ──
+            # ── V11 entry: scan every 10 seconds (outside 1-min gate) ──
             # BUG-16 fix: entry was gated to once-per-minute at :35s.
             # If candle turned green at :40s, bot missed it until next minute.
             # Now checks every 10s — same_candle_guard prevents double-entry.
-            global _v8_last_entry_scan_ts
-            _v8_force_exit_age = time.time() - float(_v8_state.get("_force_exit_ts", 0) or 0)
-            _v8_in_force_cooldown = (_v8_force_exit_age < 180 and float(_v8_state.get("_force_exit_ts", 0) or 0) > 0)
-            if (_v8_in_force_cooldown
-                    and not _v8_state.get("in_trade")
-                    and time.time() - _v8_last_entry_scan_ts >= 3):
-                _v8_last_entry_scan_ts = time.time()
-                logger.info(f"[REJECT-V8] force_exit_cooldown age={int(_v8_force_exit_age)}s — entries blocked 3 min after manual exit")
+            global _v11_last_entry_scan_ts
+            _v11_force_exit_age = time.time() - float(_v11_state.get("_force_exit_ts", 0) or 0)
+            _v11_in_force_cooldown = (_v11_force_exit_age < 180 and float(_v11_state.get("_force_exit_ts", 0) or 0) > 0)
+            if (_v11_in_force_cooldown
+                    and not _v11_state.get("in_trade")
+                    and time.time() - _v11_last_entry_scan_ts >= 3):
+                _v11_last_entry_scan_ts = time.time()
+                logger.info(f"[REJECT-V11] force_exit_cooldown age={int(_v11_force_exit_age)}s — entries blocked 3 min after manual exit")
             # (legacy entry scan removed — V11 Golden scanner drives all entries now)
 
 
@@ -5827,27 +5827,27 @@ def _strategy_loop(kite):
                         _decay_ok = (-8.0 <= _opp_margin <= V11_DECAY_HIGH) if _opp_ema9l > 0 else False
 
                         # Cooldown and basic guards
-                        _in_trade = bool(_v8_state.get("in_trade", False))
+                        _in_trade = bool(_v11_state.get("in_trade", False))
                         _in_cooldown = False
                         _cooldown_reason = ""
 
                         if now.time() < V11_OPEN_BLACKOUT_END:
                             _in_cooldown = True
                             _cooldown_reason = "open_blackout"
-                        elif _v8_state.get("_sl_cooldown_skip_next"):
+                        elif _v11_state.get("_sl_cooldown_skip_next"):
                             _in_cooldown = True
                             _cooldown_reason = "sl_cooldown"
-                            _v8_state["_sl_cooldown_skip_next"] = False  # consume: blocks one scan, then exit_candle_cooldown takes over
-                        elif _v8_state.get("_last_fired_candle_ts") == _sh_1m_bk_ts:
+                            _v11_state["_sl_cooldown_skip_next"] = False  # consume: blocks one scan, then exit_candle_cooldown takes over
+                        elif _v11_state.get("_last_fired_candle_ts") == _sh_1m_bk_ts:
                             _in_cooldown = True
                             _cooldown_reason = "same_candle"
-                        elif _v8_state.get("_last_exit_candle_ts") == _sh_1m_bk_ts:
+                        elif _v11_state.get("_last_exit_candle_ts") == _sh_1m_bk_ts:
                             _in_cooldown = True
                             _cooldown_reason = "exit_candle_cooldown"
-                        elif (_v8_state.get("_last_exit_direction_v10") == _sh_dir
-                              and time.time() - float(_v8_state.get("_last_exit_time_unix", 0)) < 180):
+                        elif (_v11_state.get("_last_exit_direction_v10") == _sh_dir
+                              and time.time() - float(_v11_state.get("_last_exit_time_unix", 0)) < 180):
                             _in_cooldown = True
-                            _remaining = int(180 - (time.time() - float(_v8_state.get("_last_exit_time_unix", 0))))
+                            _remaining = int(180 - (time.time() - float(_v11_state.get("_last_exit_time_unix", 0))))
                             _cooldown_reason = f"same_side_3min({_remaining}s)"
 
                         # Update reject reasons
@@ -5883,7 +5883,7 @@ def _strategy_loop(kite):
                                 _sh_spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
                                 _sh_nbr_otm = D.get_ltp(dir_tokens.get("CE_UP" if _sh_dir == "CE" else "PE_DN", {}).get("token", 0) or 0)
                                 _sh_nbr_itm = D.get_ltp(dir_tokens.get("CE_DN" if _sh_dir == "CE" else "PE_UP", {}).get("token", 0) or 0)
-                                _v8_execute_paper_entry(
+                                _v11_execute_paper_entry(
                                     direction=_sh_dir,
                                     strike=int(_sh_info.get("strike", 0) or 0),
                                     symbol=_sh_info.get("symbol", ""),
@@ -6161,13 +6161,13 @@ def _strategy_loop(kite):
                         "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
                         "spot": round(D.get_spot_ltp(), 1),
                         "atm_strike": int(_ce_info.get("strike", 0) or 0),
-                        "in_trade": bool(_v8_state.get("in_trade")),
-                        "direction": _v8_state.get("direction", ""),
-                        "entry_price": _v8_state.get("entry_price", 0),
-                        "peak_pnl": _v8_state.get("peak_pnl", 0),
-                        "trades_today": _v8_state.get("_trades_today", 0),
-                        "pnl_today_pts": _v8_state.get("_pnl_today_pts", 0.0),
-                        "losses_today": _v8_state.get("_losses_today", 0),
+                        "in_trade": bool(_v11_state.get("in_trade")),
+                        "direction": _v11_state.get("direction", ""),
+                        "entry_price": _v11_state.get("entry_price", 0),
+                        "peak_pnl": _v11_state.get("peak_pnl", 0),
+                        "trades_today": _v11_state.get("_trades_today", 0),
+                        "pnl_today_pts": _v11_state.get("_pnl_today_pts", 0.0),
+                        "losses_today": _v11_state.get("_losses_today", 0),
                         "CE": {
                             "strike": int(_ce_info.get("strike", 0) or 0),
                             "ltp": round(D.get_ltp(_ce_tok), 2) if _ce_tok else 0,
@@ -6332,29 +6332,29 @@ def _cmd_pulse(args):
         _td_loss = len(_trades_today) - _td_wins
         _last_t = _trades_today[-1] if _trades_today else None
 
-        _v8_in_trade = _v8_state.get("in_trade", False)
-        _v8_pos_str = ""
-        if _v8_in_trade:
-            _v8_ep  = float(_v8_state.get("entry_price", 0) or 0)
-            _v8_tok = int(_v8_state.get("token", 0) or 0)
-            _v8_ltp = D.get_ltp(_v8_tok) if _v8_tok else 0
-            _v8_pn  = round(_v8_ltp - _v8_ep, 1) if _v8_ltp else 0
-            _v8_pk  = float(_v8_state.get("peak_pnl", 0) or 0)
-            _v8_tier = _v8_state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
-            _v8_sl  = float(_v8_state.get("active_ratchet_sl", 0) or 0)
-            if _v8_sl <= 0: _v8_sl = float(_v8_state.get("initial_sl", 0) or round(_v8_ep - 12, 2))
-            _v8_lock = round(_v8_sl - _v8_ep, 1)
-            _v8_room = round(_v8_ltp - _v8_sl, 1) if _v8_ltp else 0
-            _v8_dir_emj = "🟢" if _v8_state.get("direction") == "CE" else "🔴"
-            _v8_sym = _v8_state.get("direction", "") + " " + str(_v8_state.get("strike", ""))
-            _v8_pos_str = (
-                "[V11] " + _v8_dir_emj + " " + _v8_sym + "  "
-                + ("+" if _v8_pn >= 0 else "") + str(_v8_pn) + "pts\n"
-                + "Entry ₹" + str(_v8_ep) + " → ₹" + str(round(_v8_ltp, 2))
-                + " · Peak +" + str(_v8_pk) + "\n"
-                + "Tier: " + _v8_tier + " @ ₹" + str(round(_v8_sl, 2))
-                + " (Lock " + ("+" if _v8_lock >= 0 else "") + str(_v8_lock)
-                + " · Room " + ("+" if _v8_room >= 0 else "") + str(_v8_room) + ")"
+        _v11_in_trade = _v11_state.get("in_trade", False)
+        _v11_pos_str = ""
+        if _v11_in_trade:
+            _v11_ep  = float(_v11_state.get("entry_price", 0) or 0)
+            _v11_tok = int(_v11_state.get("token", 0) or 0)
+            _v11_ltp = D.get_ltp(_v11_tok) if _v11_tok else 0
+            _v11_pn  = round(_v11_ltp - _v11_ep, 1) if _v11_ltp else 0
+            _v11_pk  = float(_v11_state.get("peak_pnl", 0) or 0)
+            _v11_tier = _v11_state.get("active_ratchet_tier", "INITIAL") or "INITIAL"
+            _v11_sl  = float(_v11_state.get("active_ratchet_sl", 0) or 0)
+            if _v11_sl <= 0: _v11_sl = float(_v11_state.get("initial_sl", 0) or round(_v11_ep - 12, 2))
+            _v11_lock = round(_v11_sl - _v11_ep, 1)
+            _v11_room = round(_v11_ltp - _v11_sl, 1) if _v11_ltp else 0
+            _v11_dir_emj = "🟢" if _v11_state.get("direction") == "CE" else "🔴"
+            _v11_sym = _v11_state.get("direction", "") + " " + str(_v11_state.get("strike", ""))
+            _v11_pos_str = (
+                "[V11] " + _v11_dir_emj + " " + _v11_sym + "  "
+                + ("+" if _v11_pn >= 0 else "") + str(_v11_pn) + "pts\n"
+                + "Entry ₹" + str(_v11_ep) + " → ₹" + str(round(_v11_ltp, 2))
+                + " · Peak +" + str(_v11_pk) + "\n"
+                + "Tier: " + _v11_tier + " @ ₹" + str(round(_v11_sl, 2))
+                + " (Lock " + ("+" if _v11_lock >= 0 else "") + str(_v11_lock)
+                + " · Room " + ("+" if _v11_room >= 0 else "") + str(_v11_room) + ")"
             )
 
         _ce_lck = _locked_ce_strike or "?"
@@ -6406,15 +6406,15 @@ def _cmd_pulse(args):
             + str(_td_wins) + "W " + str(_td_loss) + "L · "
             + ("+" if _td_pnl >= 0 else "") + "{:.1f}".format(_td_pnl) + " pts\n"
             + "⚡ V11: "
-            + str(_v8_state.get("_trades_today", 0)) + " trades · "
-            + str(_v8_state.get("_wins_today", 0)) + "W "
-            + str(_v8_state.get("_losses_today", 0)) + "L · "
-            + ("+" if _v8_state.get("_pnl_today_pts", 0) >= 0 else "")
-            + "{:.1f}".format(_v8_state.get("_pnl_today_pts", 0)) + " pts"
-            + (" | V8 active: " + str(_v8_state.get("direction", "")) + " "
-               + str(_v8_state.get("strike", ""))
-               + " peak +" + "{:.1f}".format(_v8_state.get("peak_pnl", 0))
-               if _v8_state.get("in_trade") else "")
+            + str(_v11_state.get("_trades_today", 0)) + " trades · "
+            + str(_v11_state.get("_wins_today", 0)) + "W "
+            + str(_v11_state.get("_losses_today", 0)) + "L · "
+            + ("+" if _v11_state.get("_pnl_today_pts", 0) >= 0 else "")
+            + "{:.1f}".format(_v11_state.get("_pnl_today_pts", 0)) + " pts"
+            + (" | V11 active: " + str(_v11_state.get("direction", "")) + " "
+               + str(_v11_state.get("strike", ""))
+               + " peak +" + "{:.1f}".format(_v11_state.get("peak_pnl", 0))
+               if _v11_state.get("in_trade") else "")
             + "\n"
             + ("Last: " + str(_last_t.get("entry_time", "?")) + " "
                + str(_last_t.get("direction", "?")) + " "
@@ -6424,7 +6424,7 @@ def _cmd_pulse(args):
                + str(_last_t.get("exit_reason", "?")) + ")\n" if _last_t else "")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>POSITION</b>\n"
-            + (_v8_pos_str + "\n" if _v8_in_trade else "—\n")
+            + (_v11_pos_str + "\n" if _v11_in_trade else "—\n")
             + "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ENGINE</b>\n"
             + ("Locked: CE " + str(_ce_lck) + " · PE " + str(_pe_lck) + "\n"
@@ -6488,9 +6488,9 @@ def _cmd_help(args):
 
 def _cmd_status(args):
     global _kite
-    # V11 is the live strategy — read _v8_state, not V7 state
-    with _v8_lock:
-        st = dict(_v8_state)
+    # V11 is the live strategy — read _v11_state, not V7 state
+    with _v11_lock:
+        st = dict(_v11_state)
     with _post_exit_lock:
         _post_n = len(_post_exit_observation)
     _post_exit_line = ""
@@ -6662,31 +6662,31 @@ def _cmd_resume(args):
 
 def _cmd_forceexit(args):
     v7_open = False
-    v8_open = False
+    v11_open = False
     with _state_lock:
         if state.get("in_trade"):
             state["force_exit"] = True
             v7_open = True
-    _v8_tok = 0
-    _v8_entry_px = 0.0
-    with _v8_lock:
-        if _v8_state.get("in_trade"):
-            v8_open = True
-            _v8_tok = int(_v8_state.get("token", 0) or 0)
-            _v8_entry_px = float(_v8_state.get("entry_price", 0) or 0)
-            _v8_state["_force_exit_ts"] = time.time()  # BUG-C fix: arm 3-min re-entry cooldown
+    _v11_tok = 0
+    _v11_entry_px = 0.0
+    with _v11_lock:
+        if _v11_state.get("in_trade"):
+            v11_open = True
+            _v11_tok = int(_v11_state.get("token", 0) or 0)
+            _v11_entry_px = float(_v11_state.get("entry_price", 0) or 0)
+            _v11_state["_force_exit_ts"] = time.time()  # BUG-C fix: arm 3-min re-entry cooldown
 
-    if not v7_open and not v8_open:
+    if not v7_open and not v11_open:
         _tg_send("No open trade.")
         return
-    if v7_open or v8_open:
+    if v7_open or v11_open:
         _tg_send("🚨 Force exit triggered.")
         logger.warning("[CTRL] Force exit")
-    if v8_open:
-        _ltp = D.get_ltp(_v8_tok) if _v8_tok else 0
+    if v11_open:
+        _ltp = D.get_ltp(_v11_tok) if _v11_tok else 0
         if _ltp <= 0:
-            _ltp = _v8_entry_px
-        _v8_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
+            _ltp = _v11_entry_px
+        _v11_execute_paper_exit("FORCE_EXIT", round(_ltp, 2))
 
 
 def _cmd_deploy(args):
@@ -7265,7 +7265,7 @@ def main():
     logger.info("[MAIN] Lot size from broker: " + str(live_lot_size))
 
     _load_state()
-    _load_v8_state()
+    _load_v11_state()
     _reconcile_positions(kite)
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
@@ -7355,14 +7355,14 @@ def main():
     # Restart with an open trade: option tokens are normally subscribed only
     # via _lock_strikes(), which runs inside is_trading_window() (09:15-15:00).
     # A restart outside that window left the position with ltp=0, and
-    # _v8_check_exit()'s ltp<=0 guard then disabled SL/trail/EOD exits
+    # _v11_check_exit()'s ltp<=0 guard then disabled SL/trail/EOD exits
     # entirely (2026-06-10: EOD_EXIT never fired on a stuck PE trade).
     # Subscribe the in-trade token + opposite leg unconditionally.
-    with _v8_lock:
+    with _v11_lock:
         _boot_trade_tokens = [
-            int(_v8_state.get("token", 0) or 0),
-            int(_v8_state.get("_other_token", 0) or 0),
-        ] if _v8_state.get("in_trade") else []
+            int(_v11_state.get("token", 0) or 0),
+            int(_v11_state.get("_other_token", 0) or 0),
+        ] if _v11_state.get("in_trade") else []
     if _boot_trade_tokens:
         D.subscribe_tokens(_boot_trade_tokens)
         logger.info("[MAIN] Open trade restored — resubscribed trade tokens: "

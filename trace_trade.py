@@ -15,7 +15,7 @@ from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE       = Path("/home/vishalraajput24/VISHAL_RAJPUT")
-STATE_FILE = BASE / "state/vrl_v8_state.json"        # engine truth
+STATE_FILE = BASE / "state/vrl_v11_state.json"        # engine truth
 DASH_FILE  = BASE / "state/vrl_dashboard.json"        # dashboard snapshot
 TRADE_LOG  = Path("/home/vishalraajput24/lab_data/vrl_trade_log.csv")
 LIVE_LOG   = Path.home() / "logs/live/vrl_live.log"
