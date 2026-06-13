@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+18, 1 lot single market fill) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v11_state` key that must survive restart, add it to BOTH the initial `_v11_state` dict AND `_V11_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -69,12 +69,17 @@ Tick-based (~1s), runs BEFORE the candle gate (BUG-01):
 peak < 9 pts   → INITIAL    : SL = initial_sl  (ema9_low capped at entry − 10)
 peak ≥ 9 pts   → PROTECT    : SL = max(initial_sl, entry − 2.0)
 peak ≥ 11 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
-peak ≥ 18 pts  → TRAIL_10   : SL = max(initial_sl, entry + 4.0, peak_ltp − 10.0)
+peak ≥ 15 pts  → TRAIL_10   : SL = max(initial_sl, entry + 9.0, peak_ltp − 10.0)
 ```
 
 Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
 (LOCK_4 replaced BREAKEVEN on 2026-06-10. PROTECT tier + LOCK_4 trigger 12→11 added 2026-06-11, owner-approved,
 validated by `sl_replay_study.py`: +31.5 pts over 54 replayed trades, 0 trades made worse.)
+**Merged top rung — owner-approved 2026-06-13:** the old separate `+18 → peak−10` tier was
+folded into one `peak ≥ 15` rung: `max(entry+9, peak−10)`. The `+9` floor holds from peak +15..+19
+(peak−10 only overtakes +9 at peak 19), then the trail takes over — so removing the +18 gate
+changes nothing for big winners while locking +9 (not +4) on the +15..+18 mid-winners that the
+old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 73 trades, 0 made worse.)
 
 - **EOD hard-close**: `config.yaml` → `exit.ema9_band.eod_exit_time` = **"15:15"** (changed from 15:20 on 2026-06-10). Checked tick-based inside `_v8_check_exit()`.
 - **No-tick safeguards** (PR #210, 2026-06-10 incident — restart after 15:00 left the open trade blind, EOD never fired):
@@ -240,7 +245,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+18 peak−10. Change only with explicit user confirmation (ladder values owner-approved 2026-06-11 via sl_replay_study.py).
+- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier). Change only with explicit user confirmation (ladder values validated via sl_replay_study.py).
 
 ---
 

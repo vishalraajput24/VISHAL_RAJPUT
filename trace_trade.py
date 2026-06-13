@@ -54,9 +54,9 @@ def _ok(a, b, tol=0.05):
 
 def _expected_sl_tier(peak_pnl, initial_sl, entry_price):
     """Compute the expected SL and tier from V11 Golden rules."""
-    if peak_pnl >= 18.0:
+    if peak_pnl >= 15.0:
         peak_ltp = entry_price + peak_pnl
-        sl = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
+        sl = max(initial_sl, entry_price + 9.0, peak_ltp - 10.0)
         return round(sl, 2), "TRAIL_10"
     elif peak_pnl >= 11.0:
         sl = max(initial_sl, entry_price + 4.0)
