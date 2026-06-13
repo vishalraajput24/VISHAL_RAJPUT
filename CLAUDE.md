@@ -14,7 +14,7 @@ If you are Google Antigravity reading this:
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
 3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
-5. If you add a new `_v11_state` key that must survive restart, add it to BOTH the initial `_v11_state` dict AND `_V11_PERSIST_FIELDS`. (Note: internal code still uses `_v8_*` prefix — full rename pending a dedicated PR.)
+5. If you add a new `_v11_state` key that must survive restart, add it to BOTH the initial `_v11_state` dict AND `_V11_PERSIST_FIELDS`.
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
 
 Claude Code follows the same rules. Both agents stay in sync through this file and git history.
@@ -26,7 +26,7 @@ NIFTY weekly-options bot. Zerodha **Kite** for market data, **m.Stock** for live
 
 - **Mode** is config-driven: `config.yaml` → `mode: paper | live` → `D.PAPER_MODE = CFG.is_paper()`
   - **paper**: fills simulated, logged as `PAPER_*`, zero slippage
-  - **live**: ⚠️ **NOT currently wired.** The V11 `_v8_execute_paper_entry`/`_v8_execute_paper_exit` path simulates fills in *both* modes — it never calls `ms_place_buy`/`ms_place_sell`. Flipping `mode: live` today still produces paper fills. The old V7 real-order path (`_execute_entry`/`_execute_exit_v13`) was removed 2026-06-13 (it was dead — gated on the legacy `state` dict V11 never sets). The m.Stock order **primitives** (`ms_place_buy`, `ms_place_sell`, `place_entry`, `place_exit`) were KEPT as building blocks — to make live work, wire them into the `_v8` path behind `not D.PAPER_MODE`. The m.Stock *read* calls (`ms_get_funds`, `ms_get_banner_line`) ARE live and feed the dashboard.
+  - **live**: ⚠️ **NOT currently wired.** The V11 `_v11_execute_paper_entry`/`_v11_execute_paper_exit` path simulates fills in *both* modes — it never calls `ms_place_buy`/`ms_place_sell`. Flipping `mode: live` today still produces paper fills. The old V7 real-order path (`_execute_entry`/`_execute_exit_v13`) was removed 2026-06-13 (it was dead — gated on the legacy `state` dict V11 never sets). The m.Stock order **primitives** (`ms_place_buy`, `ms_place_sell`, `place_entry`, `place_exit`) were KEPT as building blocks — to make live work, wire them into the `_v11` path behind `not D.PAPER_MODE`. The m.Stock *read* calls (`ms_get_funds`, `ms_get_banner_line`) ARE live and feed the dashboard.
 - **Strategy**: V11 Golden — 1-min engine. `V11_LIVE = True`. Version string: `v21`.
 - No shadow scanners, no P3, no V2 trackers — single code path. **Legacy V7 engine removed 2026-06-13** (~1,140 lines: `_execute_entry`, `_execute_exit_v13`, `check_entry`, `_evaluate_entry_gates_pure`, `_evaluate_exit_chain_pure`, `manage_exit`, `compute_trail_sl`, `pre_entry_checks`, `evaluate_cross_leg`, `evaluate_filters`/`log_entry` shadow-logging, + the two dead `if _in_trade:` loop blocks). File ~10,150 → ~9,010 lines.
 
@@ -81,7 +81,7 @@ folded into one `peak ≥ 15` rung: `max(entry+9, peak−10)`. The `+9` floor ho
 changes nothing for big winners while locking +9 (not +4) on the +15..+18 mid-winners that the
 old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 73 trades, 0 made worse.)
 
-- **EOD hard-close**: `config.yaml` → `exit.ema9_band.eod_exit_time` = **"15:15"** (changed from 15:20 on 2026-06-10). Checked tick-based inside `_v8_check_exit()`.
+- **EOD hard-close**: `config.yaml` → `exit.ema9_band.eod_exit_time` = **"15:15"** (changed from 15:20 on 2026-06-10). Checked tick-based inside `_v11_check_exit()`.
 - **No-tick safeguards** (PR #210, 2026-06-10 incident — restart after 15:00 left the open trade blind, EOD never fired):
   1. Startup resubscribes the in-trade token + `_other_token` unconditionally (option tokens are otherwise only subscribed via `_lock_strikes()`, which is gated to the 09:15–15:00 trading window).
   2. If `ltp <= 0` when EOD time is reached, the trade is force-closed at average entry price (same fallback as `/forceexit`) instead of silently skipping the exit check.
@@ -102,7 +102,7 @@ old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 7
 | `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
 | `screener/` | Stock F&O SMI paper engine + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
-| `state/vrl_v8_state.json` | **Primary V11 engine state** — `_v11_state` (filename uses legacy `v8` prefix — rename pending) |
+| `state/vrl_v11_state.json` | **Primary V11 engine state** — `_v11_state` |
 | `state/vrl_live_state.json` | Legacy V7 state — still written by bot, not used by V11 strategy logic |
 | `state/vrl_dashboard.json` | Dashboard snapshot — full rebuild (`_write_dashboard`) once per 1-min candle + after every exit (V11 and V7 paths); fast path `_update_dashboard_ltp` every 5–10s only refreshes ts/LTP/position, never the `today` block |
 
@@ -130,7 +130,6 @@ before ~2026-06-25.** Spec (evidence: `smi_backtest.py`, `smi_pe_tuning.py`, `sm
 
 ### Stale artifacts in state/ (do not rely on)
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale
-- `vrl_v10_state.json` — orphaned file; active state is in `vrl_v8_state.json` (rename pending)
 - `bw_gap_study.csv` — BW/RSI study; gates removed in V11 Golden
 - `vrl_zones.json` — zones engine removed; `/api/zones` route deleted 2026-06-10
 
@@ -168,16 +167,16 @@ cd ~/VISHAL_RAJPUT && git checkout main && git pull && sudo systemctl restart vr
 ---
 
 ## State persistence
-`_V11_PERSIST_FIELDS` (code: `_V8_PERSIST_FIELDS`) controls what survives restart. Any new key MUST be added to BOTH:
-1. The initial `_v11_state = { ... }` dict (code: `_v8_state`) so `_load_v11_state` restores it
-2. `_V11_PERSIST_FIELDS` (code: `_V8_PERSIST_FIELDS`) so `_save_v11_state` writes it
+`_V11_PERSIST_FIELDS` controls what survives restart. Any new key MUST be added to BOTH:
+1. The initial `_v11_state = { ... }` dict so `_load_v11_state` restores it
+2. `_V11_PERSIST_FIELDS` so `_save_v11_state` writes it
 
 Fields currently persisted:
 `in_trade`, `symbol`, `token`, `direction`, `strike`, `entry_price`, `entry_time`, `qty`,
 `peak_pnl`, `active_ratchet_tier`, `active_ratchet_sl`, `candles_held`, `_other_token`,
 `_sl_cooldown_skip_next`, `_force_exit_ts`,
 `_pnl_today_pts`, `_trades_today`, `_wins_today`, `_losses_today`,
-`_v8_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
+`_v11_both_rejected_ts`, `_last_trade_date`, `_last_exit_candle_ts`,
 `_last_exit_time_unix`, `_last_exit_direction_v10`,
 `initial_sl`, `entry_regime`,
 `peak_ltp`, `xleg_other_margin`, `spot_regime_at_entry`,
@@ -193,7 +192,7 @@ Fields currently persisted:
 - **Main loop** — single thread, ~1s cycle
 - **TG listener** — `TGListener` daemon thread (Telegram commands)
 - **Web server** — `ThreadingHTTPServer` + `_WebHandler` daemon (port 8080)
-- **`_v11_lock`** (code: `_v8_lock`) — `threading.RLock()` — protects all `_v11_state` reads/writes; RLock allows `_save_v8_state()` to re-enter from within exit-check block
+- **`_v11_lock`** — `threading.RLock()` — protects all `_v11_state` reads/writes; RLock allows `_save_v11_state()` to re-enter from within exit-check block
 - **`_state_lock`** — protects legacy `state` dict
 - **Rule**: any function callable from both main loop and TG/web thread must hold `_v11_lock` for the full check-and-act section. Never check under lock, release, then act.
 
@@ -204,7 +203,7 @@ _v11_live             — dict {"CE": {...}, "PE": {...}} — gate snapshot fed 
 _v11_live_lock        — threading.Lock() protecting _v11_live
 ```
 Scanner runs every 3s **regardless of `in_trade`** so `_v11_live` stays warm with live EMA9 data for the dashboard. When `in_trade=True`, the inner guard sets `reject_reason="in_trade"` and `_ready_to_fire=False` — no entry fires, but `_v11_live` is updated.
-Scanner fires `_v11_execute_paper_entry` (code: `_v8_execute_paper_entry`) when MOMENTUM + OPP DECAY both pass and no cooldowns active.
+Scanner fires `_v11_execute_paper_entry` when MOMENTUM + OPP DECAY both pass and no cooldowns active.
 **Expiry** is determined by the broker (Kite instrument list) at startup — never calculate it manually.
 
 ---
@@ -217,7 +216,7 @@ python3 watch_trade.py          # foreground
 nohup python3 watch_trade.py &  # background
 ```
 Polls every 2s (in trade) / 10s (idle). Cross-checks:
-- `state/vrl_v8_state.json` (V11 engine state) vs `state/vrl_dashboard.json` (9 fields)
+- `state/vrl_v11_state.json` (V11 engine state) vs `state/vrl_dashboard.json` (9 fields)
 - V11 SL tier formula (peak < 9 / ≥ 9 / ≥ 11 / ≥ 18)
 - Telegram log: entry alert, SL upgrade alert, exit alert
 Mismatches appended to `~/lab_data/trade_audit_notes.md`.

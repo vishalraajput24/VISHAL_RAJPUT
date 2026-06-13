@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
-#  VISHAL RAJPUT TRADE v17 — Central Configuration
-#  V8 (LIVE):   3-min | 5-gate entry | Trail SL LOCK_4→LOCK_50
-#  V7 (SHADOW): 15-min | 2-gate | signals only, no trades
+#  VISHAL RAJPUT TRADE — Central Configuration
+#  V11 Golden (LIVE): 1-min | MOMENTUM(ema9h+3.5) + OPP DECAY[-8,-6]
+#                     | SL ladder PROTECT@9 → LOCK_4@11 → TRAIL@15(max(entry+9,peak-10))
 # ═══════════════════════════════════════════════════════════════
 
 version: "v17"

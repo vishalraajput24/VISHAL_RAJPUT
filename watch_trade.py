@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 BASE        = Path(__file__).parent
-STATE_FILE  = BASE / "state/vrl_v8_state.json"
+STATE_FILE  = BASE / "state/vrl_v11_state.json"
 DASH_FILE   = BASE / "state/vrl_dashboard.json"
 LOG_FILE    = Path.home() / "logs/live/vrl_live.log"
 CSV_FILE    = Path.home() / "lab_data/vrl_trade_log.csv"
