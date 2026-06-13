@@ -3,7 +3,7 @@
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
 #  V11 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-6] all day
 #               Single-lot entry (market fill @ candle close)
-#  V11 Exit:   INITIAL(ema9_low) → LOCK_4(@+12, entry+4) → TRAIL_10(@+18, peak-10)
+#  V11 Exit:   INITIAL(ema9_low) → PROTECT(@+9,-2) → LOCK_4(@+11,+4) → TRAIL_10(@+15, max(entry+9, peak-10))
 # ═══════════════════════════════════════════════════════════════
 
 import csv
@@ -4164,15 +4164,18 @@ _v8_lock = threading.RLock()  # RLock: _save_v8_state() re-enters this lock from
 
 
 def _v8_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
-    """V11 dynamic exit rules (owner-approved 2026-06-11, validated by sl_replay_study.py):
+    """V11 dynamic exit rules (owner-approved 2026-06-13, validated by sl_replay_study.py):
     - Initial SL is 1-min ema9_low at entry (passed as initial_sl), capped at entry-10.
     - Protect entry-2.0 once profit hits +9.0 pts (giveback never exceeds 2 pts).
     - Lock entry+4.0 once profit hits +11.0 pts (capture a small win, not a scratch).
-    - Dynamic trail at Peak - 10.0 pts once profit hits +18.0 pts.
+    - Lock+Trail once profit hits +15.0 pts: SL = max(entry+9, peak-10). This single
+      rung absorbs the old separate +18 trail tier — peak-10 only overtakes the +9 lock
+      at peak 19, so the +9 floor holds from +15..+19 then the trail takes over.
+      Replay: +25.1 pts over 73 trades, 0 trades made worse vs the old 4-rung ladder.
     """
-    if peak_pnl >= 18.0:
+    if peak_pnl >= 15.0:
         peak_ltp = entry_price + peak_pnl
-        trail_val = max(initial_sl, entry_price + 4.0, peak_ltp - 10.0)
+        trail_val = max(initial_sl, entry_price + 9.0, peak_ltp - 10.0)
         return round(trail_val, 2), "TRAIL_10"
     elif peak_pnl >= 11.0:
         trail_val = max(initial_sl, entry_price + 4.0)
@@ -4334,7 +4337,7 @@ def _v8_execute_paper_entry(direction: str, strike: int, symbol: str, token: int
         f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low, max 10 pts)\n"
         f"XLeg Margin  {_v8_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Trail: +9 → Protect entry-2  |  +11 → Lock entry+4  |  +18 → Trail Peak-10",
+        "Trail: +9 → Protect entry-2  |  +11 → Lock entry+4  |  +15 → max(entry+9, Peak-10)",
         priority="critical"
     )
     _save_v8_state()
@@ -5523,7 +5526,7 @@ def _alert_bot_started():
         "INITIAL    peak < 9    → max(ema9_low, entry − 10)\n"
         "PROTECT    peak ≥ 9    → max(initial, entry − 2)\n"
         "LOCK_4     peak ≥ 11   → max(initial, entry + 4)\n"
-        "TRAIL_10   peak ≥ 18   → max(initial, entry + 4, peak − 10)\n"
+        "TRAIL_10   peak ≥ 15   → max(initial, entry + 9, peak − 10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>EXITS</b>  initial_sl | LOCK_4 | TRAIL_10 | EOD " + CFG.exit_ema9_band("eod_exit_time", "15:15") + "\n"
         "/help for commands"
@@ -5796,7 +5799,7 @@ def _execute_entry(kite, option_info: dict, option_type: str,
         "<b>STOP</b>\n"
         "Hard SL   -" + str(_sl_pts) + " pts (₹"
         + "{:.1f}".format(_initial_sl) + ")\n"
-        "Trail (V11): ≥12→+4 | ≥24→+12 | ≥30→+20 | ≥36→+30 | ≥40→+36 | ≥50→+50\n"
+        "Trail (V11): +9→entry−2 | +11→entry+4 | +15→max(entry+9, peak−10)\n"
     )
 
     _slip_block = ""
@@ -7577,7 +7580,7 @@ def _cmd_pulse(args):
             "INITIAL    peak<9    max(ema9_low, entry−10)\n"
             "PROTECT    peak≥9    max(initial, entry−2)\n"
             "LOCK_4     peak≥11   max(initial, entry+4)\n"
-            "TRAIL_10   peak≥18   max(initial, entry+4, peak−10)\n"
+            "TRAIL_10   peak≥15   max(initial, entry+9, peak−10)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "<b>ERRORS</b> (today, last 5)\n"
             + (_ok(False) + " " + str(len(_err_lines)) + " errors\n<pre>"
@@ -7716,7 +7719,7 @@ def _cmd_status(args):
         "Peak   : +" + str(round(peak, 1)) + "pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _stop_line + "  (" + str(_stop_dist) + "pts away)\n"
-        "Ladder : +9→PROTECT  +11→LOCK_4  +18→TRAIL_10\n"
+        "Ladder : +9→PROTECT  +11→LOCK_4  +15→TRAIL_10(entry+9/peak−10)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         + _post_exit_line +
         "Day PNL: " + ("+" if _day_pts >= 0 else "") + str(_day_pts) + "pts  "
