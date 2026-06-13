@@ -26,9 +26,9 @@ NIFTY weekly-options bot. Zerodha **Kite** for market data, **m.Stock** for live
 
 - **Mode** is config-driven: `config.yaml` → `mode: paper | live` → `D.PAPER_MODE = CFG.is_paper()`
   - **paper**: fills simulated, logged as `PAPER_*`, zero slippage
-  - **live**: real orders via m.Stock (`MSTOCK.ms_place_buy` / `ms_place_sell`) with limit-price buffer
+  - **live**: ⚠️ **NOT currently wired.** The V11 `_v8_execute_paper_entry`/`_v8_execute_paper_exit` path simulates fills in *both* modes — it never calls `ms_place_buy`/`ms_place_sell`. Flipping `mode: live` today still produces paper fills. The old V7 real-order path (`_execute_entry`/`_execute_exit_v13`) was removed 2026-06-13 (it was dead — gated on the legacy `state` dict V11 never sets). The m.Stock order **primitives** (`ms_place_buy`, `ms_place_sell`, `place_entry`, `place_exit`) were KEPT as building blocks — to make live work, wire them into the `_v8` path behind `not D.PAPER_MODE`. The m.Stock *read* calls (`ms_get_funds`, `ms_get_banner_line`) ARE live and feed the dashboard.
 - **Strategy**: V11 Golden — 1-min engine. `V11_LIVE = True`. Version string: `v21`.
-- No shadow scanners, no P3, no V2 trackers — single code path.
+- No shadow scanners, no P3, no V2 trackers — single code path. **Legacy V7 engine removed 2026-06-13** (~1,140 lines: `_execute_entry`, `_execute_exit_v13`, `check_entry`, `_evaluate_entry_gates_pure`, `_evaluate_exit_chain_pure`, `manage_exit`, `compute_trail_sl`, `pre_entry_checks`, `evaluate_cross_leg`, `evaluate_filters`/`log_entry` shadow-logging, + the two dead `if _in_trade:` loop blocks). File ~10,150 → ~9,010 lines.
 
 ### Module-as-namespace pattern
 `VRL_MAIN.py` aliases itself:
