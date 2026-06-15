@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-13 (feat/v11-version-bump). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-15 (feat/v11-mstock-live-wiring). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -26,7 +26,12 @@ NIFTY weekly-options bot. Zerodha **Kite** for market data, **m.Stock** for live
 
 - **Mode** is config-driven: `config.yaml` → `mode: paper | live` → `D.PAPER_MODE = CFG.is_paper()`
   - **paper**: fills simulated, logged as `PAPER_*`, zero slippage
-  - **live**: ⚠️ **NOT currently wired.** The V11 `_v11_execute_paper_entry`/`_v11_execute_paper_exit` path simulates fills in *both* modes — it never calls `ms_place_buy`/`ms_place_sell`. Flipping `mode: live` today still produces paper fills. The old V7 real-order path (`_execute_entry`/`_execute_exit_v13`) was removed 2026-06-13 (it was dead — gated on the legacy `state` dict V11 never sets). The m.Stock order **primitives** (`ms_place_buy`, `ms_place_sell`, `place_entry`, `place_exit`) were KEPT as building blocks — to make live work, wire them into the `_v11` path behind `not D.PAPER_MODE`. The m.Stock *read* calls (`ms_get_funds`, `ms_get_banner_line`) ARE live and feed the dashboard.
+  - **live**: ✅ **WIRED 2026-06-15 (owner-approved).** The V11 path now calls the m.Stock order primitives behind `not D.PAPER_MODE`:
+    - **Entry** (`_v11_execute_paper_entry`): calls `place_entry(_kite, symbol, token, direction, qty, entry_price)` → `ms_place_buy` **LIMIT at ref + buffer (1%, min 2pts), 8s cancel**. On non-fill/rejection the entry is **aborted** (no `in_trade`), a TG "entry MISSED" alert fires, and the candle is stamped so the 3s scanner won't hammer it. On fill, the **broker fill price** (not the candle close) becomes `entry_price` for all SL/PnL math.
+    - **Exit** (`_v11_execute_paper_exit`): calls `place_exit(_kite, …)` → `ms_place_sell` **MARKET** (with built-in retry/backoff) **before** clearing state. If the exit ultimately fails the position is **still open at the broker**, so state is NOT cleared and NO CSV row is written (`in_trade` stays True) — a critical TG "MANUAL ACTION" alert fires and the exit ladder/EOD retries on the next tick. On success the **broker fill price** is recorded.
+    - Both broker calls run **outside `_v11_lock`** (they block up to ~8s; holding the RLock that long would freeze the exit/TG/web threads). The **paper path is byte-for-byte unchanged.**
+    - ⚠️ **Live ≠ paper track record**: paper fills at candle close (zero slippage); live entry is a LIMIT that can **miss** fast breakouts paper caught (owner chose LIMIT+buffer over MARKET, 2026-06-15). Flip `config.yaml` → `mode: live` + restart to activate. CSV `entry_slippage`/`exit_slippage` still hardcode 0 (real slippage not yet threaded through — follow-up).
+    - The old V7 real-order path (`_execute_entry`/`_execute_exit_v13`) was removed 2026-06-13 (dead — gated on the legacy `state` dict V11 never sets). The m.Stock *read* calls (`ms_get_funds`, `ms_get_banner_line`) ARE live and feed the dashboard.
 - **Strategy**: V11 Golden — 1-min engine. `V11_LIVE = True`. Version string: `v21`.
 - No shadow scanners, no P3, no V2 trackers — single code path. **Legacy V7 engine removed 2026-06-13** (~1,140 lines: `_execute_entry`, `_execute_exit_v13`, `check_entry`, `_evaluate_entry_gates_pure`, `_evaluate_exit_chain_pure`, `manage_exit`, `compute_trail_sl`, `pre_entry_checks`, `evaluate_cross_leg`, `evaluate_filters`/`log_entry` shadow-logging, + the two dead `if _in_trade:` loop blocks). File ~10,150 → ~9,010 lines.
 
