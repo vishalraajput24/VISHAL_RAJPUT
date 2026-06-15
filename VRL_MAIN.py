@@ -681,6 +681,20 @@ def ms_place_sell(mc, symbol: str, qty: int,
         fill_price, fill_qty = ms_verify_fill(mc, order_id, timeout_secs)
 
         if fill_qty == 0:
+            # Before reporting failure, re-check the order book. A MARKET sell can
+            # fill just after the verify deadline; if the CALLER retries on a false
+            # failure it sells a position we no longer hold → NAKED SHORT. Never
+            # report a filled sell as failed (mirror of the buy adopt-on-fill fix).
+            time.sleep(0.6)
+            order = _ms_lookup_order(mc, order_id)
+            status = str(order.get("status", "")).lower()
+            if status in _FILLED_STATUSES and int(order.get("filled_quantity", 0) or 0) > 0:
+                fill_price = float(order.get("average_price", 0) or 0)
+                fill_qty   = int(order.get("filled_quantity", 0) or 0)
+                logger.warning(f"[MSTOCK] EXIT FILLED (detected after timeout): "
+                               f"price={fill_price} qty={fill_qty} {order_id}")
+                return {"ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+                        "order_id": order_id, "error": "", "slippage": 0}
             logger.error(f"[MSTOCK] EXIT NOT FILLED — manual action required: {order_id}")
             return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
                     "order_id": order_id,
@@ -7146,16 +7160,31 @@ def place_exit(kite, symbol: str, token: int,
         result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
         return result
 
-    # First attempt failed — retry with exponential backoff (3 attempts total)
+    # First attempt failed — retry with exponential backoff (3 attempts total).
+    # Before each retry, re-check the PREVIOUS sell order: a MARKET order can fill
+    # late, and re-selling on top of a fill creates a naked short. Only place
+    # another sell once the prior order is confirmed not traded.
+    _prev_order_id = result.get("order_id", "")
     for _retry in range(2, 4):
         _wait = 2 ** (_retry - 1)  # 2s, 4s
         logger.warning(f"[TRADE] Exit attempt {_retry-1} failed — retry {_retry} in {_wait}s")
         time.sleep(_wait)
+        if _prev_order_id:
+            _prev = MSTOCK._ms_lookup_order(mc, _prev_order_id)
+            _pstatus = str(_prev.get("status", "")).lower()
+            if _pstatus in MSTOCK._FILLED_STATUSES and int(_prev.get("filled_quantity", 0) or 0) > 0:
+                _fp = float(_prev.get("average_price", 0) or 0)
+                logger.warning(f"[TRADE] Prior exit order filled late — adopting, no re-sell: {_prev_order_id}")
+                return {"ok": True, "fill_price": _fp,
+                        "fill_qty": int(_prev.get("filled_quantity", 0) or 0),
+                        "order_id": _prev_order_id, "error": "",
+                        "slippage": round(exit_price_ref - _fp, 2)}
         result = MSTOCK.ms_place_sell(mc, symbol, qty,
                                       timeout_secs=_verify_timeout("exit", 8))
         if result["ok"]:
             result["slippage"] = round(exit_price_ref - result["fill_price"], 2)
             return result
+        _prev_order_id = result.get("order_id", "") or _prev_order_id
 
     # MStock is the only broker for orders — Kite is data-only
     logger.critical("CRITICAL: Exit failed for " + symbol
