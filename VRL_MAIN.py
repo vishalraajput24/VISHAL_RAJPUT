@@ -3795,6 +3795,30 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
     now_dt  = datetime.now()
     now_str = now_dt.strftime("%H:%M:%S")
 
+    # ── LIVE: place the real m.Stock entry BEFORE recording state ──────────────
+    # Runs outside _v11_lock — place_entry blocks up to ~8s waiting for the LIMIT
+    # fill, and holding the RLock that long would freeze the exit/TG/web threads.
+    # On a non-fill (LIMIT cancelled after 8s, rejection, partial) we abort the
+    # entry and stamp the candle so the 3s scanner doesn't hammer the same bar.
+    if not D.PAPER_MODE:
+        with _v11_lock:
+            if _v11_state.get("in_trade"):
+                logger.warning("[V11] Live entry attempted while already in_trade — BLOCKED")
+                return
+        _live = place_entry(_kite, symbol, token, direction, qty, entry_price)
+        if not _live.get("ok"):
+            logger.warning("[V11] LIVE entry not filled: " + str(_live.get("error", "")))
+            _tg_send(
+                f"⚠️ <b>V11 LIVE entry MISSED {direction} {strike}</b>\n"
+                f"LIMIT ~₹{entry_price:.1f} unfilled in 8s — {_live.get('error', '')}",
+                priority="high")
+            with _v11_lock:
+                _v11_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
+            _save_v11_state()
+            return
+        # Use the broker's real fill price for SL/PnL math — not the candle close.
+        entry_price = round(_live.get("fill_price", entry_price), 2)
+
     with _v11_lock:
         if _v11_state.get("in_trade"):
             logger.warning("[V11] Entry attempted while already in_trade — BLOCKED")
@@ -3894,7 +3918,7 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
     _tg_send(
         f"{_ce_pe} <b>V11 GOLDEN ENTRY {direction} {strike}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Entry (Mkt)  ₹{entry_price:.1f} ({qty} Qty) @ {now_str}\n"
+        f"Entry ({'Mkt' if D.PAPER_MODE else 'Lmt'})  ₹{entry_price:.1f} ({qty} Qty) @ {now_str}\n"
         f"Initial SL   ₹{initial_sl:.1f} (1m EMA9 Low, max 10 pts)\n"
         f"XLeg Margin  {_v11_state['xleg_other_margin']:+.1f} pts\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -3905,7 +3929,35 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
 
 
 def _v11_execute_paper_exit(reason: str, exit_price: float):
-    """Close V11 paper position. Logs trade to CSV."""
+    """Close V11 position. In LIVE mode places the real m.Stock SELL first, then
+    records the close at the broker's fill price. Logs trade to CSV."""
+    # ── LIVE: fire the real m.Stock MARKET SELL BEFORE clearing state ──────────
+    # Outside _v11_lock — place_exit has its own retry/backoff (up to ~6s). If the
+    # exit ultimately fails the position is STILL OPEN at the broker, so we keep
+    # in_trade=True (no state clear, no CSV row) and alert for manual action; the
+    # exit ladder / EOD check will re-fire on the next tick and retry.
+    if not D.PAPER_MODE:
+        with _v11_lock:
+            if not _v11_state.get("in_trade"):
+                return
+            _ex_symbol = _v11_state.get("symbol", "")
+            _ex_dir    = _v11_state.get("direction", "")
+            _ex_token  = int(_v11_state.get("token", 0) or 0)
+            _ex_qty    = int(_v11_state.get("qty", 0) or 0)
+        _live = place_exit(_kite, _ex_symbol, _ex_token, _ex_dir, _ex_qty, exit_price, reason)
+        if not _live.get("ok"):
+            logger.critical("[V11] LIVE EXIT FAILED — position STILL OPEN: "
+                            + _ex_symbol + " reason=" + reason
+                            + " err=" + str(_live.get("error", "")))
+            _tg_send(
+                f"🚨 <b>V11 LIVE EXIT FAILED — MANUAL ACTION</b>\n"
+                f"{_ex_symbol} ({_ex_qty} Qty) still OPEN — {reason}\n"
+                f"Broker error: {_live.get('error', '')}",
+                priority="critical")
+            return
+        # Record the close at the broker's real fill price.
+        exit_price = round(_live.get("fill_price", exit_price), 2)
+
     with _v11_lock:
         if not _v11_state.get("in_trade"):
             return
