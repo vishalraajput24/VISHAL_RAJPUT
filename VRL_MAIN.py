@@ -3741,6 +3741,11 @@ _v11_state = {
     # Strike management data collection (reset per trade, not persisted)
     "entry_spot": 0.0,
     "entry_atm_dist": 0,      # strike - true_ATM at entry (CE: + = ITM, - = OTM)
+    # Vishal Anti-Chase Filter (VAC) — own-leg 3-candle run into the entry candle.
+    # Analysis only (NOT a gate). High m3 = chasing an extended move; research
+    # (2026-06-15) showed m3>8 entries are the bleeders. Logged to test the
+    # m3<=8 block against a 60% expiry-day accuracy bar before any gate.
+    "own_m3_at_entry": 0.0,
     # PDH/PDL context at entry (analysis only — not a gate)
     "pdh_prev": 0.0,
     "pdl_prev": 0.0,
@@ -3932,6 +3937,8 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
         _v11_state["entry_spot"]            = float(spot_at_entry)
         _true_atm = int(round(spot_at_entry / 50) * 50) if spot_at_entry > 0 else int(strike)
         _v11_state["entry_atm_dist"]        = int(strike) - _true_atm
+        # Vishal Anti-Chase Filter (VAC) — own-leg 3-candle run at entry (analysis only)
+        _v11_state["own_m3_at_entry"]       = float(entry_result.get("own_m3", 0.0))
         # PDH/PDL context (analysis only — not a gate): where is spot vs yesterday's range?
         # range_pos: 0=at PDL, 1=at PDH, >1=above PDH, <0=below PDL
         _pdh, _pdl = _get_prev_day_hl()
@@ -4039,6 +4046,7 @@ def _v11_execute_paper_exit(reason: str, exit_price: float):
         dte_val      = int(_v11_state.get("dte", 0) or 0)
         entry_spot_val = float(_v11_state.get("entry_spot", 0))
         entry_atm_dist = int(_v11_state.get("entry_atm_dist", 0))
+        own_m3_val     = float(_v11_state.get("own_m3_at_entry", 0) or 0)
         pdh_prev_val   = float(_v11_state.get("pdh_prev", 0) or 0)
         pdl_prev_val   = float(_v11_state.get("pdl_prev", 0) or 0)
         entry_range_pos_val = _v11_state.get("entry_range_pos", "")
@@ -4158,6 +4166,7 @@ def _v11_execute_paper_exit(reason: str, exit_price: float):
             "pdh_prev": pdh_prev_val, "pdl_prev": pdl_prev_val,
             "entry_range_pos": entry_range_pos_val,
             "entry_atm_dist": entry_atm_dist,
+            "own_m3_at_entry": own_m3_val,
             "neighbor_ltp_otm": neighbor_otm, "neighbor_ltp_itm": neighbor_itm,
             "max_otm_drift": round(max_otm_drift, 1),
             # Entry-timing study: when did the trade actually move?
@@ -4535,7 +4544,7 @@ _V11_PERSIST_FIELDS = [
     "peak_ltp", "xleg_other_margin",
     "spot_regime_at_entry",
     # Data-collection fields (survive restart so CSV row is correct)
-    "entry_spot", "entry_atm_dist",
+    "entry_spot", "entry_atm_dist", "own_m3_at_entry",
     "pdh_prev", "pdl_prev", "entry_range_pos",
     "neighbor_ltp_otm", "neighbor_ltp_itm", "max_otm_drift",
     "vix_at_entry", "hourly_rsi_at_entry", "bias_at_entry", "session_at_entry",
@@ -4804,6 +4813,8 @@ TRADE_FIELDNAMES = [
     "spot_regime",
     # PDH/PDL context at entry (analysis only — not a gate)
     "pdh_prev", "pdl_prev", "entry_range_pos",
+    # Vishal Anti-Chase Filter (VAC) — own-leg 3-candle run at entry (analysis only)
+    "own_m3_at_entry",
     # Entry-timing study: when did the trade first go positive and when did it break out?
     "first_profit_candle", "first_profit_ltp", "first_profit_ts",
     "breakout_candle", "breakout_ltp", "breakout_ts",
@@ -5931,6 +5942,10 @@ def _strategy_loop(kite):
                         _sh_1m_open   = float(_sh_1m_comp["open"])
                         _sh_ema9h_1m  = float(_sh_1m_comp.get("ema9_high", 0))
                         _sh_ema9l_1m  = float(_sh_1m_comp.get("ema9_low", 0))
+                        # Vishal Anti-Chase Filter (VAC) input — own-leg 3-candle run
+                        # into the entry candle (close[-2] - close[-5]). Analysis only.
+                        _sh_1m_m3 = (round(_sh_1m_close - float(_sh_1m.iloc[-5]["close"]), 2)
+                                     if len(_sh_1m) >= 5 else 0.0)
 
                         # Opposite option data
                         _opp_dir = "PE" if _sh_dir == "CE" else "CE"
@@ -6027,6 +6042,7 @@ def _strategy_loop(kite):
                                         "ema9_high": _sh_ema9h_1m,
                                         "xleg_other_margin": _opp_margin,
                                         "spot_regime": spot_3m.get("regime", "") if isinstance(spot_3m, dict) else "",
+                                        "own_m3": _sh_1m_m3,
                                     },
                                     other_token=_opp_tok,
                                     spot_at_entry=_sh_spot_now,
