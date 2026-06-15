@@ -3651,6 +3651,10 @@ _v11_state = {
     "_last_signal_time": "",
     # Paper position state (parallel to V7, independent).
     "in_trade": False,
+    # Live entry reservation: set under lock BEFORE the ~8s blocking m.Stock order
+    # so a later 3s scanner tick can't fire a SECOND live order while the first
+    # is still in flight (caused real double-lot fills). Cleared on abort/failure.
+    "_entry_in_progress": False,
     "symbol": "",
     "token": 0,
     "direction": "",
@@ -3805,10 +3809,16 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
     # On a non-fill (LIMIT cancelled after 8s, rejection, partial) we abort the
     # entry and stamp the candle so the 3s scanner doesn't hammer the same bar.
     if not D.PAPER_MODE:
+        # Reserve the entry under the lock BEFORE the ~8s blocking broker call.
+        # place_entry blocks waiting for the LIMIT fill and runs OUTSIDE _v11_lock;
+        # without this reservation a later 3s scanner tick would see in_trade=False
+        # (not set until after the broker returns) and fire a SECOND live order —
+        # the cause of real double-lot fills. _entry_in_progress closes that window.
         with _v11_lock:
-            if _v11_state.get("in_trade"):
-                logger.warning("[V11] Live entry attempted while already in_trade — BLOCKED")
+            if _v11_state.get("in_trade") or _v11_state.get("_entry_in_progress"):
+                logger.warning("[V11] Live entry attempted while already in_trade/in_progress — BLOCKED")
                 return
+            _v11_state["_entry_in_progress"] = True
         _live = place_entry(_kite, symbol, token, direction, qty, entry_price)
         if not _live.get("ok"):
             logger.warning("[V11] LIVE entry not filled: " + str(_live.get("error", "")))
@@ -3818,6 +3828,7 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
                 priority="high")
             with _v11_lock:
                 _v11_state["_last_fired_candle_ts"] = entry_result.get("fired_candle_ts", "")
+                _v11_state["_entry_in_progress"] = False
             _save_v11_state()
             return
         # Use the broker's real fill price for SL/PnL math — not the candle close.
@@ -3829,6 +3840,7 @@ def _v11_execute_paper_entry(direction: str, strike: int, symbol: str, token: in
             return
         
         _v11_state["in_trade"]              = True
+        _v11_state["_entry_in_progress"]    = False
         _v11_state["symbol"]                = symbol
         _v11_state["token"]                 = token
         _v11_state["direction"]             = direction
@@ -5883,7 +5895,10 @@ def _strategy_loop(kite):
                         _decay_ok = (-8.0 <= _opp_margin <= V11_DECAY_HIGH) if _opp_ema9l > 0 else False
 
                         # Cooldown and basic guards
-                        _in_trade = bool(_v11_state.get("in_trade", False))
+                        # Treat an in-flight live entry (broker order placed, ~8s
+                        # blocking, in_trade not yet set) as in_trade so this 3s tick
+                        # can't fire a SECOND live order — the double-lot fix.
+                        _in_trade = bool(_v11_state.get("in_trade", False)) or bool(_v11_state.get("_entry_in_progress", False))
                         _in_cooldown = False
                         _cooldown_reason = ""
 
