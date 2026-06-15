@@ -7294,13 +7294,24 @@ def main():
     except Exception as _he:
         _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
         _health_ok_pre = False
-    try:
-        _sq = kite.ltp(["NSE:NIFTY 50"])
-        _sp = float(list(_sq.values())[0]["last_price"])
-        _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
-    except Exception as _he:
-        _health_lines_pre.append("Spot: ❌ " + str(_he)[:60])
-        _health_ok_pre = False
+    # REST spot probe is redundant with the WS tick check below. Kite's REST
+    # endpoint throws transient JSON-parse/timeout blips during the startup burst
+    # — retry a few times, and (in Phase 2) don't let a REST failure drive ⚠️ when
+    # the WS is delivering live ticks. Track the failure separately, not in
+    # _health_ok_pre (which stays Token-only).
+    _spot_rest_failed = False
+    for _spot_try in range(3):
+        try:
+            _sq = kite.ltp(["NSE:NIFTY 50"])
+            _sp = float(list(_sq.values())[0]["last_price"])
+            _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
+            break
+        except Exception as _he:
+            if _spot_try < 2:
+                time.sleep(1)
+                continue
+            _health_lines_pre.append("Spot: ❌ " + str(_he)[:60])
+            _spot_rest_failed = True
 
     try:
         D.set_autoheal_callback(_tg_send)
@@ -7436,6 +7447,14 @@ def main():
                 _time_h.sleep(1)
             if _ws_ltp > 0:
                 _health_lines_ws.append("WS: ✅ tick=" + str(round(_ws_ltp, 1)))
+                # Live WS tick proves spot data is healthy — a transient REST blip
+                # at boot is cosmetic, so rewrite the ❌ line instead of paging ⚠️.
+                if _spot_rest_failed:
+                    _health_lines_ws = [
+                        ("Spot: ✅ " + str(round(_ws_ltp, 1)) + " (via WS — REST blip)")
+                        if _l.startswith("Spot: ❌") else _l
+                        for _l in _health_lines_ws
+                    ]
             else:
                 _health_lines_ws.append("WS: ⚠️ no tick after 30s (feed may be down)")
                 _health_ok_ws = False
