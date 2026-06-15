@@ -75,19 +75,23 @@ peak < 9 pts   → INITIAL    : SL = initial_sl  (ema9_low capped at entry − 1
 peak ≥ 9 pts   → PROTECT    : SL = max(initial_sl, entry − 2.0)
 peak ≥ 11 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
 peak ≥ 15 pts  → TRAIL_10   : SL = max(initial_sl, entry + 9.0, peak_ltp − 10.0)
+peak ≥ 25 pts  → LOCK_25    : SL = max(initial_sl, entry + 25.0, peak_ltp − 5.0)
 ```
 
-- **Fixed take-profit `TARGET_25` (owner-approved 2026-06-15)**: `V11_TARGET_PTS = 25.0`. In
-  `_v11_check_exit()`, the first tick `ltp − entry ≥ 25` fires a MARKET exit (reason `TARGET_25`)
-  *before* the SL/trail check — they're mutually exclusive (target sits far above any current_sl).
-  Books the move instead of letting TRAIL_10 give ~10 pts back. Validated on 92 trades via
-  `~/lab_data/target_replay.py` (peak-vs-outcome, candle-data-independent): +25 = **+20.8 pts vs
-  the bare trail** and the optimum (+30 ≈ break-even, +20 worse). Trade-off = caps the rare +40/+45
-  runner; net positive in-sample. The trail ladder above remains the fallback for moves that never
-  reach +25. (Opposite-leg re-entry block was studied the same day and **rejected** — no edge, kills
-  reflexive-opposite winners like 06-10 CE +22.9; consistent with the 06-11 re-entry-blocker finding.)
+- **`LOCK_25` floor + tight trail (owner-approved 2026-06-15)**: `V11_TARGET_PTS = 25.0`. New top
+  rung in `_v11_compute_trail_sl`: `peak ≥ 25 → SL = max(initial_sl, entry+25, peak_ltp−5)`. Once
+  peak hits +25 it locks **entry+25 as a hard floor** (guaranteed +25 min) AND trails **peak−5**
+  above it (tight trail to grab max points on the runner). Floor binds for peak +25..+30; above
+  +30 the peak−5 trail takes over (peak +40 → SL +35, peak +50 → SL +45). Evolved same day:
+  +25 hard-exit → +25 floor w/ peak−10 trail → owner tightened the runner trail to **peak−5** to
+  capture more. `~/lab_data/target_replay.py` (92tr, peak-vs-outcome): the +25-floor variant was
+  +163 vs +108.7 hard-exit vs +87.8 bare trail; peak−5 grabs ~+5 more per clean runner on top.
+  Caveat: peak−5 is a tight trail — more shakeout risk on choppy pullbacks than peak−10 (not fully
+  measurable from candle data; owner accepted the trade-off for max capture). (Opposite-leg re-entry block was
+  studied the same day and **rejected** — no edge, kills reflexive-opposite winners like 06-10 CE
+  +22.9; consistent with the 06-11 re-entry-blocker finding.)
 
-Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `TARGET_25` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
+Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `LOCK_25` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
 (LOCK_4 replaced BREAKEVEN on 2026-06-10. PROTECT tier + LOCK_4 trigger 12→11 added 2026-06-11, owner-approved,
 validated by `sl_replay_study.py`: +31.5 pts over 54 replayed trades, 0 trades made worse.)
 **Merged top rung — owner-approved 2026-06-13:** the old separate `+18 → peak−10` tier was
@@ -259,7 +263,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier), **TARGET_25 fixed take-profit @ entry+25 (owner-approved 2026-06-15, target_replay.py +20.8 pts/92tr)**. Change only with explicit user confirmation (ladder values validated via sl_replay_study.py / target_replay.py).
+- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier), **LOCK_25 floor @ peak≥25 → SL max(entry+25, peak−10) (owner-approved 2026-06-15, target_replay.py +163 pts/92tr; keeps runners, evolved from an initial +25 hard-exit)**. Change only with explicit user confirmation (ladder values validated via sl_replay_study.py / target_replay.py).
 
 ---
 

@@ -3781,7 +3781,16 @@ def _v11_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float
       at peak 19, so the +9 floor holds from +15..+19 then the trail takes over.
       Replay: +25.1 pts over 73 trades, 0 trades made worse vs the old 4-rung ladder.
     """
-    if peak_pnl >= 15.0:
+    if peak_pnl >= V11_TARGET_PTS:
+        # LOCK_25 (owner-approved 2026-06-15): once peak hits +25, lock entry+25 as a hard
+        # floor AND trail peak-5 above it (tight trail to grab max points on the runner) —
+        # guarantees +25 min while riding the big winners. Replaced the original +25 hard exit
+        # (which capped runners at +25). Floor binds for peak +25..+30; above +30 the peak-5
+        # trail takes over (peak +40 → SL +35, peak +50 → SL +45).
+        peak_ltp = entry_price + peak_pnl
+        trail_val = max(initial_sl, entry_price + V11_TARGET_PTS, peak_ltp - 5.0)
+        return round(trail_val, 2), "LOCK_25"
+    elif peak_pnl >= 15.0:
         peak_ltp = entry_price + peak_pnl
         trail_val = max(initial_sl, entry_price + 9.0, peak_ltp - 10.0)
         return round(trail_val, 2), "TRAIL_10"
@@ -4315,17 +4324,12 @@ def _v11_check_exit():
             if _otm > _v11_state.get("max_otm_drift", 0.0):
                 _v11_state["max_otm_drift"] = _otm
 
-    # Exits checking (tick-based)
-    # Fixed take-profit: book at entry+25 the first tick we reach it (owner-approved
-    # 2026-06-15, see V11_TARGET_PTS). Checked before the SL — they are mutually
-    # exclusive (target is far above any current_sl), order only affects clarity.
-    if (ltp - avg_entry) >= V11_TARGET_PTS:
-        _v11_execute_paper_exit("TARGET_25", round(avg_entry + V11_TARGET_PTS, 2))
-        return
-
+    # Exits checking (tick-based). The +25 lock is now a ladder rung (LOCK_25) inside
+    # _v11_compute_trail_sl — it raises the stop to entry+25 once peak hits +25 and keeps
+    # trailing peak-10 above, so the runners are no longer capped (owner-approved 2026-06-15).
     if ltp <= current_sl:
         exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
-                       "LOCK_4": "LOCK_4"}.get(tier, "VISHAL_TRAIL")
+                       "LOCK_4": "LOCK_4", "LOCK_25": "LOCK_25"}.get(tier, "VISHAL_TRAIL")
         _v11_execute_paper_exit(exit_reason, round(current_sl, 2))
         return
 
@@ -4359,11 +4363,12 @@ V11_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (openi
 # ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
 V11_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
 V11_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
-# Fixed take-profit (owner-approved 2026-06-15): book the move at entry+25 instead of
-# letting TRAIL_10 give ~10 pts back. Validated on 92 trades via ~/lab_data/target_replay.py
-# (peak-vs-outcome, candle-data-independent): +25 = +20.8 pts vs trail, the optimum (+30 ≈
-# break-even). Cost = capping the rare +40/+45 runner; net positive in-sample. Fires a MARKET
-# exit the first tick LTP reaches the target; the trail/SL ladder remains the fallback below it.
+# LOCK_25 floor + tight trail (owner-approved 2026-06-15): once peak hits +25, the exit ladder
+# locks entry+25 as a hard SL floor AND trails peak-5 above it (see _v11_compute_trail_sl) —
+# guarantees +25 min while grabbing max points on the runner. Evolved same day: +25 hard-exit
+# -> +25 floor w/ peak-10 trail -> owner tightened to peak-5 for max capture. target_replay.py
+# (92tr): +25-floor variant +163 vs +108.7 hard-exit vs +87.8 bare trail; peak-5 grabs ~+5 more
+# per clean runner (with more shakeout risk on choppy pullbacks — owner-accepted trade-off).
 V11_TARGET_PTS = 25.0
 # CUTOVER FLAG: True = V11 Golden scanner places the live paper trades.
 V11_LIVE = True
