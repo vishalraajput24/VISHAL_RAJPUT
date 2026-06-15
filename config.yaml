@@ -39,8 +39,8 @@ lots:
 entry:
   ema9_band:
     body_pct_min: 40         # display-only in V6 (gate dropped)
-    warmup_until: "09:45"     # V7: skip first 2 candles (09:30+09:45 too noisy, 31%WR, -301pts)
-    cutoff_after: "15:00"
+    warmup_until: "10:00"     # owner 2026-06-15: disciplined window start (was 09:45)
+    cutoff_after: "14:30"     # owner 2026-06-15: no new entries after 14:30 (late session toxic, muhurat study)
     # 2026-05-07: cooldown 0 caused 10 same-candle re-fires (-287 pts).
     # Engine now has same-candle guard, but keep cooldown as safety belt.
     # 5 min covers any 3-min/15-min candle flutters; engine guard handles
@@ -123,8 +123,8 @@ market_hours:
   close_min: 30
   trade_start_hour: 9
   trade_start_min: 15
-  entry_cutoff_hour: 15
-  entry_cutoff_min: 0
+  entry_cutoff_hour: 14
+  entry_cutoff_min: 30
 
 # ── Data collection (untouched per refactor scope) ────────────
 lab:

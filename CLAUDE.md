@@ -55,7 +55,7 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 
 - **Deep decay all day (owner final, 2026-06-12)**: band widened from a midday-only (11:30–14:30) deep window to `[−8, −6]` for the whole session — shallow-decay band `(−6, −4]` removed entirely (shallow entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`).
 
-- `V11_OPEN_BLACKOUT_END = dtime(9, 45)` — no entries before 09:45
+- **Entry window 10:00–14:30 (owner 2026-06-15)**: `V11_OPEN_BLACKOUT_END = dtime(10, 0)` (was 09:45) + `market_hours.entry_cutoff` 14:30 (was 15:00). Disciplined window — conviction_sizing_study showed 09:00-10:00 bled −₹788/trade; muhurat_kuttaka_study (OOS) showed 14:30–15:15 toxic (−2.24 fwd5/40% WR). Exits/EOD unchanged (EOD still 15:15; a trade opened at 14:29 is still managed to exit — its token stays subscribed from lock time, exits run unconditionally per BUG-01).
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
 - **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
@@ -118,6 +118,7 @@ old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 7
 | `config.yaml` | Runtime config — `mode`, instrument, lots, EMA bands, thresholds, market hours |
 | `trace_trade.py` | Post-trade audit script (standalone, no Claude dependency) |
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
+| `paper_wide.py` | INDEPENDENT wide-window (09:30–15:15) paper engine for data collection (owner 2026-06-15). Imports VRL_MAIN and reuses its REAL gate fns (`get_option_1min`/`_v11_compute_trail_sl`) → zero divergence. Own state (`state/paper_wide_state.json`) + log (`lab_data/paper_wide_log.csv`). SILENT all day; ONE EOD Telegram summary. Never touches live state / never places orders. Cron 09:25 Mon–Fri, self-exits after EOD. A/B vs live's narrow 10:00–14:30 window at ~06-25. |
 | `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
 | `screener/` | Stock F&O SMI paper engine + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |

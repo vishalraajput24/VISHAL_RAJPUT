@@ -4367,7 +4367,7 @@ _v11_last_entry_scan_ts = 0.0  # throttle V11 entry scan to every 3s
 spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard() each call
 
 V11_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
-V11_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (opening chop)
+V11_OPEN_BLACKOUT_END = dtime(10, 0)  # hard gate: no entries before 10:00 (owner 2026-06-15: disciplined window; 09:00-10:00 bled -Rs788/trade per conviction_sizing_study)
 # OPP DECAY band [-8, -6] all day (owner final, 2026-06-12): shallow decay (-6,-4]
 # ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
 V11_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
