@@ -6,7 +6,7 @@
 
 version: "v17"
 bot_name: "VISHAL RAJPUT TRADE"
-mode: live
+mode: paper
 lots_fixed: 1
 
 # ── v15.2.5 BUG-Q: verify_order_fill timeouts (seconds) ─────────
