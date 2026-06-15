@@ -206,6 +206,13 @@ def _audit(st, dash, tg_events):
     else:
         info.append(f"  ✓ {'sl_tier_logic':22} state={tier!r} expected={exp_tier!r}")
 
+    # ── Vishal Anti-Chase Filter (VAC) — own-leg 3-candle run at entry (analysis only) ──
+    # Not a gate yet (logged PR #257). m3>8 = entered while the leg had already run
+    # >8 pts in 3 candles (chasing/extended — the bleed bucket from 06-15 research).
+    own_m3 = float(st.get("own_m3_at_entry", 0) or 0)
+    vac_flag = "CHASE ⚠️ (m3>8 — extended entry)" if own_m3 > 8.0 else "fresh ✓ (m3<=8)"
+    info.append(f"  • {'VAC own_m3@entry':22} {own_m3:+.1f}  → {vac_flag}")
+
     # ── TG cross-checks ──
     # 1. Entry alert
     if not tg_events.entry_sent(direction, strike):
@@ -245,6 +252,15 @@ def _reconcile(prev_st, tg_events):
 
         lines.append(f"  CSV: strike={row.get('strike')} entry={csv_entry} "
                      f"exit={csv_exit} pnl={csv_pnl} reason={csv_reason} mode={csv_regime}")
+
+        # Vishal Anti-Chase Filter (VAC) — confirm own_m3_at_entry was logged, flag chase
+        _csv_m3 = row.get("own_m3_at_entry", "")
+        if _csv_m3 in ("", None):
+            lines.append("  - WARN: own_m3_at_entry MISSING in CSV (VAC logging not captured — check deploy)")
+        else:
+            _m3v = float(_csv_m3)
+            _tag = "CHASE ⚠️ (m3>8)" if _m3v > 8.0 else "fresh (m3<=8)"
+            lines.append(f"  • VAC own_m3@entry={_m3v:+.1f} → {_tag}")
 
         if abs(csv_entry - entry) > 0.5:
             lines.append(f"  - BUG: entry mismatch — state={entry} csv={csv_entry}")
