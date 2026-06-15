@@ -428,7 +428,11 @@ MSTOCK_PRODUCT    = "MIS"     # intraday
 MSTOCK_VALIDITY   = "DAY"
 MSTOCK_TAG        = "VRL"
 
-# Status strings from MStock order book (case-insensitive compare done at use)
+# Status strings from MStock order book (case-insensitive compare done at use).
+# m.Stock reports a FILLED order as "Traded" (NOT "complete") — using the wrong
+# token here made ms_verify_fill time out on every fill and abandon real positions
+# (2026-06-15 incident: 5 live lots orphaned). Match the full filled vocabulary.
+_FILLED_STATUSES    = {"complete", "traded", "executed", "fully executed"}
 _STATUS_COMPLETE  = "complete"
 _STATUS_REJECTED  = "rejected"
 _STATUS_CANCELLED = "cancelled"
@@ -524,38 +528,45 @@ def get_mstock():
 
 # ── Order fill verification ──────────────────────────────────────────────────
 
+def _ms_lookup_order(mc, order_id: str) -> dict:
+    """Find one order in the m.Stock ORDER BOOK by id. Returns {} if absent.
+    The order book is the reliable source — get_order_details was returning
+    'Pending'/None for orders the book already showed as 'Traded' (2026-06-15)."""
+    try:
+        resp = mc.get_order_book()
+        data = resp.json()
+        if data.get("status") != "success":
+            return {}
+        orders = data.get("data") or []
+        if isinstance(orders, dict):
+            orders = orders.get("orders", []) or []
+        for o in orders:
+            if str(o.get("order_id", "")) == str(order_id):
+                return o
+    except Exception as e:
+        logger.warning(f"[MSTOCK] order lookup error: {e}")
+    return {}
+
+
 def ms_verify_fill(mc, order_id: str, timeout_secs: int = 10) -> tuple:
     """
-    Poll MStock order status until COMPLETE or REJECTED/CANCELLED.
-    Returns (fill_price, fill_qty). Returns (0.0, 0) on failure/timeout.
+    Poll the MStock ORDER BOOK until the order is filled or rejected/cancelled.
+    Returns (fill_price, fill_qty). Returns (0.0, 0) on rejection/timeout.
     """
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
-        try:
-            resp = mc.get_order_details(order_id, _segment="E")
-            data = resp.json()
-            if data.get("status") != "success":
-                time.sleep(0.5)
-                continue
-
-            order = data.get("data")
-            if isinstance(order, list):
-                order = order[-1] if order else {}
-            if not order:
-                time.sleep(0.5)
-                continue
-
+        order = _ms_lookup_order(mc, order_id)
+        if order:
             status = str(order.get("status", "")).lower()
-            if status == _STATUS_COMPLETE:
+            if status in _FILLED_STATUSES:
                 fill_price = float(order.get("average_price", 0) or 0)
                 fill_qty   = int(order.get("filled_quantity", 0) or 0)
-                return fill_price, fill_qty
+                if fill_qty > 0:
+                    return fill_price, fill_qty
             elif status in (_STATUS_REJECTED, _STATUS_CANCELLED):
                 logger.error(f"[MSTOCK] Order {order_id} {status}: "
                              f"{order.get('status_message', '')}")
                 return 0.0, 0
-        except Exception as e:
-            logger.warning(f"[MSTOCK] verify_fill error: {e}")
         time.sleep(0.5)
 
     logger.error(f"[MSTOCK] Fill verification timeout: {order_id}")
@@ -601,9 +612,23 @@ def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
         if fill_qty == 0:
             try:
                 mc.cancel_order(order_id)
-                logger.info(f"[MSTOCK] Entry cancelled — price moved: {order_id}")
+                logger.info(f"[MSTOCK] Entry cancel sent — verifying: {order_id}")
             except Exception:
                 pass
+            # Cancel can race a fill landing at the deadline. Re-check the order
+            # book: if it actually TRADED, ADOPT the position (never abandon a
+            # filled order — that orphaned 5 live lots on 2026-06-15).
+            time.sleep(0.6)
+            order = _ms_lookup_order(mc, order_id)
+            status = str(order.get("status", "")).lower()
+            if status in _FILLED_STATUSES and int(order.get("filled_quantity", 0) or 0) > 0:
+                fill_price = float(order.get("average_price", 0) or 0)
+                fill_qty   = int(order.get("filled_quantity", 0) or 0)
+                slippage   = round(fill_price - limit_price, 2)
+                logger.warning(f"[MSTOCK] ENTRY FILLED AFTER CANCEL (adopted): "
+                               f"price={fill_price} qty={fill_qty} {order_id}")
+                return {"ok": True, "fill_price": fill_price, "fill_qty": fill_qty,
+                        "order_id": order_id, "error": "", "slippage": slippage}
             return {"ok": False, "fill_price": 0.0, "fill_qty": 0,
                     "order_id": order_id, "error": "LIMIT_NOT_FILLED", "slippage": 0}
 
