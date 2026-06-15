@@ -4316,6 +4316,13 @@ def _v11_check_exit():
                 _v11_state["max_otm_drift"] = _otm
 
     # Exits checking (tick-based)
+    # Fixed take-profit: book at entry+25 the first tick we reach it (owner-approved
+    # 2026-06-15, see V11_TARGET_PTS). Checked before the SL — they are mutually
+    # exclusive (target is far above any current_sl), order only affects clarity.
+    if (ltp - avg_entry) >= V11_TARGET_PTS:
+        _v11_execute_paper_exit("TARGET_25", round(avg_entry + V11_TARGET_PTS, 2))
+        return
+
     if ltp <= current_sl:
         exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
                        "LOCK_4": "LOCK_4"}.get(tier, "VISHAL_TRAIL")
@@ -4352,6 +4359,12 @@ V11_OPEN_BLACKOUT_END = dtime(9, 45)  # hard gate: no entries before 9:45 (openi
 # ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
 V11_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
 V11_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
+# Fixed take-profit (owner-approved 2026-06-15): book the move at entry+25 instead of
+# letting TRAIL_10 give ~10 pts back. Validated on 92 trades via ~/lab_data/target_replay.py
+# (peak-vs-outcome, candle-data-independent): +25 = +20.8 pts vs trail, the optimum (+30 ≈
+# break-even). Cost = capping the rare +40/+45 runner; net positive in-sample. Fires a MARKET
+# exit the first tick LTP reaches the target; the trail/SL ladder remains the fallback below it.
+V11_TARGET_PTS = 25.0
 # CUTOVER FLAG: True = V11 Golden scanner places the live paper trades.
 V11_LIVE = True
 # Live gate snapshot for dashboard monitoring — updated every scanner cycle, per side

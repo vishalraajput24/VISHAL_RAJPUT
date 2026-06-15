@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-15 (feat/v11-mstock-live-wiring). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-15 (feat/v11-target25-takeprofit). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -77,7 +77,17 @@ peak ≥ 11 pts  → LOCK_4     : SL = max(initial_sl, entry + 4.0)
 peak ≥ 15 pts  → TRAIL_10   : SL = max(initial_sl, entry + 9.0, peak_ltp − 10.0)
 ```
 
-Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
+- **Fixed take-profit `TARGET_25` (owner-approved 2026-06-15)**: `V11_TARGET_PTS = 25.0`. In
+  `_v11_check_exit()`, the first tick `ltp − entry ≥ 25` fires a MARKET exit (reason `TARGET_25`)
+  *before* the SL/trail check — they're mutually exclusive (target sits far above any current_sl).
+  Books the move instead of letting TRAIL_10 give ~10 pts back. Validated on 92 trades via
+  `~/lab_data/target_replay.py` (peak-vs-outcome, candle-data-independent): +25 = **+20.8 pts vs
+  the bare trail** and the optimum (+30 ≈ break-even, +20 worse). Trade-off = caps the rare +40/+45
+  runner; net positive in-sample. The trail ladder above remains the fallback for moves that never
+  reach +25. (Opposite-leg re-entry block was studied the same day and **rejected** — no edge, kills
+  reflexive-opposite winners like 06-10 CE +22.9; consistent with the 06-11 re-entry-blocker finding.)
+
+Exit reasons: `EMERGENCY_SL` · `PROTECT_2` · `LOCK_4` · `VISHAL_TRAIL` · `TARGET_25` · `EOD_EXIT` · `FORCE_EXIT` (TG `/forceexit`)
 (LOCK_4 replaced BREAKEVEN on 2026-06-10. PROTECT tier + LOCK_4 trigger 12→11 added 2026-06-11, owner-approved,
 validated by `sl_replay_study.py`: +31.5 pts over 54 replayed trades, 0 trades made worse.)
 **Merged top rung — owner-approved 2026-06-13:** the old separate `+18 → peak−10` tier was
@@ -249,7 +259,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier). Change only with explicit user confirmation (ladder values validated via sl_replay_study.py).
+- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier), **TARGET_25 fixed take-profit @ entry+25 (owner-approved 2026-06-15, target_replay.py +20.8 pts/92tr)**. Change only with explicit user confirmation (ladder values validated via sl_replay_study.py / target_replay.py).
 
 ---
 
