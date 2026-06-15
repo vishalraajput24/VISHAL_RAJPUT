@@ -585,6 +585,8 @@ def ms_place_buy(mc, symbol: str, qty: int, limit_price: float,
             _tag               = MSTOCK_TAG,
         )
         data = resp.json()
+        if isinstance(data, list):          # m.Stock place_order returns [{...}]
+            data = data[0] if data else {}
         if data.get("status") != "success":
             err = str(data.get("message", data))
             logger.error(f"[MSTOCK] BUY rejected: {err}")
@@ -640,6 +642,8 @@ def ms_place_sell(mc, symbol: str, qty: int,
             _tag               = MSTOCK_TAG,
         )
         data = resp.json()
+        if isinstance(data, list):          # m.Stock place_order returns [{...}]
+            data = data[0] if data else {}
         if data.get("status") != "success":
             err = str(data.get("message", data))
             logger.error(f"[MSTOCK] SELL rejected: {err}")
