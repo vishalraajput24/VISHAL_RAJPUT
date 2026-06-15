@@ -80,8 +80,13 @@ def _last_csv_row():
         return {}
 
 def _expected_sl(peak_pnl, initial_sl, entry_price):
-    """V11 Golden 4-tier SL formula."""
-    if peak_pnl >= 15.0:
+    """V11 Golden 5-tier SL formula (mirrors _v11_compute_trail_sl)."""
+    if peak_pnl >= 25.0:
+        # LOCK_25 (owner-approved 2026-06-15): entry+25 hard floor + peak-5 tight trail.
+        peak_ltp = entry_price + peak_pnl
+        sl = max(initial_sl, entry_price + 25.0, peak_ltp - 5.0)
+        return round(sl, 2), "LOCK_25"
+    elif peak_pnl >= 15.0:
         peak_ltp = entry_price + peak_pnl
         sl = max(initial_sl, entry_price + 9.0, peak_ltp - 10.0)
         return round(sl, 2), "TRAIL_10"
@@ -221,7 +226,7 @@ def _audit(st, dash, tg_events):
         info.append(f"  ✓ {'tg_entry_alert':22} found for {direction} {strike}")
 
     # 2. SL tier upgrade alerts
-    if tier in ("PROTECT", "LOCK_4", "TRAIL_10"):
+    if tier in ("PROTECT", "LOCK_4", "TRAIL_10", "LOCK_25"):
         if not tg_events.sl_upgrade_sent(tier):
             bugs.append(f"  - BUG: TG SL upgrade alert NOT found for {tier} (state shows {tier})")
         else:
