@@ -164,6 +164,12 @@ on the 40-day cache (~5.7 trades/day, balanced CE/PE). Own files — never touch
 `smi_paper_loose_log.csv`; Telegram alerts relabelled "SMI LOOSE". Own cron (same schedule
 as frozen, log `~/logs/smi_paper_loose.log`). This is DATA-COLLECTION ONLY, not a validated
 strategy — do not treat its P&L as an edge.
+**Dashboard:** the F&O tab's `_web_read_fno()` reads BOTH `fno_tracker.csv` (frozen, tag
+`engine=SMI`) AND `fno_tracker_loose.csv` (tag `engine=LOOSE`); loose cards show an amber
+"LOOSE" badge. Files stay separate (the two crons run on the same minute — a shared file
+would race on the full-file rewrite and could corrupt the frozen validation tracker).
+SMI has NO fixed target (t1/t2 blank by design) — exits are 1% SL · trail arms +1.5% then
+close-vs-SMA8 · 15:15 force close; the card's progress bar/target fields stay empty for SMI.
 - `confirm_bars` column in the trade log (added 2026-06-12, data collection only): bars between
   the SMI cross and the entry (CE always 0 — same-bar; PE 0–6 — first confirm in the window).
   Entries fire on the FIRST confirming bar, so the 6-bar window is a ceiling, not a delay.

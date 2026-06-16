@@ -7956,16 +7956,21 @@ def _web_read_trades():
     return trades
 
 def _web_read_fno():
-    fno_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener", "fno_tracker.csv")
-    if not os.path.isfile(fno_path): return []
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener")
+    # frozen SMI engine + the loose data-visibility sibling (separate files; tagged)
+    sources = [("fno_tracker.csv", "SMI"), ("fno_tracker_loose.csv", "LOOSE")]
     rows = []
-    try:
-        with open(fno_path) as f:
-            for r in csv.DictReader(f):
-                st = str(r.get("status",""))
-                if not (st.startswith("OPEN") or "HIT" in st): continue
-                try:
-                    rows.append({
+    for fname, engine in sources:
+        fno_path = os.path.join(base, fname)
+        if not os.path.isfile(fno_path): continue
+        try:
+            with open(fno_path) as f:
+                for r in csv.DictReader(f):
+                    st = str(r.get("status",""))
+                    if not (st.startswith("OPEN") or "HIT" in st): continue
+                    try:
+                        rows.append({
+                        "engine":              engine,
                         "symbol":              r.get("symbol",""),
                         "direction":           r.get("direction",""),
                         "option_symbol":       r.get("option_symbol",""),
@@ -7991,8 +7996,8 @@ def _web_read_fno():
                         "last_checked":        r.get("last_checked",""),
                         "date_added":          r.get("date_added",""),
                     })
-                except Exception: pass
-    except Exception: pass
+                    except Exception: pass
+        except Exception: pass
     return rows
 
 def _web_read_weekly():
@@ -8417,9 +8422,10 @@ async function renderFno(){
       var barClr=isSl?'var(--rd)':isT1?'var(--gn)':pct>=70?'var(--gn)':pct>=35?'var(--am)':'var(--rd)';
       var t1Pct=range>0?Math.max(0,Math.min(100,((t1-sl)/range)*100)):0;
       var dirIcon=p.direction==='CALL'?'🟢':'🔴';
+      var looseBadge=p.engine==='LOOSE'?'<span style="font-size:8px;font-weight:800;color:var(--am);background:rgba(245,158,11,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">LOOSE</span>':'';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-left:3px solid '+dirClr+';border-radius:8px;padding:10px 10px 8px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
-          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+
+          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+looseBadge+
           '<span style="font-size:10px;font-weight:700;color:'+dirClr+';margin-left:5px">'+esc(p.direction)+' '+(p.strike||'')+'</span>'+
           '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+' · '+lots+' lot × '+lotSize+' = '+qty+' qty</div>'+
           '<div style="font-size:9px;color:var(--dm);margin-top:1px">Inv ₹'+Math.round(invest).toLocaleString('en-IN')+' → ₹'+Math.round(curVal).toLocaleString('en-IN')+'</div></div>'+
