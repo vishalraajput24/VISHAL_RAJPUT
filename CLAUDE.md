@@ -50,10 +50,16 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 ### Entry gates (both must pass)
 | Gate | Condition | Constant |
 |------|-----------|----------|
-| **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` | `V11_MIN_EMA9H_GAP = 3.5` (hard gate) |
-| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −6.0]` — all day | `V11_DECAY_HIGH = -6.0` |
+| **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` (dte≥2) | `V11_MIN_EMA9H_GAP = 3.5` (hard gate) |
+| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −6.0]` — all day (dte≥2) | `V11_DECAY_HIGH = -6.0` |
 
-- **Deep decay all day (owner final, 2026-06-12)**: band widened from a midday-only (11:30–14:30) deep window to `[−8, −6]` for the whole session — shallow-decay band `(−6, −4]` removed entirely (shallow entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`).
+- **Per-DTE %-gate for dte 0/1 (owner-approved 2026-06-16, LIVE)**: near-expiry ATM premium collapses (~50 @dte0, ~113 @dte1) so the absolute +3.5/[−8,−6] gate over-fires on cheap premium. For **dte 0 and dte 1** the gate is normalized to **% of premium** via `_v11_gate_check(dte, …)` + `V11_PCT_GATE_DTE`:
+  - **dte 0**: MOMENTUM `close ≥ ema9_high + 2.3%·close`, OPP DECAY `(opp_margin/opp_close) ∈ [−4.8%, −2.7%]`
+  - **dte 1**: MOMENTUM `+3.0%·close`, same decay band `[−4.8%, −2.7%]`
+  - **dte ≥ 2**: **unchanged** — the locked absolute gate above.
+  - Calibrated by the expiry-aligned per-DTE sweep (`~/lab_data/perdte_pct_gate_study.py`, 21 days / 5 weekly expiries): decay floor −4.8% stable across DTE; momentum % rises away from expiry. dte0 flipped −180%→+75.5% (n=8, 75% WR), dte1 −58.5%→+39.1% (n=17, 65% WR). **In-sample** — owner shipped for live validation; revisit at the ~06-26 FINAL PACKAGE review. The full per-DTE table (incl. dte 4/5/6 = NO-TRADE: no positive gate exists) lives in `perdte_pct_gate_study.py` `PERDTE_GATES`; only dte 0/1 are wired live (the bot trades NIFTY weeklies = ~always dte 0/1).
+
+- **Deep decay all day (owner final, 2026-06-12)**: band widened from a midday-only (11:30–14:30) deep window to `[−8, −6]` for the whole session — shallow-decay band `(−6, −4]` removed entirely (shallow entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`). (Applies to dte≥2; dte 0/1 now use the %-gate above.)
 
 - **Entry window 10:00–14:30 (owner 2026-06-15)**: `V11_OPEN_BLACKOUT_END = dtime(10, 0)` (was 09:45) + `market_hours.entry_cutoff` 14:30 (was 15:00). Disciplined window — conviction_sizing_study showed 09:00-10:00 bled −₹788/trade; muhurat_kuttaka_study (OOS) showed 14:30–15:15 toxic (−2.24 fwd5/40% WR). Exits/EOD unchanged (EOD still 15:15; a trade opened at 14:29 is still managed to exit — its token stays subscribed from lock time, exits run unconditionally per BUG-01).
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
