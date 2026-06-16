@@ -4585,8 +4585,10 @@ def _load_v11_state():
                 _v11_state["_wins_today"]    = 0
                 _v11_state["_losses_today"]  = 0
                 _v11_state["_v11_both_rejected_ts"] = 0.0
+                _v11_state["_last_trade_date"] = _today
                 _v11_state["_sl_cooldown_skip_next"] = False  # clear stale cooldown on new day
             logger.info("[V11] New trading day — daily counters reset (last_date=" + _last_date + ")")
+            _save_v11_state()  # persist the reset so the on-disk file isn't a stale snapshot
         if _v11_state.get("in_trade"):
             _sym  = str(_v11_state.get("symbol", ""))
             _ep   = float(_v11_state.get("entry_price", 0))
@@ -4708,6 +4710,7 @@ def _reset_daily(today_str: str):
         _v11_state["_losses_today"]         = 0
         _v11_state["_v11_both_rejected_ts"] = 0.0
         _v11_state["_last_trade_date"]      = today_str
+    _save_v11_state()  # persist the cross-midnight reset so the on-disk file isn't stale
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
