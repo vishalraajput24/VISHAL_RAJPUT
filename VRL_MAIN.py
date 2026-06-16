@@ -4698,6 +4698,16 @@ def _reset_daily(today_str: str):
     _v11_state["_last_fired_candle_ts"] = ""
     with _v11_lock:
         _v11_state["_sl_cooldown_skip_next"] = False  # BUG-FIX: clear stale ESL flag on new day
+        # BUG-FIX: reset V11 per-day trade counters when the bot crosses midnight
+        # without a restart. The restart path (_load_v11_state) already does this;
+        # without it here, _v11_state keeps yesterday's counts while the dashboard
+        # 'today' block (CSV-driven) shows 0 → state/dashboard/TG misalignment.
+        _v11_state["_pnl_today_pts"]        = 0.0
+        _v11_state["_trades_today"]         = 0
+        _v11_state["_wins_today"]           = 0
+        _v11_state["_losses_today"]         = 0
+        _v11_state["_v11_both_rejected_ts"] = 0.0
+        _v11_state["_last_trade_date"]      = today_str
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
