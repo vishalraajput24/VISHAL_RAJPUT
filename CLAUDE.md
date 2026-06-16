@@ -125,6 +125,7 @@ old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 7
 | `trace_trade.py` | Post-trade audit script (standalone, no Claude dependency) |
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
 | `paper_wide.py` | INDEPENDENT wide-window (09:30–15:15) paper engine for data collection (owner 2026-06-15). Imports VRL_MAIN and reuses its REAL gate fns (`get_option_1min`/`_v11_compute_trail_sl`) → zero divergence. Own state (`state/paper_wide_state.json`) + log (`lab_data/paper_wide_log.csv`). SILENT all day; ONE EOD Telegram summary. Never touches live state / never places orders. Cron 09:25 Mon–Fri, self-exits after EOD. A/B vs live's narrow 10:00–14:30 window at ~06-25. |
+| `screener/smi_paper_loose.py` | LOOSE sibling of the SMI paper engine (owner 2026-06-16) — per-stock adaptive p20/p80 gate + direction-only 1h, ~5-6 trades/day for data visibility. Imports `smi_paper`, reuses its math/exits/fill; own state/log/tracker (`structure=SMI_LOOSE`). See the SMI section below. |
 | `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
 | `screener/` | Stock F&O SMI paper engine + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
@@ -148,6 +149,21 @@ before ~2026-06-25.** Spec (evidence: `smi_backtest.py`, `smi_pe_tuning.py`, `sm
   force close at 15:15 bar. Backtest: ~66% win, ~+0.49%/trade stock-level (40 days, 119 stocks).
 - State `smi_paper_state.json` · dashboard rows in `fno_tracker.csv` (`structure=SMI`) ·
   clean trade log `smi_paper_log.csv` for the review.
+
+**LOOSE sibling — `screener/smi_paper_loose.py` (owner 2026-06-16, data visibility):**
+the frozen gate can go several sessions with ZERO trades ("fully blind"), so this engine
+runs ALONGSIDE the frozen one (which is untouched — clean 06-25 baseline) at a deliberately
+looser gate for ~5-6 paper trades/day to watch. **Imports `smi_paper` and reuses its exact
+SMI math / exits / fill model / `main()`** — only the entry gate is swapped (zero divergence
+elsewhere). Gate is **per-stock adaptive** ("flexible as per stock"): oversold/overbought =
+each stock's OWN SMI **p20 / p80** over the lookback (not the global −40/+45), and the 1h
+filter is relaxed to **direction-only** (CE 1h SMI>sig · PE 1h SMI<sig; the +5/−5 margin +
+(0,50) zone that killed ~99% of crosses is dropped; PE still needs close<day-VWAP). Validated
+on the 40-day cache (~5.7 trades/day, balanced CE/PE). Own files — never touches frozen data:
+`smi_paper_loose_state.json`, `fno_tracker_loose.csv` (`structure=SMI_LOOSE`),
+`smi_paper_loose_log.csv`; Telegram alerts relabelled "SMI LOOSE". Own cron (same schedule
+as frozen, log `~/logs/smi_paper_loose.log`). This is DATA-COLLECTION ONLY, not a validated
+strategy — do not treat its P&L as an edge.
 - `confirm_bars` column in the trade log (added 2026-06-12, data collection only): bars between
   the SMI cross and the entry (CE always 0 — same-bar; PE 0–6 — first confirm in the window).
   Entries fire on the FIRST confirming bar, so the 6-bar window is a ceiling, not a delay.
