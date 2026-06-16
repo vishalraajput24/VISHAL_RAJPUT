@@ -4371,6 +4371,40 @@ V11_OPEN_BLACKOUT_END = dtime(10, 0)  # hard gate: no entries before 10:00 (owne
 # OPP DECAY band [-8, -6] all day (owner final, 2026-06-12): shallow decay (-6,-4]
 # ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
 V11_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
+
+# ── Per-DTE %-of-premium entry gate (owner-approved 2026-06-16) ──────────────
+# Near-expiry ATM premium collapses (~50 @dte0, ~113 @dte1) so the absolute
+# MOMENTUM +3.5 / OPP DECAY [-8,-6] gate is effectively a different, looser
+# strategy on expiry-week days — it over-fires on cheap premium. For dte 0/1
+# the gate is normalized to % of premium. Calibrated by the expiry-aligned
+# per-DTE sweep (~/lab_data/perdte_pct_gate_study.py, 21 days / 5 weekly
+# expiries): decay floor -4.8% is STABLE across DTE; momentum % rises away
+# from expiry (2.3% @dte0, 3.0% @dte1). dte>=2 KEEPS the locked absolute gate
+# untouched. In-sample (dte0 n=8 / dte1 n=17) — owner shipped for live
+# validation; revisit at the ~06-26 FINAL PACKAGE review.
+V11_PCT_GATE_DTE = {
+    0: {"mom_pct": 0.023, "decay_lo": -0.048, "decay_hi": -0.027},
+    1: {"mom_pct": 0.030, "decay_lo": -0.048, "decay_hi": -0.027},
+}
+
+
+def _v11_gate_check(dte, own_close, own_ema9h, opp_margin, opp_close, opp_ema9l):
+    """(momentum_ok, decay_ok). dte 0/1 → %-of-premium; dte>=2 → locked abs."""
+    cfg = V11_PCT_GATE_DTE.get(int(dte or 0))
+    if cfg:
+        mom_ok = (own_close >= own_ema9h + cfg["mom_pct"] * own_close) if own_ema9h > 0 else False
+        if opp_close > 0 and opp_ema9l > 0:
+            _ratio = opp_margin / opp_close
+            decay_ok = cfg["decay_lo"] <= _ratio <= cfg["decay_hi"]
+        else:
+            decay_ok = False
+        return mom_ok, decay_ok
+    # dte>=2 (or unmapped): locked absolute gate — unchanged
+    mom_ok = (own_close >= own_ema9h + V11_MIN_EMA9H_GAP) if own_ema9h > 0 else False
+    decay_ok = (-8.0 <= opp_margin <= V11_DECAY_HIGH) if opp_ema9l > 0 else False
+    return mom_ok, decay_ok
+
+
 V11_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # LOCK_25 floor + tight trail (owner-approved 2026-06-15): once peak hits +25, the exit ladder
 # locks entry+25 as a hard SL floor AND trails peak-5 above it (see _v11_compute_trail_sl) —
@@ -5975,9 +6009,11 @@ def _strategy_loop(kite):
                             _opp_ema9l = float(_opp_comp.get("ema9_low", 0))
                             _opp_margin = round(_opp_close - _opp_ema9l, 2)
 
-                        # Golden Setup conditions
-                        _momentum_ok = (_sh_1m_close >= _sh_ema9h_1m + V11_MIN_EMA9H_GAP) if _sh_ema9h_1m > 0 else False
-                        _decay_ok = (-8.0 <= _opp_margin <= V11_DECAY_HIGH) if _opp_ema9l > 0 else False
+                        # Golden Setup conditions — per-DTE gate: dte 0/1 use
+                        # %-of-premium, dte>=2 keep the locked absolute gate.
+                        _momentum_ok, _decay_ok = _v11_gate_check(
+                            dte, _sh_1m_close, _sh_ema9h_1m,
+                            _opp_margin, _opp_close, _opp_ema9l)
 
                         # Cooldown and basic guards
                         # Treat an in-flight live entry (broker order placed, ~8s
@@ -6013,9 +6049,17 @@ def _strategy_loop(kite):
                         elif _in_cooldown:
                             _reject_reason = _cooldown_reason
                         elif not _momentum_ok:
-                            _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V11_MIN_EMA9H_GAP})"
+                            if int(dte or 0) in V11_PCT_GATE_DTE:
+                                _mp = V11_PCT_GATE_DTE[int(dte or 0)]["mom_pct"]
+                                _reject_reason = f"below_mom_pct(dte{dte} gap{round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{_mp*_sh_1m_close:.1f})"
+                            else:
+                                _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V11_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{V11_DECAY_HIGH:.0f}])"
+                            if int(dte or 0) in V11_PCT_GATE_DTE and _opp_close > 0:
+                                _cfg = V11_PCT_GATE_DTE[int(dte or 0)]
+                                _reject_reason = f"decay_pct_weak(dte{dte} {_opp_margin/_opp_close*100:+.1f}% not in [{_cfg['decay_lo']*100:.1f},{_cfg['decay_hi']*100:.1f}])"
+                            else:
+                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{V11_DECAY_HIGH:.0f}])"
 
                         _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
