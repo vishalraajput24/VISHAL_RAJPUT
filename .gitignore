@@ -23,3 +23,6 @@ screener/fno_tech_cache*
 screener/archive/
 screener/multibagger_*.csv
 analysis/daily/*.bak
+
+# v12 flow study data cache (regenerated)
+screener/v12_flow_5m_cache.csv

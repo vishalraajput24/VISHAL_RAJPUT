@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 // V12 VISHAL RAJPUT — DUAL-LEG VALIDATOR (Pine v6)  ·  5-minute
 // ----------------------------------------------------------------------------
-// One script that reproduces the LIVE v12_orion.py engine so you can backtest
+// One script that reproduces the LIVE v12_vishal.py engine so you can backtest
 // BOTH legs the bot actually runs, each on its own chart:
 //
 //   • FUTURES leg  → load this on NIFTY FUTURES (or the index) 5m, mode=FUTURES.
@@ -15,14 +15,14 @@
 // OPTION mode the signal is pulled from "Signal symbol" via request.security so
 // the option premium chart only drives the entry fill + exits.
 //
-//   SIGNAL (identical to v12_orion.py / orion_v2514_backtest.py):
+//   SIGNAL (identical to v12_vishal.py / orion_v2514_backtest.py):
 //     SMI(30,3,3): smi=100·EMA²(close-(hh+ll)/2,3)/(EMA²(hh-ll,3)/2), sig=EMA(smi,3)
 //     E2 = SMI cross out of ±35 on the right side of its signal line
 //     E3 = break of nearest swing high/low (pivot lr5) within 20 bars  (vol filter OFF)
 //     E1 = VWAP — CONFIRM/CONVICTION ONLY (tag; optional gate, never a trigger)
 //     E2 OR E3 fires. Window 09:30-14:45 IST. One position. Stop after 5 losses/day.
 //
-//   EXITS  (per leg, from v12_orion.py):
+//   EXITS  (per leg, from v12_vishal.py):
 //     FUTURES : SL entry ∓ 1.5·ATR(14) · arm +1.0·ATR · trail to SMA8 · EOD 15:25
 //     OPTION  : SL entry-22 · arm +8 · trail peak-6 · EOD 15:25   (premium points)
 //
