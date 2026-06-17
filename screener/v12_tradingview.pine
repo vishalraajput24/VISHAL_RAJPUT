@@ -1,0 +1,84 @@
+// ════════════════════════════════════════════════════════════════════════════
+// V12 VISHAL RAJPUT — TradingView visualisation (Pine v6)
+// Mirrors the live 5m paper engine (v12_orion.py): SMI %K30/%D3/sig3,
+// E2 cross at bands +35/-35 (confirm=none), E3 cluster break (lookback 20,
+// swing 3), E1 OFF. Entry window 09:30-14:45 IST. ATM-option exits are NOT
+// shown (they live on the option premium, not this index chart).
+//
+// HOW TO USE: TradingView → open NIFTY (5-minute) → Pine Editor → paste ONE
+// script → "Add to chart". Script 1 = arrows on price. Script 2 = SMI pane.
+// Set a TradingView alert on the "V12 CE"/"V12 PE" conditions → TV pushes its
+// own phone/email notification (works even when our Telegram bot is down).
+// ════════════════════════════════════════════════════════════════════════════
+
+
+// ─────────────────────────── SCRIPT 1 — signals on price ────────────────────
+//@version=6
+indicator("V12 Vishal Rajput — 5m Signals", overlay=true)
+
+kLen     = input.int(30,   "SMI %K length")
+dLen     = input.int(3,    "SMI smooth")
+sigLen   = input.int(3,    "SMI signal")
+overbought = input.float(35.0,  "E2 overbought (PE)")
+oversold   = input.float(-35.0, "E2 oversold (CE)")
+lookback = input.int(20,   "E3 cluster lookback (bars)")
+lr       = input.int(3,    "E3 swing left/right")
+showWin  = input.bool(true,"Only 09:30-14:45 IST")
+
+f_ema2(src, len) => ta.ema(ta.ema(src, len), len)
+hh  = ta.highest(high, kLen)
+ll  = ta.lowest(low,  kLen)
+smi = 100 * f_ema2(close - (hh + ll) / 2, dLen) / (f_ema2(hh - ll, dLen) / 2)
+smiSig = ta.ema(smi, sigLen)
+
+// E2 — SMI cross through the band + on the right side of its signal line
+e2_ce = smi[1] <= oversold   and smi > oversold   and smi > smiSig
+e2_pe = smi[1] >= overbought and smi < overbought and smi < smiSig
+
+// E3 — break of the nearest swing (resistance/support) within the lookback
+ph = ta.pivothigh(high, lr, lr)
+pl = ta.pivotlow(low,  lr, lr)
+var float lastPH = na
+var float lastPL = na
+var int   phBar  = na
+var int   plBar  = na
+if not na(ph)
+    lastPH := ph
+    phBar  := bar_index - lr
+if not na(pl)
+    lastPL := pl
+    plBar  := bar_index - lr
+resOk = not na(lastPH) and (bar_index - phBar) <= lookback
+supOk = not na(lastPL) and (bar_index - plBar) <= lookback
+e3_ce = resOk and close[1] <= lastPH and close > lastPH
+e3_pe = supOk and close[1] >= lastPL and close < lastPL
+
+inWin = not showWin or ((hour * 60 + minute) >= 570 and (hour * 60 + minute) <= 885)
+
+plotshape(e2_ce and inWin, "E2 CE", shape.triangleup,  location.belowbar, color.new(color.green, 0), size=size.small, text="E2")
+plotshape(e3_ce and inWin, "E3 CE", shape.triangleup,  location.belowbar, color.new(color.lime,  0), size=size.tiny,  text="E3")
+plotshape(e2_pe and inWin, "E2 PE", shape.triangledown,location.abovebar, color.new(color.red,    0), size=size.small, text="E2")
+plotshape(e3_pe and inWin, "E3 PE", shape.triangledown,location.abovebar, color.new(color.maroon, 0), size=size.tiny,  text="E3")
+
+plot(ta.vwap(hlc3), "VWAP", color.new(color.orange, 0))
+
+alertcondition((e2_ce or e3_ce) and inWin, "V12 CE", "V12 Vishal Rajput — CE entry signal (5m)")
+alertcondition((e2_pe or e3_pe) and inWin, "V12 PE", "V12 Vishal Rajput — PE entry signal (5m)")
+
+
+// ─────────────────────────── SCRIPT 2 — SMI oscillator pane ─────────────────
+// Paste THIS as a SECOND, separate indicator (its own sub-pane).
+//
+// //@version=6
+// indicator("V12 SMI (30,3,3)")
+// kLen = input.int(30); dLen = input.int(3); sigLen = input.int(3)
+// f_ema2(s, l) => ta.ema(ta.ema(s, l), l)
+// hh = ta.highest(high, kLen)
+// ll = ta.lowest(low, kLen)
+// smi = 100 * f_ema2(close - (hh + ll) / 2, dLen) / (f_ema2(hh - ll, dLen) / 2)
+// smiSig = ta.ema(smi, sigLen)
+// plot(smi,    "SMI",    color.blue)
+// plot(smiSig, "Signal", color.orange)
+// hline(35,  "OB +35", color.red)
+// hline(-35, "OS -35", color.green)
+// hline(0,   "0")
