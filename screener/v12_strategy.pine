@@ -4,7 +4,7 @@
 // Runs the COMPLETE V12 strategy on the NIFTY 50 index itself — signal AND
 // trade are both on the index. No futures, no option premium.
 //
-//   SIGNAL  (mirrors v12_orion.py / v12_tradingview.pine exactly):
+//   SIGNAL  (mirrors v12_vishal.py / v12_tradingview.pine exactly):
 //     E2 = SMI(30,3,3) cross out of ±35 band, on the right side of its signal
 //     E3 = break of the nearest swing high/low (pivot lr5) within 20 bars
 //     E1 = VWAP — CONFIRM/CONVICTION ONLY (never triggers), shown as a tag

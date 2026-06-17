@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════════
 // V12 VISHAL RAJPUT — TradingView visualisation (Pine v6)
-// Mirrors the live 5m paper engine (v12_orion.py): SMI %K30/%D3/sig3,
+// Mirrors the live 5m paper engine (v12_vishal.py): SMI %K30/%D3/sig3,
 // E2 cross at bands +35/-35 (confirm=none), E3 cluster break (lookback 20,
 // swing 3), E1 OFF. Entry window 09:30-14:45 IST. ATM-option exits are NOT
 // shown (they live on the option premium, not this index chart).
