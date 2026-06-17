@@ -811,7 +811,7 @@ def ms_get_banner_line() -> str:
 
 
 
-VERSION  = "v21"
+VERSION  = "v22"
 BOT_NAME = "VISHAL RAJPUT TRADE"
 
 def _load_env_file(path: str):
@@ -1853,12 +1853,24 @@ STRIKE_PREMIUM_MIN      = CFG.strike_cfg("premium_min", 100)
 STRIKE_PREMIUM_MIN_DTE0 = CFG.strike_cfg("premium_min_dte0", 50)
 STRIKE_PREMIUM_MAX      = CFG.strike_cfg("premium_max", 400)
 
+V11_STRIKE_STEP = 100   # 100-pt strikes only — 50-step half-strikes too illiquid
+
 def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
     """
-    v13.3: True ATM — round to nearest 50 for ALL DTE.
-    Both CE and PE use the SAME ATM strike. Premium naturally balanced.
+    v22: 100-pt 'intelligent' strikes, slightly-ITM per direction (owner 2026-06-17).
+    - CE floors to the 100 below spot   → strike <= spot  → ITM call
+    - PE ceils  to the 100 above spot   → strike >= spot  → ITM put
+    So CE and PE sit on DIFFERENT strikes, but BOTH are ITM. This makes the
+    OPP DECAY gate meaningful: the opposite leg fed to the decay check is the
+    other ITM option (e.g. CE entry → decay read on the ITM PE), not an OTM leg
+    that is always decaying anyway. The scanner already pairs own=_locked["CE"]
+    with opp=_locked["PE"], so locking these two ITM legs wires the correlation.
+    At an exact round-100 spot both collapse to the same true-ATM strike.
     """
-    return int(round(spot / 50) * 50)
+    _f = int(spot)
+    if direction == "CE":
+        return (_f // V11_STRIKE_STEP) * V11_STRIKE_STEP
+    return ((_f + V11_STRIKE_STEP - 1) // V11_STRIKE_STEP) * V11_STRIKE_STEP
 
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
@@ -4442,9 +4454,10 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
                 _locked_tokens[_dt] = _tk[_dt]
                 _locked_tokens[_dt]["strike"] = _strike  # ensure strike survives into V11 entry display
 
-        # Pre-warm neighbors — ATM±50 CE+PE (always, regardless of multi flag)
+        # Pre-warm neighbors — ATM±100 CE+PE (always, regardless of multi flag)
+        # ±100 to land on liquid 100-grid strikes (v22 ITM scheme).
         # Keys: CE_UP / CE_DN / PE_UP / PE_DN
-        for _suffix, _delta in (("UP", +50), ("DN", -50)):
+        for _suffix, _delta in (("UP", +V11_STRIKE_STEP), ("DN", -V11_STRIKE_STEP)):
             _ce_n_strike = _locked_ce_strike + _delta
             _pe_n_strike = _locked_pe_strike + _delta
             _ce_n_tk = D.get_option_tokens(kite, _ce_n_strike, expiry)
@@ -4458,9 +4471,9 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
         if _sub_tokens:
             D.subscribe_tokens(_sub_tokens)
 
-    logger.info("[MAIN] Strikes LOCKED: ATM=" + str(_locked_ce_strike)
-                + " (neighbors " + str(_locked_ce_strike - 50)
-                + "/" + str(_locked_ce_strike + 50)
+    logger.info("[MAIN] Strikes LOCKED (ITM-100): CE=" + str(_locked_ce_strike)
+                + " PE=" + str(_locked_pe_strike)
+                + " (neighbors ±" + str(V11_STRIKE_STEP)
                 + " pre-warmed) at spot=" + str(round(spot, 1)))
     if kite and expiry and _locked_ce_strike:
         try:
@@ -6262,20 +6275,24 @@ def _strategy_loop(kite):
                     _relock = True
                     _is_initial_lock = True
                 else:
-                    _target_atm = int(round(spot_ltp / 50) * 50)
-                    _dist_from_lock = abs(spot_ltp - _locked_ce_strike)
-                    if (_target_atm != _locked_ce_strike
-                            and _dist_from_lock >= 40):
+                    # v22 ITM-100 scheme: CE is locked to the floor-100 of spot, so
+                    # spot lives in [_locked_ce_strike, _locked_ce_strike+100).
+                    # Relock only when spot crosses into a NEW 100-band, with a 15-pt
+                    # hysteresis past each boundary (lower edge = locked, upper = locked+100)
+                    # so it does not flap tick-by-tick right at a round strike.
+                    _target_ce = (int(spot_ltp) // V11_STRIKE_STEP) * V11_STRIKE_STEP
+                    if (_target_ce != _locked_ce_strike
+                            and (spot_ltp >= _locked_ce_strike + V11_STRIKE_STEP + 15
+                                 or spot_ltp <= _locked_ce_strike - 15)):
                         _relock = True
                         _spot_move = round(spot_ltp - _locked_at_spot, 1)
                         _old_ce = _locked_ce_strike
                         _old_pe = _locked_pe_strike
-                        logger.info("[MAIN] ATM drift past hysteresis: locked="
+                        logger.info("[MAIN] ATM band cross past hysteresis: locked CE="
                                     + str(_locked_ce_strike) + " target="
-                                    + str(_target_atm) + " spot="
+                                    + str(_target_ce) + " spot="
                                     + str(round(spot_ltp, 1))
-                                    + " (dist=" + "{:.1f}".format(_dist_from_lock)
-                                    + " > 40) — RELOCKING (neighbor pre-warmed)")
+                                    + " — RELOCKING (neighbor pre-warmed)")
 
                 if _relock:
                     _lock_strikes(spot_ltp, dte, kite, expiry)
