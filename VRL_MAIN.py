@@ -7974,8 +7974,10 @@ def _web_read_trades():
 
 def _web_read_fno():
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener")
-    # frozen SMI engine + the loose data-visibility sibling (separate files; tagged)
-    sources = [("fno_tracker.csv", "SMI"), ("fno_tracker_loose.csv", "LOOSE")]
+    # frozen SMI engine + loose data-visibility sibling + focused 9-stock tuned engine
+    # (separate files; tagged)
+    sources = [("fno_tracker.csv", "SMI"), ("fno_tracker_loose.csv", "LOOSE"),
+               ("fno_tracker_focus.csv", "FOCUS")]
     rows = []
     for fname, engine in sources:
         fno_path = os.path.join(base, fname)
@@ -8440,9 +8442,10 @@ async function renderFno(){
       var t1Pct=range>0?Math.max(0,Math.min(100,((t1-sl)/range)*100)):0;
       var dirIcon=p.direction==='CALL'?'🟢':'🔴';
       var looseBadge=p.engine==='LOOSE'?'<span style="font-size:8px;font-weight:800;color:var(--am);background:rgba(245,158,11,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">LOOSE</span>':'';
+      var focusBadge=p.engine==='FOCUS'?'<span style="font-size:8px;font-weight:800;color:var(--gn);background:rgba(34,197,94,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">FOCUS9</span>':'';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-left:3px solid '+dirClr+';border-radius:8px;padding:10px 10px 8px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
-          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+looseBadge+
+          '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+looseBadge+focusBadge+
           '<span style="font-size:10px;font-weight:700;color:'+dirClr+';margin-left:5px">'+esc(p.direction)+' '+(p.strike||'')+'</span>'+
           '<div style="font-size:9px;color:var(--dm);margin-top:1px">₹'+entry.toFixed(0)+' → ₹'+ltp.toFixed(0)+' · '+lots+' lot × '+lotSize+' = '+qty+' qty</div>'+
           '<div style="font-size:9px;color:var(--dm);margin-top:1px">Inv ₹'+Math.round(invest).toLocaleString('en-IN')+' → ₹'+Math.round(curVal).toLocaleString('en-IN')+'</div></div>'+
