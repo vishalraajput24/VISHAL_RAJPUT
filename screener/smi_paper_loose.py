@@ -49,6 +49,13 @@ S.TRADE_LOG  = os.path.join(S.BASE_DIR, "smi_paper_loose_log.csv")
 # ── Loose gate knobs (per-stock adaptive) ─────────────────────────────────────
 OS_PCTILE = 20.0   # CE: cross up through the stock's own p20 SMI (its oversold)
 OB_PCTILE = 80.0   # PE: cross down through the stock's own p80 SMI (its overbought)
+PE_1H_MAX = 40.0   # PE: also require 1h SMI < 40 — don't short a stock whose 1h
+                   # momentum is still in bull territory. Added 2026-06-17 after the
+                   # loose engine mass-fired 11 counter-trend PEs into a rising market
+                   # (1h SMI pinned 60–88, passing the old direction-only filter by a
+                   # razor margin). 40-day cache study (smi_loose_optimize.py): PE exp
+                   # −0.043%→−0.006%/trade, overall +0.062%→+0.078%, ~5/day kept, CE
+                   # (the actual edge, +0.100%) left untouched.
 
 
 def scan_entry_loose(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
@@ -97,7 +104,7 @@ def scan_entry_loose(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
             s1h, g1h = S.smi_1h_at(df, df.index[j])
             if np.isnan(s1h) or np.isnan(g1h):
                 return False
-            if not (s1h < g1h):
+            if not (s1h < g1h and s1h < PE_1H_MAX):   # 1h bearish AND not in bull zone
                 return False
             if not (sv[j] < gv[j] and sv[j] < ob_thr):
                 return False
