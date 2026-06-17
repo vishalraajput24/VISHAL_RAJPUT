@@ -99,9 +99,9 @@ def flow_veto(df: pd.DataFrame, bar: pd.Series, direction: str):
     return l1, l2, bool(l1 or l2)
 
 
-def scan_entry_flow(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
+def scan_entry_flow(sym: str, df: pd.DataFrame, fired: set):
     """Loose adaptive cross + V12 flow-gate. Same return contract as S.scan_entry."""
-    e = L.scan_entry_loose(sym, df, fired, nifty_bear)
+    e = L.scan_entry_loose(sym, df, fired)
     if not e:
         return None
     if "volume" not in df.columns or len(df) < max(VOL_WIN, DIV_WIN) + 5:

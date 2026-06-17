@@ -19,7 +19,6 @@ smi_single_filter.py for the evidence):
               close vs SMA8 · force close at the 15:15 bar close
   Paper fill: buy 1 lot nearest-expiry ATM option (CE/PE) at LTP; P&L tracked on
               option premium, exits driven by STOCK price (as backtested)
-  NIFTY 1h SMI bearish = conviction tag on PE entries (logged, not a gate)
 
 Files:
   state   : smi_paper_state.json   (open trades + fired-signal keys)
@@ -81,7 +80,6 @@ ENTRY_START  = "09:30"
 ENTRY_END    = "14:30"
 LAST_BAR     = "15:15"
 LOOKBACK_DAYS = 25          # enough for SMI-1h warmup + SMA8
-NIFTY_TOKEN  = 256265
 
 TRACKER_COLS = [
     "date_added","symbol","direction","option_symbol","strike","expiry","lot_size",
@@ -304,7 +302,7 @@ def log_exit(trade: dict, exit_ts, stock_exit: float, exit_prem: float, reason: 
 # Signal scan on one symbol — returns entry dict if the LAST closed bar fires
 # ─────────────────────────────────────────────────────────────────────────────
 
-def scan_entry(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
+def scan_entry(sym: str, df: pd.DataFrame, fired: set):
     if len(df) < SMI_LENGTH * 4:
         return None
     smi, sig = compute_smi(df)
@@ -357,8 +355,7 @@ def scan_entry(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
         if confirms(last):
             key = f"{sym}:PE:{df.index[ci].isoformat()}"
             if key not in fired:
-                conv = "PE-HIGH (NIFTY 1h bear)" if nifty_bear else "NORMAL"
-                return {"direction": "PE", "ts": ts, "key": key, "conviction": conv,
+                return {"direction": "PE", "ts": ts, "key": key, "conviction": "NORMAL",
                         "confirm_bars": back,
                         "detail": (f"SMI v1 | PE cross +{OB_PE:.0f} (bar -{back}) "
                                    f"| smi15={sv[last]:.1f} | 1h={smi1h:.1f}/sig{sig1h:.1f} "
@@ -425,16 +422,6 @@ def main():
     tok = {r["tradingsymbol"]: int(r["instrument_token"])
            for _, r in inst_nse.iterrows() if r["tradingsymbol"] in symbols}
 
-    # NIFTY conviction context (PE tag only)
-    nifty_bear = False
-    try:
-        ndf = fetch_15m(kite, NIFTY_TOKEN)
-        if ndf is not None and len(ndf) > SMI_LENGTH * 4:
-            s1h, g1h = smi_1h_at(ndf, ndf.index[-1])
-            nifty_bear = (not np.isnan(s1h)) and s1h < g1h
-    except Exception as e:
-        print(f"NIFTY fetch error: {e}")
-
     entries, exits = [], []
     t0 = time.time()
     for n, sym in enumerate(symbols, 1):
@@ -457,7 +444,7 @@ def main():
             continue   # no new entry while a trade is open or just closed this bar
 
         # 2) new entry?
-        e = scan_entry(sym, df, fired, nifty_bear)
+        e = scan_entry(sym, df, fired)
         if e:
             spot = float(df["close"].iloc[-1])
             opt = pick_atm_option(nfo, sym, spot, e["direction"])

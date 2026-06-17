@@ -58,7 +58,7 @@ PE_1H_MAX = 40.0   # PE: also require 1h SMI < 40 — don't short a stock whose 
                    # (the actual edge, +0.100%) left untouched.
 
 
-def scan_entry_loose(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
+def scan_entry_loose(sym: str, df: pd.DataFrame, fired: set):
     """Per-stock adaptive entry. Same return contract as S.scan_entry, so it can
     be monkeypatched straight into S.main()."""
     if len(df) < S.SMI_LENGTH * 4:
@@ -116,8 +116,7 @@ def scan_entry_loose(sym: str, df: pd.DataFrame, fired: set, nifty_bear: bool):
         if confirms(last):
             key = f"{sym}:PE:{df.index[ci].isoformat()}"
             if key not in fired:
-                conv = "LOOSE-PE (NIFTY 1h bear)" if nifty_bear else "LOOSE"
-                return {"direction": "PE", "ts": ts, "key": key, "conviction": conv,
+                return {"direction": "PE", "ts": ts, "key": key, "conviction": "LOOSE",
                         "confirm_bars": back,
                         "detail": (f"SMI LOOSE | PE cross p{OB_PCTILE:.0f}={ob_thr:+.1f} "
                                    f"(bar -{back}) | smi15={sv[last]:.1f} "
