@@ -1,0 +1,209 @@
+// ════════════════════════════════════════════════════════════════════════════
+// V12 VISHAL RAJPUT — DUAL-LEG VALIDATOR (Pine v6)  ·  5-minute
+// ----------------------------------------------------------------------------
+// One script that reproduces the LIVE v12_orion.py engine so you can backtest
+// BOTH legs the bot actually runs, each on its own chart:
+//
+//   • FUTURES leg  → load this on NIFTY FUTURES (or the index) 5m, mode=FUTURES.
+//                    CE→long, PE→short. Exits in index points (ATR ladder).
+//   • OPTION  leg  → load this on a NIFTY weekly ATM option 5m, mode=OPTION,
+//                    set "Option side" = CE or PE to match the chart. Always
+//                    LONG the premium. Exits in premium points (22/8/6 ladder).
+//
+// The SIGNAL is ALWAYS computed on the underlying (futures/index), never on the
+// option — exactly like the engine (signal = futures 5m, trade = option). In
+// OPTION mode the signal is pulled from "Signal symbol" via request.security so
+// the option premium chart only drives the entry fill + exits.
+//
+//   SIGNAL (identical to v12_orion.py / orion_v2514_backtest.py):
+//     SMI(30,3,3): smi=100·EMA²(close-(hh+ll)/2,3)/(EMA²(hh-ll,3)/2), sig=EMA(smi,3)
+//     E2 = SMI cross out of ±35 on the right side of its signal line
+//     E3 = break of nearest swing high/low (pivot lr5) within 20 bars  (vol filter OFF)
+//     E1 = VWAP — CONFIRM/CONVICTION ONLY (tag; optional gate, never a trigger)
+//     E2 OR E3 fires. Window 09:30-14:45 IST. One position. Stop after 5 losses/day.
+//
+//   EXITS  (per leg, from v12_orion.py):
+//     FUTURES : SL entry ∓ 1.5·ATR(14) · arm +1.0·ATR · trail to SMA8 · EOD 15:25
+//     OPTION  : SL entry-22 · arm +8 · trail peak-6 · EOD 15:25   (premium points)
+//
+// ⚠️ V12 is in FORWARD PAPER VALIDATION (re-judge ~30-Jun) and is OOS-fragile —
+//    use this to VALIDATE/visualise signals, NOT as a live auto-trader.
+//    Set chart timezone = Asia/Kolkata and timeframe = 5m for faithful results.
+// ════════════════════════════════════════════════════════════════════════════
+//@version=6
+strategy("V12 Vishal Rajput — DUAL-LEG Validator (5m)", overlay=true,
+         pyramiding=0, calc_on_every_tick=false, process_orders_on_close=true,
+         default_qty_type=strategy.fixed, default_qty_value=1,
+         initial_capital=100000, commission_type=strategy.commission.points,
+         commission_value=0)
+
+// ─────────────────────────────── mode ───────────────────────────────────────
+legMode  = input.string("FUTURES", "Leg to validate", options=["FUTURES","OPTION"],
+                        group="Mode", tooltip="FUTURES = trade chart price (load on futures/index). OPTION = trade chart premium long (load on an option chart).")
+optSide  = input.string("CE", "Option side (OPTION mode)", options=["CE","PE"],
+                        group="Mode", tooltip="Must match the option chart you loaded. CE chart→CE, PE chart→PE.")
+sigChart = input.bool(true, "Signal = current chart", group="Mode",
+                        tooltip="ON for FUTURES mode (chart IS the underlying). OFF for OPTION mode → pull signal from 'Signal symbol'.")
+sigSym   = input.symbol("NSE:NIFTY1!", "Signal symbol (when above is OFF)", group="Mode")
+
+// ─────────────────────────────── signal inputs ──────────────────────────────
+kLen       = input.int(30,    "SMI %K length",        group="Signal")
+dLen       = input.int(3,     "SMI smooth",           group="Signal")
+sigLen     = input.int(3,     "SMI signal",           group="Signal")
+overbought = input.float(35.0,"E2 overbought (PE)",   group="Signal")
+oversold   = input.float(-35.0,"E2 oversold (CE)",    group="Signal")
+lookback   = input.int(20,    "E3 cluster lookback",  group="Signal")
+lr         = input.int(5,     "E3 swing left/right",  group="Signal")
+useE1      = input.bool(false,"Require E1 (VWAP) confirm to enter", group="Signal")
+
+// ─────────────────────────────── futures-leg exits ──────────────────────────
+atrLen   = input.int(14,    "ATR length",       group="Futures exits")
+slATR    = input.float(1.5, "Hard SL (× ATR)",  group="Futures exits")
+armATR   = input.float(1.0, "Arm trail (× ATR)",group="Futures exits")
+maLen    = input.int(8,     "Trail SMA len",    group="Futures exits")
+
+// ─────────────────────────────── option-leg exits ───────────────────────────
+optSL    = input.float(22.0,"Hard SL (premium pts)",  group="Option exits")
+optArm   = input.float(8.0, "Arm trail (premium pts)",group="Option exits")
+optGap   = input.float(6.0, "Trail give-back (peak-N)",group="Option exits")
+
+// ─────────────────────────────── session ────────────────────────────────────
+useWin   = input.bool(true, "Only 09:30–14:45 IST entries", group="Session")
+winStart = input.int(570, "Entry start (min of day)", group="Session")  // 09:30
+winEnd   = input.int(885, "Entry end   (min of day)", group="Session")  // 14:45
+eodMin   = input.int(925, "Force-close (min of day)", group="Session")  // 15:25
+maxLosses= input.int(5,   "Stop after N losses/day",  group="Session")
+
+// ═════════════════════ SIGNAL (computed on the underlying) ═══════════════════
+// Wrapped in a function so it can run either on the chart (FUTURES) or inside
+// request.security against the index (OPTION). Returns raw direction booleans,
+// the E1/VWAP side, and the SMI pair for plotting.
+f_ema2(src, len) => ta.ema(ta.ema(src, len), len)
+
+calcSignal() =>
+    hh   = ta.highest(high, kLen)
+    ll   = ta.lowest(low,  kLen)
+    smi  = 100 * f_ema2(close - (hh + ll) / 2, dLen) / (f_ema2(hh - ll, dLen) / 2)
+    smiS = ta.ema(smi, sigLen)
+    // E2 — SMI cross through band, on its signal's side
+    _e2_ce = smi[1] <= oversold   and smi > oversold   and smi > smiS
+    _e2_pe = smi[1] >= overbought and smi < overbought and smi < smiS
+    // E3 — break of nearest swing within lookback (no volume filter, engine default)
+    ph = ta.pivothigh(high, lr, lr)
+    pl = ta.pivotlow(low,  lr, lr)
+    var float lastPH = na
+    var float lastPL = na
+    var int   phBar  = na
+    var int   plBar  = na
+    if not na(ph)
+        lastPH := ph
+        phBar  := bar_index - lr
+    if not na(pl)
+        lastPL := pl
+        plBar  := bar_index - lr
+    _resOk = not na(lastPH) and (bar_index - phBar) <= lookback
+    _supOk = not na(lastPL) and (bar_index - plBar) <= lookback
+    _e3_ce = _resOk and close[1] <= lastPH and close > lastPH
+    _e3_pe = _supOk and close[1] >= lastPL and close < lastPL
+    // E1 — VWAP side (confirm/tag only)
+    _e1_ce = close > ta.vwap(hlc3)
+    _e1_pe = close < ta.vwap(hlc3)
+    [(_e2_ce or _e3_ce), (_e2_pe or _e3_pe), _e1_ce, _e1_pe, smi, smiS]
+
+[ceRaw, peRaw, e1_ce, e1_pe, smiPlot, smiSPlot] = sigChart ? calcSignal() :
+     request.security(sigSym, "5", calcSignal(), lookahead=barmerge.lookahead_off)
+
+ceSig = ceRaw and (not useE1 or e1_ce)
+peSig = peRaw and (not useE1 or e1_pe)
+
+// ═════════════════════ session / loss guard ═════════════════════════════════
+minOfDay = hour * 60 + minute
+inWin    = not useWin or (minOfDay >= winStart and minOfDay <= winEnd)
+isEOD    = minOfDay >= eodMin
+
+newDay = ta.change(time("D")) != 0
+var int lossesToday = 0
+if newDay
+    lossesToday := 0
+if ta.change(strategy.closedtrades) > 0
+    if strategy.closedtrades.profit(strategy.closedtrades - 1) < 0
+        lossesToday := lossesToday + 1
+
+flat   = strategy.position_size == 0
+canEnt = inWin and not isEOD and flat and lossesToday < maxLosses
+
+// in OPTION mode only the matching side is tradeable (one chart = one side, long)
+takeCE = ceSig and (legMode == "FUTURES" or optSide == "CE")
+takePE = peSig and (legMode == "FUTURES" or optSide == "PE")
+
+// ═════════════════════ entries ══════════════════════════════════════════════
+var float entryPx  = na
+var float atrEntry = na
+var bool  armed    = false
+var float stopLvl  = na
+var float peakPrem = na
+
+atrV = ta.atr(atrLen)
+maV  = ta.sma(close, maLen)
+
+if canEnt and takeCE
+    // FUTURES: long the index.  OPTION: long the CE premium.  Both are long.
+    strategy.entry("L", strategy.long, comment = legMode == "OPTION" ? "CE prem" : "E2/E3 CE")
+    entryPx  := close
+    atrEntry := atrV
+    armed    := false
+    peakPrem := close
+    stopLvl  := legMode == "OPTION" ? close - optSL : close - slATR * atrV
+
+if canEnt and takePE
+    // FUTURES → short the index ; OPTION → long the PE premium (chart already inverts)
+    if legMode == "FUTURES"
+        strategy.entry("S", strategy.short, comment="E2/E3 PE")
+        stopLvl := close + slATR * atrV
+    else
+        strategy.entry("L", strategy.long, comment="PE prem")
+        stopLvl := close - optSL
+    entryPx  := close
+    atrEntry := atrV
+    armed    := false
+    peakPrem := close
+
+// ═════════════════════ exit management ══════════════════════════════════════
+if strategy.position_size > 0
+    if legMode == "OPTION"
+        // premium long: arm at +optArm, then trail to (peak - optGap)
+        peakPrem := math.max(peakPrem, high)
+        if not armed and high >= entryPx + optArm
+            armed := true
+        if armed
+            stopLvl := math.max(stopLvl, peakPrem - optGap)
+    else
+        // futures long: arm at +armATR·ATR, then trail to SMA8
+        if not armed and high >= entryPx + armATR * atrEntry
+            armed := true
+        if armed
+            stopLvl := math.max(stopLvl, maV)
+    if isEOD
+        strategy.close("L", comment="EOD")
+    else
+        strategy.exit("L-x", from_entry="L", stop=stopLvl, comment = armed ? "TRAIL" : "SL")
+
+if strategy.position_size < 0                    // FUTURES short only
+    if not armed and low <= entryPx - armATR * atrEntry
+        armed := true
+    if armed
+        stopLvl := math.min(stopLvl, maV)
+    if isEOD
+        strategy.close("S", comment="EOD")
+    else
+        strategy.exit("S-x", from_entry="S", stop=stopLvl, comment = armed ? "TRAIL" : "SL")
+
+// ═════════════════════ visuals + alerts ═════════════════════════════════════
+plot(strategy.position_size != 0 ? stopLvl : na, "Stop", color.new(color.fuchsia, 0),
+     style=plot.style_linebr, linewidth=2)
+plotshape(canEnt and takeCE, "CE entry", shape.triangleup,  location.belowbar, color.new(color.green,0), size=size.small, text="CE")
+plotshape(canEnt and takePE, "PE entry", shape.triangledown,location.abovebar, color.new(color.red,  0), size=size.small, text="PE")
+plotchar(armed and strategy.position_size != 0, "armed", "▲", location.bottom, color.new(color.aqua,0), size=size.tiny)
+
+alertcondition(canEnt and takeCE, "V12 CE", "V12 Vishal Rajput — CE entry (5m)")
+alertcondition(canEnt and takePE, "V12 PE", "V12 Vishal Rajput — PE entry (5m)")
