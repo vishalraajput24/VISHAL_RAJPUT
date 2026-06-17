@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-15 (feat/v11-target25-takeprofit). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-17 (feat/v11-itm100-strikes, v21→v22). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill, ITM-100 strikes CE-floor/PE-ceil) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v11_state` key that must survive restart, add it to BOTH the initial `_v11_state` dict AND `_V11_PERSIST_FIELDS`.
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -66,6 +66,22 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 - **Exit-candle cooldown** (`_last_exit_candle_ts`) — no re-entry on same candle as exit
 - **Same-side 3-min blocker** (`_last_exit_direction_v10` + `_last_exit_time_unix`) — after any exit, same direction blocked for 180s (any strike). Prevents post-trail chasing and rapid same-side re-entries
 - ~~Exhausted-loss re-entry block~~ — **removed 2026-06-11 (owner instruction)**: live counterfactual showed it skipped only 1 of 10 losers while blocking recovery winners (incl. a +32). Replaced by the midday deep-decay window above.
+
+### Strike selection — ITM-100 "intelligent" strikes (owner 2026-06-17, v22, PAPER 1-WEEK TRIAL)
+`V11_STRIKE_STEP = 100`, `resolve_strike_for_direction`: **CE floors** to the 100 below spot
+(→ strike ≤ spot → ITM call), **PE ceils** to the 100 above spot (→ strike ≥ spot → ITM put).
+50-step half-strikes were too illiquid. CE and PE now sit on DIFFERENT strikes but BOTH ITM
+(they straddle spot, so ITM depth always sums to 100 — at an exact round-100 spot both collapse
+to true ATM). **Why ITM both sides:** the OPP DECAY gate must read a meaningful opposite leg.
+The scanner already pairs `own=_locked_tokens["CE"]` with `opp=_locked_tokens["PE"]`, so locking
+the two ITM legs means a **CE entry reads decay on the ITM PE** (and vice-versa) — not an OTM leg
+that is always decaying anyway (owner's rationale). `_lock_strikes` neighbor pre-warm widened
+±50 → ±100; relock hysteresis rewritten to 100-band-cross + 15-pt buffer (was `round(spot/50)`).
+⚠️ **Trial caveats**: (1) depth asymmetry is inherent to a 100 grid (one leg near-ATM, the other
+near +100 deep-ITM depending on where spot sits in the band); (2) the SL ladder below is in
+ABSOLUTE premium points calibrated on ~ATM 50-step premium — deep-ITM premium is larger / moves
+differently, NOT auto-rescaled; (3) the 06-15 split-ATM backtest found ITM LOSES on V11
+(−92 pts/33tr) — this is a 1-week PAPER forward test to measure the real difference, revisit ~06-24.
 
 ### Execution — single lot
 Config: `lots_fixed: 1`, `lot_size: 65` → 65 qty, single market fill at the last 1-min candle close.
