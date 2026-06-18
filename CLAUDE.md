@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-18 (keep FOCUS35, removed frozen/loose/flow stock-F&O engines). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-18 (OPP DECAY band tightened [−8,−6]→[−9,−7] dte≥2; keep FOCUS35, removed frozen/loose/flow stock-F&O engines). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -12,7 +12,7 @@
 If you are Google Antigravity reading this:
 1. Read this entire CLAUDE.md — it is the single source of truth for architecture, strategy values, and rules.
 2. After any change you make to `VRL_MAIN.py`, `config.yaml`, `watch_trade.py`, or `trace_trade.py` — update the relevant section of this file in the same PR. Do not leave CLAUDE.md stale.
-3. **Never change locked strategy values** (OPP DECAY [−8,−6], initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill, ITM-100 strikes CE-floor/PE-ceil) without the user's explicit instruction.
+3. **Never change locked strategy values** (OPP DECAY [−9,−7] dte≥2, initial SL cap entry−10, PROTECT @+9 → entry−2, LOCK_4 @+11 → entry+4, TRAIL_10 @+15 → max(entry+9, peak−10), 1 lot single market fill, ITM-100 strikes CE-floor/PE-ceil) without the user's explicit instruction.
 4. Follow the PR workflow (branch → commit → `gh pr create` → `gh pr merge --squash`) — no direct pushes to main.
 5. If you add a new `_v11_state` key that must survive restart, add it to BOTH the initial `_v11_state` dict AND `_V11_PERSIST_FIELDS`.
 6. Update the `> Last resynced:` date at the top of this file whenever you resync it.
@@ -51,15 +51,15 @@ When searching for "dead" code, count dotted refs (`D.foo`, `MSTOCK.foo`) — a 
 | Gate | Condition | Constant |
 |------|-----------|----------|
 | **MOMENTUM** | 1-min option `close >= ema9_high + 3.5` (dte≥2) | `V11_MIN_EMA9H_GAP = 3.5` (hard gate) |
-| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−8.0, −6.0]` — all day (dte≥2) | `V11_DECAY_HIGH = -6.0` |
+| **OPP DECAY** | opposite leg: `close − ema9_low` in `[−9.0, −7.0]` (dte≥2) | `V11_DECAY_LOW = -9.0` / `V11_DECAY_HIGH = -7.0` |
 
-- **Per-DTE %-gate for dte 0/1 (owner-approved 2026-06-16, LIVE)**: near-expiry ATM premium collapses (~50 @dte0, ~113 @dte1) so the absolute +3.5/[−8,−6] gate over-fires on cheap premium. For **dte 0 and dte 1** the gate is normalized to **% of premium** via `_v11_gate_check(dte, …)` + `V11_PCT_GATE_DTE`:
+- **Per-DTE %-gate for dte 0/1 (owner-approved 2026-06-16, LIVE)**: near-expiry ATM premium collapses (~50 @dte0, ~113 @dte1) so the absolute +3.5/[−9,−7] gate over-fires on cheap premium. For **dte 0 and dte 1** the gate is normalized to **% of premium** via `_v11_gate_check(dte, …)` + `V11_PCT_GATE_DTE`:
   - **dte 0**: MOMENTUM `close ≥ ema9_high + 2.3%·close`, OPP DECAY `(opp_margin/opp_close) ∈ [−4.8%, −2.7%]`
   - **dte 1**: MOMENTUM `+3.0%·close`, same decay band `[−4.8%, −2.7%]`
   - **dte ≥ 2**: **unchanged** — the locked absolute gate above.
   - Calibrated by the expiry-aligned per-DTE sweep (`~/lab_data/perdte_pct_gate_study.py`, 21 days / 5 weekly expiries): decay floor −4.8% stable across DTE; momentum % rises away from expiry. dte0 flipped −180%→+75.5% (n=8, 75% WR), dte1 −58.5%→+39.1% (n=17, 65% WR). **In-sample** — owner shipped for live validation; revisit at the ~06-26 FINAL PACKAGE review. The full per-DTE table (incl. dte 4/5/6 = NO-TRADE: no positive gate exists) lives in `perdte_pct_gate_study.py` `PERDTE_GATES`; only dte 0/1 are wired live (the bot trades NIFTY weeklies = ~always dte 0/1).
 
-- **Deep decay all day (owner final, 2026-06-12)**: band widened from a midday-only (11:30–14:30) deep window to `[−8, −6]` for the whole session — shallow-decay band `(−6, −4]` removed entirely (shallow entries ran 2W/9L −34 pts over 06-10/06-11; study: `~/lab_data/xleg_context_study.py`). (Applies to dte≥2; dte 0/1 now use the %-gate above.)
+- **Decay band tightened to `[−9, −7]` (owner-approved 2026-06-18, dte≥2)**: from `[−8, −6]`. The decay-floor sweep over all logged trades + the 06-18 session showed the shallow half of `[−8,−6]` holds the losers — on dte≥2 band `[−8,−7]` = 78% WR / +8.73 per trade (n=9) vs `[−8,−6]` 44% WR / +1.52 (n=27); on 06-18 (dte5) the +25 winner sat at −7.23 (inside) while all 4 losers were −6.3..−6.9 (excluded). Deep floor extended −8→−9 (neutral on dte≥2, same 9 trades; admits a few neutral deeper trades all-dte). ⚠️ best bucket n=9 — shipped on owner's explicit call, re-confirm at the ~06-26/30 FINAL PACKAGE review. Prior `[−8, −6]` was owner-final 2026-06-12 (widened from a midday-only deep window; shallow `(−6,−4]` ran 2W/9L −34 pts; study `~/lab_data/xleg_context_study.py`). dte 0/1 still use the %-gate above (UNCHANGED).
 
 - **Entry window 10:00–14:30 (owner 2026-06-15)**: `V11_OPEN_BLACKOUT_END = dtime(10, 0)` (was 09:45) + `market_hours.entry_cutoff` 14:30 (was 15:00). Disciplined window — conviction_sizing_study showed 09:00-10:00 bled −₹788/trade; muhurat_kuttaka_study (OOS) showed 14:30–15:15 toxic (−2.24 fwd5/40% WR). Exits/EOD unchanged (EOD still 15:15; a trade opened at 14:29 is still managed to exit — its token stays subscribed from lock time, exits run unconditionally per BUG-01).
 - **Same-candle guard** (`_last_fired_candle_ts`) — no double-entry on same 1-min candle
@@ -293,7 +293,7 @@ Post-trade reconciler. Reads state + dashboard + CSV and flags:
 - **Re-entry disabled**: every exit sets `_reentry_armed = False`; fresh setup only.
 - **No strike/streak re-entry blockers (2026-06-11)**: the exhausted-loss strike block was tried and removed same day — live counterfactual showed it kills recovery winners. 15+ broader variants (time/streak/daily-cap) all reduced net P&L. Big winners are themselves re-entries after clean SLs.
 - **Single-lot execution (2026-06-10)**: 1 lot, market fill at candle close. Split-lot 50/50 (Lot 2 limit @ candle midpoint, 3-candle cancel) removed at user request.
-- **All strategy parameters are locked** — OPP DECAY [−8,−6] all day (owner final 2026-06-12), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier), **LOCK_25 floor @ peak≥25 → SL max(entry+25, peak−10) (owner-approved 2026-06-15, target_replay.py +163 pts/92tr; keeps runners, evolved from an initial +25 hard-exit)**. Change only with explicit user confirmation (ladder values validated via sl_replay_study.py / target_replay.py).
+- **All strategy parameters are locked** — OPP DECAY [−9,−7] dte≥2 (owner-approved 2026-06-18, tightened from [−8,−6]), initial SL cap entry−10, PROTECT @+9 entry−2, LOCK_4 @+11 entry+4, TRAIL_10 @+15 max(entry+9, peak−10) (owner-approved 2026-06-13, merged the old +18 tier), **LOCK_25 floor @ peak≥25 → SL max(entry+25, peak−10) (owner-approved 2026-06-15, target_replay.py +163 pts/92tr; keeps runners, evolved from an initial +25 hard-exit)**. Change only with explicit user confirmation (ladder values validated via sl_replay_study.py / target_replay.py).
 
 ---
 
