@@ -106,13 +106,14 @@ plotshape(diagOK and not inWindow,          "Out of window", shape.cross,      l
 // ---------------------------------------------------------------------
 showTbl = input.bool(true, "Show live info table", group="Diagnostics")
 var table t = table.new(position.top_right, 2, 8, border_width=1)
+// Function declarations must be at global scope in Pine — not inside the `if`.
+f_row(i, k, v, col) =>
+    table.cell(t, 0, i, k, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black,0))
+    table.cell(t, 1, i, v, text_color=col,          text_size=size.small, bgcolor=color.new(color.black,0))
 if showTbl and barstate.islast
     needPx   = ema9_high + momGap                     // exact close needed for MOMENTUM
     gap      = close - needPx                          // >=0 means momentum passing
     istNow   = str.format_time(time_close, "HH:mm:ss", "Asia/Kolkata")
-    f_row(i, k, v, col) =>
-        table.cell(t, 0, i, k, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black,0))
-        table.cell(t, 1, i, v, text_color=col,          text_size=size.small, bgcolor=color.new(color.black,0))
     f_row(0, "IST candle",  istNow,                                  color.aqua)
     f_row(1, "Leg",         legType,                                 color.aqua)
     f_row(2, "Close",       str.tostring(close, "#.##"),             color.white)
