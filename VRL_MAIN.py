@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  VRL_MAIN.py — VISHAL RAJPUT TRADE v21 (V11 Golden)
 #  MERGED: VRL_CONFIG + VRL_DATA + VRL_ENGINE + VRL_LEVELS + VRL_LAB
-#  V11 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-8,-6] all day
+#  V11 (LIVE):  1-min | Golden — Gate1: close>EMA9H+3.5  Gate2: OppDecay[-9,-7] dte>=2
 #               Single-lot entry (market fill @ candle close)
 #  V11 Exit:   INITIAL(ema9_low) → PROTECT(@+9,-2) → LOCK_4(@+11,+4) → TRAIL_10(@+15, max(entry+9, peak-10))
 # ═══════════════════════════════════════════════════════════════
@@ -4385,13 +4385,19 @@ spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard
 
 V11_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V11_OPEN_BLACKOUT_END = dtime(10, 0)  # hard gate: no entries before 10:00 (owner 2026-06-15: disciplined window; 09:00-10:00 bled -Rs788/trade per conviction_sizing_study)
-# OPP DECAY band [-8, -6] all day (owner final, 2026-06-12): shallow decay (-6,-4]
-# ran 2W/9L over 06-10..06-11; deep band made the whole-day filter.
-V11_DECAY_HIGH = -6.0  # upper bound → band [-8, -6]
+# OPP DECAY band [-9, -7] for dte>=2 (owner-approved 2026-06-18). Tightened from
+# [-8, -6]: the decay-floor sweep over all logged trades + today's session showed
+# the shallow half of [-8,-6] holds the losers — on dte>=2, band [-8,-7] = 78% WR
+# +8.73/trade (n=9) vs [-8,-6] 44% WR +1.52 (n=27); today (dte5) the +25 winner sat
+# at -7.23 (inside) while all 4 losers were -6.3..-6.9 (excluded). Deep floor extended
+# -8 -> -9 (neutral on dte>=2, same 9 trades). Prior band [-8,-6] was owner-final
+# 2026-06-12 (shallow (-6,-4] ran 2W/9L). dte 0/1 %-gate below is UNCHANGED.
+V11_DECAY_LOW  = -9.0  # deep (lower) bound
+V11_DECAY_HIGH = -7.0  # shallow (upper) bound → band [-9, -7]
 
 # ── Per-DTE %-of-premium entry gate (owner-approved 2026-06-16) ──────────────
 # Near-expiry ATM premium collapses (~50 @dte0, ~113 @dte1) so the absolute
-# MOMENTUM +3.5 / OPP DECAY [-8,-6] gate is effectively a different, looser
+# MOMENTUM +3.5 / OPP DECAY [-9,-7] gate is effectively a different, looser
 # strategy on expiry-week days — it over-fires on cheap premium. For dte 0/1
 # the gate is normalized to % of premium. Calibrated by the expiry-aligned
 # per-DTE sweep (~/lab_data/perdte_pct_gate_study.py, 21 days / 5 weekly
@@ -4418,7 +4424,7 @@ def _v11_gate_check(dte, own_close, own_ema9h, opp_margin, opp_close, opp_ema9l)
         return mom_ok, decay_ok
     # dte>=2 (or unmapped): locked absolute gate — unchanged
     mom_ok = (own_close >= own_ema9h + V11_MIN_EMA9H_GAP) if own_ema9h > 0 else False
-    decay_ok = (-8.0 <= opp_margin <= V11_DECAY_HIGH) if opp_ema9l > 0 else False
+    decay_ok = (V11_DECAY_LOW <= opp_margin <= V11_DECAY_HIGH) if opp_ema9l > 0 else False
     return mom_ok, decay_ok
 
 
@@ -5617,7 +5623,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 _fails = []
                 if not _momentum_ok: _fails.append(f"below_ema9h_gap({_momentum_gap:+.1f}<3.5)")
                 if not _decay_ok:
-                    _fails.append(f"opp_decay({_decay_margin:+.1f} not in [-8,{V11_DECAY_HIGH:.0f}])")
+                    _fails.append(f"opp_decay({_decay_margin:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])")
                 verdict = _fails[0] if _fails else "scanning"
 
             _ltp_out = round(result.get("entry_price", 0.0) or _ltp_fallback, 2)
@@ -6077,7 +6083,7 @@ def _strategy_loop(kite):
                                 _cfg = V11_PCT_GATE_DTE[int(dte or 0)]
                                 _reject_reason = f"decay_pct_weak(dte{dte} {_opp_margin/_opp_close*100:+.1f}% not in [{_cfg['decay_lo']*100:.1f},{_cfg['decay_hi']*100:.1f}])"
                             else:
-                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [-8,{V11_DECAY_HIGH:.0f}])"
+                                _reject_reason = f"opp_decay_weak({_opp_margin:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])"
 
                         _decay_gate = _decay_ok
                         _ready_to_fire = (_momentum_ok and _decay_gate and not _in_trade and not _in_cooldown)
