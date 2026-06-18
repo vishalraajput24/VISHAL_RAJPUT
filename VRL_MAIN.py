@@ -5286,9 +5286,11 @@ def _alert_bot_started():
         "Size    : 1 lot fixed\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V11 GOLDEN GATES</b>\n"
-        "1) MOMENTUM  close > EMA9H + 3.5 pts (hard gate)\n"
-        "2) OPP DECAY opp close − ema9l in [−8, −6] (all day)\n"
-        "Cooldown: 9:45 blackout · same-candle · same-side 3-min\n"
+        "1) MOMENTUM  dte≥2: close > EMA9H + 3.5 pts (hard gate)\n"
+        "   dte0/1: close ≥ EMA9H + 2.3%/3.0% of premium\n"
+        "2) OPP DECAY dte≥2: opp close − ema9l in [−9, −7]\n"
+        "   dte0/1: (opp margin / opp close) in [−4.8%, −2.7%]\n"
+        "Cooldown: 10:00 blackout · same-candle · same-side 3-min\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>V11 SL LADDER</b>\n"
         "INITIAL    peak < 9    → max(ema9_low, entry − 10)\n"
@@ -8281,7 +8283,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     var html='<div style="margin:8px 8px 0">';
     html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V11 LIVE — Golden (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
     html+='<div style="margin:2px 10px 9px">';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V11 GOLDEN GATES &nbsp;·&nbsp; Close > EMA9H+3.5 &nbsp;·&nbsp; Opp Decay [−8, −4] (11:30–14:30 deep [−8, −6]) &nbsp;·&nbsp; Same-side 3-min</div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V11 GOLDEN GATES &nbsp;·&nbsp; dte≥2: Close > EMA9H+3.5 · Opp Decay [−9, −7] &nbsp;·&nbsp; dte0/1 %-gate: Mom +2.3%/+3.0% · Opp Decay [−4.8%, −2.7%] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
     // ── Account + rolling performance (moved from retired MKT tab) ──
