@@ -67,7 +67,10 @@ oppOn = str.length(oppSym) > 0
      [close, ta.ema(low, emaLen)], lookahead=barmerge.lookahead_off)
 
 oppMargin = oppClose - oppEma9Low                      // close - ema9_low of OPPOSITE leg
-decayOK   = not oppOn ? true : (oppMargin >= decayLow and oppMargin <= decayHigh)
+oppHasData = not oppOn or not na(oppClose)              // false => TV has no data for the opposite leg
+// If the opposite leg has NO data we treat decay as PASS (so MOMENTUM alone can fire) instead of
+// silently killing every entry via na. Set the opposite symbol only if TV actually has its data.
+decayOK   = not oppOn ? true : (na(oppClose) ? true : (oppMargin >= decayLow and oppMargin <= decayHigh))
 
 // ---------------------------------------------------------------------
 //  GATES
@@ -77,6 +80,16 @@ inWindow   = not useWindow or not na(time(timeframe.period, winStart, "Asia/Kolk
 isEOD      = not na(time(timeframe.period, eodTime, "Asia/Kolkata"))
 
 entrySignal = momentumOK and decayOK and inWindow and not isEOD
+
+// ---------------------------------------------------------------------
+//  DIAGNOSTICS — see WHICH gate blocks (turn off once tuned)
+// ---------------------------------------------------------------------
+showDiag = input.bool(true, "Show gate diagnostics", group="Diagnostics")
+plotshape(showDiag and momentumOK,            "MOMENTUM ok", shape.triangleup,   location.belowbar, color.new(color.aqua,0),   size=size.tiny, text="M")
+plotshape(showDiag and oppOn and decayOK,     "DECAY ok",    shape.circle,       location.belowbar, color.new(color.yellow,0), size=size.tiny, text="D")
+plotshape(showDiag and oppOn and not oppHasData, "NO OPP DATA", shape.xcross,    location.abovebar, color.new(color.red,0),    size=size.tiny, text="no-data")
+plotshape(showDiag and not inWindow,          "Out of window", shape.cross,      location.bottom,   color.new(color.gray,60),  size=size.tiny)
+plotshape(entrySignal and strategy.position_size == 0, "BUY", shape.labelup,     location.belowbar, color.new(color.green,0),  size=size.small, text="BUY", textcolor=color.white)
 
 // ---------------------------------------------------------------------
 //  ENTRY  (buy the charted leg; long-only — option premium long)
