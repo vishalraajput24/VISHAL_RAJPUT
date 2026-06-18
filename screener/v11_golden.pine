@@ -27,6 +27,8 @@ decayLow      = input.float(-9.0,"OPP DECAY band low",         group=grpGate, st
 decayHigh     = input.float(-7.0,"OPP DECAY band high",        group=grpGate, step=0.1)
 
 grpOpp = "Opposite leg (for OPP DECAY)"
+legType = input.string("CE", "This chart is a ...", options=["CE","PE"], group=grpOpp,
+     tooltip="Pick CE if you are charting a call you might BUY, PE if a put. Only changes the arrow/alert text — the gate math is identical for both legs.")
 oppSym  = input.symbol("",  "Opposite leg symbol (the OTHER side's premium)", group=grpOpp,
      tooltip="If you are charting the CE you want to BUY, put the matching PE here (and vice-versa). Leave blank to DISABLE the decay gate and trade on MOMENTUM only.")
 
@@ -82,14 +84,51 @@ isEOD      = not na(time(timeframe.period, eodTime, "Asia/Kolkata"))
 entrySignal = momentumOK and decayOK and inWindow and not isEOD
 
 // ---------------------------------------------------------------------
-//  DIAGNOSTICS — see WHICH gate blocks (turn off once tuned)
+//  CLEAN BUY ARROW (confirmed bar only — matches the bot's candle-close fire)
+// ---------------------------------------------------------------------
+buyNow       = entrySignal and strategy.position_size == 0
+buyConfirmed = buyNow and barstate.isconfirmed       // non-repainting: fires on the CLOSED 1-min candle
+plotshape(buyConfirmed, "BUY", shape.arrowup, location.belowbar, color.new(color.lime,0),
+     size=size.large, text="BUY", textcolor=color.white)
+
+// ---------------------------------------------------------------------
+//  DIAGNOSTICS — see WHICH gate blocks (toggle off once happy)
 // ---------------------------------------------------------------------
 showDiag = input.bool(true, "Show gate diagnostics", group="Diagnostics")
-plotshape(showDiag and momentumOK,            "MOMENTUM ok", shape.triangleup,   location.belowbar, color.new(color.aqua,0),   size=size.tiny, text="M")
-plotshape(showDiag and oppOn and decayOK,     "DECAY ok",    shape.circle,       location.belowbar, color.new(color.yellow,0), size=size.tiny, text="D")
-plotshape(showDiag and oppOn and not oppHasData, "NO OPP DATA", shape.xcross,    location.abovebar, color.new(color.red,0),    size=size.tiny, text="no-data")
-plotshape(showDiag and not inWindow,          "Out of window", shape.cross,      location.bottom,   color.new(color.gray,60),  size=size.tiny)
-plotshape(entrySignal and strategy.position_size == 0, "BUY", shape.labelup,     location.belowbar, color.new(color.green,0),  size=size.small, text="BUY", textcolor=color.white)
+diagOK   = showDiag and barstate.isconfirmed
+plotshape(diagOK and momentumOK,            "MOMENTUM ok", shape.triangleup,   location.belowbar, color.new(color.aqua,0),   size=size.tiny, text="M")
+plotshape(diagOK and oppOn and decayOK,     "DECAY ok",    shape.circle,       location.belowbar, color.new(color.yellow,0), size=size.tiny, text="D")
+plotshape(diagOK and oppOn and not oppHasData, "NO OPP DATA", shape.xcross,    location.abovebar, color.new(color.red,0),    size=size.tiny, text="no-data")
+plotshape(diagOK and not inWindow,          "Out of window", shape.cross,      location.bottom,   color.new(color.gray,60),  size=size.tiny)
+
+// ---------------------------------------------------------------------
+//  LIVE INFO TABLE — verify IST time + how far close is from the trigger
+// ---------------------------------------------------------------------
+showTbl = input.bool(true, "Show live info table", group="Diagnostics")
+var table t = table.new(position.top_right, 2, 8, border_width=1)
+if showTbl and barstate.islast
+    needPx   = ema9_high + momGap                     // exact close needed for MOMENTUM
+    gap      = close - needPx                          // >=0 means momentum passing
+    istNow   = str.format_time(time_close, "HH:mm:ss", "Asia/Kolkata")
+    f_row(i, k, v, col) =>
+        table.cell(t, 0, i, k, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black,0))
+        table.cell(t, 1, i, v, text_color=col,          text_size=size.small, bgcolor=color.new(color.black,0))
+    f_row(0, "IST candle",  istNow,                                  color.aqua)
+    f_row(1, "Leg",         legType,                                 color.aqua)
+    f_row(2, "Close",       str.tostring(close, "#.##"),             color.white)
+    f_row(3, "Need (>=)",   str.tostring(needPx, "#.##"),            color.yellow)
+    f_row(4, "Mom gap",     str.tostring(gap, "#.##"),               gap >= 0 ? color.lime : color.red)
+    f_row(5, "Opp margin",  oppOn ? (na(oppClose) ? "NO DATA" : str.tostring(oppMargin, "#.##")) : "off", decayOK ? color.lime : color.red)
+    f_row(6, "In window",   inWindow ? "YES" : "NO",                 inWindow ? color.lime : color.red)
+    f_row(7, "READY",       buyNow ? ("BUY " + legType) : "wait",    buyNow ? color.lime : color.gray)
+
+// ---------------------------------------------------------------------
+//  ALERTS — fire on the confirmed candle so timing matches the bot
+// ---------------------------------------------------------------------
+alertcondition(buyConfirmed, "V11 BUY signal", "V11 BUY {{ticker}} @ {{close}}")
+if buyConfirmed
+    alert("V11 BUY " + legType + " " + syminfo.ticker + " @ " + str.tostring(close, "#.##") +
+         " | " + str.format_time(time_close, "HH:mm:ss", "Asia/Kolkata") + " IST", alert.freq_once_per_bar_close)
 
 // ---------------------------------------------------------------------
 //  ENTRY  (buy the charted leg; long-only — option premium long)
