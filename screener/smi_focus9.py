@@ -64,6 +64,26 @@ FOCUS = {
     # ── 06-18 batch-2 (liquid large-caps, same win>=70% & avg>0 in-sample 40d) ──
     "HEROMOTOCO": dict(k=30, ob=35, os=-35, dirs=("PE",),      flow=False, wr=83.3),
     "NESTLEIND":  dict(k=40, ob=35, os=-35, dirs=("PE",),      flow=False, wr=73.3),
+    # ── 06-18 batch-3 (full-cache sweep, liquid subset win>=75% & avg>0, in-sample 40d;
+    #    thin/penny option-books dropped). OVERFIT BY DESIGN — best-of-72-configs/stock. ──
+    "MPHASIS":    dict(k=21, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=93.3),
+    "TATACONSUM": dict(k=21, ob=40, os=-40, dirs=("PE",),      flow=True,  wr=91.7),
+    "ZYDUSLIFE":  dict(k=21, ob=50, os=-50, dirs=("PE",),      flow=False, wr=86.7),
+    "APOLLOHOSP": dict(k=40, ob=45, os=-45, dirs=("PE",),      flow=False, wr=84.6),
+    "DMART":      dict(k=21, ob=40, os=-40, dirs=("PE",),      flow=False, wr=84.6),
+    "DLF":        dict(k=21, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=83.3),
+    "JIOFIN":     dict(k=40, ob=50, os=-50, dirs=("CE", "PE"), flow=True,  wr=82.4),
+    "LUPIN":      dict(k=30, ob=35, os=-35, dirs=("CE", "PE"), flow=True,  wr=80.0),
+    "AUBANK":     dict(k=30, ob=35, os=-35, dirs=("CE", "PE"), flow=True,  wr=78.9),
+    "LICHSGFIN":  dict(k=21, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=78.9),
+    "INDUSINDBK": dict(k=40, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=78.6),
+    "TRENT":      dict(k=21, ob=45, os=-45, dirs=("PE",),      flow=False, wr=78.6),
+    "DIVISLAB":   dict(k=30, ob=50, os=-50, dirs=("PE",),      flow=False, wr=77.8),
+    "BPCL":       dict(k=21, ob=50, os=-50, dirs=("CE",),      flow=False, wr=76.9),
+    "COALINDIA":  dict(k=21, ob=45, os=-45, dirs=("PE",),      flow=False, wr=76.9),
+    "SIEMENS":    dict(k=30, ob=35, os=-35, dirs=("PE",),      flow=False, wr=76.9),
+    "CHOLAFIN":   dict(k=40, ob=40, os=-40, dirs=("PE",),      flow=False, wr=75.0),
+    "MCX":        dict(k=21, ob=45, os=-45, dirs=("PE",),      flow=False, wr=75.0),
 }
 SMI_D, SMI_SIG = 3, 3
 
