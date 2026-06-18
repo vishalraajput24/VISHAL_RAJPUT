@@ -7979,10 +7979,9 @@ def _web_read_trades():
 
 def _web_read_fno():
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screener")
-    # frozen SMI engine + loose data-visibility sibling + focused 9-stock tuned engine
-    # (separate files; tagged)
-    sources = [("fno_tracker.csv", "SMI"), ("fno_tracker_loose.csv", "LOOSE"),
-               ("fno_tracker_focus.csv", "FOCUS")]
+    # SMI FOCUS35 — the only surviving stock-F&O engine (frozen/loose/flow siblings
+    # removed 2026-06-18; each stock runs its own tuned V12 gate)
+    sources = [("fno_tracker_focus.csv", "FOCUS")]
     rows = []
     for fname, engine in sources:
         fno_path = os.path.join(base, fname)
