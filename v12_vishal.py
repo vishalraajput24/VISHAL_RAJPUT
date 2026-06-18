@@ -48,6 +48,7 @@ ENTRY_END   = dt.time(14, 45)
 FORCE_CLOSE = dt.time(15, 25)
 POLL_SEC    = 30
 MAX_LOSSES  = 5                              # losing option-trades/day → stop entries
+STRIKE_STEP = 100                           # 100-pt strikes only (50-step too illiquid); CE floors / PE ceils → both slightly ITM
 
 # 5m-tuned signal + exit constants
 SMI_PERIOD  = 30
@@ -307,7 +308,13 @@ def main():
                 tg(f"⚪ V12 VR FLOW-SKIP {eng} {direction} [{why}] · hollow move, no entry")
                 save_state(s); time.sleep(POLL_SEC); continue
 
-            strike = V.resolve_strike_for_direction(fut_now, direction, dte)
+            # 100-pt strikes (liquidity) + same moneyness both sides: slightly ITM.
+            # CE floors (strike ≤ spot → ITM call); PE ceils (strike ≥ spot → ITM put).
+            _f = int(fut_now)
+            if direction == "CE":
+                strike = (_f // STRIKE_STEP) * STRIKE_STEP
+            else:
+                strike = ((_f + STRIKE_STEP - 1) // STRIKE_STEP) * STRIKE_STEP
             toks = V.get_option_tokens(kite, strike, expiry)
             leg = toks.get(direction)
             if not leg:
