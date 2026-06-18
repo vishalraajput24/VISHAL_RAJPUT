@@ -54,6 +54,16 @@ FOCUS = {
     "BAJFINANCE": dict(k=30, ob=50, os=-50, dirs=("CE", "PE"), flow=True,  wr=78.6),
     "TCS":        dict(k=21, ob=35, os=-35, dirs=("CE", "PE"), flow=False, wr=72.7),
     "SBIN":       dict(k=30, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=71.4),
+    # ── 06-18 liquid expansion (batch-tuned, win>=70% & avg>0, in-sample 40d) ──
+    "KOTAKBANK":  dict(k=40, ob=45, os=-45, dirs=("CE", "PE"), flow=True,  wr=92.9),
+    "ASIANPAINT": dict(k=21, ob=35, os=-35, dirs=("PE",),      flow=False, wr=81.2),
+    "HINDUNILVR": dict(k=30, ob=50, os=-50, dirs=("PE",),      flow=False, wr=78.6),
+    "M&M":        dict(k=30, ob=40, os=-40, dirs=("PE",),      flow=False, wr=75.0),
+    "ADANIPORTS": dict(k=30, ob=40, os=-40, dirs=("CE", "PE"), flow=True,  wr=75.0),
+    "HDFCLIFE":   dict(k=30, ob=40, os=-40, dirs=("CE", "PE"), flow=True,  wr=71.4),
+    # ── 06-18 batch-2 (liquid large-caps, same win>=70% & avg>0 in-sample 40d) ──
+    "HEROMOTOCO": dict(k=30, ob=35, os=-35, dirs=("PE",),      flow=False, wr=83.3),
+    "NESTLEIND":  dict(k=40, ob=35, os=-35, dirs=("PE",),      flow=False, wr=73.3),
 }
 SMI_D, SMI_SIG = 3, 3
 
@@ -67,7 +77,7 @@ def scan_entry_focus(sym, df, fired):
     ts = df.index[last]
     if not (S.ENTRY_START <= ts.strftime("%H:%M") <= S.ENTRY_END):
         return None
-    smi_v, sig_v = OB.smi(df, k=c["k"], d=SMI_D, sig=SMI_SIG)
+    smi_v, sig_v = OB.smi(df, k=c["k"], d=c.get("d", SMI_D), sig=c.get("sig", SMI_SIG))
     sv, gv = smi_v.values, sig_v.values
     if np.isnan(sv[last]) or np.isnan(sv[last - 1]) or np.isnan(gv[last]):
         return None
@@ -99,8 +109,10 @@ def scan_entry_focus(sym, df, fired):
 
     return {"direction": direction, "ts": ts, "key": key,
             "conviction": f"FOCUS(wr{c['wr']:.0f})", "confirm_bars": 0,
+            "sl_pct": c.get("sl", S.SL_PCT), "trail_arm": c.get("trail", S.TRAIL_ARM),
             "detail": (f"SMI FOCUS9 {sym} | E2 k{c['k']} ±{c['ob']} {direction} "
-                       f"| smi={cur:.1f}/sig{cs:.1f}{flow_note}")}
+                       f"| smi={cur:.1f}/sig{cs:.1f} | sl{c.get('sl', S.SL_PCT):g}/"
+                       f"tr{c.get('trail', S.TRAIL_ARM):g}{flow_note}")}
 
 
 def _send_focus(msg):
