@@ -1,10 +1,12 @@
 """
-smi_focus9.py
-─────────────
-FOCUSED 9-stock paper engine — one code, each stock running its OWN tuned V12 gate
-(from the 06-17 per-stock tuning, v12_one_stock_tune / v12_batch_tune). Purpose:
-forward-monitor the 9 keeper stocks for ~1 week to confirm the tuned edges are real
-and we're on the right track, BEFORE trusting any of them.
+smi_focus35.py
+──────────────
+FOCUSED 35-stock paper engine — one code, each stock running its OWN tuned V12 gate
+(from the 06-17/06-18 per-stock tuning, v12_one_stock_tune / v12_batch_tune /
+v12_focus_tune). Started as 9 keepers (hence the old "focus9" name) and grew to 35
+stocks (9 original + 6 liquid + 2 batch-2 + 18 deep-tuned batch-3, all 06-18). Purpose:
+forward-monitor these stocks for ~1 week to confirm the tuned edges are real and we're
+on the right track, BEFORE trusting any of them.
 
 Each stock's gate (E2 SMI cross + optional flow-gate) uses its own SMI period / bands /
 direction / flow on-off. Everything else (1% SL · trail +1.5% then close-vs-SMA8 ·
@@ -12,18 +14,18 @@ direction / flow on-off. Everything else (1% SL · trail +1.5% then close-vs-SMA
 identical exits/fill to frozen/loose/flow, so results are comparable.
 
 Reuses smi_paper (exits/fill/main) + smi_paper_flow (flow-gate) + orion (SMI). Only the
-9 FOCUS symbols ever fire; every other stock returns None. Own files (never touches
+35 FOCUS symbols ever fire; every other stock returns None. Own files (never touches
 frozen/loose/flow data):
-  state   : smi_focus9_state.json
+  state   : smi_focus35_state.json
   tracker : fno_tracker_focus.csv   (structure tag = SMI_FOCUS)
-  log     : smi_focus9_log.csv
-Telegram alerts relabelled "SMI FOCUS9".
+  log     : smi_focus35_log.csv
+Telegram alerts relabelled "SMI FOCUS35".
 
 IN-SAMPLE TUNED — this is the forward-validation run, NOT a proven edge yet. Judge the
 week's results against the in-sample win-rates below.
 
-  python3 smi_focus9.py          # one pass (latest closed 15m bar)
-  python3 smi_focus9.py --dry    # no writes, print decisions only
+  python3 smi_focus35.py          # one pass (latest closed 15m bar)
+  python3 smi_focus35.py --dry    # no writes, print decisions only
 """
 
 import os
@@ -37,9 +39,9 @@ import orion_v2514_backtest as OB
 _orig_send = S.send_telegram
 _orig_upsert = S.tracker_upsert
 
-S.STATE_FILE = os.path.join(S.BASE_DIR, "smi_focus9_state.json")
+S.STATE_FILE = os.path.join(S.BASE_DIR, "smi_focus35_state.json")
 S.TRACKER    = os.path.join(S.BASE_DIR, "fno_tracker_focus.csv")
-S.TRADE_LOG  = os.path.join(S.BASE_DIR, "smi_focus9_log.csv")
+S.TRADE_LOG  = os.path.join(S.BASE_DIR, "smi_focus35_log.csv")
 
 # ── Per-stock tuned gate (06-17). k=SMI period · ob/os=cross bands ·
 #    dirs=allowed sides · flow=apply V12 flow-gate. SL/trail = shared (1% / +1.5%).
@@ -131,13 +133,13 @@ def scan_entry_focus(sym, df, fired):
     return {"direction": direction, "ts": ts, "key": key,
             "conviction": f"FOCUS(wr{c['wr']:.0f})", "confirm_bars": 0,
             "sl_pct": c.get("sl", S.SL_PCT), "trail_arm": c.get("trail", S.TRAIL_ARM),
-            "detail": (f"SMI FOCUS9 {sym} | E2 k{c['k']} ±{c['ob']} {direction} "
+            "detail": (f"SMI FOCUS35 {sym} | E2 k{c['k']} ±{c['ob']} {direction} "
                        f"| smi={cur:.1f}/sig{cs:.1f} | sl{c.get('sl', S.SL_PCT):g}/"
                        f"tr{c.get('trail', S.TRAIL_ARM):g}{flow_note}")}
 
 
 def _send_focus(msg):
-    _orig_send(msg.replace("SMI PAPER", "SMI FOCUS9"))
+    _orig_send(msg.replace("SMI PAPER", "SMI FOCUS35"))
 
 
 def _upsert_focus(trade, status, cur_prem):

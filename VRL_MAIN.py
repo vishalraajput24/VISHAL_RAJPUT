@@ -8447,7 +8447,7 @@ async function renderFno(){
       var t1Pct=range>0?Math.max(0,Math.min(100,((t1-sl)/range)*100)):0;
       var dirIcon=p.direction==='CALL'?'🟢':'🔴';
       var looseBadge=p.engine==='LOOSE'?'<span style="font-size:8px;font-weight:800;color:var(--am);background:rgba(245,158,11,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">LOOSE</span>':'';
-      var focusBadge=p.engine==='FOCUS'?'<span style="font-size:8px;font-weight:800;color:var(--gn);background:rgba(34,197,94,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">FOCUS9</span>':'';
+      var focusBadge=p.engine==='FOCUS'?'<span style="font-size:8px;font-weight:800;color:var(--gn);background:rgba(34,197,94,.15);border-radius:3px;padding:1px 4px;margin-left:5px;letter-spacing:.5px">FOCUS35</span>':'';
       return '<div style="margin:6px 8px;background:var(--c1);border:1px solid '+cardBorder+';border-left:3px solid '+dirClr+';border-radius:8px;padding:10px 10px 8px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
           '<div><span style="font-size:14px;font-weight:800;color:var(--tx)">'+dirIcon+' '+esc(p.symbol)+'</span>'+looseBadge+focusBadge+
