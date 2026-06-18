@@ -82,6 +82,16 @@ def connect():
     V._kite = k                          # so V.get_option_1min/get_option_tokens work
     return k
 
+# paper_wide runs no WebSocket, so V.get_spot_ltp() (WS tick cache) is always 0
+# here — which made resolve_strike_for_direction() return strike 0 and spam
+# "[DATA] Token resolve incomplete: strike=0" twice every 15s. Read spot via REST.
+def spot_ltp_rest(kite):
+    try:
+        q = kite.ltp("NSE:NIFTY 50")
+        return float(list(q.values())[0]["last_price"])
+    except Exception:
+        return 0.0
+
 # ---------- gate evaluation (reuses V's exact candle/ema math) ----------
 def leg(token, n=100):
     df = V.get_option_1min(int(token), n)
@@ -182,7 +192,9 @@ def main():
                 time.sleep(POLL_SEC); continue
 
             # ----- ENTRY scan (flat) -----
-            spot = V.get_spot_ltp()
+            spot = spot_ltp_rest(kite)
+            if spot <= 0:                                # no REST quote — skip cycle
+                time.sleep(POLL_SEC); continue
             ce_strike = V.resolve_strike_for_direction(spot, "CE", dte)
             pe_strike = V.resolve_strike_for_direction(spot, "PE", dte)
             toks = {}

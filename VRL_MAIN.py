@@ -1904,6 +1904,11 @@ def get_option_tokens(kite, strike: int, expiry_date) -> dict:
     kite = kite or _kite
     if kite is None:
         return {}
+    if not strike or int(strike) <= 0:
+        # A strike-0 lookup can never resolve a real option; scanning every NFO
+        # instrument for it is wasteful and used to log a misleading "incomplete"
+        # warning. Bail early (callers already treat {} as "no tokens").
+        return {}
     key = (int(strike), expiry_date.isoformat() if expiry_date else "")
     with _token_cache_lock:
         if key in _token_cache:
