@@ -1,6 +1,6 @@
 # VRL Trading Bot — Developer Reference
 
-> Last resynced: 2026-06-18 (rename focus9→focus35). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
+> Last resynced: 2026-06-18 (keep FOCUS35, removed frozen/loose/flow stock-F&O engines). Single-file bot: `VRL_MAIN.py` (~10,000 lines).
 > Grep by symbol name — line numbers in this doc are approximate.
 
 ---
@@ -141,9 +141,8 @@ old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 7
 | `trace_trade.py` | Post-trade audit script (standalone, no Claude dependency) |
 | `watch_trade.py` | Live alignment watcher — polls state/dashboard/TG every 2s (standalone) |
 | `paper_wide.py` | INDEPENDENT wide-window (09:30–15:15) paper engine for data collection (owner 2026-06-15). Imports VRL_MAIN and reuses its REAL gate fns (`get_option_1min`/`_v11_compute_trail_sl`) → zero divergence. Own state (`state/paper_wide_state.json`) + log (`lab_data/paper_wide_log.csv`). SILENT all day; ONE EOD Telegram summary. Never touches live state / never places orders. Cron 09:25 Mon–Fri, self-exits after EOD. A/B vs live's narrow 10:00–14:30 window at ~06-25. |
-| `screener/smi_paper_loose.py` | LOOSE sibling of the SMI paper engine (owner 2026-06-16) — per-stock adaptive p20/p80 gate + direction-only 1h, ~5-6 trades/day for data visibility. Imports `smi_paper`, reuses its math/exits/fill; own state/log/tracker (`structure=SMI_LOOSE`). See the SMI section below. |
 | `screener/smi_focus35.py` | FOCUSED stock engine (owner 2026-06-17, "1 code for the keeper stocks, monitor 1 week"; renamed focus9→focus35 on 06-18 to match the count). One engine, each stock running its OWN tuned V12 gate from the per-stock tuning (`v12_one_stock_tune.py` / `v12_batch_tune.py`): per-stock **SMI period (k) · cross bands (±ob) · direction · flow on/off** in the `FOCUS` dict. **35 stocks** (started as 9, hence the old "focus9" name — original 9 + 6 liquid-expansion on 06-18 + 2 batch-2 on 06-18 + 18 batch-3 liquid-subset on 06-18). The 18 batch-3 names (win≥75% from a full-cache sweep, thin/penny option-books dropped) were then **DEEP-TUNED** by `screener/v12_focus_tune.py` — a wider 2430-config/stock grid that also sweeps SMI smoothing (`d`/`sig`), `sl`% and `trail`%, optimizing max avg%/trade subject to n≥12 & win≥70% (the original batch tuner froze those at 3/3, 1.0%, 1.5%). The FOCUS dict carries the per-stock overrides; the engine honors them (`smi_focus35` passes `d`/`sig` to `OB.smi`; `smi_paper` sets per-trade `sl_price` from `sl_pct` and reads `trail_arm`). Post-tune in-sample win/avg: MPHASIS 92%/+0.98 · TATACONSUM 92%/+0.64 · ZYDUSLIFE 80%/+0.64 · APOLLOHOSP 75%/+0.47 · DMART 85%/+0.59 · DLF 75%/+0.83 · JIOFIN 77%/+0.64 · LUPIN 86%/+0.27 · AUBANK 86%/+0.54 · LICHSGFIN 77%/+0.70 · INDUSINDBK 83%/+0.67 · TRENT 79%/+0.52 · DIVISLAB 92%/+0.67 · BPCL 75%/+0.37 · COALINDIA 79%/+0.80 · SIEMENS 77%/+0.93 · CHOLAFIN 77%/+0.58 · MCX 75%/+0.81. ⚠️ **Heavily in-sample / overfit by design** — best-of-2430 per stock; treat win-rates as a screen, not a guarantee. The deep tune mostly found edge in tighter SL (0.8%) and faster trail-arm (1.0–1.5%), not the frozen 1.0/1.5. Original 9 + WR: MARUTI k21/±45/both/flowON 87% · LT k30/±50/both/flowON 87% · TITAN k21/±50/CE/flowON 83% · INFY k30/±35/PE/flowOFF 83% · BHARTIARTL k40/±40/both/flowON 83% · RELIANCE k30/±50/both/flowON 79% · BAJFINANCE k30/±50/both/flowON 79% · TCS k21/±35/both/flowOFF 73% · SBIN k30/±45/both/flowON 71%. 06-18 liquid expansion (+6): KOTAKBANK k40/±45/both/flowON 93% · ASIANPAINT k21/±35/PE/flowOFF 81% · HINDUNILVR k30/±50/PE/flowOFF 79% · M&M k30/±40/PE/flowOFF 75% · ADANIPORTS k30/±40/both/flowON 75% · HDFCLIFE k30/±40/both/flowON 71%. 06-18 batch-2 (+2): HEROMOTOCO k30/±35/PE/flowOFF 83% · NESTLEIND k40/±35/PE/flowOFF 73%. All expansion picks pass the same batch-tune keeper bar (win≥70% & avg>0, in-sample 40d). Only these 35 ever fire; everything else returns None. Shared exits/fill (1% SL · trail +1.5% · 15:15 EOD · 1 lot ATM). Reuses `smi_paper` + `smi_paper_flow` + `orion_v2514_backtest`; own state/log/tracker (`smi_focus35_state.json` / `smi_focus35_log.csv` / `fno_tracker_focus.csv`, `structure=SMI_FOCUS`), TG "SMI FOCUS35", own cron, log `~/logs/smi_focus35.log`, green "FOCUS35" dashboard badge. **IN-SAMPLE TUNED — this is the ~1-week forward-validation run, NOT a proven edge; judge the week vs the in-sample win-rates above.** |
-| `screener/smi_paper_flow.py` | FLOW sibling (owner 2026-06-17, "apply V12 to stock F&O on 15m, keep it simple as V12") — a **LITERAL mirror of v12_vishal's converged gate** on each stock's 15m bars: **E2 SMI cross + FLOW-GATE, nothing else** (no per-stock percentiles, no 1h filter, no VWAP — V12 has none). Signal = orion `smi(k=30,d=3,sig=3)`, bands **±35**, side-of-signal: CE `prev≤−35 & cur>−35 & cur>sig`, PE `prev≥+35 & cur<+35 & cur<sig`, same-bar — identical to `orion_v2514_backtest.gen_signals` E2. Then V12's flow-gate vetoes hollow moves: **L1** effort-vs-result (below-median volx + weak 5-bar approach, OR rejection wick CE close_pos≤0.40 / PE≥0.60) **OR L2** A/D divergence (new 20-bar price extreme the intraday A/D doesn't confirm), self-calibrating percentiles (`v12_vishal.flow_veto` math). Imports `smi_paper` (exits/fill/`main()`) + `orion_v2514_backtest` (SMI); own state/log/tracker (`smi_paper_flow_state.json` / `smi_paper_flow_log.csv` / `fno_tracker_flow.csv`, `structure=SMI_FLOW`), TG relabel "SMI FLOW", own cron (frozen/loose schedule, log `~/logs/smi_paper_flow.log`). DATA-COLLECTION ONLY — V12's gate is in-sample/OOS-fragile; judge alongside frozen/loose ~06-25. NOT yet wired into the dashboard F&O tab (follow-up). |
+| `screener/smi_paper_flow.py` | **LIBRARY ONLY (standalone FLOW engine removed 2026-06-18).** Kept because `smi_focus35` imports it for the V12 flow-gate (`F.VOL_WIN`, `F.add_flow_features`, `F.flow_veto` — L1 effort-vs-result + L2 A/D-divergence veto, `v12_vishal.flow_veto` math). Its own cron/state/log/tracker (`fno_tracker_flow.csv` etc.) are gone — do not run it directly. |
 | `sl_replay_study.py` | SL-ladder replay backtest — re-runs historical trades against `lab_data/options_1min` candles under candidate SL rules (standalone, read-only) |
 | `screener/` | Stock F&O SMI paper engine + multibagger screeners (separate processes, not imported by VRL_MAIN) |
 | `static/VRL_DASHBOARD.html` | **Generated artifact** — overwritten from `_WEB_HTML` on every restart. Never edit directly. |
@@ -151,49 +150,32 @@ old ladder left under-protected. Replay (`sl_replay_study.py`): +25.1 pts over 7
 | `state/vrl_live_state.json` | Legacy V7 state — still written by bot, not used by V11 strategy logic |
 | `state/vrl_dashboard.json` | Dashboard snapshot — full rebuild (`_write_dashboard`) once per 1-min candle + after every exit (V11 and V7 paths); fast path `_update_dashboard_ltp` every 5–10s only refreshes ts/LTP/position, never the `today` block |
 
-### Stock F&O — SMI paper engine (since 2026-06-12)
+### Stock F&O — SMI FOCUS35 is the only engine (owner 2026-06-18: "keep focus35, remove other stock F&O code")
 Old daily-pick screener strategy **retired 2026-06-11** (crons removed: `vishal_fno_screener.py`
 15:40 + `fno_collector.py --tick`; files kept on disk for rollback; final book +₹18,709,
 archived to `fno_tracker_archive.csv`). `fno_collector.py --morning` still runs (universe/OHLCV cache).
 
-New engine: `screener/smi_paper.py` — cron every 15m bar close +2min (09:47–15:31 Mon–Fri),
-log `~/logs/smi_paper.log`. **2-week paper validation — strategy constants FROZEN, no tuning
-before ~2026-06-25.** Spec (evidence: `smi_backtest.py`, `smi_pe_tuning.py`, `smi_single_filter.py`):
-- SMI RMA(Wilder) 14/3/3 on 15m + 1h. CE: cross up −40 same-bar, SMI>signal, 1h SMI>signal+5,
-  1h SMI in (0,50). PE: cross down +45 entry within 6 bars (first confirm), SMI<signal,
-  1h SMI<signal−5, 1h SMI in (0,50), stock below day VWAP. NIFTY 1h SMI bear = PE conviction tag.
-- Entries on bars labelled 09:30–14:30; paper fill = 1 lot nearest-expiry ATM option at LTP.
-- Exits (stock-price driven): SL 1% of entry, trail arms at +1.5% peak → exit close vs SMA8,
-  force close at 15:15 bar. Backtest: ~66% win, ~+0.49%/trade stock-level (40 days, 119 stocks).
-- State `smi_paper_state.json` · dashboard rows in `fno_tracker.csv` (`structure=SMI`) ·
-  clean trade log `smi_paper_log.csv` for the review.
+**Removed 2026-06-18** — the three parallel SMI paper engines (frozen `smi_paper`, `smi_paper_loose`,
+`smi_paper_flow`): their crons deleted, the LOOSE engine file + the dead `smi_loose_optimize.py`
+study `git rm`'d, and all their data purged (`fno_tracker.csv` / `fno_tracker_loose.csv` /
+`fno_tracker_flow.csv` + the matching `*_state.json` / `*_log.csv` + the `.bak_20260617` backups).
+`smi_paper.py` and `smi_paper_flow.py` files are **kept ON PURPOSE** — `smi_focus35` imports them
+as libraries (S = exits/fill/`main()` orchestration, F = the flow-gate). They no longer run standalone.
 
-**LOOSE sibling — `screener/smi_paper_loose.py` (owner 2026-06-16, data visibility):**
-the frozen gate can go several sessions with ZERO trades ("fully blind"), so this engine
-runs ALONGSIDE the frozen one (which is untouched — clean 06-25 baseline) at a deliberately
-looser gate for ~5-6 paper trades/day to watch. **Imports `smi_paper` and reuses its exact
-SMI math / exits / fill model / `main()`** — only the entry gate is swapped (zero divergence
-elsewhere). Gate is **per-stock adaptive** ("flexible as per stock"): oversold/overbought =
-each stock's OWN SMI **p20 / p80** over the lookback (not the global −40/+45), and the 1h
-filter is relaxed to **direction-only** (CE 1h SMI>sig · PE 1h SMI<sig; the +5/−5 margin +
-(0,50) zone that killed ~99% of crosses is dropped; PE still needs close<day-VWAP). Validated
-on the 40-day cache (~5.7 trades/day, balanced CE/PE). Own files — never touches frozen data:
-`smi_paper_loose_state.json`, `fno_tracker_loose.csv` (`structure=SMI_LOOSE`),
-`smi_paper_loose_log.csv`; Telegram alerts relabelled "SMI LOOSE". Own cron (same schedule
-as frozen, log `~/logs/smi_paper_loose.log`). This is DATA-COLLECTION ONLY, not a validated
-strategy — do not treat its P&L as an edge.
-**Dashboard:** the F&O tab's `_web_read_fno()` reads `fno_tracker.csv` (frozen, tag
-`engine=SMI`), `fno_tracker_loose.csv` (tag `engine=LOOSE`, amber "LOOSE" badge) AND
-`fno_tracker_focus.csv` (tag `engine=FOCUS`, green "FOCUS35" badge — the 35-stock tuned engine,
-see `smi_focus35.py` below). Files stay separate (the crons run on the same minute — a shared
-file would race on the full-file rewrite and could corrupt the frozen validation tracker).
-SMI has NO fixed target (t1/t2 blank by design) — exits are 1% SL · trail arms +1.5% then
-close-vs-SMA8 · 15:15 force close; the card's progress bar/target fields stay empty for SMI.
-- `confirm_bars` column in the trade log (added 2026-06-12, data collection only): bars between
-  the SMI cross and the entry (CE always 0 — same-bar; PE 0–6 — first confirm in the window).
-  Entries fire on the FIRST confirming bar, so the 6-bar window is a ceiling, not a delay.
-  At the ~06-25 review, bucket PE results by `confirm_bars` to decide the optimal window
-  (backtest: window 3 = 22 trades +9.4% total, window 6 = 36 trades +15.0% — late confirms paid).
+**`screener/smi_focus35.py` — the surviving engine.** 35 stocks, each running its OWN tuned V12
+gate (per-stock SMI period `k` · cross bands `±ob` · direction · flow on/off · `d`/`sig`/`sl`/`trail`
+overrides in the `FOCUS` dict). Cron every 15m bar close +2min (09:47–15:31 Mon–Fri), log
+`~/logs/smi_focus35.log`. Reuses the shared SMI math / exits / fill model from `smi_paper`
+(SMI RMA(Wilder) base; **exits**: SL 1% of entry — per-stock override via `sl_pct`; trail arms at
++1.5% peak — per-stock `trail_arm`; close vs SMA8; 15:15 force close; paper fill = 1 lot
+nearest-expiry ATM option at LTP). Own state/log/tracker (`smi_focus35_state.json` /
+`smi_focus35_log.csv` / `fno_tracker_focus.csv`, `structure=SMI_FOCUS`), TG "SMI FOCUS35",
+green "FOCUS35" dashboard badge. **IN-SAMPLE TUNED — ~1-week forward-validation, NOT a proven edge.**
+
+**Dashboard:** the F&O tab's `_web_read_fno()` now reads ONLY `fno_tracker_focus.csv`
+(tag `engine=FOCUS`, green "FOCUS35" badge). The frozen/loose readers were removed with the engines.
+SMI has NO fixed target (t1/t2 blank by design) — the card's progress bar/target fields stay empty.
+`watch_trade.py` now watches the FOCUS35 state/tracker/log; `smi_force_close.py` flat-outs FOCUS35.
 
 ### Stale artifacts in state/ (do not rely on)
 - `vrl_shadow_state.json` — shadow scanner removed; file is stale
@@ -288,10 +270,10 @@ Polls every 2s (in trade) / 10s (idle). Cross-checks:
 - Telegram log: entry alert, SL upgrade alert, exit alert
 Mismatches appended to `~/lab_data/trade_audit_notes.md`.
 
-Also watches the SMI stock F&O paper engine every 15m, matching its cron (PR #235, #237):
-- `screener/smi_paper_state.json` open trades — SL formula (stock entry ∓1%), trail armed at +1.5% peak, matching OPEN row in `fno_tracker.csv` (structure=SMI)
+Also watches the SMI FOCUS35 stock F&O paper engine every 15m, matching its cron (repointed 06-18 from the removed frozen engine):
+- `screener/smi_focus35_state.json` open trades — SL formula (stock entry ∓1%), trail armed at +1.5% peak, matching OPEN row in `fno_tracker_focus.csv` (structure=SMI_FOCUS)
 - Stale-state alarm if state file >22 min old during 09:47–15:31 (dead cron detector)
-- Exit reconciliation vs `screener/smi_paper_log.csv` (pnl_rs math, exit reason ∈ SL-HIT/TRAIL-SMA8/EOD-CLOSE/EOD-LATE, tracker status)
+- Exit reconciliation vs `screener/smi_focus35_log.csv` (pnl_rs math, exit reason ∈ SL-HIT/TRAIL-SMA8/EOD-CLOSE/EOD-LATE, tracker status)
 
 ### trace_trade.py
 Post-trade reconciler. Reads state + dashboard + CSV and flags:

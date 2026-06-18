@@ -5,7 +5,7 @@ Runs forever with no Claude Code dependency.
 Polls state/dashboard/log every 2s (in trade) or 10s (idle).
 Cross-checks state.json vs dashboard.json vs Telegram log.
 Also watches the stock F&O SMI paper engine (every 15m, matching its cron):
-state vs fno_tracker.csv vs smi_paper_log.csv + SL formula + freshness.
+state vs fno_tracker.csv vs smi_focus35_log.csv + SL formula + freshness.
 Logs mismatches to ~/lab_data/trade_audit_notes.md.
 
 Usage:
@@ -34,10 +34,10 @@ AUDIT_FILE  = Path.home() / "lab_data/trade_audit_notes.md"
 POLL_IDLE   = 10   # seconds when no trade
 POLL_TRADE  = 2    # seconds while in trade
 
-# ── SMI paper engine (stock F&O) ──
-SMI_STATE_FILE = BASE / "screener/smi_paper_state.json"
-SMI_TRACKER    = BASE / "screener/fno_tracker.csv"
-SMI_LOG_CSV    = BASE / "screener/smi_paper_log.csv"
+# ── SMI FOCUS35 paper engine (stock F&O) — only surviving engine (06-18) ──
+SMI_STATE_FILE = BASE / "screener/smi_focus35_state.json"
+SMI_TRACKER    = BASE / "screener/fno_tracker_focus.csv"
+SMI_LOG_CSV    = BASE / "screener/smi_focus35_log.csv"
 SMI_SL_PCT     = 1.0          # stock SL = entry -/+ 1%
 SMI_POLL       = 15 * 60      # engine runs on 15m cron — match its cadence
 SMI_STALE_SEC  = 22 * 60      # state older than ~1.5 cron cycles during market hours
@@ -317,7 +317,7 @@ def _smi_audit(open_trades):
     if _smi_market_hours():
         age = _file_age(SMI_STATE_FILE)
         if age > SMI_STALE_SEC:
-            bugs.append(f"  - STALE: smi_paper_state.json not updated for {int(age // 60)}m "
+            bugs.append(f"  - STALE: smi_focus35_state.json not updated for {int(age // 60)}m "
                         f"(cron runs every 15m — engine may be down)")
 
     for sym, tr in open_trades.items():
@@ -350,7 +350,7 @@ def _smi_audit(open_trades):
     return info, bugs
 
 def _smi_reconcile(closed_trades):
-    """Symbols that left open_trades — verify they landed in smi_paper_log.csv."""
+    """Symbols that left open_trades — verify they landed in smi_focus35_log.csv."""
     lines = []
     log_rows = _smi_log_rows()
     tracker = _smi_tracker_rows()
@@ -359,7 +359,7 @@ def _smi_reconcile(closed_trades):
         hits = [r for r in log_rows
                 if r.get("symbol") == sym and r.get("entry_time") == tr.get("entry_time")]
         if not hits:
-            lines.append(f"  - BUG: {sym} left state but no row in smi_paper_log.csv")
+            lines.append(f"  - BUG: {sym} left state but no row in smi_focus35_log.csv")
             continue
         row = hits[-1]
         reason = row.get("exit_reason", "")
@@ -461,7 +461,7 @@ def main():
                     ]
                     print("\n".join(block))
                     _append_audit(block)
-                # exits — reconcile against smi_paper_log.csv
+                # exits — reconcile against smi_focus35_log.csv
                 closed = {s: smi_prev_open[s]
                           for s in smi_prev_open.keys() - smi_open.keys()}
                 if closed:

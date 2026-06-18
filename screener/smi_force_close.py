@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 """
-smi_force_close.py  — one-off manual flat-out of open SMI paper trades.
-Owner instruction 2026-06-17: close ALL current stock-F&O paper trades (frozen +
-loose) to start a clean slate and monitor new (bugfree, post PR #267) trades.
+smi_force_close.py  — one-off manual flat-out of open SMI FOCUS35 paper trades.
+(The frozen/loose siblings were removed 2026-06-18; FOCUS35 is the only stock-F&O
+engine left.)
 
-Usage:  python3 smi_force_close.py frozen   |   python3 smi_force_close.py loose
+Usage:  python3 smi_force_close.py
 Reuses the engine's OWN log_exit / tracker_upsert so logs + tracker + state stay
 consistent. Exits at live option LTP, reason=FORCE-CLOSE.
 """
 import sys, json
 from datetime import datetime
 
-mode = sys.argv[1] if len(sys.argv) > 1 else ""
-if mode == "loose":
-    import smi_paper_loose as _L   # applies loose file paths + SMI_LOOSE tracker tag
-    import smi_paper as S
-    label = "LOOSE"
-elif mode == "frozen":
-    import smi_paper as S
-    label = "FROZEN"
-else:
-    print("usage: smi_force_close.py frozen|loose"); sys.exit(1)
+import smi_focus35 as _F   # applies FOCUS35 file paths + SMI_FOCUS tracker tag
+import smi_paper as S
+label = "FOCUS35"
 
 state = S.load_state()
 opens = state.get("open_trades", {})
