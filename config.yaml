@@ -9,6 +9,12 @@ bot_name: "VISHAL RAJPUT TRADE"
 mode: paper
 lots_fixed: 1
 
+# Market-DATA source: kite (default) | upstox. Orders always go to m.Stock.
+# Upstox path is REST-only for now (historical/ltp/quote/instruments); the live
+# tick WebSocket is still Kite. Do NOT set to upstox for live trading until the
+# WS feed is migrated. See upstox_data.py / upstox_parity.py.
+data_provider: kite
+
 # ── v15.2.5 BUG-Q: verify_order_fill timeouts (seconds) ─────────
 # Previously hardcoded in VRL_TRADE.place_entry / place_exit.
 # Tune these without a code edit if Kite latency changes.
