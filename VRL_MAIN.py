@@ -732,51 +732,103 @@ def ms_get_stock_positions(mc) -> list:
 
 # ── Fund summary (cached) ────────────────────────────────────────────────────
 
-_ms_funds_cache = {"ts": 0.0, "ok": False, "name": "", "available": 0.0, "used": 0.0}
+# `ok`/available/used reflect the LAST SUCCESSFUL fetch; `stale` flags that the
+# most recent refresh failed and we are serving the last-good numbers.
+_ms_funds_cache = {"ts": 0.0, "ok": False, "stale": False,
+                   "name": "", "available": 0.0, "used": 0.0,
+                   "have_good": False, "next_retry_ts": 0.0}
+
+# m.Stock's gateway intermittently returns a 502/HTML bot-protection page
+# (validate.perfdrive.com) instead of JSON — ~50% of calls during incidents.
+# Retry a few times per refresh, and on total failure keep serving the
+# last-good balance (flagged stale) instead of dropping to the Kite fallback.
+_MS_FUNDS_RETRIES        = 3      # attempts per refresh
+_MS_FUNDS_RETRY_GAP      = 1.5    # seconds between attempts
+_MS_FUNDS_FAIL_COOLDOWN  = 20.0   # after a failed refresh, retry sooner than max_age
+
+def _ms_fetch_fund_summary_once():
+    """One fund_summary REST call → (available, used) or raise. Treats a
+    non-success status / non-JSON body as a retryable failure."""
+    mc = get_mstock()
+    f  = mc.get_fund_summary()
+    fd = f.json()
+    if fd.get("status") != "success":
+        raise RuntimeError(f"fund_summary status={fd.get('status')}")
+    rows = fd.get("data") or []
+    row = next(
+        (r for r in rows if str(r.get("SEG", "")).upper() in ("A", "E", "EQUITY")),
+        rows[0] if rows else {}
+    )
+    available = float(row.get("AVAILABLE_BALANCE") or row.get("NET") or 0)
+    used      = float(row.get("AMOUNT_UTILIZED") or row.get("LIMIT_SOD") or 0)
+    return available, used
 
 def ms_get_funds(max_age_secs: int = 300) -> dict:
     """m.Stock client name + fund summary, cached (one REST call / 5 min).
-    Returns {"ok", "name", "available", "used"} — ok=False means the numbers
-    are unavailable (login pending, API error) and should not be trusted."""
+    Returns {"ok", "stale", "name", "available", "used"}.
+      - ok=True            → numbers are trustworthy (fresh or last-good).
+      - ok=True, stale=True → last refresh failed; serving last-good numbers.
+      - ok=False           → never fetched successfully (login pending / cold).
+    Resilient to m.Stock's intermittent 502 bot-protection page: retries a few
+    times per refresh, and falls back to the last-good balance instead of the
+    Kite account so the dashboard never flips to a bogus number."""
     import base64
     now_ts = time.time()
-    if now_ts - _ms_funds_cache["ts"] < max_age_secs:
-        return dict(_ms_funds_cache)
-    _ms_funds_cache["ts"] = now_ts  # even on failure, don't hammer the API
+    c = _ms_funds_cache
+
+    # Serve cache while fresh. After a failed refresh we still keep ok/values
+    # (last-good), so honour a short failure-cooldown before retrying.
+    age = now_ts - c["ts"]
+    if age < max_age_secs and now_ts < c.get("next_retry_ts", 0.0):
+        return dict(c)
+    if age < max_age_secs and not c.get("stale"):
+        return dict(c)
+
+    # Name from JWT payload (cheap, no network) — refresh opportunistically.
     try:
-        mc = get_mstock()
+        saved = _ms_read_token()
+        jwt   = saved.get("access_token", "")
+        if jwt:
+            payload_b64 = jwt.split(".")[1]
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            c["name"] = str(payload.get("CLIENTNAME", "")).strip().title()
+    except Exception:
+        pass
 
-        # Name from JWT payload
+    last_err = None
+    for attempt in range(_MS_FUNDS_RETRIES):
         try:
-            saved = _ms_read_token()
-            jwt   = saved.get("access_token", "")
-            if jwt:
-                payload_b64 = jwt.split(".")[1]
-                padding = 4 - len(payload_b64) % 4
-                if padding != 4:
-                    payload_b64 += "=" * padding
-                payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-                _ms_funds_cache["name"] = str(payload.get("CLIENTNAME", "")).strip().title()
-        except Exception:
-            pass
+            available, used = _ms_fetch_fund_summary_once()
+            c["available"]  = available
+            c["used"]       = used
+            c["ok"]         = True
+            c["stale"]      = False
+            c["have_good"]  = True
+            c["ts"]         = time.time()
+            c["next_retry_ts"] = 0.0
+            return dict(c)
+        except Exception as e:
+            last_err = e
+            if attempt < _MS_FUNDS_RETRIES - 1:
+                time.sleep(_MS_FUNDS_RETRY_GAP)
 
-        f  = mc.get_fund_summary()
-        fd = f.json()
-        if fd.get("status") == "success":
-            rows = fd.get("data") or []
-            row = next(
-                (r for r in rows if str(r.get("SEG", "")).upper() in ("A", "E", "EQUITY")),
-                rows[0] if rows else {}
-            )
-            _ms_funds_cache["available"] = float(row.get("AVAILABLE_BALANCE") or row.get("NET") or 0)
-            _ms_funds_cache["used"]      = float(row.get("AMOUNT_UTILIZED") or row.get("LIMIT_SOD") or 0)
-            _ms_funds_cache["ok"] = True
-        else:
-            _ms_funds_cache["ok"] = False
-    except Exception as e:
-        _ms_funds_cache["ok"] = False
-        logger.debug(f"[MSTOCK] ms_get_funds: {e}")
-    return dict(_ms_funds_cache)
+    # All attempts failed. Keep last-good numbers (flagged stale) if we ever had
+    # them; otherwise ok stays False. Retry again after a short cooldown.
+    c["ts"]            = now_ts
+    c["next_retry_ts"] = now_ts + _MS_FUNDS_FAIL_COOLDOWN
+    if c.get("have_good"):
+        c["ok"]    = True
+        c["stale"] = True
+        logger.warning(f"[MSTOCK] ms_get_funds: refresh failed ({last_err}); "
+                       f"serving last-good balance ₹{c['available']:,.0f}")
+    else:
+        c["ok"]    = False
+        c["stale"] = False
+        logger.warning(f"[MSTOCK] ms_get_funds: no fund data yet ({last_err})")
+    return dict(c)
 
 
 # ── Startup banner helper ────────────────────────────────────────────────────
@@ -5542,8 +5594,11 @@ def _account_block():
     try:
         funds = MSTOCK.ms_get_funds()
         if funds.get("ok"):
+            nm = funds.get("name", "") or "m.Stock"
+            if funds.get("stale"):
+                nm += " (m.Stock stale)"   # last-good; refresh is currently 502'ing
             return {
-                "name": funds.get("name", "") or "m.Stock",
+                "name": nm,
                 "balance": round(funds.get("available", 0), 2),
                 "used": round(funds.get("used", 0), 2),
             }
