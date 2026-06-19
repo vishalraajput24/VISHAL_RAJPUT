@@ -1409,6 +1409,15 @@ def _on_noreconnect(ws):
 
 def start_websocket():
     global _ticker, _ws_connected
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            with _subscribed_lock:
+                init_tokens = list(_subscribed)
+            ud.start_ws(init_tokens)
+            _ws_connected = True
+            logger.info("[WS] Upstox protobuf feed started")
+        return
     if _kite is None:
         raise RuntimeError("Call init(kite) before start_websocket()")
     old = _ticker
@@ -1442,6 +1451,17 @@ def subscribe_tokens(tokens: list) -> set:
     global _subscribed
     with _subscribed_lock:
         new = set(int(t) for t in tokens if t)
+        if DATA_PROVIDER == "upstox":
+            ud = _udata_mod()
+            if ud is not None:
+                try:
+                    ud.ws_subscribe(list(new))
+                except Exception as _e:
+                    logger.warning("[WS] Upstox subscribe failed: " + str(_e))
+                    return set()
+            _subscribed.update(new)
+            logger.info("[WS] Subscribed (upstox): " + str(new))
+            return new
         if _ticker and _ws_connected:
             try:
                 _ticker.subscribe(list(new))
@@ -1458,6 +1478,15 @@ def unsubscribe_tokens(tokens: list):
     with _subscribed_lock:
         rem = set(int(t) for t in tokens if t)
         _subscribed -= rem
+        if DATA_PROVIDER == "upstox":
+            ud = _udata_mod()
+            if ud is not None:
+                try:
+                    ud.ws_unsubscribe(list(rem))
+                except Exception:
+                    pass
+            logger.info("[WS] Unsubscribed (upstox): " + str(rem))
+            return
         if _ticker and _ws_connected:
             try:
                 _ticker.unsubscribe(list(rem))
@@ -1468,6 +1497,14 @@ def unsubscribe_tokens(tokens: list):
 def get_ltp(token) -> float:
     if token is None:
         return 0.0
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is None:
+            return 0.0
+        v = ud.ws_get_ltp(int(token), max_age=TICK_STALE_SECS)
+        if v <= 0 and is_market_open():
+            logger.warning("[DATA] No fresh upstox tick token=" + str(token))
+        return v
     with _tick_lock:
         entry = _ticks.get(int(token))
     if not entry:
@@ -1518,6 +1555,23 @@ def check_and_reconnect():
     """
     global _last_reconnect_attempt, _kite
     if not is_market_open():
+        return
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is None:
+            return
+        if ud.ws_get_ltp(NIFTY_SPOT_TOKEN, max_age=180) > 0:
+            return  # fresh upstox spot tick
+        if time.time() - _last_reconnect_attempt < 600:
+            return
+        _last_reconnect_attempt = time.time()
+        logger.warning("[DATA] Upstox spot tick stale 3+ min — restarting feed")
+        try:
+            with _subscribed_lock:
+                toks = list(_subscribed)
+            ud.restart_ws(toks)
+        except Exception as e:
+            logger.error("[DATA] upstox WS restart failed: " + str(e))
         return
     if _is_auth_rejected():
         return
@@ -2717,6 +2771,8 @@ def update_vwap(kite) -> dict:
     NEVER raises — silent on failure.
     """
     global _vwap_state
+    if kite is None:
+        return _vwap_state          # upstox provider / no Kite session: VWAP is dashboard-only
     try:
         import numpy as np
         from_dt = datetime.now() - timedelta(hours=7)
@@ -7615,7 +7671,7 @@ def main():
                 _tok_data = _j.load(_tf)
         _tok_date = _tok_data.get("date", "")
         _today = _dt_date.today().isoformat()
-        if _tok_date != _today:
+        if _tok_date != _today and D.data_provider() != "upstox":
             logger.warning("[MAIN] Token is from " + str(_tok_date or "MISSING")
                            + ", not today (" + _today + ") — forcing fresh auth")
             _tg_send("\u26a0\ufe0f Stale token detected on startup, auto-refreshing\n"
@@ -7625,19 +7681,35 @@ def main():
     except Exception as _te:
         logger.warning("[MAIN] Token freshness check error: " + str(_te))
 
-    kite = get_kite()
-    _kite = kite
-    D.init(kite)
+    _upstox_data_mode = (D.data_provider() == "upstox")
+    if _upstox_data_mode:
+        # Market data on Upstox → no Kite session needed at all (orders = m.Stock).
+        kite = None
+        _kite = None
+        D.init(None)
+    else:
+        kite = get_kite()
+        _kite = kite
+        D.init(kite)
 
     # Phase 1 health: Token + REST spot (before WS starts — WS check happens after start_websocket)
     _health_lines_pre = []
     _health_ok_pre = True
-    try:
-        _prof = kite.profile()
-        _health_lines_pre.append("Token: ✅ " + str(_prof.get("user_name", "?")))
-    except Exception as _he:
-        _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
-        _health_ok_pre = False
+    if _upstox_data_mode:
+        try:
+            _ud = D._udata_mod()
+            _nm = _ud.profile_name() if _ud is not None else "?"
+            _health_lines_pre.append("Upstox token: ✅ " + str(_nm))
+        except Exception as _he:
+            _health_lines_pre.append("Upstox token: ❌ " + str(_he)[:60])
+            _health_ok_pre = False
+    else:
+        try:
+            _prof = kite.profile()
+            _health_lines_pre.append("Token: ✅ " + str(_prof.get("user_name", "?")))
+        except Exception as _he:
+            _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
+            _health_ok_pre = False
     # REST spot probe is redundant with the WS tick check below. Kite's REST
     # endpoint throws transient JSON-parse/timeout blips during the startup burst
     # — retry a few times, and (in Phase 2) don't let a REST failure drive ⚠️ when
@@ -7646,8 +7718,13 @@ def main():
     _spot_rest_failed = False
     for _spot_try in range(3):
         try:
-            _sq = kite.ltp(["NSE:NIFTY 50"])
-            _sp = float(list(_sq.values())[0]["last_price"])
+            if _upstox_data_mode:
+                _sp = float(D.get_spot_ltp())
+                if _sp <= 0:
+                    raise RuntimeError("upstox spot 0")
+            else:
+                _sq = kite.ltp(["NSE:NIFTY 50"])
+                _sp = float(list(_sq.values())[0]["last_price"])
             _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
             break
         except Exception as _he:
