@@ -141,6 +141,9 @@ def register_index_tokens(spot_token: int, vix_token: int):
     with _lock:
         _index_bridge[int(spot_token)] = SPOT_KEY
         _index_bridge[int(vix_token)]  = VIX_KEY
+    with _ws_lock:
+        _rev_index[SPOT_KEY] = int(spot_token)
+        _rev_index[VIX_KEY]  = int(vix_token)
 
 
 def key_for_token(token: int) -> str | None:
@@ -259,3 +262,157 @@ def ltp(tokens) -> dict:
 
 def get_ltp_one(token: int) -> float:
     return ltp([token]).get(int(token), 0.0)
+
+
+def profile_name() -> str:
+    """Verify the Upstox token and return the account name (startup health)."""
+    d = _get(f"{UBASE}/v2/user/profile").get("data", {})
+    return d.get("user_name", "?")
+
+
+# ============================================================ live WebSocket
+# Upstox v3 market-data-feed (PROTOBUF) via the official SDK's
+# MarketDataStreamerV3, which handles connect / protobuf decode / reconnect.
+# Decoded ltp is cached keyed by the canonical int token so VRL_MAIN's
+# get_ltp(int token) works unchanged.
+_streamer   = None
+_ws_lock    = threading.RLock()
+_ws_ticks   = {}        # token(int) -> {"ltp": float, "ts": float}
+_ws_subs    = set()     # subscribed instrument_keys
+_rev_index  = {}        # index instrument_key -> configured int token
+
+
+def _key_to_token(key: str):
+    """instrument_key -> canonical int token. Options: 'NSE_FO|56372' -> 56372
+    (exchange_token == our token). Index: reverse of the configured tokens."""
+    if key in _rev_index:
+        return _rev_index[key]
+    if "|" in key:
+        tail = key.split("|", 1)[1]
+        if tail.isdigit():
+            return int(tail)
+    return None
+
+
+def _extract_ltp(feed):
+    """Recursively find the first ltpc.ltp in a decoded feed entry (works for
+    ltpc / fullFeed.marketFF / indexFF shapes)."""
+    if isinstance(feed, dict):
+        lt = feed.get("ltpc")
+        if isinstance(lt, dict) and "ltp" in lt:
+            try:
+                return float(lt["ltp"])
+            except (TypeError, ValueError):
+                pass
+        for v in feed.values():
+            r = _extract_ltp(v)
+            if r is not None:
+                return r
+    return None
+
+
+def _on_msg(data):
+    feeds = (data or {}).get("feeds") or {}
+    now = time.time()
+    for key, feed in feeds.items():
+        ltp_v = _extract_ltp(feed)
+        if ltp_v is None:
+            continue
+        tok = _key_to_token(key)
+        if tok is None:
+            continue
+        with _ws_lock:
+            _ws_ticks[tok] = {"ltp": ltp_v, "ts": now}
+
+
+def start_ws(initial_tokens=None):
+    """Open the Upstox protobuf feed (non-blocking; SDK runs its own thread).
+    Idempotent. Returns the streamer, or None if it can't start."""
+    global _streamer
+    with _ws_lock:
+        if _streamer is not None:
+            if initial_tokens:
+                ws_subscribe(initial_tokens)
+            return _streamer
+        try:
+            import upstox_client
+        except Exception as e:
+            print(f"[upstox_data] SDK import failed: {e}")
+            return None
+        keys = []
+        for t in (initial_tokens or []):
+            k = key_for_token(t)
+            if k:
+                keys.append(k)
+        cfg = upstox_client.Configuration()
+        cfg.access_token = access_token()
+        s = upstox_client.MarketDataStreamerV3(
+            upstox_client.ApiClient(cfg), instrumentKeys=keys, mode="ltpc")
+        s.on(s.Event["MESSAGE"], _on_msg)
+        try:
+            s.auto_reconnect(True, interval=2, retry_count=20)
+        except Exception:
+            pass
+        s.connect()
+        _streamer = s
+        _ws_subs.update(keys)
+        return s
+
+
+def ws_subscribe(tokens):
+    s = _streamer
+    if s is None:
+        return start_ws(tokens)
+    keys = []
+    for t in tokens:
+        k = key_for_token(t)
+        if k and k not in _ws_subs:
+            keys.append(k)
+    if keys:
+        try:
+            s.subscribe(keys, "ltpc")
+            with _ws_lock:
+                _ws_subs.update(keys)
+        except Exception as e:
+            print(f"[upstox_data] ws subscribe failed: {e}")
+    return s
+
+
+def ws_unsubscribe(tokens):
+    s = _streamer
+    if s is None:
+        return
+    keys = [key_for_token(t) for t in tokens]
+    keys = [k for k in keys if k and k in _ws_subs]
+    if keys:
+        try:
+            s.unsubscribe(keys)
+        except Exception:
+            pass
+        with _ws_lock:
+            _ws_subs.difference_update(keys)
+
+
+def restart_ws(tokens=None):
+    """Force a fresh feed (used by the stale-tick auto-heal)."""
+    global _streamer
+    with _ws_lock:
+        s = _streamer
+        _streamer = None
+        _ws_subs.clear()
+    if s is not None:
+        try:
+            s.disconnect()
+        except Exception:
+            pass
+    return start_ws(tokens)
+
+
+def ws_get_ltp(token, max_age=8.0) -> float:
+    with _ws_lock:
+        e = _ws_ticks.get(int(token))
+    if not e:
+        return 0.0
+    if time.time() - e["ts"] > max_age:
+        return 0.0
+    return e["ltp"]
