@@ -174,6 +174,14 @@ def is_paper() -> bool:
     return mode() == "paper"
 
 
+def data_provider() -> str:
+    """Market-DATA source: 'kite' (default) or 'upstox'. Orders always m.Stock.
+    Upstox path is REST-only today (historical/ltp/quote/instruments); the live
+    tick WebSocket is still Kite, so do NOT flip to 'upstox' for live trading
+    until the WS feed is migrated."""
+    return (get().get("data_provider") or "kite").lower()
+
+
 
 # ── Instrument ──
 
@@ -1474,8 +1482,17 @@ def get_ltp(token) -> float:
 
 
 def get_spot_ltp() -> float:
-    """v15.2: convenience helper — spot LTP via WebSocket tick cache."""
-    return get_ltp(NIFTY_SPOT_TOKEN)
+    """v15.2: convenience helper — spot LTP via WebSocket tick cache.
+    Under the Upstox provider (no Kite WS) fall back to a REST quote."""
+    v = get_ltp(NIFTY_SPOT_TOKEN)
+    if v <= 0 and DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            try:
+                return ud.get_ltp_one(NIFTY_SPOT_TOKEN)
+            except Exception:
+                return 0.0
+    return v
 
 def is_tick_live(token) -> bool:
     with _tick_lock:
@@ -1553,6 +1570,16 @@ def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
         return ltp
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            try:
+                v = ud.get_ltp_one(INDIA_VIX_TOKEN)
+                if v > 0:
+                    return float(v)
+            except Exception:
+                pass
+        return 0.0
     if _is_auth_rejected():
         return 0.0
     if _kite is not None:
@@ -1713,6 +1740,16 @@ _lot_size_cache = {}  # {"2026-04-17": 65}
 _lot_size_cache_lock = threading.Lock()
 
 def get_lot_size(kite=None) -> int:
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            try:
+                lot = ud.lot_size()
+                if lot > 0:
+                    return lot
+            except Exception as e:
+                logger.warning("[DATA] upstox lot_size failed: " + str(e))
+        return LOT_SIZE_BASE
     k = kite or _kite
     if k is None:
         return LOT_SIZE_BASE
@@ -1787,16 +1824,47 @@ def _hist_cache_put(key: str, df):
             for k, _v in ordered[:len(_hist_cache) - _HIST_CACHE_MAX]:
                 del _hist_cache[k]
 
+# ── Upstox data provider (lazy) — see upstox_data.py / data_provider() ──
+DATA_PROVIDER = CFG.data_provider()
+_udata = None
+def _udata_mod():
+    """Lazy-import the Upstox backend and register the index tokens once.
+    Returns None (callers fall back to Kite) if the module can't load."""
+    global _udata
+    if _udata is None:
+        try:
+            import upstox_data
+            upstox_data.register_index_tokens(NIFTY_SPOT_TOKEN, INDIA_VIX_TOKEN)
+            _udata = upstox_data
+        except Exception as e:
+            logger.error("[DATA] upstox_data import failed, using Kite: " + str(e))
+            return None
+    return _udata
+
+
 def get_historical_data(token: int, interval: str, lookback: int,
                         today_only: bool = False) -> pd.DataFrame:
-    if _kite is None:
-        return pd.DataFrame()
     # Check cache first — key includes the current candle bucket, so a
-    # fresh fetch is triggered exactly once per candle close.
+    # fresh fetch is triggered exactly once per candle close. (Shared across
+    # providers so a flip doesn't double-fetch.)
     cache_key = _hist_cache_key(token, interval, lookback)
     cached = _hist_cache_get(cache_key)
     if cached is not None:
         return cached
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            try:
+                df = ud.historical_df(int(token), interval, lookback)
+            except Exception as e:
+                logger.warning("[DATA] upstox historical failed token="
+                               + str(token) + ": " + str(e))
+                df = pd.DataFrame()
+            if not df.empty:
+                _hist_cache_put(cache_key, df)
+            return df
+    if _kite is None:
+        return pd.DataFrame()
     min_from = datetime.now() - timedelta(days=3)
     minutes_per_candle = {
         "minute": 1, "3minute": 3, "5minute": 5,
@@ -1927,6 +1995,14 @@ def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
         reference_date = date.today()
+    if DATA_PROVIDER == "upstox":
+        ud = _udata_mod()
+        if ud is not None:
+            try:
+                return ud.nearest_expiry(reference_date)
+            except Exception as e:
+                logger.error("[DATA] upstox nearest_expiry error: " + str(e))
+                return None
     kite = kite or _kite
     if kite is None:
         raise RuntimeError("Kite not initialised")
@@ -1953,6 +2029,25 @@ def calculate_dte(expiry_date) -> int:
     return max((expiry_date - date.today()).days, 0)
 
 def get_option_tokens(kite, strike: int, expiry_date) -> dict:
+    if DATA_PROVIDER == "upstox":
+        if not strike or int(strike) <= 0:
+            return {}
+        key = (int(strike), expiry_date.isoformat() if expiry_date else "")
+        with _token_cache_lock:
+            if key in _token_cache:
+                return dict(_token_cache[key])
+        ud = _udata_mod()
+        if ud is None:
+            return {}
+        try:
+            res = ud.option_tokens(int(strike), expiry_date)
+        except Exception as e:
+            logger.error("[DATA] upstox option_tokens error: " + str(e))
+            return {}
+        if len(res) == 2:                      # only cache complete results
+            with _token_cache_lock:
+                _token_cache[key] = res
+        return dict(res)
     kite = kite or _kite
     if kite is None:
         return {}
