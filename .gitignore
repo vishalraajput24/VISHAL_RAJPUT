@@ -26,3 +26,6 @@ analysis/daily/*.bak
 
 # v12 flow study data cache (regenerated)
 screener/v12_flow_5m_cache.csv
+
+# kept on disk for smi_rnd_study (pending 06-25), not on GitHub
+screener/smi_backtest.py
