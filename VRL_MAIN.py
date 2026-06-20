@@ -175,10 +175,10 @@ def is_paper() -> bool:
 
 
 def data_provider() -> str:
-    """Market-DATA source: 'kite' (default) or 'upstox'. Orders always m.Stock.
-    Upstox path is REST-only today (historical/ltp/quote/instruments); the live
-    tick WebSocket is still Kite, so do NOT flip to 'upstox' for live trading
-    until the WS feed is migrated."""
+    """Market-DATA source: 'kite' or 'upstox'. Orders always m.Stock.
+    Upstox path is full REST + live protobuf WebSocket (migrated 2026-06-19); the
+    bot runs with no Kite session at all under 'upstox'. Keep mode: paper for a
+    few A/B sessions before any live consideration."""
     return (get().get("data_provider") or "kite").lower()
 
 
