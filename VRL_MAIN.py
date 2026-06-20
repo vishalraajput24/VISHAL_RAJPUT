@@ -182,6 +182,16 @@ def data_provider() -> str:
     return (get().get("data_provider") or "kite").lower()
 
 
+def strategy_version() -> str:
+    """Entry-gate variant: 'v11' (default, proven) | 'v13' (owner 2026-06-20).
+    V13 swaps the gate REFERENCE LINES (same +3.5 gap / [-9,-7] band):
+      MOMENTUM  own_close >= own ema9_LOW  + 3.5   (V11 used ema9_high)
+      OPP DECAY opp_close  - opp ema9_HIGH in [-9,-7] (V11 used ema9_low)
+    Everything else (exit ladder, ITM-100 strikes, window, single lot) is shared.
+    Reversible: flip config.yaml -> strategy_version back to v11 any time."""
+    return (get().get("strategy_version") or "v11").lower()
+
+
 
 # ── Instrument ──
 
@@ -4631,6 +4641,20 @@ def _v11_gate_check(dte, own_close, own_ema9h, opp_margin, opp_close, opp_ema9l)
     return mom_ok, decay_ok
 
 
+def _v13_gate_check(own_close, own_ema9l, opp_margin_high, opp_ema9h):
+    """(momentum_ok, decay_ok) for V13 (owner 2026-06-20, strategy_version: v13).
+    Same +3.5 gap / [-9,-7] band as V11 but off the OTHER ema9 lines:
+      MOMENTUM  own_close >= own ema9_LOW  + 3.5   (vs V11 ema9_high)
+      OPP DECAY (opp_close - opp ema9_HIGH) in [-9,-7]  (vs V11 ema9_low)
+    opp_margin_high = opp_close - opp_ema9h (precomputed by caller).
+    NOTE: absolute gate applied to ALL dte (per owner's literal spec). On dte 0/1
+    cheap premium this fires more than V11's %-gate — owner-accepted, paper-validate.
+    UNTESTED vs V11's proven edge — running paper only."""
+    mom_ok = (own_close >= own_ema9l + V11_MIN_EMA9H_GAP) if own_ema9l > 0 else False
+    decay_ok = (V11_DECAY_LOW <= opp_margin_high <= V11_DECAY_HIGH) if opp_ema9h > 0 else False
+    return mom_ok, decay_ok
+
+
 V11_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # LOCK_25 floor + tight trail (owner-approved 2026-06-15): once peak hits +25, the exit ladder
 # locks entry+25 as a hard SL floor AND trails peak-5 above it (see _v11_compute_trail_sl) —
@@ -6234,18 +6258,35 @@ def _strategy_loop(kite):
 
                         _opp_close = 0.0
                         _opp_ema9l = 0.0
+                        _opp_ema9h = 0.0
                         _opp_margin = 0.0
+                        _opp_margin_high = 0.0
                         if _opp_1m is not None and len(_opp_1m) >= 2:
                             _opp_comp = _opp_1m.iloc[-2]
                             _opp_close = float(_opp_comp["close"])
                             _opp_ema9l = float(_opp_comp.get("ema9_low", 0))
+                            _opp_ema9h = float(_opp_comp.get("ema9_high", 0))
                             _opp_margin = round(_opp_close - _opp_ema9l, 2)
+                            _opp_margin_high = round(_opp_close - _opp_ema9h, 2)
 
-                        # Golden Setup conditions — per-DTE gate: dte 0/1 use
-                        # %-of-premium, dte>=2 keep the locked absolute gate.
-                        _momentum_ok, _decay_ok = _v11_gate_check(
-                            dte, _sh_1m_close, _sh_ema9h_1m,
-                            _opp_margin, _opp_close, _opp_ema9l)
+                        # Entry gate — strategy_version selectable (owner 2026-06-20):
+                        #   v11: per-DTE gate (dte0/1 %, dte>=2 abs), off ema9_high
+                        #        (momentum) / ema9_low (decay).
+                        #   v13: absolute gate off ema9_low (momentum) / ema9_high
+                        #        (decay), same +3.5 / [-9,-7].
+                        _is_v13 = (D.strategy_version() == "v13")
+                        if _is_v13:
+                            _momentum_ok, _decay_ok = _v13_gate_check(
+                                _sh_1m_close, _sh_ema9l_1m,
+                                _opp_margin_high, _opp_ema9h)
+                        else:
+                            _momentum_ok, _decay_ok = _v11_gate_check(
+                                dte, _sh_1m_close, _sh_ema9h_1m,
+                                _opp_margin, _opp_close, _opp_ema9l)
+                        # display helpers — show the line each version actually gates on
+                        _disp_mom_gap = round(_sh_1m_close
+                                              - (_sh_ema9l_1m if _is_v13 else _sh_ema9h_1m), 2)
+                        _disp_decay_margin = _opp_margin_high if _is_v13 else _opp_margin
 
                         # Cooldown and basic guards
                         # Treat an in-flight live entry (broker order placed, ~8s
@@ -6281,13 +6322,17 @@ def _strategy_loop(kite):
                         elif _in_cooldown:
                             _reject_reason = _cooldown_reason
                         elif not _momentum_ok:
-                            if int(dte or 0) in V11_PCT_GATE_DTE:
+                            if _is_v13:
+                                _reject_reason = f"below_ema9l_gap({_disp_mom_gap:+.2f}<{V11_MIN_EMA9H_GAP})"
+                            elif int(dte or 0) in V11_PCT_GATE_DTE:
                                 _mp = V11_PCT_GATE_DTE[int(dte or 0)]["mom_pct"]
                                 _reject_reason = f"below_mom_pct(dte{dte} gap{round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{_mp*_sh_1m_close:.1f})"
                             else:
                                 _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V11_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            if int(dte or 0) in V11_PCT_GATE_DTE and _opp_close > 0:
+                            if _is_v13:
+                                _reject_reason = f"opp_decay_high_weak({_disp_decay_margin:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])"
+                            elif int(dte or 0) in V11_PCT_GATE_DTE and _opp_close > 0:
                                 _cfg = V11_PCT_GATE_DTE[int(dte or 0)]
                                 _reject_reason = f"decay_pct_weak(dte{dte} {_opp_margin/_opp_close*100:+.1f}% not in [{_cfg['decay_lo']*100:.1f},{_cfg['decay_hi']*100:.1f}])"
                             else:
@@ -6302,9 +6347,9 @@ def _strategy_loop(kite):
                                 "price": round(D.get_ltp(_sh_tok) or _sh_1m_close, 1),
                                 "ema9h": round(_sh_ema9h_1m, 2),
                                 "ema9l": round(_sh_ema9l_1m, 2),
-                                "momentum_gap": round(_sh_1m_close - _sh_ema9h_1m, 2),
+                                "momentum_gap": _disp_mom_gap,
                                 "momentum_ok": _momentum_ok,
-                                "decay_margin": _opp_margin,
+                                "decay_margin": _disp_decay_margin,
                                 "decay_ok": _decay_ok,
                                 "ready": _ready_to_fire,
                                 "reject": _reject_reason,
@@ -6323,13 +6368,13 @@ def _strategy_loop(kite):
                                     entry_price=_sh_1m_close,
                                     entry_result={
                                         "entry_price": _sh_1m_close,
-                                        "entry_mode": f"V11_{_sh_dir}",
+                                        "entry_mode": f"{'V13' if _is_v13 else 'V11'}_{_sh_dir}",
                                         "fired_candle_ts": _sh_1m_bk_ts,
                                         "close": _sh_1m_close,
                                         "open": _sh_1m_open,
                                         "ema9_low": _sh_ema9l_1m,
                                         "ema9_high": _sh_ema9h_1m,
-                                        "xleg_other_margin": _opp_margin,
+                                        "xleg_other_margin": _disp_decay_margin,
                                         "spot_regime": spot_3m.get("regime", "") if isinstance(spot_3m, dict) else "",
                                         "own_m3": _sh_1m_m3,
                                     },
@@ -7649,10 +7694,13 @@ def main():
     logger.info("[MAIN] ═══ VISHAL RAJPUT TRADE " + D.VERSION + " STARTING ═══")
     _mode_str = "PAPER" if D.PAPER_MODE else "LIVE"
     logger.info("[MAIN] Mode: " + _mode_str)
+    logger.info("[MAIN] Data provider: " + D.data_provider()
+                + " | Strategy gate: " + D.strategy_version().upper())
     _tg_send(
         ("🟡 <b>Bot starting in PAPER mode</b>" if D.PAPER_MODE else "🟢 <b>Bot starting in LIVE mode</b>")
         + "\nVersion: " + D.VERSION
         + "\nMode: <b>" + _mode_str + "</b>"
+        + "\nData: " + D.data_provider() + " | Gate: <b>" + D.strategy_version().upper() + "</b>"
         + ("\n⚠️ Real orders will be placed!" if not D.PAPER_MODE else ""),
         priority="critical"
     )
