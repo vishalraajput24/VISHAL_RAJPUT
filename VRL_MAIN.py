@@ -937,6 +937,8 @@ LAB_LOG_FILE     = os.path.join(LAB_LOG_DIR,  "vrl_lab.log")
 TRADE_LOG_PATH   = os.path.join(LAB_DIR,      "vrl_trade_log.csv")
 STATE_FILE_PATH        = os.path.join(STATE_DIR, "vrl_live_state.json")
 V11_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v11_state.json")
+V13_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v13_state.json")
+V13_TRADE_LOG_PATH      = os.path.join(LAB_DIR,   "vrl_v13_trade_log.csv")
 SHADOW_STATE_FILE_PATH = os.path.join(STATE_DIR, "vrl_shadow_state.json")
 PID_FILE_PATH          = os.path.join(STATE_DIR, "vrl_live.pid")
 TOKEN_FILE_PATH     = os.path.join(STATE_DIR, "access_token.json")
@@ -4908,6 +4910,275 @@ def _load_v11_state():
         logger.error("[V11] State load error: " + str(e))
 
 
+# ═══════════════════════════════════════════════════════════════
+#  V13 SHADOW ENGINE — runs CONCURRENTLY with V11, PAPER-ONLY.
+#  Owner 2026-06-20: surface both gates on the dashboard for a live
+#  A/B. Shares the locked strikes, tick feed and exit ladder
+#  (_v11_compute_trail_sl) with V11; keeps its OWN independent
+#  position, cooldowns, day counters, state file and trade log.
+#  NEVER places a real m.Stock order — shadow comparison only.
+# ═══════════════════════════════════════════════════════════════
+_v13_state = {
+    "in_trade": False, "symbol": "", "token": 0, "direction": "",
+    "strike": 0, "entry_price": 0.0, "entry_time": "", "qty": 0,
+    "peak_pnl": 0.0, "peak_ltp": 0.0,
+    "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
+    "initial_sl": 0.0, "candles_held": 0, "_last_minute": "",
+    "_other_token": 0, "entry_mode": "", "dte": 0,
+    "xleg_other_margin": 0.0, "spot_regime_at_entry": "", "entry_spot": 0.0,
+    "_last_fired_candle_ts": "", "_last_exit_candle_ts": "",
+    "_last_exit_time_unix": 0.0, "_last_exit_direction": "",
+    "_sl_cooldown_skip_next": False,
+    "_pnl_today_pts": 0.0, "_trades_today": 0,
+    "_wins_today": 0, "_losses_today": 0, "_last_trade_date": "",
+}
+_v13_lock = threading.RLock()  # RLock: _save_v13_state() re-enters from exit-check block
+_v13_live_lock = threading.Lock()
+_v13_live = {"CE": {}, "PE": {}}
+
+_V13_PERSIST_FIELDS = [
+    "in_trade", "symbol", "token", "direction", "strike",
+    "entry_price", "entry_time", "qty", "peak_pnl", "peak_ltp",
+    "active_ratchet_tier", "active_ratchet_sl", "initial_sl",
+    "candles_held", "_other_token", "entry_mode",
+    "xleg_other_margin", "spot_regime_at_entry", "entry_spot",
+    "_last_fired_candle_ts", "_last_exit_candle_ts",
+    "_last_exit_time_unix", "_last_exit_direction",
+    "_sl_cooldown_skip_next",
+    "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
+    "_last_trade_date",
+]
+
+
+def _save_v13_state():
+    try:
+        with _v13_lock:
+            subset = {k: _v13_state.get(k) for k in _V13_PERSIST_FIELDS}
+        tmp = D.V13_STATE_FILE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(subset, f, indent=2, default=str)
+        os.replace(tmp, D.V13_STATE_FILE_PATH)
+    except Exception as e:
+        logger.error("[V13] State save error: " + str(e))
+
+
+def _load_v13_state():
+    if not os.path.isfile(D.V13_STATE_FILE_PATH):
+        return
+    try:
+        with open(D.V13_STATE_FILE_PATH) as f:
+            saved = json.load(f)
+        with _v13_lock:
+            for k, v in saved.items():
+                if k in _v13_state:
+                    _v13_state[k] = v
+        # New trading day → reset daily counters (mirror V11)
+        _today = date.today().isoformat()
+        if str(saved.get("_last_trade_date", "")) != _today:
+            with _v13_lock:
+                _v13_state["_pnl_today_pts"] = 0.0
+                _v13_state["_trades_today"]  = 0
+                _v13_state["_wins_today"]    = 0
+                _v13_state["_losses_today"]  = 0
+                _v13_state["_last_trade_date"] = _today
+                _v13_state["_sl_cooldown_skip_next"] = False
+            _save_v13_state()
+        logger.info("[V13] Shadow state loaded from disk")
+    except Exception as e:
+        logger.error("[V13] State load error: " + str(e))
+
+
+def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
+                             entry_mode, other_token, opp_margin_high,
+                             spot_at_entry, fired_candle_ts, ema9_low, dte):
+    """Open a V13 SHADOW paper position — single lot, fill at candle close.
+    PAPER-ONLY: never calls m.Stock (shadow A/B against V11)."""
+    qty = CFG.get().get("lots", {}).get("count", 1) * D.get_lot_size()
+    now_str = datetime.now().strftime("%H:%M:%S")
+    with _v13_lock:
+        if _v13_state.get("in_trade"):
+            return
+        # Initial SL = breakout-candle ema9_low, capped at entry-10 (same ladder
+        # base as V11). Fallback entry-5 if ema9_low not below entry.
+        initial_sl = float(ema9_low) if ema9_low else (entry_price - 5.0)
+        if initial_sl >= entry_price:
+            initial_sl = round(entry_price - 5.0, 2)
+        initial_sl = max(initial_sl, round(entry_price - 10.0, 2))
+        _v13_state.update({
+            "in_trade": True, "symbol": symbol, "token": int(token),
+            "direction": direction, "strike": int(strike or 0),
+            "entry_price": round(entry_price, 2), "entry_time": now_str,
+            "qty": qty, "candles_held": 0, "_last_minute": "",
+            "_other_token": int(other_token or 0),
+            "_last_fired_candle_ts": fired_candle_ts,
+            "initial_sl": initial_sl, "active_ratchet_sl": initial_sl,
+            "active_ratchet_tier": "INITIAL",
+            "peak_ltp": round(entry_price, 2), "peak_pnl": 0.0,
+            "entry_mode": entry_mode,
+            "xleg_other_margin": round(opp_margin_high, 2),
+            "spot_regime_at_entry": spot_3m.get("regime", "") if isinstance(spot_3m, dict) else "",
+            "entry_spot": float(spot_at_entry or 0),
+            "dte": int(dte or 0),
+            "_last_trade_date": date.today().isoformat(),
+        })
+    logger.info(f"[V13] SHADOW ENTRY: {symbol} Qty={qty} @ {entry_price}")
+    _emj = "🟢" if direction == "CE" else "🔴"
+    _tg_send(
+        f"🧪 <b>V13 SHADOW ENTRY {direction} {strike}</b>\n"
+        f"{_emj} Entry ₹{entry_price:.1f} × {qty}  SL ₹{initial_sl:.1f}\n"
+        f"Decay {opp_margin_high:+.1f} · dte {dte} · paper A/B vs V11",
+        priority="high")
+    _save_v13_state()
+
+
+def _v13_execute_paper_exit(reason, exit_price):
+    """Close the V13 SHADOW position, log to its own CSV. PAPER-ONLY."""
+    with _v13_lock:
+        if not _v13_state.get("in_trade"):
+            return
+        entry_price    = float(_v13_state.get("entry_price", 0))
+        symbol         = _v13_state.get("symbol", "")
+        direction      = _v13_state.get("direction", "")
+        strike         = int(_v13_state.get("strike", 0) or 0)
+        qty            = int(_v13_state.get("qty", 0) or 0)
+        peak           = float(_v13_state.get("peak_pnl", 0))
+        entry_time     = _v13_state.get("entry_time", "")
+        candles        = int(_v13_state.get("candles_held", 0) or 0)
+        tier           = _v13_state.get("active_ratchet_tier", "")
+        dte_val        = int(_v13_state.get("dte", 0) or 0)
+        entry_mode     = _v13_state.get("entry_mode", "V13_CE")
+        xleg_margin    = float(_v13_state.get("xleg_other_margin", 0.0))
+        spot_regime    = str(_v13_state.get("spot_regime_at_entry", ""))
+        entry_spot_val = float(_v13_state.get("entry_spot", 0))
+
+        # Clear position
+        _v13_state.update({
+            "in_trade": False, "symbol": "", "token": 0, "direction": "",
+            "strike": 0, "entry_price": 0.0, "peak_pnl": 0.0,
+            "active_ratchet_tier": "", "active_ratchet_sl": 0.0,
+            "candles_held": 0, "initial_sl": 0.0, "peak_ltp": 0.0,
+            "xleg_other_margin": 0.0,
+        })
+        pnl_pts_now = round(exit_price - entry_price, 2)
+        _v13_state["_pnl_today_pts"] = round(_v13_state.get("_pnl_today_pts", 0) + pnl_pts_now, 2)
+        _v13_state["_trades_today"]  = _v13_state.get("_trades_today", 0) + 1
+        if pnl_pts_now > 0:
+            _v13_state["_wins_today"] = _v13_state.get("_wins_today", 0) + 1
+        elif pnl_pts_now < 0:
+            _v13_state["_losses_today"] = _v13_state.get("_losses_today", 0) + 1
+        if reason == "EMERGENCY_SL":
+            _v13_state["_sl_cooldown_skip_next"] = True
+        _now_exit = datetime.now()
+        _v13_state["_last_exit_candle_ts"]  = str(_now_exit.replace(second=0, microsecond=0))
+        _v13_state["_last_exit_time_unix"]  = time.time()
+        _v13_state["_last_exit_direction"]  = direction
+        _v13_state["_last_trade_date"]      = date.today().isoformat()
+
+    pnl_pts   = round(exit_price - entry_price, 2)
+    pnl_rs    = round(pnl_pts * qty, 2)
+    exit_time = datetime.now().strftime("%H:%M:%S")
+    exit_spot = round(D.get_ltp(D.NIFTY_SPOT_TOKEN), 1)
+    charges   = {}
+    try:
+        charges = calculate_charges(entry_price, exit_price, qty, num_exit_orders=1)
+        net_pnl = charges["net_pnl"]; total_charges = charges["total_charges"]
+    except Exception:
+        net_pnl = pnl_rs; total_charges = 0.0
+    try:
+        _row = {
+            "date": date.today().isoformat(),
+            "entry_time": entry_time, "exit_time": exit_time,
+            "symbol": symbol, "direction": direction, "strike": strike,
+            "entry_price": entry_price, "exit_price": exit_price,
+            "pnl_pts": pnl_pts, "pnl_rs": pnl_rs,
+            "gross_pnl_rs": pnl_rs, "net_pnl_rs": net_pnl,
+            "peak_pnl": peak, "exit_reason": reason,
+            "dte": dte_val, "candles_held": candles,
+            "entry_mode": entry_mode, "spot_regime": spot_regime,
+            "total_charges": total_charges, "num_exit_orders": 1,
+            "qty_exited": qty, "lot_id": "ALL",
+            "xleg_other_margin": xleg_margin,
+            "entry_spot": entry_spot_val, "exit_spot": exit_spot,
+        }
+        import csv as _csv
+        _new_file = not os.path.isfile(D.V13_TRADE_LOG_PATH)
+        with open(D.V13_TRADE_LOG_PATH, "a", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=TRADE_FIELDNAMES, extrasaction="ignore")
+            if _new_file:
+                w.writeheader()
+            w.writerow(_row)
+    except Exception as _le:
+        logger.warning("[V13] Trade log write error: " + str(_le))
+
+    logger.info(f"[V13] SHADOW EXIT: {symbol} qty={qty} ref={exit_price} "
+                f"reason={reason} pnl={pnl_pts}pts")
+    _tg_send(
+        f"🧪 <b>V13 SHADOW EXIT {direction} {strike}</b>\n"
+        f"<b>{reason}</b>  {'+' if pnl_pts >= 0 else ''}{pnl_pts:.1f} pts\n"
+        f"Entry ₹{entry_price:.1f} → Exit ₹{exit_price:.1f}  Peak +{peak:.1f} ({tier})\n"
+        f"DAY {'+' if _v13_state.get('_pnl_today_pts', 0) >= 0 else ''}"
+        f"{_v13_state.get('_pnl_today_pts', 0):.1f} pts "
+        f"({_v13_state.get('_wins_today', 0)}W {_v13_state.get('_losses_today', 0)}L)",
+        priority="high")
+    _save_v13_state()
+
+
+def _v13_check_exit():
+    """Tick-based exit for the V13 shadow position. Mirrors the V11 ladder
+    (reuses _v11_compute_trail_sl). Runs every scan cycle, PAPER-ONLY."""
+    with _v13_lock:
+        if not _v13_state.get("in_trade"):
+            return
+        token            = int(_v13_state.get("token", 0) or 0)
+        initial_sl       = float(_v13_state.get("initial_sl", 0.0))
+        peak_ltp         = float(_v13_state.get("peak_ltp", 0.0))
+        entry_price_snap = float(_v13_state.get("entry_price", 0.0))
+        _cur_min = datetime.now().strftime("%H:%M")
+        _new_candle = _cur_min != _v13_state.get("_last_minute", "")
+        if _new_candle:
+            _v13_state["_last_minute"] = _cur_min
+            _v13_state["candles_held"] = _v13_state.get("candles_held", 0) + 1
+    if _new_candle:
+        _save_v13_state()
+
+    if not token:
+        return
+    ltp = D.get_ltp(token)
+
+    eod_str = CFG.exit_ema9_band("eod_exit_time", "15:20") if hasattr(CFG, "exit_ema9_band") else "15:20"
+    try:
+        _eh, _em = eod_str.split(":"); eod_mins = int(_eh) * 60 + int(_em)
+    except Exception:
+        eod_mins = 15 * 60 + 20
+    now_mins = datetime.now().hour * 60 + datetime.now().minute
+
+    if ltp <= 0:
+        # No live tick — still force EOD close at entry price (mirror V11).
+        if now_mins >= eod_mins:
+            _v13_execute_paper_exit("EOD_EXIT", round(entry_price_snap, 2))
+        return
+
+    with _v13_lock:
+        avg_entry = entry_price_snap
+        if ltp > peak_ltp:
+            peak_ltp = ltp
+            _v13_state["peak_ltp"] = peak_ltp
+            _v13_state["peak_pnl"] = round(peak_ltp - avg_entry, 2)
+        peak_pnl = peak_ltp - avg_entry
+        current_sl, tier = _v11_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
+        _v13_state["active_ratchet_tier"] = tier
+        _v13_state["active_ratchet_sl"]   = round(current_sl, 2)
+
+    if ltp <= current_sl:
+        exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
+                       "LOCK_4": "LOCK_4", "LOCK_25": "LOCK_25"}.get(tier, "VISHAL_TRAIL")
+        _v13_execute_paper_exit(exit_reason, round(current_sl, 2))
+        return
+
+    if now_mins >= eod_mins:
+        _v13_execute_paper_exit("EOD_EXIT", float(ltp))
+
+
 def _reconcile_positions(kite):
     """
     Startup position reconciliation — compare saved state with MStock broker.
@@ -4996,6 +5267,16 @@ def _reset_daily(today_str: str):
         _v11_state["_v11_both_rejected_ts"] = 0.0
         _v11_state["_last_trade_date"]      = today_str
     _save_v11_state()  # persist the cross-midnight reset so the on-disk file isn't stale
+    # V13 shadow engine — same cross-midnight daily reset
+    with _v13_lock:
+        _v13_state["_pnl_today_pts"]   = 0.0
+        _v13_state["_trades_today"]    = 0
+        _v13_state["_wins_today"]      = 0
+        _v13_state["_losses_today"]    = 0
+        _v13_state["_last_fired_candle_ts"] = ""
+        _v13_state["_sl_cooldown_skip_next"] = False
+        _v13_state["_last_trade_date"] = today_str
+    _save_v13_state()
     with _state_lock:
         state["daily_pnl"]             = 0.0
         state["_eod_reported"]         = False
@@ -5992,6 +6273,47 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
         except Exception:
             rolling_block = {"last10_wr": 0, "last20_wr": 0, "last10_pts": 0, "streak": 0}
 
+        # ── V13 shadow engine snapshot (paper A/B alongside V11) ──
+        try:
+            with _v13_live_lock:
+                _v13_ce = dict(_v13_live.get("CE", {}))
+                _v13_pe = dict(_v13_live.get("PE", {}))
+            with _v13_lock:
+                _v13_st = dict(_v13_state)
+            if _v13_st.get("in_trade"):
+                _v13_tok = _v13_st.get("token", 0)
+                _v13_ltp = D.get_ltp(_v13_tok)
+                _v13_entry = float(_v13_st.get("entry_price", 0))
+                _v13_pos = {
+                    "in_trade": True,
+                    "symbol": _v13_st.get("symbol", ""),
+                    "direction": _v13_st.get("direction", ""),
+                    "strike": _v13_st.get("strike", 0),
+                    "entry": _v13_entry,
+                    "entry_time": _v13_st.get("entry_time", ""),
+                    "ltp": round(_v13_ltp, 2) if _v13_ltp > 0 else 0,
+                    "pnl": round(_v13_ltp - _v13_entry, 1) if _v13_ltp > 0 else 0,
+                    "peak": round(_v13_st.get("peak_pnl", 0), 1),
+                    "candles": _v13_st.get("candles_held", 0),
+                    "sl": round(float(_v13_st.get("active_ratchet_sl", 0) or 0), 2),
+                    "active_ratchet_tier": _v13_st.get("active_ratchet_tier", "INITIAL"),
+                    "qty": int(_v13_st.get("qty", 0) or 0),
+                }
+            else:
+                _v13_pos = {"in_trade": False}
+            v13_block = {
+                "ce": _v13_ce, "pe": _v13_pe, "position": _v13_pos,
+                "today": {
+                    "pnl": round(float(_v13_st.get("_pnl_today_pts", 0)), 1),
+                    "trades": int(_v13_st.get("_trades_today", 0)),
+                    "wins": int(_v13_st.get("_wins_today", 0)),
+                    "losses": int(_v13_st.get("_losses_today", 0)),
+                },
+            }
+        except Exception:
+            v13_block = {"ce": {}, "pe": {}, "position": {"in_trade": False},
+                         "today": {"pnl": 0, "trades": 0, "wins": 0, "losses": 0}}
+
         dashboard = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
@@ -6022,6 +6344,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             },
             "ce": ce_signal,
             "pe": pe_signal,
+            "v13": v13_block,
             "position": position,
             "today": today_block,
             "account": _account_block(),
@@ -6194,6 +6517,8 @@ def _strategy_loop(kite):
                 with _v11_lock:
                     _v11_state["expiry"] = expiry.isoformat() if expiry else ""
                     _v11_state["dte"]    = dte
+                with _v13_lock:
+                    _v13_state["dte"]    = dte
             except Exception:
                 pass
             profile = {"conv_sl_pts": 12}
@@ -6206,6 +6531,8 @@ def _strategy_loop(kite):
             # Must be OUTSIDE the _is_new_1min_candle gate — exits need to
             # fire on every tick, not once per minute at candle close.
             _v11_check_exit()
+            # V13 shadow engine exit (paper-only, independent position)
+            _v13_check_exit()
 
             # ── V11 entry: scan every 10 seconds (outside 1-min gate) ──
             # BUG-16 fix: entry was gated to once-per-minute at :35s.
@@ -6272,24 +6599,21 @@ def _strategy_loop(kite):
                             _opp_margin = round(_opp_close - _opp_ema9l, 2)
                             _opp_margin_high = round(_opp_close - _opp_ema9h, 2)
 
-                        # Entry gate — strategy_version selectable (owner 2026-06-20):
-                        #   v11: per-DTE gate (dte0/1 %, dte>=2 abs), off ema9_high
-                        #        (momentum) / ema9_low (decay).
-                        #   v13: absolute gate off ema9_low (momentum) / ema9_high
-                        #        (decay), same +3.5 / [-9,-7].
-                        _is_v13 = (D.strategy_version() == "v13")
-                        if _is_v13:
-                            _momentum_ok, _decay_ok = _v13_gate_check(
-                                _sh_1m_close, _sh_ema9l_1m,
-                                _opp_margin_high, _opp_ema9h)
-                        else:
-                            _momentum_ok, _decay_ok = _v11_gate_check(
-                                dte, _sh_1m_close, _sh_ema9h_1m,
-                                _opp_margin, _opp_close, _opp_ema9l)
-                        # display helpers — show the line each version actually gates on
-                        _disp_mom_gap = round(_sh_1m_close
-                                              - (_sh_ema9l_1m if _is_v13 else _sh_ema9h_1m), 2)
-                        _disp_decay_margin = _opp_margin_high if _is_v13 else _opp_margin
+                        # ═══════════════════════════════════════════════
+                        #  TWO ENGINES SCAN THE SAME CANDLE, EACH PAPER,
+                        #  EACH WITH ITS OWN POSITION/COOLDOWNS (owner
+                        #  2026-06-20: live A/B, both on the dashboard).
+                        #    V11 = primary gate (per-DTE, off ema9_high /
+                        #          ema9_low). V13 = shadow gate (absolute
+                        #          all-dte, off ema9_low / ema9_high).
+                        # ═══════════════════════════════════════════════
+
+                        # ── V11 ENGINE (primary) ───────────────────────
+                        _momentum_ok, _decay_ok = _v11_gate_check(
+                            dte, _sh_1m_close, _sh_ema9h_1m,
+                            _opp_margin, _opp_close, _opp_ema9l)
+                        _disp_mom_gap = round(_sh_1m_close - _sh_ema9h_1m, 2)
+                        _disp_decay_margin = _opp_margin
 
                         # Cooldown and basic guards
                         # Treat an in-flight live entry (broker order placed, ~8s
@@ -6325,17 +6649,13 @@ def _strategy_loop(kite):
                         elif _in_cooldown:
                             _reject_reason = _cooldown_reason
                         elif not _momentum_ok:
-                            if _is_v13:
-                                _reject_reason = f"below_ema9l_gap({_disp_mom_gap:+.2f}<{V11_MIN_EMA9H_GAP})"
-                            elif int(dte or 0) in V11_PCT_GATE_DTE:
+                            if int(dte or 0) in V11_PCT_GATE_DTE:
                                 _mp = V11_PCT_GATE_DTE[int(dte or 0)]["mom_pct"]
-                                _reject_reason = f"below_mom_pct(dte{dte} gap{round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{_mp*_sh_1m_close:.1f})"
+                                _reject_reason = f"below_mom_pct(dte{dte} gap{_disp_mom_gap:+.2f}<{_mp*_sh_1m_close:.1f})"
                             else:
-                                _reject_reason = f"below_ema9h_gap({round(_sh_1m_close - _sh_ema9h_1m, 2):+.2f}<{V11_MIN_EMA9H_GAP})"
+                                _reject_reason = f"below_ema9h_gap({_disp_mom_gap:+.2f}<{V11_MIN_EMA9H_GAP})"
                         elif not _decay_ok:
-                            if _is_v13:
-                                _reject_reason = f"opp_decay_high_weak({_disp_decay_margin:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])"
-                            elif int(dte or 0) in V11_PCT_GATE_DTE and _opp_close > 0:
+                            if int(dte or 0) in V11_PCT_GATE_DTE and _opp_close > 0:
                                 _cfg = V11_PCT_GATE_DTE[int(dte or 0)]
                                 _reject_reason = f"decay_pct_weak(dte{dte} {_opp_margin/_opp_close*100:+.1f}% not in [{_cfg['decay_lo']*100:.1f},{_cfg['decay_hi']*100:.1f}])"
                             else:
@@ -6371,7 +6691,7 @@ def _strategy_loop(kite):
                                     entry_price=_sh_1m_close,
                                     entry_result={
                                         "entry_price": _sh_1m_close,
-                                        "entry_mode": f"{'V13' if _is_v13 else 'V11'}_{_sh_dir}",
+                                        "entry_mode": f"V11_{_sh_dir}",
                                         "fired_candle_ts": _sh_1m_bk_ts,
                                         "close": _sh_1m_close,
                                         "open": _sh_1m_open,
@@ -6388,6 +6708,71 @@ def _strategy_loop(kite):
                                 )
                             except Exception as _e_fire:
                                 logger.error(f"[V11] Error firing entry: {_e_fire}")
+
+                        # ── V13 ENGINE (shadow, paper-only) ────────────
+                        try:
+                            _v13_mom_ok, _v13_decay_ok = _v13_gate_check(
+                                _sh_1m_close, _sh_ema9l_1m,
+                                _opp_margin_high, _opp_ema9h)
+                            _v13_mom_gap = round(_sh_1m_close - _sh_ema9l_1m, 2)
+                            _v13_in_trade = bool(_v13_state.get("in_trade", False))
+                            _v13_cd = False
+                            _v13_cd_reason = ""
+                            if now.time() < V11_OPEN_BLACKOUT_END:
+                                _v13_cd = True; _v13_cd_reason = "open_blackout"
+                            elif _v13_state.get("_sl_cooldown_skip_next"):
+                                _v13_cd = True; _v13_cd_reason = "sl_cooldown"
+                                _v13_state["_sl_cooldown_skip_next"] = False
+                            elif _v13_state.get("_last_fired_candle_ts") == _sh_1m_bk_ts:
+                                _v13_cd = True; _v13_cd_reason = "same_candle"
+                            elif _v13_state.get("_last_exit_candle_ts") == _sh_1m_bk_ts:
+                                _v13_cd = True; _v13_cd_reason = "exit_candle_cooldown"
+                            elif (_v13_state.get("_last_exit_direction") == _sh_dir
+                                  and time.time() - float(_v13_state.get("_last_exit_time_unix", 0)) < 180):
+                                _v13_cd = True
+                                _v13_rem = int(180 - (time.time() - float(_v13_state.get("_last_exit_time_unix", 0))))
+                                _v13_cd_reason = f"same_side_3min({_v13_rem}s)"
+                            _v13_reject = ""
+                            if _v13_in_trade:
+                                _v13_reject = "in_trade"
+                            elif _v13_cd:
+                                _v13_reject = _v13_cd_reason
+                            elif not _v13_mom_ok:
+                                _v13_reject = f"below_ema9l_gap({_v13_mom_gap:+.2f}<{V11_MIN_EMA9H_GAP})"
+                            elif not _v13_decay_ok:
+                                _v13_reject = f"opp_decay_high_weak({_opp_margin_high:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])"
+                            _v13_ready = (_v13_mom_ok and _v13_decay_ok and not _v13_in_trade and not _v13_cd)
+                            with _v13_live_lock:
+                                _v13_live[_sh_dir] = {
+                                    "strike": int(_sh_info.get("strike", 0) or 0),
+                                    "price": round(D.get_ltp(_sh_tok) or _sh_1m_close, 1),
+                                    "ema9h": round(_sh_ema9h_1m, 2),
+                                    "ema9l": round(_sh_ema9l_1m, 2),
+                                    "momentum_gap": _v13_mom_gap,
+                                    "momentum_ok": _v13_mom_ok,
+                                    "decay_margin": round(_opp_margin_high, 2),
+                                    "decay_ok": _v13_decay_ok,
+                                    "ready": _v13_ready,
+                                    "reject": _v13_reject,
+                                }
+                            if _v13_ready and V11_LIVE:
+                                _v13_spot_now = D.get_ltp(D.NIFTY_SPOT_TOKEN)
+                                _v13_execute_paper_entry(
+                                    direction=_sh_dir,
+                                    strike=int(_sh_info.get("strike", 0) or 0),
+                                    symbol=_sh_info.get("symbol", ""),
+                                    token=_sh_tok,
+                                    entry_price=_sh_1m_close,
+                                    entry_mode=f"V13_{_sh_dir}",
+                                    other_token=_opp_tok,
+                                    opp_margin_high=_opp_margin_high,
+                                    spot_at_entry=_v13_spot_now,
+                                    fired_candle_ts=_sh_1m_bk_ts,
+                                    ema9_low=_sh_ema9l_1m,
+                                    dte=dte,
+                                )
+                        except Exception as _v13_e:
+                            logger.warning(f"[V13 Scanner] error: {_v13_e}")
                 except Exception as _scanner_e:
                     logger.warning(f"[V11 Scanner] error: {_scanner_e}")
 
@@ -7801,6 +8186,7 @@ def main():
 
     _load_state()
     _load_v11_state()
+    _load_v13_state()
     _reconcile_positions(kite)
     if state.get("in_trade") and not D.is_market_open():
         logger.warning("[MAIN] Startup with in_trade=True but market is CLOSED — clearing phantom state")
@@ -8570,6 +8956,44 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     html+='<div style="font-size:9px;font-weight:700;color:'+(GATE==='V13'?'var(--am)':'var(--dm)')+';padding:0 2px 6px;letter-spacing:.5px">'+gateDesc+'</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
+    // ── V13 SHADOW panel (paper A/B alongside V11) ──
+    (function(){
+      var v13=d.v13||{}; var v13ce=v13.ce||{}, v13pe=v13.pe||{}, v13pos=v13.position||{}, v13td=v13.today||{};
+      function v13gate(side,o){
+        var acc=side==='CE'?'var(--gn)':'var(--rd)';
+        var stk=(o&&o.strike>0)?o.strike:'—';
+        var ltpTxt=(o&&o.price>0)?('&#x20B9;'+o.price):'&#x20B9;&#x2014;';
+        var mg=parseFloat((o&&o.momentum_gap)||0), dm=parseFloat((o&&o.decay_margin)||0);
+        var mok=!!(o&&o.momentum_ok), dok=!!(o&&o.decay_ok), rdy=!!(o&&o.ready);
+        function chip(lbl,val,ok){var c=ok?'var(--gn)':'var(--rd)';return '<span style="font-size:9px;color:var(--dm)">'+lbl+' </span><span style="font-size:11px;font-weight:700;color:'+c+'">'+(ok?'✓':'')+val+'</span>';}
+        var st=rdy?'<span style="background:var(--gn);color:#fff;font-size:8px;font-weight:800;padding:1px 7px;border-radius:10px">READY</span>'
+                  :'<span style="font-size:8px;color:var(--am)">'+esc((o&&o.reject)||'wait')+'</span>';
+        return '<div style="flex:1;background:rgba(0,0,0,.04);border:1px solid var(--bd);border-radius:9px;padding:6px 8px">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">'
+          +'<span style="font-size:11px;font-weight:800;color:'+acc+'">'+side+' '+stk+'</span>'
+          +'<span style="font-size:11px;color:var(--tx)">'+ltpTxt+'</span></div>'
+          +'<div style="display:flex;gap:10px;margin-bottom:2px">'+chip('MOM',(mg>=0?'+':'')+mg.toFixed(1),mok)+chip('DECAY',dm.toFixed(1),dok)+'</div>'
+          +'<div>'+st+'</div></div>';
+      }
+      var vh='<div style="margin:10px 8px 0">';
+      vh+='<div style="font-size:10px;font-weight:700;color:var(--am);letter-spacing:.5px;padding:4px 10px 4px">🧪 V13 SHADOW — paper A/B (gate: all-dte Close>EMA9L+3.5 · Opp Decay(close−EMA9H) [−9,−7])</div>';
+      vh+='<div style="margin:2px 10px">';
+      if(v13pos.in_trade){
+        var vp=parseFloat(v13pos.pnl||0), vpk=parseFloat(v13pos.peak||0);
+        var vclr=vp>=0?'var(--gn)':'var(--rd)';
+        vh+='<div style="background:linear-gradient(135deg,rgba(245,158,11,.10),transparent);border:1px solid rgba(245,158,11,.25);border-radius:9px;padding:7px 9px;margin-bottom:6px">';
+        vh+='<span style="font-size:12px;font-weight:700">'+esc(v13pos.direction||'')+' '+(v13pos.strike||'')+'</span> ';
+        vh+='<span style="font-size:14px;font-weight:800;color:'+vclr+'">'+(vp>=0?'+':'')+vp.toFixed(1)+'pts</span>';
+        vh+='<span style="font-size:10px;color:#888;float:right">Entry &#x20B9;'+parseFloat(v13pos.entry||0).toFixed(1)+' → &#x20B9;'+(v13pos.ltp||0)+' · SL &#x20B9;'+parseFloat(v13pos.sl||0).toFixed(1)+' · '+esc(v13pos.active_ratchet_tier||'INITIAL')+' · Peak +'+vpk.toFixed(1)+'</span>';
+        vh+='</div>';
+      }
+      vh+='<div style="display:flex;gap:8px">'+v13gate('CE',v13ce)+v13gate('PE',v13pe)+'</div>';
+      var vd=parseFloat(v13td.pnl||0), vw=parseInt(v13td.wins||0), vl=parseInt(v13td.losses||0);
+      var vwr=(vw+vl)>0?Math.round(vw/(vw+vl)*100):0;
+      vh+='<div style="font-size:10px;color:var(--dm);padding:5px 2px 0">V13 DAY <b style="color:'+(vd>=0?'var(--gn)':'var(--rd)')+'">'+(vd>=0?'+':'')+vd.toFixed(1)+'pts</b> · '+(v13td.trades||0)+' trades · '+vw+'W '+vl+'L · WR '+vwr+'%</div>';
+      vh+='</div></div>';
+      html+=vh;
+    })();
     // ── Account + rolling performance (moved from retired MKT tab) ──
     var acct=d.account||{};
     var balAmt=Math.round(parseFloat(acct.balance||0));
