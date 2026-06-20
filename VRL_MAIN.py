@@ -5853,7 +5853,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                 verdict = _reject
             else:
                 _fails = []
-                if not _momentum_ok: _fails.append(f"below_ema9h_gap({_momentum_gap:+.1f}<3.5)")
+                _ml = "ema9l" if D.strategy_version() == "v13" else "ema9h"
+                if not _momentum_ok: _fails.append(f"below_{_ml}_gap({_momentum_gap:+.1f}<3.5)")
                 if not _decay_ok:
                     _fails.append(f"opp_decay({_decay_margin:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])")
                 verdict = _fails[0] if _fails else "scanning"
@@ -5995,6 +5996,8 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "ts": now.strftime("%Y-%m-%d %H:%M:%S"),
             "version": D.VERSION,
             "mode": "PAPER" if D.PAPER_MODE else "LIVE",
+            "gate": D.strategy_version().upper(),
+            "data_provider": D.data_provider(),
             "market": {
                 "spot": round(spot_ltp, 1),
                 "atm": atm_strike,
@@ -8458,6 +8461,8 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
   // Version + tags
   document.getElementById('ver').textContent=d.version||'';
   let tags='<span class="tag '+(d.mode==='LIVE'?'tg':'tb')+'">'+esc(d.mode||'')+'</span>';
+  if(d.gate)tags+='<span class="tag '+(d.gate==='V13'?'ta':'tg')+'" title="Active entry gate">'+esc(d.gate)+'</span>';
+  if(d.data_provider)tags+='<span class="tag tb" title="Market-data source">'+esc(d.data_provider)+'</span>';
   tags+='<span class="tag '+(mk.dte<=1?'tr':'tb')+'">DTE '+(mk.dte||0)+'</span>';
   tags+='<span class="tag tb">CE '+(mk.locked_ce||mk.atm)+' · PE '+(mk.locked_pe||mk.atm)+' 🔒</span>';
   if(mk.vix>0)tags+='<span class="tag '+(mk.vix>22?'tr':mk.vix>18?'ta':'tg')+'">VIX '+mk.vix+'</span>';
@@ -8484,7 +8489,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     var posClr=pos.direction==='CE'?'rgba(59,130,246,.1)':'rgba(239,68,68,.08)';
     var posBd=pos.direction==='CE'?'rgba(59,130,246,.25)':'rgba(239,68,68,.2)';
     ph='<div class="pos" style="background:linear-gradient(135deg,'+posClr+',transparent);border:1px solid '+posBd+'">';
-    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">🟢 '+esc(sym)+' V11 GOLDEN</div>';
+    ph+='<div style="font-size:13px;font-weight:700;margin-bottom:4px">🟢 '+esc(sym)+' '+esc(d.gate||'V11')+'</div>';
     ph+='<div style="margin:3px 0"><span class="big" style="color:'+pnlClr+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'pts</span>';
     ph+=' <span style="color:#888;font-size:11px">&#x20B9;'+pnlRs.toLocaleString('en-IN')+'</span>';
     ph+='<span style="color:#555;font-size:10px;float:right">Entry &#x20B9;'+entry.toFixed(1)+' → &#x20B9;'+ltp+'</span></div>';
@@ -8555,10 +8560,14 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     }
     var anyReady=(ce.fired||pe.fired);
     var dot=anyReady?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px"></span>':'';
+    var GATE=d.gate||'V11';
+    var gateDesc=(GATE==='V13')
+      ? '⚡ V13 GATES &nbsp;·&nbsp; all dte: Close > EMA9L+3.5 · Opp Decay (close−EMA9H) [−9, −7] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min'
+      : '⚡ V11 GOLDEN GATES &nbsp;·&nbsp; dte≥2: Close > EMA9H+3.5 · Opp Decay [−9, −7] &nbsp;·&nbsp; dte0/1 %-gate: Mom +2.3%/+3.0% · Opp Decay [−4.8%, −2.7%] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min';
     var html='<div style="margin:8px 8px 0">';
-    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ V11 LIVE — Golden (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ '+esc(GATE)+' LIVE — '+(GATE==='V13'?'owner gate':'Golden')+' (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
     html+='<div style="margin:2px 10px 9px">';
-    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">⚡ V11 GOLDEN GATES &nbsp;·&nbsp; dte≥2: Close > EMA9H+3.5 · Opp Decay [−9, −7] &nbsp;·&nbsp; dte0/1 %-gate: Mom +2.3%/+3.0% · Opp Decay [−4.8%, −2.7%] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min</div>';
+    html+='<div style="font-size:9px;font-weight:700;color:'+(GATE==='V13'?'var(--am)':'var(--dm)')+';padding:0 2px 6px;letter-spacing:.5px">'+gateDesc+'</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
     // ── Account + rolling performance (moved from retired MKT tab) ──
@@ -8572,6 +8581,8 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
       '<div class="ctx"><div class="k">AVAILABLE</div><div class="v" style="color:'+balClr+';font-size:11px">'+balStr+'</div></div>'+
       '<div class="ctx"><div class="k">USED MARGIN</div><div class="v" style="color:var(--am);font-size:11px">₹'+usedAmt.toLocaleString('en-IN')+'</div></div>'+
       '<div class="ctx"><div class="k">MODE</div><div class="v" style="color:'+(d.mode==='LIVE'?'var(--gn)':'var(--bl)')+'">'+esc(d.mode||'PAPER')+'</div></div>'+
+      '<div class="ctx"><div class="k">GATE</div><div class="v" style="color:'+(d.gate==='V13'?'var(--am)':'var(--gn)')+'">'+esc(d.gate||'V11')+'</div></div>'+
+      '<div class="ctx"><div class="k">DATA</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.data_provider||'kite')+'</div></div>'+
       '<div class="ctx"><div class="k">VERSION</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.version||'—')+'</div></div>'+
       '</div></div>';
     var l10c=rl.last10_wr>=60?'var(--gn)':rl.last10_wr>=40?'var(--am)':'var(--rd)';
