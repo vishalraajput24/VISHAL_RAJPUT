@@ -7722,6 +7722,45 @@ def _start_v12():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  LEVELS shadow helper  (folded in 2026-06-23). SELF-CONTAINED: to
+#  remove, delete this function + the _start_levels_shadow() call in
+#  main(). Imports levels_shadow.py as an on-disk helper module
+#  (read-only, DATA-ONLY — never a gate, never touches V11/V13 state,
+#  places no orders). Runs once EOD (~15:45 Mon-Fri, after the spot
+#  1-min CSV is complete) to compute the NEXT session's floor-pivots +
+#  CPR + confluence "make-or-break" box from prev-day H/L/C and write
+#  lab_data/levels/levels_<DATE>.json + append levels_shadow_log.csv
+#  (A/B log). See project_box_levels. Fully sandboxed: a levels error
+#  can never reach the V11/V13 engines.
+# ═══════════════════════════════════════════════════════════════
+def _start_levels_shadow():
+    def _loop():
+        try:
+            import levels_shadow as _lv
+        except Exception as e:
+            logger.warning("[LEVELS] import failed — helper disabled (" + str(e)[:100] + ")")
+            return
+        logger.info("[LEVELS] EOD make-or-break levels helper thread started")
+        while True:
+            now = datetime.now()
+            nxt = now.replace(hour=15, minute=45, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            time.sleep(max(60, (nxt - now).total_seconds()))
+            if datetime.now().weekday() < 5:
+                try:
+                    p = _lv.generate()        # latest spot CSV → next session's levels
+                    lv = p.get("levels", {})
+                    logger.info("[LEVELS] " + str(p.get("for_date")) + " "
+                                + str(p.get("close_vs_cpr_bias")) + " | CPR "
+                                + str(lv.get("cpr_bottom")) + "-" + str(lv.get("cpr_top"))
+                                + " (" + str(lv.get("cpr_regime")) + ")")
+                except Exception as e:
+                    logger.warning("[LEVELS] generate failed (sandboxed): " + str(e)[:120])
+    threading.Thread(target=_loop, name="LevelsShadow", daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 
@@ -7993,6 +8032,7 @@ def main():
     # ── Folded-in plug-in threads (single-process consolidation, 2026-06-23) ──
     _start_token_refresher()   # daily ~06:00 Upstox token re-mint (was upstox_auth cron)
     _start_v12()               # V12 Vishal paper engine (was v12_vishal cron)
+    _start_levels_shadow()     # daily ~15:45 EOD make-or-break levels (shadow, data-only)
 
     _strategy_loop(kite)
 
