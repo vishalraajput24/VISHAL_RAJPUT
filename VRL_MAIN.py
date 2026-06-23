@@ -1373,15 +1373,7 @@ def is_trading_window(now: datetime = None) -> bool:
     if not is_market_open():
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
-    # EXPIRY-ONLY widening (owner-approved 2026-06-22): for the 2026-06-23 weekly
-    # expiry only, extend V11's cutoff 14:30 -> 15:15 to catch a post-squeeze late
-    # gamma expansion (the 15:00 30-min block was the biggest move on 2 of 4 sampled
-    # expansion days). SELF-EXPIRES: on any other date this falls back to the locked
-    # config cutoff (14:30). Remove this block after 2026-06-23.
-    if now.date() == date(2026, 6, 23):
-        end = now.replace(hour=15, minute=15, second=0, microsecond=0)
-    else:
-        end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
+    end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
     return start <= now < end
 
 def get_lot_size(kite=None) -> int:
