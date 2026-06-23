@@ -7613,6 +7613,123 @@ def _start_tick_flow():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  IN-PROCESS UPSTOX TOKEN REFRESH
+#  (folded in from upstox_auth.py, 2026-06-23 — single-process
+#  consolidation). SELF-CONTAINED: to remove, delete this block plus the
+#  _refresh_upstox_token() + _start_token_refresher() calls in main().
+#  Upstox tokens expire ~03:30 IST daily; we re-mint at startup (before
+#  D.init) AND once each morning ~06:00 so a long-running bot survives the
+#  expiry without a manual restart. Token is set in os.environ (which
+#  upstox_data.access_token() reads first) AND persisted to ~/.env.
+# ═══════════════════════════════════════════════════════════════
+_UPSTOX_PROFILE_URL = "https://api.upstox.com/v2/user/profile"
+
+
+def _refresh_upstox_token():
+    """Mint + verify a fresh Upstox token via the headless TOTP flow and make it
+    live in THIS process (os.environ) + ~/.env. Returns True on success; never
+    raises (logs + returns False)."""
+    try:
+        from upstox_totp import UpstoxTOTP
+    except Exception as e:
+        logger.warning("[AUTH] upstox-totp unavailable — skipping refresh (" + str(e)[:60] + ")")
+        return False
+    try:
+        resp = UpstoxTOTP().app_token.get_access_token()
+    except Exception as e:
+        logger.warning("[AUTH] headless login raised: " + str(e)[:120])
+        return False
+    if not (getattr(resp, "success", False) and getattr(resp, "data", None)):
+        logger.warning("[AUTH] token generation failed: " + str(getattr(resp, "error", resp))[:120])
+        return False
+    token = resp.data.access_token
+    try:
+        r = requests.get(_UPSTOX_PROFILE_URL,
+                         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                         timeout=15)
+        r.raise_for_status()
+        body = r.json()
+        if body.get("status") != "success":
+            raise RuntimeError("profile non-success: " + str(body)[:80])
+        prof = body["data"]
+    except Exception as e:
+        logger.warning("[AUTH] token generated but verification failed: " + str(e)[:120])
+        return False
+    # env beats the ~/.env file lookup, so set it here first → live immediately
+    os.environ["UPSTOX_ACCESS_TOKEN"] = token
+    try:
+        env_path = os.path.expanduser("~/.env")
+        with open(env_path, "r") as f:
+            lines = f.readlines()
+        new_line = "UPSTOX_ACCESS_TOKEN=" + token + "\n"
+        for i, ln in enumerate(lines):
+            if re.match(r"\s*UPSTOX_ACCESS_TOKEN\s*=", ln):
+                lines[i] = new_line
+                break
+        else:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(new_line)
+        with open(env_path, "w") as f:
+            f.writelines(lines)
+        os.chmod(env_path, 0o600)
+    except Exception as e:
+        logger.warning("[AUTH] token live in env but ~/.env write failed: " + str(e)[:80])
+    logger.info("[AUTH] fresh Upstox token minted + verified for "
+                + str(prof.get("user_name")) + " (" + str(prof.get("user_id")) + ")")
+    return True
+
+
+def _start_token_refresher():
+    """Daily ~06:00 IST in-process token re-mint (Mon-Fri) so a long-running bot
+    survives the 03:30 expiry without a restart. Daemon thread."""
+    def _loop():
+        while True:
+            now = datetime.now()
+            nxt = now.replace(hour=6, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            time.sleep(max(60, (nxt - now).total_seconds()))
+            if datetime.now().weekday() < 5:
+                _refresh_upstox_token()
+    threading.Thread(target=_loop, name="TokenRefresher", daemon=True).start()
+    logger.info("[AUTH] daily token refresher thread started (~06:00 Mon-Fri)")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  V12 VISHAL paper engine  (folded in from v12_vishal.py, 2026-06-23 —
+#  single-process consolidation). SELF-CONTAINED: to remove, delete this
+#  function + the _start_v12() call in main(). v12_vishal.py stays as an
+#  imported helper module — it does `import VRL_MAIN as V`, so we pre-seed
+#  sys.modules["VRL_MAIN"] = the running bot to avoid loading a 2nd copy.
+#  PAPER only, fully sandboxed: a v12 error can never reach the V11/V13 bot.
+#  v12.main() self-exits at 15:30, so we wrap it in a daily-restart loop.
+# ═══════════════════════════════════════════════════════════════
+def _start_v12():
+    def _loop():
+        sys.modules.setdefault("VRL_MAIN", sys.modules["__main__"])
+        try:
+            import v12_vishal as _v12
+        except Exception as e:
+            logger.warning("[V12] import failed — engine disabled (" + str(e)[:100] + ")")
+            return
+        logger.info("[V12] Vishal paper engine thread started")
+        while True:
+            try:
+                now = datetime.now()
+                if now.weekday() < 5 and now.time() < dtime(15, 30):
+                    _v12.main()          # runs the session, self-exits at 15:30
+            except Exception as e:
+                logger.warning("[V12] session error (sandboxed): " + str(e)[:140])
+            now = datetime.now()
+            nxt = now.replace(hour=9, minute=20, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            time.sleep(max(60, (nxt - now).total_seconds()))
+    threading.Thread(target=_loop, name="V12Engine", daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 
@@ -7636,6 +7753,11 @@ def main():
     _write_pid()
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+
+    # Mint a fresh Upstox token IN-PROCESS before any data call (folded in from
+    # the old upstox_auth cron, 2026-06-23). Best-effort: on failure we fall back
+    # to whatever UPSTOX_ACCESS_TOKEN is already in env/~/.env (last good token).
+    _refresh_upstox_token()
 
     # Market data is Upstox-only (Kite removed) → no Kite session; orders = m.Stock.
     kite = None
@@ -7875,6 +7997,10 @@ def main():
 
     # ── Start tick-flow study collector (secret, optional, data-only) ──
     _start_tick_flow()
+
+    # ── Folded-in plug-in threads (single-process consolidation, 2026-06-23) ──
+    _start_token_refresher()   # daily ~06:00 Upstox token re-mint (was upstox_auth cron)
+    _start_v12()               # V12 Vishal paper engine (was v12_vishal cron)
 
     _strategy_loop(kite)
 
