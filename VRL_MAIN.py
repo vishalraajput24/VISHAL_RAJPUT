@@ -24,7 +24,8 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta, time as dtime
 from logging.handlers import TimedRotatingFileHandler
 
-from kiteconnect import KiteConnect, KiteTicker
+# Kite removed 2026-06-23 — market data is Upstox-only (see upstox_data.py).
+# Orders always route to m.Stock. No Kite session, no kiteconnect dependency.
 
 class _DBNoop:
     """Safe no-op proxy for removed VRL_DB — any method call does nothing."""
@@ -175,11 +176,10 @@ def is_paper() -> bool:
 
 
 def data_provider() -> str:
-    """Market-DATA source: 'kite' or 'upstox'. Orders always m.Stock.
-    Upstox path is full REST + live protobuf WebSocket (migrated 2026-06-19); the
-    bot runs with no Kite session at all under 'upstox'. Keep mode: paper for a
-    few A/B sessions before any live consideration."""
-    return (get().get("data_provider") or "kite").lower()
+    """Market-DATA source — Upstox-only since 2026-06-23 (Kite removed).
+    Orders always route to m.Stock. Retained as a constant accessor so any
+    legacy callers keep working; there is no longer a config toggle."""
+    return "upstox"
 
 
 def strategy_version() -> str:
@@ -283,141 +283,6 @@ def lookback(tf: str) -> int:
 # VRL_DATA is imported lazily inside each function because VRL_DATA
 # imports VRL_CONFIG at top-level (CFG.load() is called there), so a
 # top-level `import VRL_DATA` here would create a circular import.
-
-def _read_token() -> dict:
-    try:
-        if os.path.isfile(D.TOKEN_FILE_PATH):
-            with open(D.TOKEN_FILE_PATH) as f:
-                return json.load(f)
-    except json.JSONDecodeError as _je:
-        # Corrupt token file (truncated mid-write, disk full, etc.) —
-        # log explicitly so restart-loop rate-limit risks are visible
-        # instead of silently triggering a fresh login every startup.
-        logger.warning("[AUTH] Token file corrupted (" + str(_je)
-                       + ") — triggering fresh login")
-    except Exception as _re:
-        logger.warning("[AUTH] Token read error: " + str(_re))
-    return {}
-
-
-def _write_token(data: dict):
-    os.makedirs(D.STATE_DIR, exist_ok=True)
-    tmp = D.TOKEN_FILE_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, D.TOKEN_FILE_PATH)
-
-
-def _auto_login(kite) -> str:
-    user_id     = os.getenv("ZERODHA_USER_ID", "")
-    password    = os.getenv("ZERODHA_PASSWORD", "")
-    totp_secret = os.getenv("TOTP_SECRET", "")
-    api_secret  = D.KITE_API_SECRET
-    # Fail fast with a named error if any credential is missing, instead
-    # of letting the POST at line 274 send empty strings and Zerodha
-    # reject with a generic "Invalid credentials" response.
-    _missing = [n for n, v in (
-        ("ZERODHA_USER_ID", user_id),
-        ("ZERODHA_PASSWORD", password),
-        ("TOTP_SECRET", totp_secret),
-        ("KITE_API_SECRET", api_secret),
-    ) if not v]
-    if _missing:
-        raise RuntimeError("[AUTH] Missing env vars: " + ", ".join(_missing))
-    session     = requests.Session()
-
-    logger.info("[AUTH] Step 1: Password login")
-    r          = session.post("https://kite.zerodha.com/api/login",
-                              data={"user_id": user_id, "password": password}, timeout=15)
-    request_id = r.json()["data"]["request_id"]
-    logger.info("[AUTH] Step 1 OK")
-
-    logger.info("[AUTH] Step 2: TOTP")
-    totp = pyotp.TOTP(totp_secret).now()
-    session.post("https://kite.zerodha.com/api/twofa",
-                 data={"user_id": user_id, "request_id": request_id,
-                       "twofa_value": totp, "twofa_type": "totp"}, timeout=15)
-    logger.info("[AUTH] Step 2 OK")
-    time.sleep(2)
-
-    logger.info("[AUTH] Step 3: Fetching request_token")
-    login_url     = kite.login_url()
-    request_token = ""
-
-    r = session.get(login_url, timeout=10, allow_redirects=False)
-    finish_url = r.headers.get("Location", "")
-    logger.info("[AUTH] Step 3a: finish_url=" + finish_url[:60])
-
-    try:
-        r2  = session.get(finish_url, timeout=10, allow_redirects=False)
-        loc = r2.headers.get("Location", "")
-        m   = re.search(r"request_token=([A-Za-z0-9]+)", loc)
-        if m:
-            request_token = m.group(1)
-    except Exception as e:
-        m = re.search(r"request_token=([A-Za-z0-9]+)", str(e))
-        if m:
-            request_token = m.group(1)
-
-    if not request_token:
-        raise RuntimeError("[AUTH] request_token not found after finish step")
-
-    logger.info("[AUTH] Step 3 OK — " + request_token[:8] + "...")
-
-    logger.info("[AUTH] Step 4: Generating session")
-    sess         = kite.generate_session(request_token, api_secret=api_secret)
-    access_token = sess["access_token"]
-    logger.info("[AUTH] Done ✓")
-    return access_token
-
-
-def _notify_auth_refreshed():
-    """Reset VRL_DATA's auth-rejection flag so historical_data and
-    WebSocket retries resume after a successful login / refresh."""
-    try:
-            notify_auth_refreshed()
-    except Exception:
-        pass
-
-
-def get_kite():
-    kite      = KiteConnect(api_key=D.KITE_API_KEY)
-    saved     = _read_token()
-    today_str = date.today().isoformat()
-
-    # Delete tokens older than 1 day (never serve yesterday's token)
-    if saved.get("date") and saved.get("date") < today_str:
-        logger.warning("[AUTH] Stale token from " + saved.get("date") + " — ignoring")
-        saved = {}
-
-    if saved.get("date") == today_str and saved.get("access_token"):
-        logger.info("[AUTH] Trying saved token")
-        kite.set_access_token(saved["access_token"])
-        try:
-            kite.profile()
-            logger.info("[AUTH] Token valid ✓")
-            _notify_auth_refreshed()
-            return kite
-        except Exception:
-            logger.warning("[AUTH] Saved token expired")
-
-    for attempt in range(3):
-        try:
-            token = _auto_login(kite)
-            kite.set_access_token(token)
-            _write_token({"date": today_str, "access_token": token})
-            logger.info("[AUTH] Auto-login successful ✓")
-            _notify_auth_refreshed()
-            return kite
-        except Exception as e:
-            logger.error("[AUTH] Attempt " + str(attempt + 1) + " failed: " + str(e))
-            if attempt < 2:
-                time.sleep(3)
-
-    raise RuntimeError("[AUTH] All login attempts failed")
-
-
-
 
 # ===============================================================
 # ===============================================================
@@ -909,8 +774,6 @@ MSTOCK = _sys.modules[__name__]
 load()  # initialize CONFIG singleton before any CFG.xxx calls
 
 PAPER_MODE       = CFG.is_paper()
-KITE_API_KEY     = os.getenv("KITE_API_KEY", "")
-KITE_API_SECRET  = os.getenv("KITE_API_SECRET", "")
 TELEGRAM_TOKEN   = os.getenv("TG_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TG_GROUP_ID", "")
 
@@ -941,7 +804,6 @@ V13_STATE_FILE_PATH     = os.path.join(STATE_DIR, "vrl_v13_state.json")
 V13_TRADE_LOG_PATH      = os.path.join(LAB_DIR,   "vrl_v13_trade_log.csv")
 SHADOW_STATE_FILE_PATH = os.path.join(STATE_DIR, "vrl_shadow_state.json")
 PID_FILE_PATH          = os.path.join(STATE_DIR, "vrl_live.pid")
-TOKEN_FILE_PATH     = os.path.join(STATE_DIR, "access_token.json")
 
 # ── All constants now read from config.yaml via VRL_CONFIG ──
 INSTRUMENT_NAME  = CFG.instrument_name()
@@ -1188,43 +1050,15 @@ def create_daily_zip(target_date: str = None) -> str:
         return ""
 
 
-_kite             = None
+_kite             = None    # retained as a None constant (Kite removed) for any inert references
 _account_info     = {}
 _token_cache      = {}
 _token_cache_lock = threading.Lock()
-_nfo_instruments       = None
-_nfo_instruments_lock  = threading.Lock()
-_nfo_instruments_date  = None
-_ticker           = None
 _ticks            = {}
 _tick_lock        = threading.Lock()
 _subscribed       = set()
 _subscribed_lock  = threading.Lock()
 _ws_connected     = False
-
-# ── auth-rejection backoff ───────────────────
-# When Kite's nightly 03:30 session invalidation kills the token,
-# every historical_data / quote / LTP call raises "Incorrect
-# api_key or access_token". Without a guard, the bot retries
-# every 1-2 seconds for hours, flooding the log with 13K+ warnings.
-# This flag stops all retries until VRL_CONFIG refreshes the token
-# and calls notify_auth_refreshed().
-_auth_rejected = False
-_auth_rejected_lock = threading.Lock()
-
-
-def _is_auth_rejected() -> bool:
-    with _auth_rejected_lock:
-        return _auth_rejected
-
-
-def _set_auth_rejected():
-    global _auth_rejected
-    with _auth_rejected_lock:
-        if not _auth_rejected:
-            logger.warning("[DATA] Auth token rejected — pausing retries "
-                           "until re-auth via VRL_CONFIG.")
-        _auth_rejected = True
 
 
 # ── cross-module "trade was taken" signal ────
@@ -1293,46 +1127,15 @@ def get_post_exit_observations() -> list:
         return [dict(o) for o in _post_exit_obs]
 
 
-def notify_auth_refreshed():
-    """Called by VRL_CONFIG on successful login / token refresh.
-    Resets the auth-rejection flag so historical_data and WS
-    resume normal operation."""
-    global _auth_rejected
-    with _auth_rejected_lock:
-        if _auth_rejected:
-            logger.info("[DATA] Auth refreshed — resuming historical_data "
-                        "and WS operations.")
-        _auth_rejected = False
-
-def init(kite_instance):
-    global _kite
-    _kite = kite_instance
+def init(kite_instance=None):
+    # Kite removed — retained as a no-op so existing call sites (init(None))
+    # keep working. Market data is Upstox-only; orders go to m.Stock.
+    return
 
 
 def fetch_account_info(kite=None):
-    """Fetch profile + margins once at startup and cache."""
-    global _account_info
-    k = kite or _kite
-    if k is None:
-        return _account_info
-    try:
-        profile = k.profile()
-        margins = k.margins(segment="equity")
-        avail = margins.get("available", {})
-        used = margins.get("utilised", {})
-        _account_info = {
-            "name": profile.get("user_name", ""),
-            "user_id": profile.get("user_id", ""),
-            "email": profile.get("email", ""),
-            "broker": "Zerodha",
-            "available_margin": round(float(avail.get("live_balance", 0)), 2),
-            "used_margin": round(float(used.get("debits", 0)), 2),
-            "total_balance": round(float(margins.get("net", 0)), 2),
-        }
-        logger.info("[DATA] Account: " + _account_info["name"]
-                     + " bal=" + str(_account_info["total_balance"]))
-    except Exception as e:
-        logger.warning("[DATA] Account fetch: " + str(e))
+    # Account/margin used to come from Kite. With Kite removed the dashboard
+    # shows the m.Stock balance instead (ms_get_funds / ms_get_banner_line).
     return _account_info
 
 
@@ -1341,127 +1144,28 @@ def get_account_info():
 
 
 def refresh_margin(kite=None):
-    """Refresh just margin numbers — call after each trade."""
-    global _account_info
-    k = kite or _kite
-    if k is None:
-        return
-    try:
-        margins = k.margins(segment="equity")
-        avail = margins.get("available", {})
-        used = margins.get("utilised", {})
-        _account_info["available_margin"] = round(float(avail.get("live_balance", 0)), 2)
-        _account_info["used_margin"] = round(float(used.get("debits", 0)), 2)
-        _account_info["total_balance"] = round(float(margins.get("net", 0)), 2)
-    except Exception:
-        pass
-
-def _on_ticks(ws, ticks):
-    with _tick_lock:
-        for tick in ticks:
-            token = tick.get("instrument_token")
-            ltp   = tick.get("last_price", 0)
-            if token and ltp:
-                _ticks[token] = {"ltp": float(ltp), "ts": time.time()}
-
-def _on_connect(ws, response):
-    global _ws_connected
-    _ws_connected = True
-    logger.info("[WS] Connected")
-    with _subscribed_lock:
-        if _subscribed:
-            ws.subscribe(list(_subscribed))
-            ws.set_mode(ws.MODE_FULL, list(_subscribed))
+    # No-op since Kite removal — m.Stock funds drive the dashboard balance.
     return
-def _on_close(ws, code, reason):
-    global _ws_connected
-    if ws is not _ticker:
-        return  # callback from an orphaned ticker being torn down — ignore
-    _ws_connected = False
-    reason_str = str(reason or "")
-    logger.warning("[WS] Closed: " + str(code) + " " + reason_str)
-    if "403" in reason_str or "Forbidden" in reason_str:
-        logger.warning("[WS] 403 Forbidden — auth required")
-        _set_auth_rejected()
-        try:
-            if _ticker:
-                _ticker.stop_retry()
-                _ticker.close()
-        except Exception as _ce:
-            logger.debug("[WS] ticker.close() on 403 failed: " + str(_ce))
-    # Non-403 drops (e.g. 1006 unclean close): KiteTicker's built-in
-    # auto-reconnect takes over — _on_connect resubscribes, _on_noreconnect
-    # fires if it gives up. Never start a second ticker from here (it ran
-    # in parallel with the built-in reconnect and leaked WS connections).
-    return
-def _on_error(ws, code, reason):
-    if ws is not _ticker:
-        return
-    reason_str = str(reason or "")
-    logger.warning("[WS] Error: " + str(code) + " " + reason_str)
-    if "403" in reason_str or "Forbidden" in reason_str:
-        _set_auth_rejected()
-
-def _on_reconnect(ws, attempts):
-    logger.info("[WS] Reconnecting attempt " + str(attempts))
-
-def _on_noreconnect(ws):
-    if ws is not _ticker:
-        return
-    logger.critical("[WS] Built-in reconnect exhausted — starting fresh ticker")
-    try:
-        if _ws_autoheal_callback:
-            _ws_autoheal_callback("⚠️ WS reconnect exhausted — starting fresh ticker")
-    except Exception:
-        pass
-    try:
-        start_websocket()
-    except Exception as e:
-        logger.error("[WS] Fresh ticker start failed: " + str(e))
 
 def start_websocket():
-    global _ticker, _ws_connected
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is not None:
-            with _subscribed_lock:
-                init_tokens = list(_subscribed)
-            # Construct the streamer WITH the index feeds. A subscribe() issued
-            # after connect() races the socket OPEN and is silently dropped by
-            # the SDK, leaving the feed connected but tickless (2026-06-22). The
-            # SDK auto-subscribes construction keys on open, so seed them here.
-            for _t in (NIFTY_SPOT_TOKEN, INDIA_VIX_TOKEN):
-                if _t and _t not in init_tokens:
-                    init_tokens.append(_t)
-            ud.start_ws(init_tokens)
-            with _subscribed_lock:
-                _subscribed.update(int(t) for t in init_tokens if t)
-            _ws_connected = True
-            logger.info("[WS] Upstox protobuf feed started")
-        return
-    if _kite is None:
-        raise RuntimeError("Call init(kite) before start_websocket()")
-    old = _ticker
-    _ticker = None
-    _ws_connected = False
-    if old is not None:
-        try:
-            old.stop_retry()
-        except Exception:
-            pass
-        try:
-            old.close()
-        except Exception:
-            pass
-    _ticker = KiteTicker(KITE_API_KEY, _kite.access_token)
-    _ticker.on_ticks       = _on_ticks
-    _ticker.on_connect     = _on_connect
-    _ticker.on_close       = _on_close
-    _ticker.on_error       = _on_error
-    _ticker.on_reconnect   = _on_reconnect
-    _ticker.on_noreconnect = _on_noreconnect
-    _ticker.connect(threaded=True, disable_ssl_verification=False)
-    logger.info("[WS] Ticker started")
+    """Start the Upstox v3 protobuf market-data feed (orders go to m.Stock)."""
+    global _ws_connected
+    ud = _udata_mod()
+    if ud is not None:
+        with _subscribed_lock:
+            init_tokens = list(_subscribed)
+        # Construct the streamer WITH the index feeds. A subscribe() issued
+        # after connect() races the socket OPEN and is silently dropped by
+        # the SDK, leaving the feed connected but tickless (2026-06-22). The
+        # SDK auto-subscribes construction keys on open, so seed them here.
+        for _t in (NIFTY_SPOT_TOKEN, INDIA_VIX_TOKEN):
+            if _t and _t not in init_tokens:
+                init_tokens.append(_t)
+        ud.start_ws(init_tokens)
+        with _subscribed_lock:
+            _subscribed.update(int(t) for t in init_tokens if t)
+        _ws_connected = True
+        logger.info("[WS] Upstox protobuf feed started")
 
 def subscribe_tokens(tokens: list) -> set:
     """Subscribe to WS feed for the given tokens. Returns the set of
@@ -1472,34 +1176,21 @@ def subscribe_tokens(tokens: list) -> set:
     global _subscribed
     with _subscribed_lock:
         new = set(int(t) for t in tokens if t)
-        if DATA_PROVIDER == "upstox":
-            ud = _udata_mod()
-            if ud is not None:
-                try:
-                    ud.ws_subscribe(list(new))
-                except Exception as _e:
-                    logger.warning("[WS] Upstox subscribe failed: " + str(_e))
-                    return set()
-            _subscribed.update(new)
-            logger.info("[WS] Subscribed (upstox): " + str(new))
-            return new
-        if _ticker and _ws_connected:
+        ud = _udata_mod()
+        if ud is not None:
             try:
-                _ticker.subscribe(list(new))
-                _ticker.set_mode(_ticker.MODE_FULL, list(new))
+                ud.ws_subscribe(list(new))
             except Exception as _e:
-                logger.warning("[WS] Subscribe failed: " + str(_e))
+                logger.warning("[WS] Upstox subscribe failed: " + str(_e))
                 return set()
         _subscribed.update(new)
-    logger.info("[WS] Subscribed: " + str(new))
-    return new
+        logger.info("[WS] Subscribed (upstox): " + str(new))
+        return new
 
 def subscribe_full_flow(tokens: list):
     """Upgrade the given tokens to Upstox v3 'full' mode (DOM/OI/IV) for the
-    tick-flow study. No-op on Kite (study is Upstox-only). The LTP path is
-    unaffected; this only enriches _ws_flow/get_flow used by tick_flow.py."""
-    if DATA_PROVIDER != "upstox":
-        return
+    tick-flow study. The LTP path is unaffected; this only enriches
+    _ws_flow/get_flow used by tick_flow.py."""
     toks = [int(t) for t in tokens if t]
     if not toks:
         return
@@ -1517,51 +1208,31 @@ def unsubscribe_tokens(tokens: list):
     with _subscribed_lock:
         rem = set(int(t) for t in tokens if t)
         _subscribed -= rem
-        if DATA_PROVIDER == "upstox":
-            ud = _udata_mod()
-            if ud is not None:
-                try:
-                    ud.ws_unsubscribe(list(rem))
-                except Exception:
-                    pass
-            logger.info("[WS] Unsubscribed (upstox): " + str(rem))
-            return
-        if _ticker and _ws_connected:
+        ud = _udata_mod()
+        if ud is not None:
             try:
-                _ticker.unsubscribe(list(rem))
+                ud.ws_unsubscribe(list(rem))
             except Exception:
                 pass
-    logger.info("[WS] Unsubscribed: " + str(rem))
+        logger.info("[WS] Unsubscribed (upstox): " + str(rem))
 
 def get_ltp(token) -> float:
     if token is None:
         return 0.0
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is None:
-            return 0.0
-        v = ud.ws_get_ltp(int(token), max_age=TICK_STALE_SECS)
-        if v <= 0 and is_market_open():
-            logger.warning("[DATA] No fresh upstox tick token=" + str(token))
-        return v
-    with _tick_lock:
-        entry = _ticks.get(int(token))
-    if not entry:
+    ud = _udata_mod()
+    if ud is None:
         return 0.0
-    age = time.time() - entry["ts"]
-    if age > TICK_STALE_SECS:
-        if is_market_open():
-            logger.warning("[DATA] Stale tick token=" + str(token)
-                           + " age=" + str(round(age, 1)) + "s")
-        return 0.0
-    return entry["ltp"]
+    v = ud.ws_get_ltp(int(token), max_age=TICK_STALE_SECS)
+    if v <= 0 and is_market_open():
+        logger.warning("[DATA] No fresh upstox tick token=" + str(token))
+    return v
 
 
 def get_spot_ltp() -> float:
-    """v15.2: convenience helper — spot LTP via WebSocket tick cache.
-    Under the Upstox provider (no Kite WS) fall back to a REST quote."""
+    """v15.2: convenience helper — spot LTP via the Upstox WebSocket tick
+    cache, falling back to a REST quote when no fresh tick is present."""
     v = get_ltp(NIFTY_SPOT_TOKEN)
-    if v <= 0 and DATA_PROVIDER == "upstox":
+    if v <= 0:
         ud = _udata_mod()
         if ud is not None:
             try:
@@ -1592,101 +1263,42 @@ def check_and_reconnect():
     market hours, re-authenticate Kite and restart WebSocket. Rate limited to 1 per 10min.
     Called from strategy loop every cycle.
     """
-    global _last_reconnect_attempt, _kite
+    global _last_reconnect_attempt
     if not is_market_open():
         return
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is None:
-            return
-        if ud.ws_get_ltp(NIFTY_SPOT_TOKEN, max_age=180) > 0:
-            return  # fresh upstox spot tick
-        if time.time() - _last_reconnect_attempt < 600:
-            return
-        _last_reconnect_attempt = time.time()
-        logger.warning("[DATA] Upstox spot tick stale 3+ min — restarting feed")
-        try:
-            with _subscribed_lock:
-                toks = list(_subscribed)
-            ud.restart_ws(toks)
-        except Exception as e:
-            logger.error("[DATA] upstox WS restart failed: " + str(e))
+    ud = _udata_mod()
+    if ud is None:
         return
-    if _is_auth_rejected():
-        return
-    # Check if spot tick is stale (v13.10: tightened from 5min to 3min)
-    with _tick_lock:
-        spot_entry = _ticks.get(NIFTY_SPOT_TOKEN)
-    if spot_entry and (time.time() - spot_entry["ts"]) < 180:
-        return  # tick is fresh (< 3 min), no action needed
-    # If last tick was not from today, market never opened — holiday/weekend, don't alert
-    from datetime import date as _date
-    _last_tick_date = _date.fromtimestamp(spot_entry["ts"]) if spot_entry else None
-    if _last_tick_date != _date.today():
-        return
-    # v13.10: rate limit 1 auto-heal per 10 minutes to prevent loops
+    if ud.ws_get_ltp(NIFTY_SPOT_TOKEN, max_age=180) > 0:
+        return  # fresh upstox spot tick
     if time.time() - _last_reconnect_attempt < 600:
         return
     _last_reconnect_attempt = time.time()
-    logger.warning("[DATA] Spot tick stale 3+ min — attempting re-auth + WS reconnect")
+    logger.warning("[DATA] Upstox spot tick stale 3+ min — restarting feed")
     try:
         if _ws_autoheal_callback:
             _ws_autoheal_callback("\u26a0\ufe0f WebSocket auto-healing after stale tick (3min+)")
     except Exception:
         pass
     try:
-        new_kite = get_kite()
-        if not new_kite:
-            logger.error("[DATA] Re-auth returned None")
-            return
-        _kite = new_kite
-        # start_websocket() tears down the old ticker itself (stop_retry + close)
-        try:
-            start_websocket()
-        except Exception as _ws_err:
-            logger.error("[DATA] WS restart failed: " + str(_ws_err))
-            return
-        # Wait for connection before subscribing
-        time.sleep(3)
         with _subscribed_lock:
-            if _subscribed and _ticker and _ws_connected:
-                try:
-                    _ticker.subscribe(list(_subscribed))
-                    _ticker.set_mode(_ticker.MODE_FULL, list(_subscribed))
-                except Exception:
-                    pass
-        logger.info("[DATA] Re-auth + WS reconnect successful")
+            toks = list(_subscribed)
+        ud.restart_ws(toks)
     except Exception as e:
-        logger.error("[DATA] Re-auth failed: " + str(e))
+        logger.error("[DATA] upstox WS restart failed: " + str(e))
 
 def get_vix() -> float:
     ltp = get_ltp(INDIA_VIX_TOKEN)
     if ltp > 0:
         return ltp
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is not None:
-            try:
-                v = ud.get_ltp_one(INDIA_VIX_TOKEN)
-                if v > 0:
-                    return float(v)
-            except Exception:
-                pass
-        return 0.0
-    if _is_auth_rejected():
-        return 0.0
-    if _kite is not None:
+    ud = _udata_mod()
+    if ud is not None:
         try:
-            quote = _kite.quote(["NSE:INDIA VIX"])
-            vix   = quote.get("NSE:INDIA VIX", {}).get("last_price", 0)
-            if vix and vix > 0:
-                return float(vix)
-        except Exception as e:
-            err_str = str(e).lower()
-            if "incorrect api_key" in err_str or "access_token" in err_str:
-                _set_auth_rejected()
-            else:
-                logger.debug("[DATA] VIX quote fallback failed: " + str(e))
+            v = ud.get_ltp_one(INDIA_VIX_TOKEN)
+            if v > 0:
+                return float(v)
+        except Exception:
+            pass
     return 0.0
 
 # ═══════════════════════════════════════════════════════════════
@@ -1722,59 +1334,13 @@ _dyn_last_fail_ts: float = 0.0  # epoch time of last API failure — throttle re
 
 def _detect_market_active_today() -> bool | None:
     """
-    Dynamically detect if market is actually trading today using
-    Kite's quote API last_trade_time — this is NSE's own timestamp,
-    not our receive time, so it correctly shows yesterday's date on
-    holidays even if the WS sends a cached "last known" price on connect.
-
-    Returns True  — NSE last_trade_time is today → market active.
-    Returns False — last_trade_time is from a previous day → holiday.
-    Returns None  — too early (before 9:20) or kite not ready yet.
-    Result cached per calendar day — only 1 API call per day.
+    Dynamic holiday detection previously used Kite's quote last_trade_time.
+    With Kite removed (Upstox-only since 2026-06-23) there is no equivalent
+    REST last_trade_time field, so this always returns None and the caller
+    falls back to the static TRADING_HOLIDAYS list (same behaviour the bot
+    already had under the Upstox provider).
     """
-    today = datetime.now().strftime("%Y-%m-%d")
-    if today in _dyn_holiday_cache and _dyn_holiday_cache[today] is not None:
-        return _dyn_holiday_cache[today]
-
-    now = datetime.now()
-    # Only check after 9:20 IST (5 min into session, enough time for first trade)
-    check_after = now.replace(hour=9, minute=20, second=0, microsecond=0)
-    if now < check_after:
-        return None  # too early — caller uses static list as fallback
-
-    # kite must be initialised
-    if _kite is None:
-        return None
-
-    # Throttle retries: if last API call failed, wait 5 min before retrying
-    global _dyn_last_fail_ts
-    import time as _time
-    if _dyn_last_fail_ts and (_time.time() - _dyn_last_fail_ts) < 300:
-        return None  # cooldown — caller uses static list
-
-    try:
-        quote = _kite.quote(["NSE:NIFTY 50"])
-        ltt = (quote.get("NSE:NIFTY 50") or {}).get("last_trade_time")
-        if ltt is None:
-            return None  # API error — don't decide
-        # last_trade_time can be a datetime or string "YYYY-MM-DD HH:MM:SS"
-        if hasattr(ltt, "strftime"):
-            ltt_date = ltt.strftime("%Y-%m-%d")
-        else:
-            ltt_date = str(ltt)[:10]
-
-        if ltt_date == today:
-            _dyn_holiday_cache[today] = True
-            logger.info(f"[DATA] Dynamic: market ACTIVE today — NSE last_trade_time={ltt_date}")
-            return True
-        else:
-            _dyn_holiday_cache[today] = False
-            logger.info(f"[DATA] Dynamic: market HOLIDAY today — NSE last_trade_time={ltt_date} (not today)")
-            return False
-    except Exception as _e:
-        _dyn_last_fail_ts = _time.time()  # start cooldown
-        logger.debug(f"[DATA] Dynamic holiday check failed: {_e} — using static list (retry in 5m)")
-        return None  # fall back to static list on any API error
+    return None
 
 
 def is_trading_day(now: datetime = None) -> bool:
@@ -1818,66 +1384,15 @@ def is_trading_window(now: datetime = None) -> bool:
         end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
     return start <= now < end
 
-def _get_nfo_instruments(kite=None):
-    """Fetch NFO instruments once per day, cached."""
-    global _nfo_instruments, _nfo_instruments_date
-    from datetime import date as _d
-    today = _d.today()
-    with _nfo_instruments_lock:
-        if _nfo_instruments is not None and _nfo_instruments_date == today:
-            return _nfo_instruments
-    k = kite or _kite
-    if k is None:
-        return []
-    instruments = k.instruments("NFO")
-    with _nfo_instruments_lock:
-        _nfo_instruments = instruments
-        _nfo_instruments_date = today
-    return instruments
-# get_lot_size() called 28× per day via D.get_lot_size() — each call
-# invokes _get_nfo_instruments(kite) which returns thousands of rows.
-# Cache the result per date so only the FIRST call per day hits Kite.
-_lot_size_cache = {}  # {"2026-04-17": 65}
-_lot_size_cache_lock = threading.Lock()
-
 def get_lot_size(kite=None) -> int:
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is not None:
-            try:
-                lot = ud.lot_size()
-                if lot > 0:
-                    return lot
-            except Exception as e:
-                logger.warning("[DATA] upstox lot_size failed: " + str(e))
-        return LOT_SIZE_BASE
-    k = kite or _kite
-    if k is None:
-        return LOT_SIZE_BASE
-    today_iso = date.today().isoformat()
-    # Hold the lock across the entire miss→fetch→write flow so two
-    # threads that both miss the cache don't both end up parsing the
-    # 2000-row instrument dump.
-    with _lot_size_cache_lock:
-        if today_iso in _lot_size_cache:
-            return _lot_size_cache[today_iso]
+    ud = _udata_mod()
+    if ud is not None:
         try:
-            instruments = _get_nfo_instruments(k)
-            for inst in instruments:
-                if (inst.get("name") == "NIFTY"
-                        and inst.get("instrument_type") == "CE"
-                        and inst.get("lot_size", 0) > 0):
-                    lot = int(inst["lot_size"])
-                    logger.info("[DATA] Lot size from broker: " + str(lot)
-                                + " (cached for " + today_iso + ")")
-                    _lot_size_cache[today_iso] = lot
-                    # Evict stale dates (keep only today).
-                    for k_date in list(_lot_size_cache.keys()):
-                        if k_date != today_iso:
-                            del _lot_size_cache[k_date]
-                    return lot
+            lot = ud.lot_size()
+            if lot > 0:
+                return lot
         except Exception as e:
-            logger.warning("[DATA] Lot size fetch failed: " + str(e))
+            logger.warning("[DATA] upstox lot_size failed: " + str(e))
     return LOT_SIZE_BASE
 
 # ── Historical data cache — keyed by candle bucket so it self-invalidates
@@ -1926,11 +1441,11 @@ def _hist_cache_put(key: str, df):
                 del _hist_cache[k]
 
 # ── Upstox data provider (lazy) — see upstox_data.py / data_provider() ──
-DATA_PROVIDER = CFG.data_provider()
+DATA_PROVIDER = "upstox"   # Kite removed 2026-06-23 — single data provider, no toggle
 _udata = None
 def _udata_mod():
     """Lazy-import the Upstox backend and register the index tokens once.
-    Returns None (callers fall back to Kite) if the module can't load."""
+    Returns None (data unavailable) if the module can't load."""
     global _udata
     if _udata is None:
         try:
@@ -1938,7 +1453,7 @@ def _udata_mod():
             upstox_data.register_index_tokens(NIFTY_SPOT_TOKEN, INDIA_VIX_TOKEN)
             _udata = upstox_data
         except Exception as e:
-            logger.error("[DATA] upstox_data import failed, using Kite: " + str(e))
+            logger.error("[DATA] upstox_data import failed (no data backend): " + str(e))
             return None
     return _udata
 
@@ -1952,56 +1467,17 @@ def get_historical_data(token: int, interval: str, lookback: int,
     cached = _hist_cache_get(cache_key)
     if cached is not None:
         return cached
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is not None:
-            try:
-                df = ud.historical_df(int(token), interval, lookback)
-            except Exception as e:
-                logger.warning("[DATA] upstox historical failed token="
-                               + str(token) + ": " + str(e))
-                df = pd.DataFrame()
-            if not df.empty:
-                _hist_cache_put(cache_key, df)
-            return df
-    if _kite is None:
+    ud = _udata_mod()
+    if ud is None:
         return pd.DataFrame()
-    min_from = datetime.now() - timedelta(days=3)
-    minutes_per_candle = {
-        "minute": 1, "3minute": 3, "5minute": 5,
-        "15minute": 15, "30minute": 30, "60minute": 60,
-    }.get(interval, 1)
-    total_minutes  = lookback * minutes_per_candle * 2.5
-    candidate_from = datetime.now() - timedelta(minutes=int(total_minutes) + 60)
-    from_dt = min(candidate_from, min_from)
-    to_dt   = datetime.now()
-    raw   = None
-    if _is_auth_rejected():
-        return pd.DataFrame()
-    for attempt in range(2):
-        try:
-            raw = _kite.historical_data(
-                instrument_token=int(token), from_date=from_dt, to_date=to_dt,
-                interval=interval, continuous=False, oi=False)
-            break
-        except Exception as e:
-            err_str = str(e).lower()
-            if "incorrect api_key" in err_str or "access_token" in err_str:
-                _set_auth_rejected()
-                return pd.DataFrame()
-            logger.warning("[DATA] historical_data attempt " + str(attempt+1)
-                           + " token=" + str(token) + ": " + str(e))
-            if attempt < 1:
-                time.sleep(1)
-    if not raw:
-        return pd.DataFrame()
-    df = pd.DataFrame(raw)
-    df.rename(columns={"date": "timestamp"}, inplace=True)
-    df.set_index("timestamp", inplace=True)
-    df = df[["open", "high", "low", "close", "volume"]].copy()
-    df = df.apply(pd.to_numeric, errors="coerce")
-    df.dropna(inplace=True)
-    _hist_cache_put(cache_key, df)
+    try:
+        df = ud.historical_df(int(token), interval, lookback)
+    except Exception as e:
+        logger.warning("[DATA] upstox historical failed token="
+                       + str(token) + ": " + str(e))
+        df = pd.DataFrame()
+    if not df.empty:
+        _hist_cache_put(cache_key, df)
     return df
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -2096,32 +1572,14 @@ def resolve_strike_for_direction(spot: float, direction: str, dte: int) -> int:
 def get_nearest_expiry(kite=None, reference_date=None) -> date:
     if reference_date is None:
         reference_date = date.today()
-    if DATA_PROVIDER == "upstox":
-        ud = _udata_mod()
-        if ud is not None:
-            try:
-                return ud.nearest_expiry(reference_date)
-            except Exception as e:
-                logger.error("[DATA] upstox nearest_expiry error: " + str(e))
-                return None
-    kite = kite or _kite
-    if kite is None:
-        raise RuntimeError("Kite not initialised")
+    ud = _udata_mod()
+    if ud is None:
+        logger.error("[DATA] upstox_data unavailable for nearest_expiry")
+        return None
     try:
-        instruments = _get_nfo_instruments(kite)
-        expiries    = set()
-        for inst in instruments:
-            if inst.get("name") == "NIFTY" and inst.get("instrument_type") == "CE":
-                exp = inst.get("expiry")
-                if exp and isinstance(exp, date):
-                    expiries.add(exp)
-        future = sorted(e for e in expiries if e >= reference_date)
-        if not future:
-            logger.error("[DATA] No future expiry found")
-            return None
-        return future[0]
+        return ud.nearest_expiry(reference_date)
     except Exception as e:
-        logger.error("[DATA] get_nearest_expiry error: " + str(e))
+        logger.error("[DATA] upstox nearest_expiry error: " + str(e))
         return None
 
 def calculate_dte(expiry_date) -> int:
@@ -2130,68 +1588,24 @@ def calculate_dte(expiry_date) -> int:
     return max((expiry_date - date.today()).days, 0)
 
 def get_option_tokens(kite, strike: int, expiry_date) -> dict:
-    if DATA_PROVIDER == "upstox":
-        if not strike or int(strike) <= 0:
-            return {}
-        key = (int(strike), expiry_date.isoformat() if expiry_date else "")
-        with _token_cache_lock:
-            if key in _token_cache:
-                return dict(_token_cache[key])
-        ud = _udata_mod()
-        if ud is None:
-            return {}
-        try:
-            res = ud.option_tokens(int(strike), expiry_date)
-        except Exception as e:
-            logger.error("[DATA] upstox option_tokens error: " + str(e))
-            return {}
-        if len(res) == 2:                      # only cache complete results
-            with _token_cache_lock:
-                _token_cache[key] = res
-        return dict(res)
-    kite = kite or _kite
-    if kite is None:
-        return {}
     if not strike or int(strike) <= 0:
-        # A strike-0 lookup can never resolve a real option; scanning every NFO
-        # instrument for it is wasteful and used to log a misleading "incomplete"
-        # warning. Bail early (callers already treat {} as "no tokens").
         return {}
     key = (int(strike), expiry_date.isoformat() if expiry_date else "")
     with _token_cache_lock:
         if key in _token_cache:
             return dict(_token_cache[key])
-    try:
-        instruments = _get_nfo_instruments(kite)
-        expiry_str  = expiry_date.isoformat() if expiry_date else ""
-        result      = {}
-        for inst in instruments:
-            if (inst.get("name") == "NIFTY"
-                    and int(inst.get("strike", 0)) == int(strike)
-                    and str(inst.get("expiry", "")) == expiry_str
-                    and inst.get("instrument_type") in ("CE", "PE")):
-                opt_type = inst["instrument_type"]
-                result[opt_type] = {
-                    "token" : inst["instrument_token"],
-                    "symbol": inst["tradingsymbol"],
-                }
-            if len(result) == 2:
-                break
-        if len(result) < 2:
-            # Do NOT cache incomplete results — if only CE was found
-            # (e.g., pre-listing on gap-open), a cached {"CE": ...} would
-            # keep returning the incomplete dict, causing the next trade
-            # to manage the missing side with token=None.
-            logger.warning("[DATA] Token resolve incomplete: strike=" + str(strike)
-                           + " found=" + str(list(result.keys()))
-                           + " — skipping cache, will retry")
-            return dict(result)
-        with _token_cache_lock:
-            _token_cache[key] = result
-        return dict(result)
-    except Exception as e:
-        logger.error("[DATA] get_option_tokens error: " + str(e))
+    ud = _udata_mod()
+    if ud is None:
         return {}
+    try:
+        res = ud.option_tokens(int(strike), expiry_date)
+    except Exception as e:
+        logger.error("[DATA] upstox option_tokens error: " + str(e))
+        return {}
+    if len(res) == 2:                      # only cache complete results
+        with _token_cache_lock:
+            _token_cache[key] = res
+    return dict(res)
 
 def clear_token_cache():
     with _token_cache_lock:
@@ -2284,16 +1698,10 @@ def compute_daily_bias(kite):
     global _daily_bias, _daily_bias_done
     result = {"bias": "UNKNOWN", "ema21": 0, "adx": 0, "spot": 0, "details": ""}
     try:
-        if _kite is None:
+        df = get_historical_data(NIFTY_SPOT_TOKEN, "day", 80)
+        if df is None or len(df) < 25:
             return result
-        now = datetime.now()
-        raw = _kite.historical_data(
-            instrument_token=NIFTY_SPOT_TOKEN,
-            from_date=now - timedelta(days=60), to_date=now,
-            interval="day", continuous=False, oi=False)
-        if not raw or len(raw) < 25:
-            return result
-        df = pd.DataFrame(raw)
+        df = df.copy()
         for col in ("close", "high", "low"):
             df[col] = df[col].astype(float)
         ema21 = df["close"].ewm(span=21, adjust=False).mean()
@@ -2339,16 +1747,11 @@ def check_hourly_rsi(kite):
     global _hourly_rsi, _hourly_rsi_ts
     result = {"rsi": 0.0, "warning": False, "msg": ""}
     try:
-        if _kite is None:
-            return result
         now = datetime.now()
-        raw = _kite.historical_data(
-            instrument_token=NIFTY_SPOT_TOKEN,
-            from_date=now - timedelta(days=10), to_date=now,
-            interval="60minute", continuous=False, oi=False)
-        if not raw or len(raw) < 20:
+        df = get_historical_data(NIFTY_SPOT_TOKEN, "60minute", 200)
+        if df is None or len(df) < 20:
             return result
-        df = pd.DataFrame(raw)
+        df = df.copy()
         df["close"] = df["close"].astype(float)
         delta = df["close"].diff()
         gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
@@ -2456,17 +1859,13 @@ def ensure_option_history(kite_inst, strike: int, expiry,
               "fetched": bool, "error": str or None}
     """
     import sqlite3
-    k = kite_inst or _kite
     result = {"strike": strike, "ce_candles": 0, "pe_candles": 0,
               "fetched": False, "api_calls": 0, "error": None}
-    if k is None:
-        result["error"] = "kite not initialised"
-        return result
 
     db_path = os.path.expanduser("~/lab_data/vrl_data.db")
     cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     table_map = {"minute": "option_1min", "3minute": "option_3min"}
-    tokens = get_option_tokens(k, strike, expiry)
+    tokens = get_option_tokens(None, strike, expiry)
     if not tokens:
         result["error"] = "no tokens for strike " + str(strike)
         return result
@@ -2505,10 +1904,7 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                 to_dt = datetime.now()
                 time.sleep(0.5)
                 result["api_calls"] += 1
-                raw = k.historical_data(
-                    instrument_token=int(token),
-                    from_date=from_dt, to_date=to_dt,
-                    interval=tf, continuous=False, oi=False)
+                raw = _lab_hist_candles(int(token), tf, from_dt, to_dt)
                 if not raw:
                     continue
                 rows = []
@@ -2538,10 +1934,6 @@ def ensure_option_history(kite_inst, strike: int, expiry,
                                 + " candles (had " + str(cnt) + ")")
             except Exception as e:
                 err = str(e)[:100]
-                if "incorrect api_key" in err.lower() or "access_token" in err.lower():
-                    _set_auth_rejected()
-                    result["error"] = "auth rejected"
-                    return result
                 logger.warning("[PRELOAD] fetch error " + side + " "
                                + str(strike) + " " + tf + ": " + err)
 
@@ -2686,7 +2078,6 @@ _vwap_state = {
     "gap"         : 0.0,    # fut_close - vwap
     "last_update" : None,   # datetime of last refresh
 }
-_VWAP_FUT_TOKEN = 15956226  # NIFTY26JUNFUT 2026-06-30 — update when rolling to next expiry
 _VWAP_BUFFER    = 25        # pts — CE needs gap > +25, PE needs gap < -25
 
 # ── Output CSV ──
@@ -2817,54 +2208,9 @@ def update_vwap(kite) -> dict:
     Returns current _vwap_state dict.
     NEVER raises — silent on failure.
     """
-    global _vwap_state
-    if kite is None:
-        return _vwap_state          # upstox provider / no Kite session: VWAP is dashboard-only
-    try:
-        import numpy as np
-        from_dt = datetime.now() - timedelta(hours=7)
-        data    = kite.historical_data(_VWAP_FUT_TOKEN, from_dt, datetime.now(), "15minute")
-        if not data:
-            return _vwap_state
-
-        import pandas as pd
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-
-        today_d = date.today()
-        df = df[df.index.date == today_d]
-        df = df.between_time("09:15", "15:30")
-        if df.empty:
-            return _vwap_state
-
-        # Running VWAP from 9:15
-        df["typical"] = (df["high"] + df["low"] + df["close"]) / 3.0
-        df["tv"]      = df["typical"] * df["volume"]
-        cum_tv  = df["tv"].cumsum()
-        cum_vol = df["volume"].cumsum()
-        df["vwap"] = cum_tv / cum_vol.replace(0, np.nan)
-
-        last = df.iloc[-1]
-        fut_close = round(float(last["close"]), 2)
-        vwap_val  = round(float(last["vwap"]), 2)
-        gap       = round(fut_close - vwap_val, 2)
-
-        with _levels_lock:
-            _vwap_state["fut_close"]   = fut_close
-            _vwap_state["vwap"]        = vwap_val
-            _vwap_state["gap"]         = gap
-            _vwap_state["last_update"] = datetime.now()
-
-        logger.info(
-            f"[VWAP] fut={fut_close}  vwap={vwap_val}  "
-            f"gap={gap:+.1f}  "
-            f"({'BULL' if gap > 0 else 'BEAR'} bias)"
-        )
-    except Exception as e:
-        logger.debug(f"[VWAP] update error: {e}")
+    # VWAP was a Kite-futures dashboard widget. With Kite removed (Upstox-only,
+    # 2026-06-23) the NIFTY-future VWAP feed is gone; this is now a no-op and the
+    # dashboard VWAP fields stay blank. No V11/V13 gate uses VWAP.
     return _vwap_state
 
 
@@ -3108,45 +2454,32 @@ def _compute_indicators(df: pd.DataFrame, idx: int) -> dict:
 
 def _lab_hist_candles(token: int, interval: str,
                       from_dt: datetime, to_dt: datetime) -> list:
-    """Provider-agnostic candle fetch for the lab collectors. Returns Kite-style
-    list-of-dicts (keys: date, open, high, low, close, volume). Under Upstox the
-    bot has NO Kite session, so route through get_historical_data (Upstox REST)
-    and rebuild the dict-list — otherwise the collector calls kite.historical_data
-    on None and every fetch dies with 'NoneType has no attribute historical_data'
-    (2026-06-22)."""
-    if DATA_PROVIDER == "upstox":
-        mpc = {"minute": 1, "3minute": 3, "5minute": 5,
-               "15minute": 15, "30minute": 30, "60minute": 60}.get(interval, 1)
-        span_min = max(1.0, (to_dt - from_dt).total_seconds() / 60.0)
-        lookback = int(span_min / mpc) + 5
-        df = get_historical_data(int(token), interval, lookback)
-        if df is None or df.empty:
-            return []
-        _f = from_dt.replace(tzinfo=None) if from_dt else None
-        _t = to_dt.replace(tzinfo=None) if to_dt else None
-        out = []
-        for ts, row in df.iterrows():
-            tsd = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-            tsn = tsd.replace(tzinfo=None) if getattr(tsd, "tzinfo", None) else tsd
-            if _f and tsn < _f:
-                continue
-            if _t and tsn > _t:
-                continue
-            out.append({"date": tsd,
-                        "open": float(row["open"]), "high": float(row["high"]),
-                        "low": float(row["low"]), "close": float(row["close"]),
-                        "volume": float(row.get("volume", 0) or 0)})
-        return out
-    k = _kite
-    if k is None:
+    """Candle fetch for the lab collectors (Upstox-only since Kite removal,
+    2026-06-23). Returns Kite-style list-of-dicts (keys: date, open, high, low,
+    close, volume) by routing through get_historical_data (Upstox REST) and
+    rebuilding the dict-list the collectors expect."""
+    mpc = {"minute": 1, "3minute": 3, "5minute": 5,
+           "15minute": 15, "30minute": 30, "60minute": 60}.get(interval, 1)
+    span_min = max(1.0, (to_dt - from_dt).total_seconds() / 60.0)
+    lookback = int(span_min / mpc) + 5
+    df = get_historical_data(int(token), interval, lookback)
+    if df is None or df.empty:
         return []
-    try:
-        return k.historical_data(
-            instrument_token=int(token), from_date=from_dt, to_date=to_dt,
-            interval=interval, continuous=False, oi=False) or []
-    except Exception as e:
-        logger.error("[LAB] hist fetch error token=" + str(token) + " " + str(e))
-        return []
+    _f = from_dt.replace(tzinfo=None) if from_dt else None
+    _t = to_dt.replace(tzinfo=None) if to_dt else None
+    out = []
+    for ts, row in df.iterrows():
+        tsd = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+        tsn = tsd.replace(tzinfo=None) if getattr(tsd, "tzinfo", None) else tsd
+        if _f and tsn < _f:
+            continue
+        if _t and tsn > _t:
+            continue
+        out.append({"date": tsd,
+                    "open": float(row["open"]), "high": float(row["high"]),
+                    "low": float(row["low"]), "close": float(row["close"]),
+                    "volume": float(row.get("volume", 0) or 0)})
+    return out
 
 
 def _fetch_candles_with_warmup(kite, token: int, from_dt: datetime,
@@ -6306,13 +5639,6 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                         _sig["close"] = round(_ltp, 2)
                 elif _sig.get("ltp", 0) == 0 and _side in _tokens:
                     _ltp = D.get_ltp(_tokens[_side]["token"])
-                    if _ltp <= 0:
-                        try:
-                            _sym = _tokens[_side]["symbol"]
-                            _q = D._kite.ltp("NFO:" + _sym)
-                            _ltp = float(list(_q.values())[0]["last_price"])
-                        except Exception:
-                            pass
                     if _ltp > 0:
                         _sig["ltp"] = round(_ltp, 2)
         except Exception:
@@ -6957,14 +6283,10 @@ def _strategy_loop(kite):
                     _safe_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
                     if _safe_spot > 0:
                         _saved_via = "WS"
-                    elif kite is not None:
-                        try:
-                            q = kite.ltp(["NSE:NIFTY 50"])
-                            _safe_spot = float(list(q.values())[0]["last_price"])
+                    else:
+                        _safe_spot = D.get_spot_ltp()   # Upstox REST fallback
+                        if _safe_spot > 0:
                             _saved_via = "REST"
-                        except Exception as _re25:
-                            logger.debug("[MAIN] 15:25+ REST fallback failed: "
-                                         + str(_re25))
                     if _safe_spot > 0:
                         with _state_lock:
                             prev_src = state.get("_prev_close_src", "")
@@ -6983,13 +6305,10 @@ def _strategy_loop(kite):
                 with _state_lock:
                     state["_eod_reported"] = True
                     _eod_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
-                    if _eod_spot <= 0 and kite is not None:
-                        try:
-                            q = kite.ltp(["NSE:NIFTY 50"])
-                            _eod_spot = float(list(q.values())[0]["last_price"])
+                    if _eod_spot <= 0:
+                        _eod_spot = D.get_spot_ltp()    # Upstox REST fallback
+                        if _eod_spot > 0:
                             logger.info("[MAIN] EOD spot via REST: " + str(_eod_spot))
-                        except Exception as _re:
-                            logger.warning("[MAIN] EOD spot REST fallback failed: " + str(_re))
                     if _eod_spot > 0:
                         state["prev_close"] = round(_eod_spot, 1)
                         logger.info("[MAIN] prev_close saved: " + str(state["prev_close"]))
@@ -7540,11 +6859,10 @@ def _cmd_status(args):
     ltp   = 0.0
     try:
         ltp = D.get_ltp(token)
-        if ltp <= 0 and _kite is not None:
-            symbol = st.get("symbol")
-            if symbol:
-                q = _kite.ltp(["NFO:" + symbol])
-                ltp = float(q["NFO:" + symbol]["last_price"])
+        if ltp <= 0 and token:
+            df = D.get_option_1min(token, 3)   # Upstox REST fallback
+            if df is not None and len(df):
+                ltp = float(df.iloc[-1]["close"])
                 logger.info("[STATUS] LTP via REST: " + str(ltp))
     except Exception as e:
         logger.warning("[STATUS] LTP fetch error: " + str(e))
@@ -7593,9 +6911,6 @@ def _cmd_status(args):
 def _cmd_account(args):
     try:
         _acct = D.get_account_info()
-        if _kite:
-            D.refresh_margin(_kite)
-            _acct = D.get_account_info()
     except Exception:
         _acct = D.get_account_info()
 
@@ -8221,8 +7536,6 @@ def _tf_fut_token():
     global _flow_fut_token
     if _flow_fut_token is not None:
         return _flow_fut_token
-    if DATA_PROVIDER != "upstox":
-        return None
     ud = _udata_mod()
     if ud is None or not hasattr(ud, "nifty_front_fut"):
         return None
@@ -8236,8 +7549,6 @@ def _tf_fut_token():
 
 
 def _tf_get_flow(token):
-    if DATA_PROVIDER != "upstox":
-        return None
     ud = _udata_mod()
     try:
         return ud.get_flow(token) if ud else None
@@ -8278,8 +7589,6 @@ def _tf_get_engines():
 
 def _start_tick_flow():
     global _tick_flow_mod
-    if DATA_PROVIDER != "upstox":
-        return  # study is Upstox-only (needs full-mode DOM)
     try:
         import tick_flow as _tf
     except Exception:
@@ -8327,70 +7636,30 @@ def main():
     _write_pid()
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
-    try:
-        import json as _j
-        from datetime import date as _dt_date
-        _tok_path = D.TOKEN_FILE_PATH
-        _tok_data = {}
-        if os.path.isfile(_tok_path):
-            with open(_tok_path) as _tf:
-                _tok_data = _j.load(_tf)
-        _tok_date = _tok_data.get("date", "")
-        _today = _dt_date.today().isoformat()
-        if _tok_date != _today and D.data_provider() != "upstox":
-            logger.warning("[MAIN] Token is from " + str(_tok_date or "MISSING")
-                           + ", not today (" + _today + ") — forcing fresh auth")
-            _tg_send("\u26a0\ufe0f Stale token detected on startup, auto-refreshing\n"
-                     "Old: " + str(_tok_date or "MISSING") + " → New: " + _today)
-        else:
-            logger.info("[MAIN] Token freshness check: OK (" + _today + ")")
-    except Exception as _te:
-        logger.warning("[MAIN] Token freshness check error: " + str(_te))
 
-    _upstox_data_mode = (D.data_provider() == "upstox")
-    if _upstox_data_mode:
-        # Market data on Upstox → no Kite session needed at all (orders = m.Stock).
-        kite = None
-        _kite = None
-        D.init(None)
-    else:
-        kite = get_kite()
-        _kite = kite
-        D.init(kite)
+    # Market data is Upstox-only (Kite removed) → no Kite session; orders = m.Stock.
+    kite = None
+    D.init(None)
 
-    # Phase 1 health: Token + REST spot (before WS starts — WS check happens after start_websocket)
+    # Phase 1 health: Upstox token + REST spot (WS check happens after start_websocket)
     _health_lines_pre = []
     _health_ok_pre = True
-    if _upstox_data_mode:
-        try:
-            _ud = D._udata_mod()
-            _nm = _ud.profile_name() if _ud is not None else "?"
-            _health_lines_pre.append("Upstox token: ✅ " + str(_nm))
-        except Exception as _he:
-            _health_lines_pre.append("Upstox token: ❌ " + str(_he)[:60])
-            _health_ok_pre = False
-    else:
-        try:
-            _prof = kite.profile()
-            _health_lines_pre.append("Token: ✅ " + str(_prof.get("user_name", "?")))
-        except Exception as _he:
-            _health_lines_pre.append("Token: ❌ " + str(_he)[:60])
-            _health_ok_pre = False
-    # REST spot probe is redundant with the WS tick check below. Kite's REST
-    # endpoint throws transient JSON-parse/timeout blips during the startup burst
-    # — retry a few times, and (in Phase 2) don't let a REST failure drive ⚠️ when
-    # the WS is delivering live ticks. Track the failure separately, not in
-    # _health_ok_pre (which stays Token-only).
+    try:
+        _ud = D._udata_mod()
+        _nm = _ud.profile_name() if _ud is not None else "?"
+        _health_lines_pre.append("Upstox token: ✅ " + str(_nm))
+    except Exception as _he:
+        _health_lines_pre.append("Upstox token: ❌ " + str(_he)[:60])
+        _health_ok_pre = False
+    # REST spot probe is redundant with the WS tick check below; track its
+    # failure separately so a transient REST blip doesn't drive ⚠️ when the
+    # WS is delivering live ticks (_health_ok_pre stays Token-only).
     _spot_rest_failed = False
     for _spot_try in range(3):
         try:
-            if _upstox_data_mode:
-                _sp = float(D.get_spot_ltp())
-                if _sp <= 0:
-                    raise RuntimeError("upstox spot 0")
-            else:
-                _sq = kite.ltp(["NSE:NIFTY 50"])
-                _sp = float(list(_sq.values())[0]["last_price"])
+            _sp = float(D.get_spot_ltp())
+            if _sp <= 0:
+                raise RuntimeError("upstox spot 0")
             _health_lines_pre.append("Spot: ✅ " + str(round(_sp, 1)))
             break
         except Exception as _he:
@@ -9239,7 +8508,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
       '<div class="ctx"><div class="k">USED MARGIN</div><div class="v" style="color:var(--am);font-size:11px">₹'+usedAmt.toLocaleString('en-IN')+'</div></div>'+
       '<div class="ctx"><div class="k">MODE</div><div class="v" style="color:'+(d.mode==='LIVE'?'var(--gn)':'var(--bl)')+'">'+esc(d.mode||'PAPER')+'</div></div>'+
       '<div class="ctx"><div class="k">GATE</div><div class="v" style="color:'+(d.gate==='V13'?'var(--am)':'var(--gn)')+'">'+esc(d.gate||'V11')+'</div></div>'+
-      '<div class="ctx"><div class="k">DATA</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.data_provider||'kite')+'</div></div>'+
+      '<div class="ctx"><div class="k">DATA</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.data_provider||'upstox')+'</div></div>'+
       '<div class="ctx"><div class="k">VERSION</div><div class="v" style="color:var(--dm);font-size:10px">'+esc(d.version||'—')+'</div></div>'+
       '</div></div>';
     var l10c=rl.last10_wr>=60?'var(--gn)':rl.last10_wr>=40?'var(--am)':'var(--rd)';
@@ -10063,11 +9332,12 @@ def _run_collector():
     _collector_log("=== VRL_COLLECTOR v2 start ===")
 
     try:
-        kite = get_kite()
-        init(kite)
-        _collector_log("Auth OK")
+        init(None)                       # Upstox-only data; no Kite session
+        if _udata_mod() is None:
+            raise RuntimeError("upstox_data unavailable")
+        _collector_log("Upstox data init OK")
     except Exception as e:
-        _collector_log("AUTH FAILED: " + str(e))
+        _collector_log("DATA INIT FAILED: " + str(e))
         sys.exit(1)
 
     try:
