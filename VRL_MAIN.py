@@ -1426,7 +1426,16 @@ def start_websocket():
         if ud is not None:
             with _subscribed_lock:
                 init_tokens = list(_subscribed)
+            # Construct the streamer WITH the index feeds. A subscribe() issued
+            # after connect() races the socket OPEN and is silently dropped by
+            # the SDK, leaving the feed connected but tickless (2026-06-22). The
+            # SDK auto-subscribes construction keys on open, so seed them here.
+            for _t in (NIFTY_SPOT_TOKEN, INDIA_VIX_TOKEN):
+                if _t and _t not in init_tokens:
+                    init_tokens.append(_t)
             ud.start_ws(init_tokens)
+            with _subscribed_lock:
+                _subscribed.update(int(t) for t in init_tokens if t)
             _ws_connected = True
             logger.info("[WS] Upstox protobuf feed started")
         return
@@ -1484,6 +1493,24 @@ def subscribe_tokens(tokens: list) -> set:
         _subscribed.update(new)
     logger.info("[WS] Subscribed: " + str(new))
     return new
+
+def subscribe_full_flow(tokens: list):
+    """Upgrade the given tokens to Upstox v3 'full' mode (DOM/OI/IV) for the
+    tick-flow study. No-op on Kite (study is Upstox-only). The LTP path is
+    unaffected; this only enriches _ws_flow/get_flow used by tick_flow.py."""
+    if DATA_PROVIDER != "upstox":
+        return
+    toks = [int(t) for t in tokens if t]
+    if not toks:
+        return
+    ud = _udata_mod()
+    if ud is None:
+        return
+    try:
+        ud.subscribe_full(toks)
+    except Exception as _e:
+        logger.debug("[WS] full-mode upgrade failed: " + str(_e))
+
 
 def unsubscribe_tokens(tokens: list):
     global _subscribed
@@ -1780,7 +1807,15 @@ def is_trading_window(now: datetime = None) -> bool:
     if not is_market_open():
         return False
     start = now.replace(hour=TRADE_START_HOUR, minute=TRADE_START_MIN, second=0, microsecond=0)
-    end   = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
+    # EXPIRY-ONLY widening (owner-approved 2026-06-22): for the 2026-06-23 weekly
+    # expiry only, extend V11's cutoff 14:30 -> 15:15 to catch a post-squeeze late
+    # gamma expansion (the 15:00 30-min block was the biggest move on 2 of 4 sampled
+    # expansion days). SELF-EXPIRES: on any other date this falls back to the locked
+    # config cutoff (14:30). Remove this block after 2026-06-23.
+    if now.date() == date(2026, 6, 23):
+        end = now.replace(hour=15, minute=15, second=0, microsecond=0)
+    else:
+        end = now.replace(hour=ENTRY_CUTOFF_HOUR, minute=ENTRY_CUTOFF_MIN, second=0, microsecond=0)
     return start <= now < end
 
 def _get_nfo_instruments(kite=None):
@@ -2938,11 +2973,7 @@ def collect_spot_1min(kite):
     try:
         now     = datetime.now()
         from_dt = now - timedelta(minutes=60)
-        candles = kite.historical_data(
-            instrument_token=D.NIFTY_SPOT_TOKEN,
-            from_date=from_dt, to_date=now,
-            interval="minute", continuous=False, oi=False,
-        )
+        candles = _lab_hist_candles(D.NIFTY_SPOT_TOKEN, "minute", from_dt, now)
         if not candles or len(candles) < 2:
             return
         last   = candles[-2]
@@ -3075,6 +3106,49 @@ def _compute_indicators(df: pd.DataFrame, idx: int) -> dict:
 
 # ─── FETCH ────────────────────────────────────────────────────
 
+def _lab_hist_candles(token: int, interval: str,
+                      from_dt: datetime, to_dt: datetime) -> list:
+    """Provider-agnostic candle fetch for the lab collectors. Returns Kite-style
+    list-of-dicts (keys: date, open, high, low, close, volume). Under Upstox the
+    bot has NO Kite session, so route through get_historical_data (Upstox REST)
+    and rebuild the dict-list — otherwise the collector calls kite.historical_data
+    on None and every fetch dies with 'NoneType has no attribute historical_data'
+    (2026-06-22)."""
+    if DATA_PROVIDER == "upstox":
+        mpc = {"minute": 1, "3minute": 3, "5minute": 5,
+               "15minute": 15, "30minute": 30, "60minute": 60}.get(interval, 1)
+        span_min = max(1.0, (to_dt - from_dt).total_seconds() / 60.0)
+        lookback = int(span_min / mpc) + 5
+        df = get_historical_data(int(token), interval, lookback)
+        if df is None or df.empty:
+            return []
+        _f = from_dt.replace(tzinfo=None) if from_dt else None
+        _t = to_dt.replace(tzinfo=None) if to_dt else None
+        out = []
+        for ts, row in df.iterrows():
+            tsd = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+            tsn = tsd.replace(tzinfo=None) if getattr(tsd, "tzinfo", None) else tsd
+            if _f and tsn < _f:
+                continue
+            if _t and tsn > _t:
+                continue
+            out.append({"date": tsd,
+                        "open": float(row["open"]), "high": float(row["high"]),
+                        "low": float(row["low"]), "close": float(row["close"]),
+                        "volume": float(row.get("volume", 0) or 0)})
+        return out
+    k = _kite
+    if k is None:
+        return []
+    try:
+        return k.historical_data(
+            instrument_token=int(token), from_date=from_dt, to_date=to_dt,
+            interval=interval, continuous=False, oi=False) or []
+    except Exception as e:
+        logger.error("[LAB] hist fetch error token=" + str(token) + " " + str(e))
+        return []
+
+
 def _fetch_candles_with_warmup(kite, token: int, from_dt: datetime,
                                to_dt: datetime, interval: str,
                                warmup_candles: int = 60) -> list:
@@ -3089,14 +3163,7 @@ def _fetch_candles_with_warmup(kite, token: int, from_dt: datetime,
     warmup_from = from_dt - timedelta(minutes=extra_minutes + 60)
 
     try:
-        all_candles = kite.historical_data(
-            instrument_token = int(token),
-            from_date        = warmup_from,
-            to_date          = to_dt,
-            interval         = interval,
-            continuous       = False,
-            oi               = False,
-        )
+        all_candles = _lab_hist_candles(token, interval, warmup_from, to_dt)
         return all_candles if all_candles else []
     except Exception as e:
         logger.warning("[LAB] Warmup fetch failed, using regular fetch: " + str(e))
@@ -3105,18 +3172,7 @@ def _fetch_candles_with_warmup(kite, token: int, from_dt: datetime,
 
 def _fetch_candles(kite, token: int, from_dt: datetime,
                    to_dt: datetime, interval: str = "3minute") -> list:
-    try:
-        return kite.historical_data(
-            instrument_token = int(token),
-            from_date        = from_dt,
-            to_date          = to_dt,
-            interval         = interval,
-            continuous       = False,
-            oi               = False,
-        )
-    except Exception as e:
-        logger.error("[LAB] Fetch error token=" + str(token) + " " + str(e))
-        return []
+    return _lab_hist_candles(token, interval, from_dt, to_dt)
 
 
 # ─── RESET ────────────────────────────────────────────────────
@@ -4600,6 +4656,12 @@ spot_3m: dict = {}  # BUG-B fix: module-level cache; updated by _write_dashboard
 
 V11_MIN_EMA9H_GAP = 3.5   # momentum breakout floor (single source of truth)
 V11_OPEN_BLACKOUT_END = dtime(10, 0)  # hard gate: no entries before 10:00 (owner 2026-06-15: disciplined window; 09:00-10:00 bled -Rs788/trade per conviction_sizing_study)
+# V13 SHADOW runs a WIDER paper window than V11 (owner 2026-06-21): 09:30-15:15
+# for max samples for the tick-flow study. V11 (primary) is UNCHANGED — it keeps
+# its proven is_trading_window cutoff (enforced explicitly in the V11 block below
+# now that the scanner gate is widened to cover V13's later window).
+V13_OPEN_BLACKOUT_END = dtime(9, 30)
+V13_ENTRY_CUTOFF      = dtime(15, 15)
 # OPP DECAY band [-9, -7] for dte>=2 (owner-approved 2026-06-18). Tightened from
 # [-8, -6]: the decay-floor sweep over all logged trades + today's session showed
 # the shallow half of [-8,-6] holds the losers — on dte>=2, band [-8,-7] = 78% WR
@@ -4686,7 +4748,11 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
     _locked_at_spot = spot
     _locked_tokens = {}
 
-    if kite and expiry:
+    # Under Upstox the bot runs with NO Kite session (kite is None) but option
+    # tokens resolve via upstox_data regardless — so gate on expiry, not kite,
+    # or _locked_tokens stays empty and every scan cycle logs "Relock failed"
+    # (2026-06-22). On Kite, kite is required as before.
+    if (kite or DATA_PROVIDER == "upstox") and expiry:
         # Active legs (ATM)
         for _dt, _strike in [("CE", _locked_ce_strike), ("PE", _locked_pe_strike)]:
             _tk = D.get_option_tokens(kite, _strike, expiry)
@@ -4710,12 +4776,18 @@ def _lock_strikes(spot, dte, kite=None, expiry=None):
         _sub_tokens = [v["token"] for v in _locked_tokens.values() if v.get("token")]
         if _sub_tokens:
             D.subscribe_tokens(_sub_tokens)
+        # Tick-flow study: upgrade the two PRIMARY legs (CE/PE) to Upstox full
+        # mode so tick_flow.py sees DOM/OI/IV. Neighbors stay ltpc. (Secret
+        # collector; no-op on Kite.)
+        _flow_legs = [(_locked_tokens.get("CE") or {}).get("token"),
+                      (_locked_tokens.get("PE") or {}).get("token")]
+        D.subscribe_full_flow(_flow_legs)
 
     logger.info("[MAIN] Strikes LOCKED (ITM-100): CE=" + str(_locked_ce_strike)
                 + " PE=" + str(_locked_pe_strike)
                 + " (neighbors ±" + str(V11_STRIKE_STEP)
                 + " pre-warmed) at spot=" + str(round(spot, 1)))
-    if kite and expiry and _locked_ce_strike:
+    if (kite or DATA_PROVIDER == "upstox") and expiry and _locked_ce_strike:
         try:
             _r11 = D.ensure_option_history(
                 kite, _locked_ce_strike, expiry,
@@ -4926,6 +4998,7 @@ _v13_state = {
     "initial_sl": 0.0, "candles_held": 0, "_last_minute": "",
     "_other_token": 0, "entry_mode": "", "dte": 0,
     "xleg_other_margin": 0.0, "spot_regime_at_entry": "", "entry_spot": 0.0,
+    "pdh_prev": 0.0, "pdl_prev": 0.0, "entry_range_pos": "",
     "_last_fired_candle_ts": "", "_last_exit_candle_ts": "",
     "_last_exit_time_unix": 0.0, "_last_exit_direction": "",
     "_sl_cooldown_skip_next": False,
@@ -4942,6 +5015,7 @@ _V13_PERSIST_FIELDS = [
     "active_ratchet_tier", "active_ratchet_sl", "initial_sl",
     "candles_held", "_other_token", "entry_mode",
     "xleg_other_margin", "spot_regime_at_entry", "entry_spot",
+    "pdh_prev", "pdl_prev", "entry_range_pos",
     "_last_fired_candle_ts", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction",
     "_sl_cooldown_skip_next",
@@ -5021,6 +5095,15 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
             "dte": int(dte or 0),
             "_last_trade_date": date.today().isoformat(),
         })
+        # PDH/PDL context (analysis only — feeds the box-break shadow study;
+        # mirrors V11). range_pos: 0=at PDL, 1=at PDH, >1=above PDH, <0=below PDL
+        _pdh, _pdl = _get_prev_day_hl()
+        _spot_e = float(spot_at_entry or 0)
+        _v13_state["pdh_prev"] = _pdh
+        _v13_state["pdl_prev"] = _pdl
+        _v13_state["entry_range_pos"] = (
+            round((_spot_e - _pdl) / (_pdh - _pdl), 3)
+            if _pdh > _pdl > 0 and _spot_e > 0 else "")
     logger.info(f"[V13] SHADOW ENTRY: {symbol} Qty={qty} @ {entry_price}")
     _emj = "🟢" if direction == "CE" else "🔴"
     _tg_send(
@@ -5050,6 +5133,9 @@ def _v13_execute_paper_exit(reason, exit_price):
         xleg_margin    = float(_v13_state.get("xleg_other_margin", 0.0))
         spot_regime    = str(_v13_state.get("spot_regime_at_entry", ""))
         entry_spot_val = float(_v13_state.get("entry_spot", 0))
+        pdh_prev_val   = float(_v13_state.get("pdh_prev", 0) or 0)
+        pdl_prev_val   = float(_v13_state.get("pdl_prev", 0) or 0)
+        range_pos_val  = _v13_state.get("entry_range_pos", "")
 
         # Clear position
         _v13_state.update({
@@ -5099,6 +5185,8 @@ def _v13_execute_paper_exit(reason, exit_price):
             "qty_exited": qty, "lot_id": "ALL",
             "xleg_other_margin": xleg_margin,
             "entry_spot": entry_spot_val, "exit_spot": exit_spot,
+            "pdh_prev": pdh_prev_val, "pdl_prev": pdl_prev_val,
+            "entry_range_pos": range_pos_val,
         }
         import csv as _csv
         _new_file = not os.path.isfile(D.V13_TRADE_LOG_PATH)
@@ -5958,7 +6046,11 @@ def _update_dashboard_ltp():
         if vix > 0:
             dash.setdefault("market", {})["vix"] = round(vix, 1)
 
-        # Update option LTPs
+        # Update option LTPs. V13 shares V11's locked strikes, so refresh its
+        # gate-card price from the SAME LTP here — otherwise the V13 card stays
+        # frozen at the last full rebuild (once/min) while V11 ticks every
+        # ~5-10s, producing a same-strike price mismatch on the dashboard.
+        _v13_dash = dash.get("v13", {})
         for side in ("CE", "PE"):
             sig = dash.get(side.lower(), {})
             oi = _locked_tokens.get(side) if _locked_tokens else None
@@ -5966,6 +6058,10 @@ def _update_dashboard_ltp():
                 ltp = D.get_ltp(oi["token"])
                 if ltp > 0:
                     sig["ltp"] = round(ltp, 2)
+                    _v13_sig = _v13_dash.get(side.lower(), {})
+                    if (_v13_sig
+                            and int(_v13_sig.get("strike", 0) or 0) == int(sig.get("strike", 0) or 0)):
+                        _v13_sig["price"] = round(ltp, 2)
 
         # Update V11 position if in trade (_v11_state — V7 state never has V11 trades)
         with _v11_lock:
@@ -5993,11 +6089,24 @@ def _update_dashboard_ltp():
         dash["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dash["version"] = D.VERSION
         dash.setdefault("market", {})["market_open"] = D.is_market_open()
+        # tick-flow read changes every second → refresh on the FAST path too
+        _inject_flow_block(dash)
 
         tmp = dash_path + ".tmp"
         with open(tmp, "w") as f:
             json.dump(dash, f, default=str)
         os.replace(tmp, dash_path)
+    except Exception:
+        pass
+
+
+def _inject_flow_block(dash):
+    """Embed the tick-flow study's live read into the dashboard JSON (secret
+    collector; no-op if the module isn't loaded)."""
+    if _tick_flow_mod is None:
+        return
+    try:
+        dash["flow"] = _tick_flow_mod.flow_block()
     except Exception:
         pass
 
@@ -6278,6 +6387,17 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             with _v13_live_lock:
                 _v13_ce = dict(_v13_live.get("CE", {}))
                 _v13_pe = dict(_v13_live.get("PE", {}))
+            # V13 shares V11's locked strikes/tick feed — when the strike
+            # matches, reuse V11's freshly-fetched gate-card LTP so the two
+            # cards never show a different price for the same strike (the V13
+            # scanner snapshot lags ~3s and rounds to 1dp; V11's ltp is the
+            # live, fast-path-refreshed value). Falls back to the V13 snapshot
+            # price only if strikes diverge (shouldn't happen).
+            for _v13_sig, _v11_sig in ((_v13_ce, ce_signal), (_v13_pe, pe_signal)):
+                if (_v13_sig and _v11_sig
+                        and int(_v13_sig.get("strike", 0) or 0) == int(_v11_sig.get("strike", 0) or 0)
+                        and float(_v11_sig.get("ltp", 0) or 0) > 0):
+                    _v13_sig["price"] = round(float(_v11_sig["ltp"]), 2)
             with _v13_lock:
                 _v13_st = dict(_v13_state)
             if _v13_st.get("in_trade"):
@@ -6351,6 +6471,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
             "rolling": rolling_block,
             "cooldown": {},
         }
+        _inject_flow_block(dashboard)
 
         tmp = os.path.join(D.STATE_DIR, 'vrl_dashboard.json') + ".tmp"
         with open(tmp, "w") as f:
@@ -6554,7 +6675,13 @@ def _strategy_loop(kite):
             # for the dashboard. The inner _in_trade check prevents any entry from
             # firing (sets reject_reason="in_trade", _ready_to_fire=False).
             global _v11_scanner_last_ts
-            if (D.is_trading_window(now)
+            # Scanner window = UNION of V11's (is_trading_window, 09:15-14:30) and
+            # V13's wider shadow window (09:30-15:15). V11 is re-gated to its own
+            # window inside its block, so widening here only lets V13 fire later.
+            _scan_window = D.is_trading_window(now) or (
+                D.is_market_open()
+                and V13_OPEN_BLACKOUT_END <= now.time() < V13_ENTRY_CUTOFF)
+            if (_scan_window
                     and _locked_tokens
                     and time.time() - _v11_scanner_last_ts >= 3):
                 _v11_scanner_last_ts = time.time()
@@ -6623,7 +6750,12 @@ def _strategy_loop(kite):
                         _in_cooldown = False
                         _cooldown_reason = ""
 
-                        if now.time() < V11_OPEN_BLACKOUT_END:
+                        if not D.is_trading_window(now):
+                            # V11 keeps its proven window even though the scanner
+                            # now runs later for V13. Behavior unchanged for V11.
+                            _in_cooldown = True
+                            _cooldown_reason = "outside_window"
+                        elif now.time() < V11_OPEN_BLACKOUT_END:
                             _in_cooldown = True
                             _cooldown_reason = "open_blackout"
                         elif _v11_state.get("_sl_cooldown_skip_next"):
@@ -6718,8 +6850,8 @@ def _strategy_loop(kite):
                             _v13_in_trade = bool(_v13_state.get("in_trade", False))
                             _v13_cd = False
                             _v13_cd_reason = ""
-                            if now.time() < V11_OPEN_BLACKOUT_END:
-                                _v13_cd = True; _v13_cd_reason = "open_blackout"
+                            if now.time() < V13_OPEN_BLACKOUT_END or now.time() >= V13_ENTRY_CUTOFF:
+                                _v13_cd = True; _v13_cd_reason = "outside_v13_window"
                             elif _v13_state.get("_sl_cooldown_skip_next"):
                                 _v13_cd = True; _v13_cd_reason = "sl_cooldown"
                                 _v13_state["_sl_cooldown_skip_next"] = False
@@ -8074,6 +8206,104 @@ def _shutdown(signum, frame):
     sys.exit(0)
 
 # ═══════════════════════════════════════════════════════════════
+#  TICK-FLOW STUDY — secret collector hook (optional, data-only)
+# ═══════════════════════════════════════════════════════════════
+# The method/thresholds live in the gitignored tick_flow.py. If that module is
+# absent (e.g. a clean GitHub checkout), this is a silent no-op. Nothing here
+# touches engine state or order routing.
+_tick_flow_mod = None
+_flow_fut_token = None
+
+
+def _tf_fut_token():
+    """Resolve + cache the NIFTY front-month future token for the flow study
+    (Upstox-only). None if unavailable — collector then runs on CE/PE legs."""
+    global _flow_fut_token
+    if _flow_fut_token is not None:
+        return _flow_fut_token
+    if DATA_PROVIDER != "upstox":
+        return None
+    ud = _udata_mod()
+    if ud is None or not hasattr(ud, "nifty_front_fut"):
+        return None
+    try:
+        tok, _key = ud.nifty_front_fut()
+        if tok:
+            _flow_fut_token = int(tok)
+        return _flow_fut_token
+    except Exception:
+        return None
+
+
+def _tf_get_flow(token):
+    if DATA_PROVIDER != "upstox":
+        return None
+    ud = _udata_mod()
+    try:
+        return ud.get_flow(token) if ud else None
+    except Exception:
+        return None
+
+
+def _tf_get_tokens():
+    lt = _locked_tokens or {}
+    out = {}
+    for side in ("CE", "PE"):
+        info = lt.get(side) or {}
+        if info.get("token"):
+            out[side] = {"token": int(info["token"]),
+                         "strike": info.get("strike", "")}
+    ft = _tf_fut_token()
+    if ft:
+        out["FUT"] = {"token": int(ft)}
+    return out
+
+
+def _tf_get_engines():
+    out = {}
+    _fields = ("in_trade", "direction", "token", "entry_price", "entry_time",
+               "peak_pnl", "strike", "dte")
+    try:
+        with _v11_lock:
+            out["V11"] = {k: _v11_state.get(k) for k in _fields}
+    except Exception:
+        pass
+    try:
+        with _v13_lock:
+            out["V13"] = {k: _v13_state.get(k) for k in _fields}
+    except Exception:
+        pass
+    return out
+
+
+def _start_tick_flow():
+    global _tick_flow_mod
+    if DATA_PROVIDER != "upstox":
+        return  # study is Upstox-only (needs full-mode DOM)
+    try:
+        import tick_flow as _tf
+    except Exception:
+        logger.info("[FLOW] tick_flow module absent — collector disabled")
+        return
+    try:
+        # subscribe the NIFTY front-month FUT in full mode (underlying flow
+        # context for V11/V13 + the V12-NIFTY signal). Best-effort; CE/PE legs
+        # are subscribed at strike-lock time.
+        _ft = _tf_fut_token()
+        if _ft:
+            D.subscribe_full_flow([_ft])
+            logger.info("[FLOW] NIFTY FUT token " + str(_ft) + " subscribed (full)")
+        else:
+            logger.info("[FLOW] NIFTY FUT token unresolved — CE/PE legs only")
+        _tf.configure(_tf_get_flow, _tf_get_tokens, _tf_get_engines)
+        _tf.start()
+        _tick_flow_mod = _tf
+        logger.info("[FLOW] tick-flow collector started (paper data-only)")
+    except Exception as _fe:
+        logger.warning("[FLOW] collector start failed: " + str(_fe))
+
+
+# ═══════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 
@@ -8373,6 +8603,9 @@ def main():
         logger.info("[MAIN] Web dashboard daemon thread started")
     except Exception as _we:
         logger.warning(f"[MAIN] Web dashboard failed to start: {_we}")
+
+    # ── Start tick-flow study collector (secret, optional, data-only) ──
+    _start_tick_flow()
 
     _strategy_loop(kite)
 
@@ -9023,6 +9256,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
       '<div class="ctx"><div class="k">STREAK</div><div class="v" style="color:'+strkClr+';font-size:9px">'+strkTxt+'</div></div>'+
       '</div></div>';
     document.getElementById('p-sig').innerHTML=html;
+    try{ if(d.flow){ document.getElementById('p-sig').innerHTML += renderFlow(d.flow); } }catch(e){}
   })();
 
   // (MKT tab retired 2026-06-10 — account/rolling moved to SIG)
@@ -9124,6 +9358,23 @@ async function renderWeekly(){
         '<div style="font-weight:800;font-size:16px;color:'+avgClr+'">'+(avgRet>=0?'+':'')+avgRet.toFixed(1)+'%</div></div>'+
       '</div>'+cards+closedHtml;
   }catch(e){document.getElementById('p-wkly').innerHTML='<div style="color:var(--dm);padding:16px">Error loading weekly data</div>';console.error(e);}
+}
+
+function flowChip(v){var c=v==='REAL'?'#2ecc71':(v==='BLUFF'?'#e74c3c':'#999');return '<span style="color:'+c+';font-weight:600">'+(v||'—')+'</span>';}
+function renderFlow(f){
+  if(!f) return '';
+  var rows='';
+  ['CE','PE','FUT'].forEach(function(k){var l=f[k];if(!l||l.ltp===undefined)return;
+    rows+='<tr><td style="padding:2px 6px">'+k+'</td><td>'+(l.ltp||'')+'</td><td>'+(l.delta_30s||0)+'</td><td>'+(l.cum_delta||0)+'</td><td>'+(l.book_imb||0)+'</td><td>'+(l.oi_state||'')+'</td><td>'+flowChip(l.verdict)+' <span style="color:#888;font-size:10px">'+(l.sigs||'')+'</span></td></tr>';});
+  if(!rows) rows='<tr><td colspan="7" style="color:#888;padding:4px">waiting for full-mode ticks…</td></tr>';
+  var banner='';
+  if(f.trade){var t=f.trade;var bc=t.fade?'#e74c3c':(t.ride?'#2ecc71':'#999');var bl=t.fade?'FADE':(t.ride?'RIDE':'steady');
+    banner='<div style="margin-top:6px;padding:6px;border:1px solid '+bc+';border-radius:6px;color:'+bc+';font-size:11px">IN-TRADE '+(t.engine||'')+' '+(t.direction||'')+' +'+(t.peak_pnl||0)+' · '+bl+' · sinceΔ '+(t.since_entry_delta||0)+'</div>';}
+  var ev='';
+  if(f.events&&f.events.length){ev='<div style="margin-top:6px;font-size:10px;color:#888">'+f.events.slice().reverse().map(function(e){return e.ts+' '+e.text;}).join(' · ')+'</div>';}
+  return '<div style="border:1px solid #0b8;border-radius:8px;padding:8px;margin-top:10px;background:rgba(0,180,160,.05)">'+
+    '<div style="color:#0cc;font-weight:600;margin-bottom:4px;font-size:12px">FLOW · Upstox full-mode · provisional/un-calibrated</div>'+
+    '<table style="width:100%;font-size:11px;border-collapse:collapse"><tr style="color:#888;text-align:left"><th style="padding:2px 6px">leg</th><th>ltp</th><th>Δ30s</th><th>cumΔ</th><th>book</th><th>OI state</th><th>verdict</th></tr>'+rows+'</table>'+banner+ev+'</div>';
 }
 
 async function renderFno(){
@@ -9234,8 +9485,14 @@ async function loadFiles(folder){
 
 async function go(){
   try{
-    const[d,t]=await Promise.all([fetch('/api/dashboard').then(r=>r.json()).catch(e=>null),fetch('/api/trades').then(r=>r.json()).catch(e=>[])]);
-    render(d||{},t||[]);
+    const dr=await fetch('/api/dashboard');
+    // session expired/absent -> /api/* 302s to the login HTML; fetch follows it,
+    // so r.json() would throw and the page would hang blank. Bounce to /login instead.
+    if(dr.redirected||dr.status===401||dr.status===403){location.href='/login';return;}
+    const d=await dr.json().catch(e=>null);
+    if(d===null){location.href='/login';return;}
+    const t=await fetch('/api/trades').then(r=>r.json()).catch(e=>[]);
+    render(d,t||[]);
     if(_curTab==='fno')renderFno();
     if(_curTab==='wkly')renderWeekly();
   }catch(e){console.error(e)}
