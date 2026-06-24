@@ -4324,6 +4324,7 @@ _v13_state = {
     "_other_token": 0, "entry_mode": "", "dte": 0,
     "xleg_other_margin": 0.0, "spot_regime_at_entry": "", "entry_spot": 0.0,
     "pdh_prev": 0.0, "pdl_prev": 0.0, "entry_range_pos": "",
+    "vel2_at_entry": None,
     "_last_fired_candle_ts": "", "_last_exit_candle_ts": "",
     "_last_exit_time_unix": 0.0, "_last_exit_direction": "",
     "_sl_cooldown_skip_next": False,
@@ -4340,7 +4341,7 @@ _V13_PERSIST_FIELDS = [
     "active_ratchet_tier", "active_ratchet_sl", "initial_sl",
     "candles_held", "_other_token", "entry_mode",
     "xleg_other_margin", "spot_regime_at_entry", "entry_spot",
-    "pdh_prev", "pdl_prev", "entry_range_pos",
+    "pdh_prev", "pdl_prev", "entry_range_pos", "vel2_at_entry",
     "_last_fired_candle_ts", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction",
     "_sl_cooldown_skip_next",
@@ -4389,7 +4390,8 @@ def _load_v13_state():
 
 def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
                              entry_mode, other_token, opp_margin_high,
-                             spot_at_entry, fired_candle_ts, ema9_low, dte):
+                             spot_at_entry, fired_candle_ts, ema9_low, dte,
+                             vel2_at_entry=None):
     """Open a V13 SHADOW paper position — single lot, fill at candle close.
     PAPER-ONLY: never calls m.Stock (shadow A/B against V11)."""
     qty = CFG.get().get("lots", {}).get("count", 1) * D.get_lot_size()
@@ -4418,6 +4420,7 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
             "spot_regime_at_entry": spot_3m.get("regime", "") if isinstance(spot_3m, dict) else "",
             "entry_spot": float(spot_at_entry or 0),
             "dte": int(dte or 0),
+            "vel2_at_entry": (round(float(vel2_at_entry), 2) if vel2_at_entry is not None else None),
             "_last_trade_date": date.today().isoformat(),
         })
         # PDH/PDL context (analysis only — feeds the box-break shadow study;
@@ -4434,7 +4437,9 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
     _tg_send(
         f"🧪 <b>V13 SHADOW ENTRY {direction} {strike}</b>\n"
         f"{_emj} Entry ₹{entry_price:.1f} × {qty}  SL ₹{initial_sl:.1f}\n"
-        f"Decay {opp_margin_high:+.1f} · dte {dte} · paper A/B vs V11",
+        f"Decay {opp_margin_high:+.1f} · vel2 "
+        f"{('%+.1f' % vel2_at_entry) if vel2_at_entry is not None else 'n/a'} · "
+        f"dte {dte} · paper A/B vs V11",
         priority="high")
     _save_v13_state()
 
@@ -4529,6 +4534,8 @@ def _v13_execute_paper_exit(reason, exit_price):
         f"🧪 <b>V13 SHADOW EXIT {direction} {strike}</b>\n"
         f"<b>{reason}</b>  {'+' if pnl_pts >= 0 else ''}{pnl_pts:.1f} pts\n"
         f"Entry ₹{entry_price:.1f} → Exit ₹{exit_price:.1f}  Peak +{peak:.1f} ({tier})\n"
+        f"vel2@entry "
+        f"{('%+.1f' % _v13_state.get('vel2_at_entry')) if _v13_state.get('vel2_at_entry') is not None else 'n/a'}\n"
         f"DAY {'+' if _v13_state.get('_pnl_today_pts', 0) >= 0 else ''}"
         f"{_v13_state.get('_pnl_today_pts', 0):.1f} pts "
         f"({_v13_state.get('_wins_today', 0)}W {_v13_state.get('_losses_today', 0)}L)",
@@ -5736,6 +5743,7 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
                     "sl": round(float(_v13_st.get("active_ratchet_sl", 0) or 0), 2),
                     "active_ratchet_tier": _v13_st.get("active_ratchet_tier", "INITIAL"),
                     "qty": int(_v13_st.get("qty", 0) or 0),
+                    "vel2_at_entry": _v13_st.get("vel2_at_entry"),
                 }
             else:
                 _v13_pos = {"in_trade": False}
@@ -6240,6 +6248,7 @@ def _strategy_loop(kite):
                                     fired_candle_ts=_sh_1m_bk_ts,
                                     ema9_low=_sh_ema9l_1m,
                                     dte=dte,
+                                    vel2_at_entry=_v13_vel2,
                                 )
                         except Exception as _v13_e:
                             logger.warning(f"[V13 Scanner] error: {_v13_e}")
@@ -8673,13 +8682,17 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
         var mg=parseFloat((o&&o.momentum_gap)||0), dm=parseFloat((o&&o.decay_margin)||0);
         var mok=!!(o&&o.momentum_ok), dok=!!(o&&o.decay_ok), rdy=!!(o&&o.ready);
         function chip(lbl,val,ok){var c=ok?'var(--gn)':'var(--rd)';return '<span style="font-size:9px;color:var(--dm)">'+lbl+' </span><span style="font-size:11px;font-weight:700;color:'+c+'">'+(ok?'✓':'')+val+'</span>';}
+        var hasV2=(o&&o.vel2!==null&&o.vel2!==undefined);
+        var v2=parseFloat((o&&o.vel2)||0), v2ok=!!(o&&o.vel2_ok);
+        var v2chip=hasV2?chip('VEL2',(v2>=0?'+':'')+v2.toFixed(1),v2ok)
+                        :'<span style="font-size:9px;color:var(--dm)">VEL2 </span><span style="font-size:11px;font-weight:700;color:var(--dm)">n/a</span>';
         var st=rdy?'<span style="background:var(--gn);color:#fff;font-size:8px;font-weight:800;padding:1px 7px;border-radius:10px">READY</span>'
                   :'<span style="font-size:8px;color:var(--am)">'+esc((o&&o.reject)||'wait')+'</span>';
         return '<div style="flex:1;background:rgba(0,0,0,.04);border:1px solid var(--bd);border-radius:9px;padding:6px 8px">'
           +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">'
           +'<span style="font-size:11px;font-weight:800;color:'+acc+'">'+side+' '+stk+'</span>'
           +'<span style="font-size:11px;color:var(--tx)">'+ltpTxt+'</span></div>'
-          +'<div style="display:flex;gap:10px;margin-bottom:2px">'+chip('MOM',(mg>=0?'+':'')+mg.toFixed(1),mok)+chip('DECAY',dm.toFixed(1),dok)+'</div>'
+          +'<div style="display:flex;gap:10px;margin-bottom:2px">'+chip('MOM',(mg>=0?'+':'')+mg.toFixed(1),mok)+chip('DECAY',dm.toFixed(1),dok)+v2chip+'</div>'
           +'<div>'+st+'</div></div>';
       }
       var vh='<div style="margin:10px 8px 0">';
@@ -8691,7 +8704,8 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
         vh+='<div style="background:linear-gradient(135deg,rgba(245,158,11,.10),transparent);border:1px solid rgba(245,158,11,.25);border-radius:9px;padding:7px 9px;margin-bottom:6px">';
         vh+='<span style="font-size:12px;font-weight:700">'+esc(v13pos.direction||'')+' '+(v13pos.strike||'')+'</span> ';
         vh+='<span style="font-size:14px;font-weight:800;color:'+vclr+'">'+(vp>=0?'+':'')+vp.toFixed(1)+'pts</span>';
-        vh+='<span style="font-size:10px;color:#888;float:right">Entry &#x20B9;'+parseFloat(v13pos.entry||0).toFixed(1)+' → &#x20B9;'+(v13pos.ltp||0)+' · SL &#x20B9;'+parseFloat(v13pos.sl||0).toFixed(1)+' · '+esc(v13pos.active_ratchet_tier||'INITIAL')+' · Peak +'+vpk.toFixed(1)+'</span>';
+        var v13v2=(v13pos.vel2_at_entry!==null&&v13pos.vel2_at_entry!==undefined)?('vel2@entry '+(parseFloat(v13pos.vel2_at_entry)>=0?'+':'')+parseFloat(v13pos.vel2_at_entry).toFixed(1)+' · '):'';
+        vh+='<span style="font-size:10px;color:#888;float:right">'+v13v2+'Entry &#x20B9;'+parseFloat(v13pos.entry||0).toFixed(1)+' → &#x20B9;'+(v13pos.ltp||0)+' · SL &#x20B9;'+parseFloat(v13pos.sl||0).toFixed(1)+' · '+esc(v13pos.active_ratchet_tier||'INITIAL')+' · Peak +'+vpk.toFixed(1)+'</span>';
         vh+='</div>';
       }
       vh+='<div style="display:flex;gap:8px">'+v13gate('CE',v13ce)+v13gate('PE',v13pe)+'</div>';
