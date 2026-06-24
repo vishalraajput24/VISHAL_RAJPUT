@@ -7617,10 +7617,45 @@ def _start_tick_flow():
 _UPSTOX_PROFILE_URL = "https://api.upstox.com/v2/user/profile"
 
 
+def _validate_upstox_token(token):
+    """Hit the Upstox profile endpoint with `token`. Returns the profile dict if
+    the token is still valid, else None. Never raises."""
+    if not token:
+        return None
+    try:
+        r = requests.get(_UPSTOX_PROFILE_URL,
+                         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                         timeout=15)
+        if r.status_code != 200:
+            return None
+        body = r.json()
+        if body.get("status") == "success":
+            return body.get("data")
+    except Exception:
+        return None
+    return None
+
+
 def _refresh_upstox_token():
-    """Mint + verify a fresh Upstox token via the headless TOTP flow and make it
-    live in THIS process (os.environ) + ~/.env. Returns True on success; never
-    raises (logs + returns False)."""
+    """Ensure a VALID Upstox token is live in this process (os.environ) + ~/.env.
+    Reuses the existing token if it still validates; only mints a fresh one via the
+    headless TOTP flow when the current token is missing/expired. Returns True on
+    success; never raises (logs + returns False)."""
+    # 1) Reuse path — if the token already in env/~/.env still validates, keep it.
+    try:
+        import upstox_data
+        existing = upstox_data.access_token()
+    except Exception:
+        existing = os.getenv("UPSTOX_ACCESS_TOKEN", "")
+    prof = _validate_upstox_token(existing)
+    if prof:
+        os.environ["UPSTOX_ACCESS_TOKEN"] = existing  # ensure env has it (env beats file)
+        logger.info("[AUTH] existing Upstox token still valid — reusing (no re-mint) for "
+                    + str(prof.get("user_name")) + " (" + str(prof.get("user_id")) + ")")
+        return True
+
+    # 2) Mint path — existing token missing/expired, so do the headless TOTP login.
+    logger.info("[AUTH] no valid Upstox token in env/~/.env — minting a fresh one")
     try:
         from upstox_totp import UpstoxTOTP
     except Exception as e:
@@ -7635,17 +7670,9 @@ def _refresh_upstox_token():
         logger.warning("[AUTH] token generation failed: " + str(getattr(resp, "error", resp))[:120])
         return False
     token = resp.data.access_token
-    try:
-        r = requests.get(_UPSTOX_PROFILE_URL,
-                         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                         timeout=15)
-        r.raise_for_status()
-        body = r.json()
-        if body.get("status") != "success":
-            raise RuntimeError("profile non-success: " + str(body)[:80])
-        prof = body["data"]
-    except Exception as e:
-        logger.warning("[AUTH] token generated but verification failed: " + str(e)[:120])
+    prof = _validate_upstox_token(token)
+    if not prof:
+        logger.warning("[AUTH] token generated but verification failed")
         return False
     # env beats the ~/.env file lookup, so set it here first → live immediately
     os.environ["UPSTOX_ACCESS_TOKEN"] = token
