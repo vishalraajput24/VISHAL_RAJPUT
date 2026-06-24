@@ -3389,8 +3389,9 @@ _v11_state = {
 _v11_lock = threading.RLock()  # RLock: _save_v11_state() re-enters this lock from within exit-check block
 
 
-def _v11_compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
-    """V11 dynamic exit rules (owner-approved 2026-06-13, validated by sl_replay_study.py):
+def _compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
+    """Shared dynamic exit ladder used by both engines (owner-approved 2026-06-13,
+    validated by sl_replay_study.py):
     - Initial SL is 1-min ema9_low at entry (passed as initial_sl), capped at entry-10.
     - Protect entry-2.0 once profit hits +9.0 pts (giveback never exceeds 2 pts).
     - Lock entry+4.0 once profit hits +11.0 pts (capture a small win, not a scratch).
@@ -3923,7 +3924,7 @@ def _v11_check_exit():
             _v11_state["breakout_ts"]     = datetime.now().strftime("%H:%M:%S")
 
         # Determine dynamic trail SL
-        current_sl, tier = _v11_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
+        current_sl, tier = _compute_trail_sl(avg_entry, peak_pnl, initial_sl)
         
         prev_tier = _v11_state.get("active_ratchet_tier", "")
         _v11_state["active_ratchet_tier"] = tier
@@ -3947,7 +3948,7 @@ def _v11_check_exit():
                 _v11_state["max_otm_drift"] = _otm
 
     # Exits checking (tick-based). The +25 lock is now a ladder rung (LOCK_25) inside
-    # _v11_compute_trail_sl — it raises the stop to entry+25 once peak hits +25 and keeps
+    # _compute_trail_sl — it raises the stop to entry+25 once peak hits +25 and keeps
     # trailing peak-10 above, so the runners are no longer capped (owner-approved 2026-06-15).
     if ltp <= current_sl:
         exit_reason = {"INITIAL": "EMERGENCY_SL", "PROTECT": "PROTECT_2",
@@ -4046,7 +4047,7 @@ def _v13_gate_check(own_close, own_ema9l, opp_margin_high, opp_ema9h):
 
 V11_BREAKOUT_THRESHOLD = 5.0          # pts above avg_entry to mark "real move started"
 # LOCK_25 floor + tight trail (owner-approved 2026-06-15): once peak hits +25, the exit ladder
-# locks entry+25 as a hard SL floor AND trails peak-5 above it (see _v11_compute_trail_sl) —
+# locks entry+25 as a hard SL floor AND trails peak-5 above it (see _compute_trail_sl) —
 # guarantees +25 min while grabbing max points on the runner. Evolved same day: +25 hard-exit
 # -> +25 floor w/ peak-10 trail -> owner tightened to peak-5 for max capture. target_replay.py
 # (92tr): +25-floor variant +163 vs +108.7 hard-exit vs +87.8 bare trail; peak-5 grabs ~+5 more
@@ -4311,7 +4312,7 @@ def _load_v11_state():
 #  V13 SHADOW ENGINE — runs CONCURRENTLY with V11, PAPER-ONLY.
 #  Owner 2026-06-20: surface both gates on the dashboard for a live
 #  A/B. Shares the locked strikes, tick feed and exit ladder
-#  (_v11_compute_trail_sl) with V11; keeps its OWN independent
+#  (_compute_trail_sl) with V11; keeps its OWN independent
 #  position, cooldowns, day counters, state file and trade log.
 #  NEVER places a real m.Stock order — shadow comparison only.
 # ═══════════════════════════════════════════════════════════════
@@ -4606,7 +4607,7 @@ def _v13_execute_paper_exit(reason, exit_price):
 
 def _v13_check_exit():
     """Tick-based exit for the V13 position. Mirrors the V11 ladder
-    (reuses _v11_compute_trail_sl). Runs every scan cycle."""
+    (reuses _compute_trail_sl). Runs every scan cycle."""
     with _v13_lock:
         if not _v13_state.get("in_trade"):
             return
@@ -4646,7 +4647,7 @@ def _v13_check_exit():
             _v13_state["peak_ltp"] = peak_ltp
             _v13_state["peak_pnl"] = round(peak_ltp - avg_entry, 2)
         peak_pnl = peak_ltp - avg_entry
-        current_sl, tier = _v11_compute_trail_sl(avg_entry, peak_pnl, initial_sl)
+        current_sl, tier = _compute_trail_sl(avg_entry, peak_pnl, initial_sl)
         _v13_state["active_ratchet_tier"] = tier
         _v13_state["active_ratchet_sl"]   = round(current_sl, 2)
 
