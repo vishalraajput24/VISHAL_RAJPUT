@@ -6182,6 +6182,21 @@ def _strategy_loop(kite):
                                 _v13_cd = True
                                 _v13_rem = int(180 - (time.time() - float(_v13_state.get("_last_exit_time_unix", 0))))
                                 _v13_cd_reason = f"same_side_3min({_v13_rem}s)"
+                            # vel2 HARD GATE (owner 2026-06-24, "we are confident now"):
+                            # the fast 2-min futures slope (signed in trade direction) must
+                            # be > 0 to fire. The 06-24 A/B showed every V13 loser carrying
+                            # vel2 data had vel2<=0 while the lone winner had vel2>0. Reads the
+                            # live signed slope from the in-process tick_flow collector.
+                            # FAIL-OPEN: when tick_flow is off or <3 completed futures minutes
+                            # exist (vel2 is None) we allow the fire, so a feed gap never freezes
+                            # V13 — the gate only blocks on a confirmed non-positive slope.
+                            _v13_vel2 = None
+                            try:
+                                if _tick_flow_mod is not None:
+                                    _v13_vel2 = _tick_flow_mod.fut_vel2(_sh_dir)
+                            except Exception:
+                                _v13_vel2 = None
+                            _v13_vel2_ok = (_v13_vel2 is None) or (_v13_vel2 > 0)
                             _v13_reject = ""
                             if _v13_in_trade:
                                 _v13_reject = "in_trade"
@@ -6191,7 +6206,10 @@ def _strategy_loop(kite):
                                 _v13_reject = f"below_ema9l_gap({_v13_mom_gap:+.2f}<{V11_MIN_EMA9H_GAP})"
                             elif not _v13_decay_ok:
                                 _v13_reject = f"opp_decay_high_weak({_opp_margin_high:+.1f} not in [{V11_DECAY_LOW:.0f},{V11_DECAY_HIGH:.0f}])"
-                            _v13_ready = (_v13_mom_ok and _v13_decay_ok and not _v13_in_trade and not _v13_cd)
+                            elif not _v13_vel2_ok:
+                                _v13_reject = f"vel2<=0({_v13_vel2:+.2f})"
+                            _v13_ready = (_v13_mom_ok and _v13_decay_ok and _v13_vel2_ok
+                                          and not _v13_in_trade and not _v13_cd)
                             with _v13_live_lock:
                                 _v13_live[_sh_dir] = {
                                     "strike": int(_sh_info.get("strike", 0) or 0),
@@ -6202,6 +6220,8 @@ def _strategy_loop(kite):
                                     "momentum_ok": _v13_mom_ok,
                                     "decay_margin": round(_opp_margin_high, 2),
                                     "decay_ok": _v13_decay_ok,
+                                    "vel2": (round(_v13_vel2, 2) if _v13_vel2 is not None else None),
+                                    "vel2_ok": _v13_vel2_ok,
                                     "ready": _v13_ready,
                                     "reject": _v13_reject,
                                 }
