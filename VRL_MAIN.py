@@ -183,13 +183,9 @@ def data_provider() -> str:
 
 
 def strategy_version() -> str:
-    """Entry-gate variant: 'v11' (default, proven) | 'v13' (owner 2026-06-20).
-    V13 swaps the gate REFERENCE LINES (same +3.5 gap / [-9,-7] band):
-      MOMENTUM  own_close >= own ema9_LOW  + 3.5   (V11 used ema9_high)
-      OPP DECAY opp_close  - opp ema9_HIGH in [-9,-7] (V11 used ema9_low)
-    Everything else (exit ladder, ITM-100 strikes, window, single lot) is shared.
-    Reversible: flip config.yaml -> strategy_version back to v11 any time."""
-    return (get().get("strategy_version") or "v11").lower()
+    """V13 is the sole engine (owner 2026-06-24, V11 retired). Kept as a constant
+    for the dashboard/TG gate label."""
+    return "v13"
 
 
 
