@@ -8629,13 +8629,15 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
     var anyReady=(ce.fired||pe.fired);
     var dot=anyReady?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gn);margin-right:5px"></span>':'';
     var GATE=d.gate||'V11';
-    var gateDesc=(GATE==='V13')
-      ? '⚡ V13 GATES &nbsp;·&nbsp; all dte: Close > EMA9L+3.5 · Opp Decay (close−EMA9H) [−9, −7] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min'
-      : '⚡ V11 GOLDEN GATES &nbsp;·&nbsp; dte≥2: Close > EMA9H+3.5 · Opp Decay [−9, −7] &nbsp;·&nbsp; dte0/1 %-gate: Mom +2.3%/+3.0% · Opp Decay [−4.8%, −2.7%] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min';
+    // Top panel renders V11's gate data (d.ce/d.pe). V13 is now the PRIMARY engine
+    // (owner 2026-06-24, retiring V11) — its panel below is the headline; this V11
+    // panel is labelled legacy/retiring. Decoupled from the strategy_version flag so
+    // it never mislabels V11 numbers as V13.
+    var gateDesc='⚡ V11 GOLDEN GATES &nbsp;·&nbsp; dte≥2: Close > EMA9H+3.5 · Opp Decay [−9, −7] &nbsp;·&nbsp; dte0/1 %-gate: Mom +2.3%/+3.0% · Opp Decay [−4.8%, −2.7%] &nbsp;·&nbsp; 10:00–14:30 · Same-side 3-min';
     var html='<div style="margin:8px 8px 0">';
-    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'⭐ '+esc(GATE)+' LIVE — '+(GATE==='V13'?'owner gate':'Golden')+' (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
+    html+='<div style="font-size:10px;font-weight:700;color:var(--dm);letter-spacing:.5px;padding:4px 10px 6px">'+dot+'V11 — Golden (legacy · retiring) (1-min)'+(d.ts?' · '+d.ts:'')+'</div>';
     html+='<div style="margin:2px 10px 9px">';
-    html+='<div style="font-size:9px;font-weight:700;color:'+(GATE==='V13'?'var(--am)':'var(--dm)')+';padding:0 2px 6px;letter-spacing:.5px">'+gateDesc+'</div>';
+    html+='<div style="font-size:9px;font-weight:700;color:var(--dm);padding:0 2px 6px;letter-spacing:.5px">'+gateDesc+'</div>';
     html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+gateCard('CE',ce)+gateCard('PE',pe)+'</div>';
     html+='</div></div>';
     // ── V13 SHADOW panel (paper A/B alongside V11) ──
@@ -8662,7 +8664,7 @@ function render(d, trades){ if(!d || !d.market){document.getElementById('p-sig')
           +'<div>'+st+'</div></div>';
       }
       var vh='<div style="margin:10px 8px 0">';
-      vh+='<div style="font-size:10px;font-weight:700;color:var(--am);letter-spacing:.5px;padding:4px 10px 4px">🧪 V13 SHADOW — paper A/B (gate: all-dte Close>EMA9L+3.5 · Opp Decay(close−EMA9H) [−9,−7])</div>';
+      vh+='<div style="font-size:11px;font-weight:800;color:var(--am);letter-spacing:.5px;padding:4px 10px 4px">⭐ V13 PRIMARY — owner gate · vel2-filtered (all-dte Close>EMA9L+3.5 · Opp Decay(close−EMA9H) [−9,−7])</div>';
       vh+='<div style="margin:2px 10px">';
       if(v13pos.in_trade){
         var vp=parseFloat(v13pos.pnl||0), vpk=parseFloat(v13pos.peak||0);
