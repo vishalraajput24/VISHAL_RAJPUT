@@ -4327,7 +4327,7 @@ _v13_state = {
     "vel2_at_entry": None,
     "_last_fired_candle_ts": "", "_last_exit_candle_ts": "",
     "_last_exit_time_unix": 0.0, "_last_exit_direction": "",
-    "_sl_cooldown_skip_next": False,
+    "_sl_cooldown_skip_next": False, "_entry_in_progress": False,
     "_pnl_today_pts": 0.0, "_trades_today": 0,
     "_wins_today": 0, "_losses_today": 0, "_last_trade_date": "",
 }
@@ -4344,7 +4344,7 @@ _V13_PERSIST_FIELDS = [
     "pdh_prev", "pdl_prev", "entry_range_pos", "vel2_at_entry",
     "_last_fired_candle_ts", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction",
-    "_sl_cooldown_skip_next",
+    "_sl_cooldown_skip_next", "_entry_in_progress",
     "_pnl_today_pts", "_trades_today", "_wins_today", "_losses_today",
     "_last_trade_date",
 ]
@@ -4392,11 +4392,43 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
                              entry_mode, other_token, opp_margin_high,
                              spot_at_entry, fired_candle_ts, ema9_low, dte,
                              vel2_at_entry=None):
-    """Open a V13 SHADOW paper position — single lot, fill at candle close.
-    PAPER-ONLY: never calls m.Stock (shadow A/B against V11)."""
+    """Open a V13 position — single lot, fill at candle close.
+    In LIVE mode places the real m.Stock entry first (cloned from the V11 path,
+    owner 2026-06-24 retire-V11 stage 2); the paper path is byte-for-byte
+    unchanged so the paper A/B record stays clean."""
     qty = CFG.get().get("lots", {}).get("count", 1) * D.get_lot_size()
     now_str = datetime.now().strftime("%H:%M:%S")
+
+    # ── LIVE: place the real m.Stock entry BEFORE recording state ──────────────
+    # Mirrors _v11_execute_paper_entry: runs OUTSIDE _v13_lock (place_entry blocks
+    # up to ~8s for the LIMIT fill; holding the RLock that long would freeze the
+    # exit/TG/web threads). _entry_in_progress is reserved under the lock first so a
+    # later 3s scanner tick can't fire a SECOND live order while the broker call is
+    # in flight (the double-lot guard). On a non-fill the entry aborts and the candle
+    # is stamped so the scanner won't hammer the same bar.
+    if not D.PAPER_MODE:
+        with _v13_lock:
+            if _v13_state.get("in_trade") or _v13_state.get("_entry_in_progress"):
+                logger.warning("[V13] Live entry attempted while already in_trade/in_progress — BLOCKED")
+                return
+            _v13_state["_entry_in_progress"] = True
+        _live = place_entry(_kite, symbol, token, direction, qty, entry_price)
+        if not _live.get("ok"):
+            logger.warning("[V13] LIVE entry not filled: " + str(_live.get("error", "")))
+            _tg_send(
+                f"⚠️ <b>V13 LIVE entry MISSED {direction} {strike}</b>\n"
+                f"LIMIT ~₹{entry_price:.1f} unfilled in 8s — {_live.get('error', '')}",
+                priority="high")
+            with _v13_lock:
+                _v13_state["_last_fired_candle_ts"] = fired_candle_ts
+                _v13_state["_entry_in_progress"] = False
+            _save_v13_state()
+            return
+        # Use the broker's real fill price for SL/PnL math — not the candle close.
+        entry_price = round(_live.get("fill_price", entry_price), 2)
+
     with _v13_lock:
+        _v13_state["_entry_in_progress"] = False
         if _v13_state.get("in_trade"):
             return
         # Initial SL = breakout-candle ema9_low, capped at entry-10 (same ladder
@@ -4432,20 +4464,49 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
         _v13_state["entry_range_pos"] = (
             round((_spot_e - _pdl) / (_pdh - _pdl), 3)
             if _pdh > _pdl > 0 and _spot_e > 0 else "")
-    logger.info(f"[V13] SHADOW ENTRY: {symbol} Qty={qty} @ {entry_price}")
+    logger.info(f"[V13] {'PAPER' if D.PAPER_MODE else 'LIVE'} ENTRY: {symbol} Qty={qty} @ {entry_price}")
     _emj = "🟢" if direction == "CE" else "🔴"
     _tg_send(
-        f"🧪 <b>V13 SHADOW ENTRY {direction} {strike}</b>\n"
-        f"{_emj} Entry ₹{entry_price:.1f} × {qty}  SL ₹{initial_sl:.1f}\n"
+        f"⭐ <b>V13 {'PAPER' if D.PAPER_MODE else 'LIVE'} ENTRY {direction} {strike}</b>\n"
+        f"{_emj} Entry ({'Mkt' if D.PAPER_MODE else 'Lmt'}) ₹{entry_price:.1f} × {qty}  SL ₹{initial_sl:.1f}\n"
         f"Decay {opp_margin_high:+.1f} · vel2 "
         f"{('%+.1f' % vel2_at_entry) if vel2_at_entry is not None else 'n/a'} · "
-        f"dte {dte} · paper A/B vs V11",
+        f"dte {dte}",
         priority="high")
     _save_v13_state()
 
 
 def _v13_execute_paper_exit(reason, exit_price):
-    """Close the V13 SHADOW position, log to its own CSV. PAPER-ONLY."""
+    """Close the V13 position, log to its own CSV. In LIVE mode places the real
+    m.Stock MARKET SELL first (cloned from the V11 path, owner 2026-06-24 retire-V11
+    stage 2); the paper path is byte-for-byte unchanged."""
+    # ── LIVE: fire the real m.Stock MARKET SELL BEFORE clearing state ──────────
+    # Mirrors _v11_execute_paper_exit: runs OUTSIDE _v13_lock (place_exit has its own
+    # retry/backoff). If the exit ultimately fails the position is STILL OPEN at the
+    # broker, so we keep in_trade=True (no state clear, no CSV row) and alert for
+    # manual action; the exit ladder / EOD check re-fires on the next tick and retries.
+    if not D.PAPER_MODE:
+        with _v13_lock:
+            if not _v13_state.get("in_trade"):
+                return
+            _ex_symbol = _v13_state.get("symbol", "")
+            _ex_dir    = _v13_state.get("direction", "")
+            _ex_token  = int(_v13_state.get("token", 0) or 0)
+            _ex_qty    = int(_v13_state.get("qty", 0) or 0)
+        _live = place_exit(_kite, _ex_symbol, _ex_token, _ex_dir, _ex_qty, exit_price, reason)
+        if not _live.get("ok"):
+            logger.critical("[V13] LIVE EXIT FAILED — position STILL OPEN: "
+                            + _ex_symbol + " reason=" + reason
+                            + " err=" + str(_live.get("error", "")))
+            _tg_send(
+                f"🚨 <b>V13 LIVE EXIT FAILED — MANUAL ACTION</b>\n"
+                f"{_ex_symbol} ({_ex_qty} Qty) still OPEN — {reason}\n"
+                f"Broker error: {_live.get('error', '')}",
+                priority="critical")
+            return
+        # Record the close at the broker's real fill price.
+        exit_price = round(_live.get("fill_price", exit_price), 2)
+
     with _v13_lock:
         if not _v13_state.get("in_trade"):
             return
@@ -4528,10 +4589,10 @@ def _v13_execute_paper_exit(reason, exit_price):
     except Exception as _le:
         logger.warning("[V13] Trade log write error: " + str(_le))
 
-    logger.info(f"[V13] SHADOW EXIT: {symbol} qty={qty} ref={exit_price} "
+    logger.info(f"[V13] {'PAPER' if D.PAPER_MODE else 'LIVE'} EXIT: {symbol} qty={qty} ref={exit_price} "
                 f"reason={reason} pnl={pnl_pts}pts")
     _tg_send(
-        f"🧪 <b>V13 SHADOW EXIT {direction} {strike}</b>\n"
+        f"⭐ <b>V13 {'PAPER' if D.PAPER_MODE else 'LIVE'} EXIT {direction} {strike}</b>\n"
         f"<b>{reason}</b>  {'+' if pnl_pts >= 0 else ''}{pnl_pts:.1f} pts\n"
         f"Entry ₹{entry_price:.1f} → Exit ₹{exit_price:.1f}  Peak +{peak:.1f} ({tier})\n"
         f"vel2@entry "
@@ -4544,8 +4605,8 @@ def _v13_execute_paper_exit(reason, exit_price):
 
 
 def _v13_check_exit():
-    """Tick-based exit for the V13 shadow position. Mirrors the V11 ladder
-    (reuses _v11_compute_trail_sl). Runs every scan cycle, PAPER-ONLY."""
+    """Tick-based exit for the V13 position. Mirrors the V11 ladder
+    (reuses _v11_compute_trail_sl). Runs every scan cycle."""
     with _v13_lock:
         if not _v13_state.get("in_trade"):
             return
@@ -6173,7 +6234,7 @@ def _strategy_loop(kite):
                                 _sh_1m_close, _sh_ema9l_1m,
                                 _opp_margin_high, _opp_ema9h)
                             _v13_mom_gap = round(_sh_1m_close - _sh_ema9l_1m, 2)
-                            _v13_in_trade = bool(_v13_state.get("in_trade", False))
+                            _v13_in_trade = bool(_v13_state.get("in_trade", False)) or bool(_v13_state.get("_entry_in_progress", False))
                             _v13_cd = False
                             _v13_cd_reason = ""
                             if now.time() < V13_OPEN_BLACKOUT_END or now.time() >= V13_ENTRY_CUTOFF:
