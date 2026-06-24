@@ -7745,39 +7745,6 @@ def _start_token_refresher():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  V12 VISHAL paper engine  (folded in from v12_vishal.py, 2026-06-23 —
-#  single-process consolidation). SELF-CONTAINED: to remove, delete this
-#  function + the _start_v12() call in main(). v12_vishal.py stays as an
-#  imported helper module — it does `import VRL_MAIN as V`, so we pre-seed
-#  sys.modules["VRL_MAIN"] = the running bot to avoid loading a 2nd copy.
-#  PAPER only, fully sandboxed: a v12 error can never reach the V11/V13 bot.
-#  v12.main() self-exits at 15:30, so we wrap it in a daily-restart loop.
-# ═══════════════════════════════════════════════════════════════
-def _start_v12():
-    def _loop():
-        sys.modules.setdefault("VRL_MAIN", sys.modules["__main__"])
-        try:
-            import v12_vishal as _v12
-        except Exception as e:
-            logger.warning("[V12] import failed — engine disabled (" + str(e)[:100] + ")")
-            return
-        logger.info("[V12] Vishal paper engine thread started")
-        while True:
-            try:
-                now = datetime.now()
-                if now.weekday() < 5 and now.time() < dtime(15, 30):
-                    _v12.main()          # runs the session, self-exits at 15:30
-            except Exception as e:
-                logger.warning("[V12] session error (sandboxed): " + str(e)[:140])
-            now = datetime.now()
-            nxt = now.replace(hour=9, minute=20, second=0, microsecond=0)
-            if nxt <= now:
-                nxt += timedelta(days=1)
-            time.sleep(max(60, (nxt - now).total_seconds()))
-    threading.Thread(target=_loop, name="V12Engine", daemon=True).start()
-
-
-# ═══════════════════════════════════════════════════════════════
 #  LEVELS shadow helper  (folded in 2026-06-23). SELF-CONTAINED: to
 #  remove, delete this function + the _start_levels_shadow() call in
 #  main(). Imports levels_shadow.py as an on-disk helper module
@@ -8087,7 +8054,6 @@ def main():
 
     # ── Folded-in plug-in threads (single-process consolidation, 2026-06-23) ──
     _start_token_refresher()   # daily ~06:00 Upstox token re-mint (was upstox_auth cron)
-    _start_v12()               # V12 Vishal paper engine (was v12_vishal cron)
     _start_levels_shadow()     # daily ~15:45 EOD make-or-break levels (shadow, data-only)
 
     _strategy_loop(kite)
