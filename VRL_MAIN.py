@@ -3572,6 +3572,7 @@ _v13_state = {
     "xleg_other_margin": 0.0, "spot_regime_at_entry": "", "entry_spot": 0.0,
     "pdh_prev": 0.0, "pdl_prev": 0.0, "entry_range_pos": "",
     "vel2_at_entry": None,
+    "aligned_at_entry": None,
     "_last_fired_candle_ts": "", "_last_exit_candle_ts": "",
     "_last_exit_time_unix": 0.0, "_last_exit_direction": "",
     "_sl_cooldown_skip_next": False, "_entry_in_progress": False,
@@ -3589,6 +3590,7 @@ _V13_PERSIST_FIELDS = [
     "candles_held", "_other_token", "entry_mode",
     "xleg_other_margin", "spot_regime_at_entry", "entry_spot",
     "pdh_prev", "pdl_prev", "entry_range_pos", "vel2_at_entry",
+    "aligned_at_entry",
     "_last_fired_candle_ts", "_last_exit_candle_ts",
     "_last_exit_time_unix", "_last_exit_direction",
     "_sl_cooldown_skip_next", "_entry_in_progress",
@@ -3638,7 +3640,7 @@ def _load_v13_state():
 def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
                              entry_mode, other_token, opp_margin_high,
                              spot_at_entry, fired_candle_ts, ema9_low, dte,
-                             vel2_at_entry=None):
+                             vel2_at_entry=None, aligned_at_entry=None):
     """Open a V13 position — single lot, fill at candle close.
     In LIVE mode places the real m.Stock entry first (cloned from the V11 path,
     owner 2026-06-24 retire-V11 stage 2); the paper path is byte-for-byte
@@ -3700,6 +3702,7 @@ def _v13_execute_paper_entry(direction, strike, symbol, token, entry_price,
             "entry_spot": float(spot_at_entry or 0),
             "dte": int(dte or 0),
             "vel2_at_entry": (round(float(vel2_at_entry), 2) if vel2_at_entry is not None else None),
+            "aligned_at_entry": (int(aligned_at_entry) if aligned_at_entry is not None else None),
             "_last_trade_date": date.today().isoformat(),
         })
         # PDH/PDL context (analysis only — feeds the box-break shadow study;
@@ -3778,6 +3781,9 @@ def _v13_execute_paper_exit(reason, exit_price):
         # the CSV records whether the vel2 hard-gate had a real positive value or
         # failed open on None (e.g. tick_flow warmup after an intraday restart).
         vel2_entry_val = _v13_state.get("vel2_at_entry")
+        # aligned (futures EMA9>EMA21 trend agrees with the trade dir) at entry —
+        # paired with vel2 here to A/B the vel2-AND-aligned candidate. None = warmup.
+        aligned_entry_val = _v13_state.get("aligned_at_entry")
 
         # Clear position
         _v13_state.update({
@@ -3830,6 +3836,7 @@ def _v13_execute_paper_exit(reason, exit_price):
             "pdh_prev": pdh_prev_val, "pdl_prev": pdl_prev_val,
             "entry_range_pos": range_pos_val,
             "vel2_at_entry": vel2_entry_val,
+            "aligned_at_entry": aligned_entry_val,
         }
         import csv as _csv
         _new_file = not os.path.isfile(D.V13_TRADE_LOG_PATH)
@@ -4120,6 +4127,10 @@ TRADE_FIELDNAMES = [
     # a float = the confirmed slope the gate fired on. Appended LAST so existing
     # rows/header stay column-aligned. Analysis only — not a gate input.
     "vel2_at_entry",
+    # aligned (0/1) — futures EMA9>EMA21 trend agrees with the trade direction at
+    # entry (CE+UP / PE+DN); None = futures warmup. Paired with vel2_at_entry to
+    # A/B the vel2-AND-aligned candidate filter. Appended LAST. Analysis only.
+    "aligned_at_entry",
 ]
 
 def _trade_csv_reader(f):
@@ -5339,6 +5350,16 @@ def _strategy_loop(kite):
                                     _v13_vel2 = _tick_flow_mod.fut_vel2(_sh_dir)
                             except Exception:
                                 _v13_vel2 = None
+                            # aligned (0/1): does the futures EMA9>EMA21 trend agree
+                            # with this leg's direction? DATA-ONLY shadow logged
+                            # alongside vel2 to A/B the vel2-AND-aligned candidate —
+                            # GATES NOTHING (None on warmup, like vel2).
+                            _v13_aligned = None
+                            try:
+                                if _tick_flow_mod is not None:
+                                    _v13_aligned = _tick_flow_mod.fut_aligned(_sh_dir)
+                            except Exception:
+                                _v13_aligned = None
                             _v13_vel2_ok = (_v13_vel2 is None) or (_v13_vel2 > 0)
                             _v13_reject = ""
                             if _v13_in_trade:
@@ -5384,6 +5405,7 @@ def _strategy_loop(kite):
                                     ema9_low=_sh_ema9l_1m,
                                     dte=dte,
                                     vel2_at_entry=_v13_vel2,
+                                    aligned_at_entry=_v13_aligned,
                                 )
                         except Exception as _v13_e:
                             logger.warning(f"[V13 Scanner] error: {_v13_e}")
