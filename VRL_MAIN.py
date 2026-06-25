@@ -6696,7 +6696,14 @@ def _shutdown(signum, frame):
     _remove_pid()
     time.sleep(0.5)  # ensure pending TG messages flush
     logger.info("[MAIN] Clean shutdown")
-    sys.exit(0)
+    # sys.exit(0) only unwinds the main thread. The Upstox MarketDataStreamerV3
+    # runs a non-daemon websocket thread (and the tick-flow collector may too)
+    # that we never disconnect, so the interpreter otherwise blocks at exit until
+    # systemd's 90s stop-timeout forces a SIGKILL — observed on every restart
+    # (Clean shutdown logs, then ~89s of limbo). State is already saved above, so
+    # flush log handlers and hard-exit for a fast, clean stop.
+    logging.shutdown()
+    os._exit(0)
 
 # ═══════════════════════════════════════════════════════════════
 #  TICK-FLOW STUDY — secret collector hook (optional, data-only)
