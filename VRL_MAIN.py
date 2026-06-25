@@ -4771,8 +4771,9 @@ def _warmup_info(now, dte):
 
 def _account_block():
     """Dashboard account section. Orders go via m.Stock, so show the m.Stock
-    funds (cached 5-min); fall back to the Kite margins (data-feed account)
-    only when m.Stock is unavailable, labelled so the source is obvious."""
+    funds (cached 5-min, with last-good/stale handling inside ms_get_funds).
+    Kite is fully removed — there is no data-feed account to fall back to, so
+    when m.Stock is unavailable we say so rather than show a phantom margin."""
     try:
         funds = MSTOCK.ms_get_funds()
         if funds.get("ok"):
@@ -4786,11 +4787,12 @@ def _account_block():
             }
     except Exception:
         pass
-    acct = D.get_account_info()
+    # m.Stock funds unavailable with no last-good cached yet (e.g. the fund_summary
+    # gateway returning a 502 / empty body). No Kite fallback exists anymore.
     return {
-        "name": (acct.get("name", "") + " (Kite)").strip(),
-        "balance": acct.get("total_balance", 0),
-        "used": acct.get("used_margin", 0),
+        "name": "m.Stock (unavailable)",
+        "balance": 0.0,
+        "used": 0.0,
     }
 
 
