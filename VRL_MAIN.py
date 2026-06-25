@@ -4856,6 +4856,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
             if _fired:
                 verdict = "✅ READY"
+            elif _reject == "outside_v13_window":
+                # Gate is warm + aligned, only the entry window is pending/closed.
+                if now.time() < V13_OPEN_BLACKOUT_END:
+                    verdict = "⏳ ARMED · window opens 09:30"
+                else:
+                    verdict = "🔒 window closed (15:15)"
             elif _reject:
                 verdict = _reject
             else:
@@ -5225,8 +5231,14 @@ def _strategy_loop(kite):
             # for the dashboard. The inner _in_trade check prevents any entry from
             # firing (sets reject="in_trade", _v13_ready=False).
             global _v13_scanner_last_ts
-            _scan_window = D.is_market_open() and (
-                V13_OPEN_BLACKOUT_END <= now.time() < V13_ENTRY_CUTOFF)
+            # Compute the gate snapshot (_v13_live) whenever the market is open —
+            # from 09:15, NOT 09:30 — so the dashboard shows live EMA9 bands +
+            # momentum/decay aligned from the bell. ENTRIES stay gated to the
+            # [09:30, 15:15) window by the inner "outside_v13_window" cooldown below
+            # (_v13_ready requires not _v13_cd, and the fire at _v13_ready/ENGINE_LIVE
+            # runs only inside it), so decoupling the scan from the window warms the
+            # dashboard without ever firing early.
+            _scan_window = D.is_market_open()
             if (_scan_window
                     and _locked_tokens
                     and time.time() - _v13_scanner_last_ts >= _V13_SCAN_INTERVAL_SEC):
