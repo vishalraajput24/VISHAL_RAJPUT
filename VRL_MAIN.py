@@ -841,9 +841,8 @@ STATE_PERSIST_FIELDS = [
     "_last_cleanup_date",
     # v16.0 ratchet state
     "active_ratchet_tier", "active_ratchet_sl",
-    # Milestone + scan throttling — restored so restarts mid-trade don't
-    # lose dedup state and re-fire milestone alerts / scan the same bar twice.
-    "_last_milestone", "_last_candle_held_min", "_last_scan_key",
+    # Scan throttling — restored so restarts mid-trade don't re-scan the same bar twice.
+    "_last_scan_key",
     # Last exit memory
     "last_exit_time", "last_exit_direction", "last_exit_peak",
     "last_exit_reason",
@@ -852,8 +851,6 @@ STATE_PERSIST_FIELDS = [
     # Bot control
     "paused", "prev_close",
     "_exit_failed",
-    # Legacy compat (kept for VRL_TRADE SL-M + restart resume)
-    "lot1_active", "lot2_active", "lots_split",
 ]
 
 def get_session_block(hour: int, minute: int) -> str:
@@ -3239,15 +3236,6 @@ DEFAULT_STATE = {
     "active_ratchet_tier": "",
     "active_ratchet_sl"  : 0.0,
     "other_token"        : 0,
-    # V7 re-entry watcher — 2-candle window after exit
-    "_reentry_armed"     : False,
-    "_reentry_exit_ts"   : 0.0,
-    "_reentry_attempts"  : 0,         # count of candles checked
-    "_reentry_last_checked_epoch": 0.0,
-    "_next_candle2_after": 0.0,
-    "_reentry_direction" : "",
-    "_reentry_token"     : 0,
-    "_reentry_strike"    : 0,
     # Same-candle guard: timestamp of last fired candle (str). Engine
     # rejects re-entry when current candle == this, stops the
     # 2026-05-07 same-candle re-fire bug.
@@ -3276,21 +3264,12 @@ DEFAULT_STATE = {
     "_last_warmup_log"   : "",
     "_last_scan"         : {},
     "prev_close"         : 0.0,
-    # ── Exchange order tracking (live mode — legacy compat) ──
-    "_sl_order_id"       : "",
-    "_sl_trigger_at_exchange": 0,
-    "lot1_active"        : True,  # legacy (always True in v15.0)
-    "lot2_active"        : True,  # legacy (always True in v15.0)
-    "lots_split"         : False, # legacy (always False in v15.0)
-    "current_floor"      : 0.0,   # legacy (used for dashboard trail display)
-    "_candle_low"        : 0.0,   # legacy
-    "_last_milestone"    : 0,     # legacy
-    "_static_floor_sl"   : 0.0,   # legacy
 }
 
 state   = deepcopy(DEFAULT_STATE)
 _running = True
 _last_health_log_ts = 0.0   # throttle for intraday [MAIN] Token health re-log
+_HEALTH_LOG_INTERVAL_SEC = 1800   # re-log token health every 30 min
 
 
 def _compute_trail_sl(entry_price: float, peak_pnl: float, initial_sl: float) -> tuple:
@@ -3417,6 +3396,7 @@ V11_TARGET_PTS = 25.0
 # Master enable: True = the V13 scanner places trades (paper or live per mode).
 ENGINE_LIVE = True
 _v13_scanner_last_ts: float = 0.0   # throttle: V13 scanner runs every 3s
+_V13_SCAN_INTERVAL_SEC = 3   # seconds between V13 scanner passes
 
 
 def _lock_strikes(spot, dte, kite=None, expiry=None):
@@ -4391,6 +4371,7 @@ from collections import deque as _deque
 _tg_timestamps = _deque(maxlen=20)
 _TG_FLOOD_LIMIT = 15   # was 5 — Telegram allows ~30/sec; 15/10s is safe
 _TG_FLOOD_WINDOW = 10  # seconds
+_STARTUP_ALERT_COOLDOWN_SEC = 600   # suppress duplicate restart TG alert within 10 min
 
 
 def _tg_send(text: str, parse_mode: str = "HTML", chat_id: str = None,
@@ -4487,7 +4468,7 @@ def _alert_bot_started():
         if os.path.exists(_ts_file):
             with open(_ts_file) as _tf:
                 _last_ts = float(_tf.read().strip())
-            if _now_ts - _last_ts < 600:  # 10 min cooldown
+            if _now_ts - _last_ts < _STARTUP_ALERT_COOLDOWN_SEC:
                 logger.info(f"[MAIN] Startup TG alert suppressed — last restart {int(_now_ts - _last_ts)}s ago")
                 with open(_ts_file, "w") as _tf:
                     _tf.write(str(_now_ts))
@@ -4875,6 +4856,12 @@ def _write_dashboard(spot_ltp, atm_strike, dte, vix_ltp, session,
 
             if _fired:
                 verdict = "✅ READY"
+            elif _reject == "outside_v13_window":
+                # Gate is warm + aligned, only the entry window is pending/closed.
+                if now.time() < V13_OPEN_BLACKOUT_END:
+                    verdict = "⏳ ARMED · window opens 09:30"
+                else:
+                    verdict = "🔒 window closed (15:15)"
             elif _reject:
                 verdict = _reject
             else:
@@ -5134,7 +5121,7 @@ def _strategy_loop(kite):
         # ── intraday Token-health refresh (every 30 min; startup check was one-shot) ──
         try:
             _hb_now = time.time()
-            if _hb_now - _last_health_log_ts >= 1800:
+            if _hb_now - _last_health_log_ts >= _HEALTH_LOG_INTERVAL_SEC:
                 _last_health_log_ts = _hb_now
                 _hb_spot = D.get_ltp(D.NIFTY_SPOT_TOKEN)
                 with D._tick_lock:
@@ -5244,11 +5231,17 @@ def _strategy_loop(kite):
             # for the dashboard. The inner _in_trade check prevents any entry from
             # firing (sets reject="in_trade", _v13_ready=False).
             global _v13_scanner_last_ts
-            _scan_window = D.is_market_open() and (
-                V13_OPEN_BLACKOUT_END <= now.time() < V13_ENTRY_CUTOFF)
+            # Compute the gate snapshot (_v13_live) whenever the market is open —
+            # from 09:15, NOT 09:30 — so the dashboard shows live EMA9 bands +
+            # momentum/decay aligned from the bell. ENTRIES stay gated to the
+            # [09:30, 15:15) window by the inner "outside_v13_window" cooldown below
+            # (_v13_ready requires not _v13_cd, and the fire at _v13_ready/ENGINE_LIVE
+            # runs only inside it), so decoupling the scan from the window warms the
+            # dashboard without ever firing early.
+            _scan_window = D.is_market_open()
             if (_scan_window
                     and _locked_tokens
-                    and time.time() - _v13_scanner_last_ts >= 3):
+                    and time.time() - _v13_scanner_last_ts >= _V13_SCAN_INTERVAL_SEC):
                 _v13_scanner_last_ts = time.time()
                 try:
                     for _sh_dir, _sh_info in [("CE", (_locked_tokens or {}).get("CE", {})),
@@ -7002,11 +6995,6 @@ def main():
             state["entry_time"] = ""
             state["peak_pnl"] = 0.0
             state["candles_held"] = 0
-            state["lot1_active"] = True
-            state["lot2_active"] = True
-            state["lots_split"] = False
-            state["_static_floor_sl"] = 0
-            state["current_floor"] = 0.0
         _save_state()
         logger.info("[MAIN] Phantom trade state cleared ✓")
 
