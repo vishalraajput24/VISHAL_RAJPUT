@@ -3774,6 +3774,10 @@ def _v13_execute_paper_exit(reason, exit_price):
         pdh_prev_val   = float(_v13_state.get("pdh_prev", 0) or 0)
         pdl_prev_val   = float(_v13_state.get("pdl_prev", 0) or 0)
         range_pos_val  = _v13_state.get("entry_range_pos", "")
+        # vel2 (fast 2-min futures slope) at entry — captured here under lock so
+        # the CSV records whether the vel2 hard-gate had a real positive value or
+        # failed open on None (e.g. tick_flow warmup after an intraday restart).
+        vel2_entry_val = _v13_state.get("vel2_at_entry")
 
         # Clear position
         _v13_state.update({
@@ -3825,6 +3829,7 @@ def _v13_execute_paper_exit(reason, exit_price):
             "entry_spot": entry_spot_val, "exit_spot": exit_spot,
             "pdh_prev": pdh_prev_val, "pdl_prev": pdl_prev_val,
             "entry_range_pos": range_pos_val,
+            "vel2_at_entry": vel2_entry_val,
         }
         import csv as _csv
         _new_file = not os.path.isfile(D.V13_TRADE_LOG_PATH)
@@ -4110,6 +4115,11 @@ TRADE_FIELDNAMES = [
     "first_profit_candle", "first_profit_ltp", "first_profit_ts",
     "breakout_candle", "breakout_ltp", "breakout_ts",
     "early_candles",   # breakout_candle - 1 = candles spent before real move
+    # vel2 (signed fast 2-min futures slope) at entry — None = vel2 hard-gate
+    # FAILED OPEN (tick_flow warmup / feed gap, e.g. after an intraday restart);
+    # a float = the confirmed slope the gate fired on. Appended LAST so existing
+    # rows/header stay column-aligned. Analysis only — not a gate input.
+    "vel2_at_entry",
 ]
 
 def _trade_csv_reader(f):
