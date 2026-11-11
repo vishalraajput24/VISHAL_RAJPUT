@@ -1,0 +1,46 @@
+name: Build AutoBase APK
+
+on:
+  push:
+    paths:
+      - "autobase-android/**"
+      - ".github/workflows/build-autobase-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: autobase-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoBase-debug-apk
+          path: autobase-android/app/build/outputs/apk/debug/app-debug.apk
+
+      # A release asset is easy to download from a phone browser (artifacts are not).
+      - name: Publish APK as a pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: autobase-build-${{ github.run_number }}
+          name: AutoBase build ${{ github.run_number }}
+          prerelease: true
+          files: autobase-android/app/build/outputs/apk/debug/app-debug.apk

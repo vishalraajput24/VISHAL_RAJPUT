@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AutoBase</string>
+    <string name="service_desc">Takes a screenshot and taps buttons you chose (collect, help, upgrade). Nothing is sent anywhere; everything stays on the phone.</string>
+</resources>
