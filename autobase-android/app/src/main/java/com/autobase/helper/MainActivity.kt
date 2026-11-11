@@ -168,6 +168,31 @@ class MainActivity : ComponentActivity() {
         ui.post(step)
     }
 
+    private fun showSkills() {
+        val sb = StringBuilder()
+        val fmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        val skills = SkillStore.all()
+        if (skills.isEmpty()) sb.append("No skills learned yet. The AI learns a routine the first time it completes one (Help All, collecting, training...).\n")
+        for (s in skills) {
+            sb.append("* ${s.id}  every ${s.intervalMin} min${if (s.enabled) "" else "  [DISABLED]"}\n")
+            sb.append("   ${s.steps.joinToString(" > ") { it.label }}\n")
+            sb.append("   ok ${s.ok}, nothing-to-do ${s.partials}, failed ${s.fails}, last run ${if (s.lastRun > 0) fmt.format(java.util.Date(s.lastRun)) else "-"}\n")
+        }
+        sb.append("\nThings the AI noticed it could automate:\n")
+        val notes = SkillStore.notes()
+        if (notes.isEmpty()) sb.append("(nothing yet)\n") else notes.takeLast(30).forEach { sb.append("- $it\n") }
+        val tv = TextView(this).apply { text = sb.toString(); textSize = 13f; setPadding(24, 24, 24, 24); setTextIsSelectable(true) }
+        AlertDialog.Builder(this)
+            .setTitle("Skills and discoveries")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setNeutralButton("Delete all skills") { _, _ ->
+                SkillStore.clear()
+                Toast.makeText(this, "All skills deleted", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     private fun showLog() {
         val tv = TextView(this).apply {
             text = BotLog.dump(80)
@@ -211,6 +236,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BotLog.init(filesDir)
+        SkillStore.init(this)
         BotLog.header = "Night Builder build ${currentBuild()} | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE}"
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
@@ -359,6 +385,7 @@ class MainActivity : ComponentActivity() {
             }
         })
         add(button("STOP") { BotService.instance?.stopBot() })
+        add(button("Skills and discoveries (what it learned)") { showSkills() })
         add(button("Show log (copy and send it to me)") { showLog() })
         add(button("Share last AI view (screenshot with the red box)") { shareLastView() })
 

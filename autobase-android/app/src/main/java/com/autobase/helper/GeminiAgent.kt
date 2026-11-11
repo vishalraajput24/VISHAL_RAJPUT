@@ -18,6 +18,9 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                     .put("label", str("visible text or short name of the button to tap"))
                     .put("reason", str("one short sentence: why this action"))
                     .put("wait_seconds", JSONObject().put("type", "INTEGER").put("description", "only for wait: seconds to sleep before looking again (10-300)"))
+                    .put("task", str("snake_case name of the routine this tap belongs to, e.g. alliance_help"))
+                    .put("repeat_minutes", JSONObject().put("type", "INTEGER").put("description", "minutes after which the same taps can be repeated blindly; 0 if not repeatable"))
+                    .put("notes", str("optional: something noticed that could be automated"))
                     .put(
                         "box_2d", JSONObject().put("type", "ARRAY")
                             .put("description", "[ymin, xmin, ymax, xmax] of the button, normalized to 0-1000. Only for tap.")
@@ -33,8 +36,8 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
 
     private val candidates = listOf(model, "gemini-flash-lite-latest", "gemini-flash-latest").distinct()
 
-    override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
-        val body = buildBody(jpegBase64, history)
+    override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>, known: String): AiDecision {
+        val body = buildBody(jpegBase64, history, known)
         var rate: RateLimitException? = null
         var busy: OverloadedException? = null
         for ((i, m) in candidates.withIndex()) {
@@ -47,7 +50,7 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
             } catch (e: Exception) {
                 if (thinkingOff && e.message?.contains("think", ignoreCase = true) == true) {
                     thinkingOff = false
-                    return decide(jpegBase64, width, height, history)   // retry once without the override
+                    return decide(jpegBase64, width, height, history, known)   // retry once without the override
                 }
                 if (i == 0) throw e   // bad key / bad request on the user's own model: report it
             }
@@ -55,8 +58,9 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
         throw busy ?: rate ?: Exception("No Gemini model answered")
     }
 
-    private fun buildBody(jpegBase64: String, history: List<String>): JSONObject {
-        val prompt = "Your last actions (oldest first):\n${AiPrompts.history(history)}\n\n" +
+    private fun buildBody(jpegBase64: String, history: List<String>, known: String): JSONObject {
+        val prompt = "Routines the app already replays by itself: $known\n" +
+            "Your last actions (oldest first):\n${AiPrompts.history(history)}\n\n" +
             "Decide the next action. For tap, box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000."
 
         return JSONObject()
@@ -113,7 +117,11 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                 }
             }
             val ws = out.optInt("wait_seconds", -1).takeIf { it > 0 }
-            return AiDecision(out.optString("action", "wait").lowercase(), box, out.optString("label"), out.optString("reason"), ws)
+            val rep = out.optInt("repeat_minutes", -1).takeIf { it >= 0 }
+            return AiDecision(
+                out.optString("action", "wait").lowercase(), box, out.optString("label"), out.optString("reason"),
+                ws, out.optString("task"), rep, out.optString("notes")
+            )
         } catch (e: java.io.IOException) {
             throw OverloadedException("network/timeout: ${e.message}")   // includes read timeouts: retry later
         } finally {

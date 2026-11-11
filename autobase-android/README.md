@@ -37,3 +37,10 @@ never sent), blocked words (shop, gems, buy, speed up, VIP, deals, prices) refus
 stop when the same spot is tapped 4 times, daily call cap, 10 h auto-stop.
 Default model is claude-haiku-5-5 (cheap); change it in the Model field for more accurate taps.
 The API key is stored only in the app's private storage on the phone.
+
+## Skills (learning)
+When the AI completes a routine that is safe to repeat (Help All, collecting, training the same troop), the app
+saves it as a skill: the tapped buttons are cropped as small images plus the tap order and a repeat timer.
+Due skills are replayed with image matching and no AI call. If a replay step is missing, the app closes the
+open menus and asks the AI again; a skill that fails 3 times is disabled and re-learned. The "Skills and
+discoveries" button lists what was learned and what the AI noticed it could automate.

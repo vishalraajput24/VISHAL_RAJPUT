@@ -19,7 +19,10 @@ data class AiDecision(
     val box: List<Int>?,
     val label: String,
     val reason: String,
-    val waitSec: Int? = null
+    val waitSec: Int? = null,
+    val task: String = "",
+    val repeatMin: Int? = null,
+    val notes: String = ""
 )
 
 /** Thrown when a provider says "too many requests / quota used up". */
@@ -29,7 +32,7 @@ class RateLimitException(message: String) : Exception(message)
 class OverloadedException(message: String) : Exception(message)
 
 interface Brain {
-    fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision
+    fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>, known: String): AiDecision
 }
 
 object AiPrompts {
@@ -38,26 +41,37 @@ object AiPrompts {
 
     val SYSTEM = """
 You operate the mobile strategy game Kingshot on the owner's own phone, looking at one screenshot at a time.
-Your job is to keep the city progressing while the owner sleeps, safely.
+Your job is to keep the city progressing while the owner sleeps, safely, and to notice what else can be automated.
 
-Do, in this priority order:
-1. Dismiss harmless popups: "Welcome back!" (tap Confirm), info dialogs (tap their X / Confirm / Claim).
-2. Collect what is ready: resource bubbles above buildings, free daily/idle rewards, completed-task Claim buttons.
-3. Alliance Help: if a "Help" / "Help All" button is visible, tap it.
-4. Keep the building queue busy: the quick panel (Town tab) lists "Building Queue 1 - Idle" with an arrow button. If a queue is Idle, use the arrow to go to a building and start an Upgrade that costs only normal resources (food, wood, stone, iron, coins). Prefer the building named in the quest bar at the bottom (e.g. "Upgrade Town Center to Lv. 15"). The Upgrade screen needs a final Upgrade/Confirm tap.
-If none of this applies, or everything is already running, choose wait.
+Allowed work, in priority order:
+1. Dismiss harmless popups ("Welcome back!" -> Confirm; info dialogs -> X / Confirm / Claim).
+2. Collect what is ready: resource bubbles above buildings, free or idle rewards, completed-task Claim buttons.
+3. Alliance Help: "Help" / "Help All".
+4. Keep every queue busy. The quick panel (Town tab on the left) shows them:
+   - Building Queue: if Idle, start an Upgrade (prefer the building named in the quest bar at the bottom).
+   - Troops Training (Infantry, Cavalry, Archer): if a line is idle, train the highest tier available, using resources only.
+   - Tech Research: if idle, start the recommended research, using resources only.
+5. Gather resources: if the march queue has a free slot, send a gather march to a resource node on the world map. Gather only.
+If nothing applies, choose wait.
 
-Never tap anything that could spend real money or premium currency, or is irreversible:
-Shop, Deals, Top-up, VIP purchase, Buy, any button showing a price or a gem/diamond cost, Speed Up or Use Item buttons,
-attack / rally / march / teleport / dismiss troops, chat, settings, account, mail deletion.
-If an Upgrade screen would use gems, or you are unsure what a button does, choose wait (or stop if the screen looks wrong).
+Never do anything that could spend real money or premium currency, or that is irreversible or hostile:
+Shop, Deals, Top-up, VIP purchase, Buy, any price or gem/diamond cost, Speed Up / Use Item,
+attack, rally, scout players, teleport / relocate, dismiss or disband troops, chat, settings, account, mail deletion.
+Gather marches go to resource nodes only; never attack monsters, beasts or players.
+If a screen would use gems, or you are unsure what a button does, choose wait (or stop if the screen looks wrong).
+
+Routines:
+- Give every tap a task name in snake_case (for example alliance_help, train_cavalry, collect_resources). Use the SAME name for every tap of one routine, from its first tap until you are back on the city view.
+- repeat_minutes: set it only when the exact same taps can safely be repeated blindly later (Help All, collecting, training the same troop at the same building). Use about the timer length for training, research or collecting, otherwise 15 to 30. For choices that differ each time (which building to upgrade, which resource tile) use 0.
+- The app replays learned routines by itself on timers, so do not redo a routine listed as already learned unless something looks stuck.
+- notes: when you notice something that could be automated but you did not do it (an idle queue, a free reward, a feature), write one short sentence. Leave it empty otherwise.
 
 Rules:
 - Return exactly one action: tap, wait, or stop.
-- For tap, give a tight box around the button you want.
+- For tap, give a tight box around just the button.
 - Do not repeat an action that did not change the screen; if your last actions look stuck, choose stop.
 - Loading screens, animations or unclear screens: wait.
-- When you choose wait, also give wait_seconds: if a build/training/research timer is the only thing pending, use about that remaining time but at most 300; on a loading or transition screen use 10; otherwise use 60.
+- For wait also give wait_seconds: about the remaining timer if that is the only thing pending (at most 300), 10 on a loading screen, otherwise 60.
 """.trimIndent()
 }
 
@@ -86,6 +100,9 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
                         .putAdditionalProperty("label", prop("string", "the visible text or short name of the button you tap, e.g. Confirm, Help, Upgrade"))
                         .putAdditionalProperty("reason", prop("string", "one short sentence: why this action"))
                         .putAdditionalProperty("wait_seconds", prop("integer", "only for wait: seconds to sleep before looking again (10-300)"))
+                        .putAdditionalProperty("task", prop("string", "snake_case name of the routine this tap belongs to, e.g. alliance_help"))
+                        .putAdditionalProperty("repeat_minutes", prop("integer", "minutes after which the same taps can be repeated blindly; 0 if not repeatable"))
+                        .putAdditionalProperty("notes", prop("string", "optional: something noticed that could be automated"))
                         .build()
                 )
                 .required(listOf("action", "reason"))
@@ -94,9 +111,10 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
         .build()
 
     /** Blocking call, run it off the main thread. Throws on network/API errors. */
-    override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
+    override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>, known: String): AiDecision {
         val histText = AiPrompts.history(history)
         val prompt = "Screenshot size: ${width}x${height} pixels (box coordinates must use this size).\n" +
+            "Routines the app already replays by itself: $known\n" +
             "Your last actions (oldest first):\n$histText\n\nDecide the next action and call the act tool."
 
         val content = listOf(
@@ -132,7 +150,7 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
             val action = str("action").lowercase()
             val x1 = num("x1"); val y1 = num("y1"); val x2 = num("x2"); val y2 = num("y2")
             val box = if (x1 != null && y1 != null && x2 != null && y2 != null) listOf(x1, y1, x2, y2) else null
-            return AiDecision(action, box, str("label"), str("reason"), num("wait_seconds"))
+            return AiDecision(action, box, str("label"), str("reason"), num("wait_seconds"), str("task"), num("repeat_minutes"), str("notes"))
         }
         return AiDecision("wait", null, "", "no tool call returned")
     }
