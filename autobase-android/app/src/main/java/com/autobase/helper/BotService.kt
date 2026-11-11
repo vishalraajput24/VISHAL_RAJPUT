@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
+import android.util.Base64
 import android.graphics.PixelFormat
 import android.view.Display
 import android.view.View
@@ -18,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import org.opencv.android.OpenCVLoader
 import org.opencv.core.Mat
 import kotlin.coroutines.resume
@@ -66,7 +69,9 @@ class BotService : AccessibilityService() {
     fun startBot() {
         if (running) return
         running = true
-        job = scope.launch { runLoop() }
+        job = scope.launch {
+            if (Prefs.aiMode(this@BotService)) runAiLoop() else runTemplateLoop()
+        }
     }
 
     fun stopBot(msg: String = "Stopped") {
@@ -96,7 +101,7 @@ class BotService : AccessibilityService() {
         overlay = null
     }
 
-    private suspend fun runLoop() {
+    private suspend fun runTemplateLoop() {
         val templates = Templates.loadAll(this)
         if (templates.isEmpty()) {
             stopBot("No button images set. Add at least one.")
@@ -158,6 +163,123 @@ class BotService : AccessibilityService() {
             }
         } finally {
             templates.values.forEach(Mat::release)
+        }
+    }
+
+    /** Package name of the app currently in front (used by the "detect game package" button). */
+    fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString()
+
+    private val blockedWords = Regex(
+        "\\b(buy|purchase|shop|gems?|diamonds?|top-?up|recharge|deals?|vip|speed ?up|pay|price|use item)\\b|[$\u20b9]",
+        RegexOption.IGNORE_CASE
+    )
+
+    private suspend fun runAiLoop() {
+        val key = Prefs.apiKey(this)
+        val model = Prefs.model(this)
+        val pkg = Prefs.gamePackage(this)
+        if (key.isBlank()) { stopBot("AI mode: enter your API key"); return }
+        if (pkg.isBlank()) {
+            stopBot("AI mode needs the game package so other apps are never sent. Use 'Detect game package'.")
+            return
+        }
+        val agent = AiAgent(key, model)
+        val startedAt = System.currentTimeMillis()
+        val history = ArrayDeque<String>()
+        var consecutiveErrors = 0
+        var lastTap: Pair<Int, Int>? = null
+        var sameSpot = 0
+
+        while (scope.isActive && running) {
+            if (System.currentTimeMillis() - startedAt > MAX_HOURS * 3_600_000L) {
+                stopBot("Auto-stopped after $MAX_HOURS hours"); return
+            }
+            if (currentPackage() != pkg) {
+                status = "Waiting for the game to be on screen"
+                delay(5_000)
+                continue
+            }
+            val used = Prefs.callsToday(this)
+            val cap = Prefs.maxCallsPerDay(this)
+            if (used >= cap) { stopBot("Daily AI call limit reached ($cap)"); return }
+
+            val bmp = screenshot()
+            if (bmp == null) {
+                status = "Screenshot failed, retrying"
+                delay(3_000)
+                continue
+            }
+            val sendW = 720
+            val sendH = (bmp.height * sendW.toFloat() / bmp.width).toInt()
+            val factor = bmp.width.toFloat() / sendW
+            val small = Bitmap.createScaledBitmap(bmp, sendW, sendH, true)
+            bmp.recycle()
+            val out = ByteArrayOutputStream()
+            small.compress(Bitmap.CompressFormat.JPEG, 70, out)
+            small.recycle()
+            val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+
+            status = "Asking AI... (call ${used + 1}/$cap)"
+            Prefs.addCall(this)
+            val result = withContext(Dispatchers.IO) {
+                runCatching { agent.decide(b64, sendW, sendH, history.toList()) }
+            }
+            val decision = result.getOrNull()
+            if (decision == null) {
+                consecutiveErrors++
+                val msg = result.exceptionOrNull()?.message?.take(120) ?: "unknown error"
+                if (consecutiveErrors >= 3) {
+                    stopBot("AI errors, stopped. Last: $msg")
+                    return
+                }
+                status = "AI error ($consecutiveErrors/3): $msg"
+                delay(15_000)
+                continue
+            }
+            consecutiveErrors = 0
+
+            when (decision.action) {
+                "stop" -> { stopBot("AI asked to stop: ${decision.reason}"); return }
+                "tap" -> {
+                    val b = decision.box
+                    val text = decision.label + " " + decision.reason
+                    if (b == null || b[2] <= b[0] || b[3] <= b[1] ||
+                        b[0] < 0 || b[1] < 0 || b[2] > sendW || b[3] > sendH
+                    ) {
+                        status = "AI gave an invalid box, skipping"
+                        delay(10_000)
+                    } else if (blockedWords.containsMatchIn(text)) {
+                        status = "Blocked a risky tap: '${decision.label}'"
+                        history.addLast("REFUSED to tap '${decision.label}' (money/risky). Choose something else or wait.")
+                        while (history.size > 4) history.removeFirst()
+                        delay(10_000)
+                    } else {
+                        val cx = ((b[0] + b[2]) / 2f * factor).toInt()
+                        val cy = ((b[1] + b[3]) / 2f * factor).toInt()
+                        val here = Pair(cx, cy)
+                        sameSpot = if (lastTap != null && near(lastTap, here)) sameSpot + 1 else 1
+                        lastTap = here
+                        if (sameSpot >= 4) {
+                            stopBot("Stuck: same spot tapped 4 times ('${decision.label}')")
+                            return
+                        }
+                        tap(cx + Random.nextInt(-4, 5), cy + Random.nextInt(-4, 5))
+                        status = "AI tapped '${decision.label}': ${decision.reason}"
+                        history.addLast("tapped '${decision.label}' - ${decision.reason}")
+                        while (history.size > 4) history.removeFirst()
+                        delay(Random.nextLong(3_500, 6_000))   // let the game animate before the next look
+                    }
+                }
+                else -> {
+                    sameSpot = 0
+                    lastTap = null
+                    history.addLast("waited - ${decision.reason}")
+                    while (history.size > 4) history.removeFirst()
+                    val base = Prefs.intervalSec(this) * 1000L
+                    status = "AI: nothing to do (${decision.reason}). Next look in ~${base / 1000}s"
+                    delay(base + Random.nextLong(0, 5_000))
+                }
+            }
         }
     }
 

@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -26,6 +27,10 @@ class MainActivity : ComponentActivity() {
     private var pendingName: String? = null
     private lateinit var pkgField: EditText
     private lateinit var intervalField: EditText
+    private lateinit var aiSwitch: Switch
+    private lateinit var apiKeyField: EditText
+    private lateinit var modelField: EditText
+    private lateinit var maxCallsField: EditText
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         val name = pendingName
@@ -88,6 +93,18 @@ class MainActivity : ComponentActivity() {
         add(text("Step 3 (optional): game package name. Taps only happen while this app is in front. Leave empty to skip."))
         pkgField = EditText(this).apply { setText(Prefs.gamePackage(this@MainActivity)) }
         add(pkgField)
+        add(button("Detect game package (open the game within 6 seconds)") {
+            Toast.makeText(this, "Open the game now. Detecting in 6 seconds...", Toast.LENGTH_LONG).show()
+            ui.postDelayed({
+                val p = BotService.instance?.currentPackage()
+                if (p != null && p != packageName) {
+                    pkgField.setText(p)
+                    Toast.makeText(this, "Detected: $p", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Could not detect. Is the accessibility service on and the game in front?", Toast.LENGTH_LONG).show()
+                }
+            }, 6000)
+        })
 
         add(text("Check interval when idle (seconds)"))
         intervalField = EditText(this).apply {
@@ -96,9 +113,38 @@ class MainActivity : ComponentActivity() {
         }
         add(intervalField)
 
+        add(text(
+            "AI mode (optional): Claude looks at the screen and decides what to tap. Needs internet and your " +
+                "Anthropic API key. Game screenshots are sent to Anthropic. Requires the game package above."
+        ))
+        aiSwitch = Switch(this).apply {
+            text = "Use AI mode"
+            isChecked = Prefs.aiMode(this@MainActivity)
+        }
+        add(aiSwitch)
+        apiKeyField = EditText(this).apply {
+            hint = "Anthropic API key"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(Prefs.apiKey(this@MainActivity))
+        }
+        add(apiKeyField)
+        add(text("Model (cheap and fast by default; a stronger model taps more accurately but costs more)"))
+        modelField = EditText(this).apply { setText(Prefs.model(this@MainActivity)) }
+        add(modelField)
+        add(text("Max AI calls per day (cost cap)"))
+        maxCallsField = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(Prefs.maxCallsPerDay(this@MainActivity).toString())
+        }
+        add(maxCallsField)
+
         add(button("START") {
             Prefs.setGamePackage(this, pkgField.text.toString())
             Prefs.setIntervalSec(this, intervalField.text.toString().toIntOrNull() ?: 30)
+            Prefs.setAiMode(this, aiSwitch.isChecked)
+            Prefs.setApiKey(this, apiKeyField.text.toString())
+            Prefs.setModel(this, modelField.text.toString())
+            Prefs.setMaxCallsPerDay(this, maxCallsField.text.toString().toIntOrNull() ?: 400)
             val svc = BotService.instance
             if (svc == null) {
                 Toast.makeText(this, "Enable the accessibility service first", Toast.LENGTH_LONG).show()

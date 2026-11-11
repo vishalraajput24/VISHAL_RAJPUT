@@ -25,3 +25,12 @@ pre-release named `autobase-build-N`. Open the Releases page on your phone and i
 - Keep screen timeout at maximum; disable battery optimisation for the app.
 - Automating a game may violate its terms of service and can get an account banned.
   Use at your own risk, ideally on a spare account first.
+
+## AI mode (optional)
+Turn on "Use AI mode" in the app and paste your Anthropic API key. Instead of matching saved
+button images, the app sends a downscaled screenshot to Claude, which returns one action
+(tap a box / wait / stop). Guards in the app: game-package filter is mandatory (other apps are
+never sent), blocked words (shop, gems, buy, speed up, VIP, deals, prices) refuse the tap,
+stop when the same spot is tapped 4 times, daily call cap, 10 h auto-stop.
+Default model is claude-haiku-5-5 (cheap); change it in the Model field for more accurate taps.
+The API key is stored only in the app's private storage on the phone.
