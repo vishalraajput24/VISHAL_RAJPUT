@@ -71,9 +71,19 @@ class MainActivity : ComponentActivity() {
         statusView = text("Status: ...").apply { textSize = 16f }
         add(statusView)
 
-        add(text("Step 1: enable the AutoBase accessibility service."))
+        add(text("Step 1: enable the Night Builder accessibility service."))
         add(button("Open Accessibility settings") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        })
+        add(text(
+            "Not listed, or greyed out? Android blocks apps installed from a file. Tap the button below -> " +
+                "three dots (top right) -> 'Allow restricted settings'. Then open Accessibility again: " +
+                "Installed / Downloaded apps -> Night Builder -> ON."
+        ))
+        add(button("Open App info (Allow restricted settings)") {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            )
         })
 
         add(text(

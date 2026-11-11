@@ -8,12 +8,21 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.autobase.helper"
+        applicationId = "com.nightbuilder.app"
         minSdk = 30            // AccessibilityService.takeScreenshot() needs Android 11+
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         ndk { abiFilters += listOf("arm64-v8a") }   // keeps the APK small
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

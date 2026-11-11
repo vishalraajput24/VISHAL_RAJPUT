@@ -1,4 +1,4 @@
-# AutoBase (personal-use prototype)
+# Night Builder (personal-use prototype)
 
 Android app that watches the screen and taps three buttons you choose
 (collect, help, upgrade) so a base can progress overnight.

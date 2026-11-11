@@ -1,4 +1,4 @@
-name: Build AutoBase APK
+name: Build Night Builder APK
 
 on:
   push:
@@ -33,14 +33,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AutoBase-debug-apk
+          name: NightBuilder-debug-apk
           path: autobase-android/app/build/outputs/apk/debug/app-debug.apk
 
       # A release asset is easy to download from a phone browser (artifacts are not).
       - name: Publish APK as a pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: autobase-build-${{ github.run_number }}
-          name: AutoBase build ${{ github.run_number }}
+          tag_name: nightbuilder-build-${{ github.run_number }}
+          name: Night Builder build ${{ github.run_number }}
           prerelease: true
           files: autobase-android/app/build/outputs/apk/debug/app-debug.apk
