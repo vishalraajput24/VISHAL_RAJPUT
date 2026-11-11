@@ -39,6 +39,7 @@ class BotService : AccessibilityService() {
         @Volatile var instance: BotService? = null
         @Volatile var status: String = "Service not enabled"
         @Volatile var running: Boolean = false
+        @Volatile var lastEventPackage: String? = null
         const val MATCH_THRESHOLD = 0.85
         const val MAX_HOURS = 10L        // auto-stop so it never runs forever
         const val STUCK_LIMIT = 6        // same spot tapped this many times in a row => stop
@@ -55,7 +56,13 @@ class BotService : AccessibilityService() {
         addKeepAwakeOverlay()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val p = event.packageName?.toString() ?: return
+        // ignore our own windows, the status bar/shade and keyboards
+        if (p == packageName || p == "com.android.systemui" || p.contains("inputmethod") || p.contains("keyboard")) return
+        lastEventPackage = p
+    }
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -167,7 +174,7 @@ class BotService : AccessibilityService() {
     }
 
     /** Package name of the app currently in front (used by the "detect game package" button). */
-    fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString()
+    fun currentPackage(): String? = rootInActiveWindow?.packageName?.toString() ?: lastEventPackage
 
     private val blockedWords = Regex(
         "\\b(buy|purchase|shop|gems?|diamonds?|top-?up|recharge|deals?|vip|speed ?up|pay|price|use item)\\b|[$\u20b9]",

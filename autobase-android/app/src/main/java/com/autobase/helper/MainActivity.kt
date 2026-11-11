@@ -1,6 +1,7 @@
 package com.autobase.helper
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -49,6 +50,51 @@ class MainActivity : ComponentActivity() {
             Templates.save(this, name, bmp)
             refreshSlots()
         }
+    }
+
+    private var detecting = false
+
+    /** Polls the foreground app for 20 seconds and keeps the last real app seen (not us, not home, not system UI). */
+    private fun startDetect() {
+        val svc = BotService.instance
+        if (svc == null) {
+            Toast.makeText(this, "Enable the accessibility service first", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (detecting) return
+        detecting = true
+        val home = packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY
+        )?.activityInfo?.packageName
+        var candidate: String? = null
+        var left = 20
+        Toast.makeText(this, "Now open the game and leave it on screen for a few seconds.", Toast.LENGTH_LONG).show()
+        val step = object : Runnable {
+            override fun run() {
+                val p = svc.currentPackage()
+                if (p != null && p != packageName && p != home && p != "com.android.systemui" &&
+                    !p.contains("inputmethod") && !p.contains("keyboard")
+                ) candidate = p
+                if (left <= 0) {
+                    detecting = false
+                    val found = candidate
+                    if (found != null) {
+                        pkgField.setText(found)
+                        Prefs.setGamePackage(this@MainActivity, found)
+                        BotService.status = "Detected game: $found"
+                        Toast.makeText(this@MainActivity, "Detected: $found", Toast.LENGTH_LONG).show()
+                    } else {
+                        BotService.status = "Could not detect a game app"
+                        Toast.makeText(this@MainActivity, "Could not detect. Try again and keep the game open.", Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    BotService.status = "Detecting game... ${left}s left. Open the game now."
+                    left--
+                    ui.postDelayed(this, 1000)
+                }
+            }
+        }
+        ui.post(step)
     }
 
     private val ticker = object : Runnable {
@@ -108,20 +154,12 @@ class MainActivity : ComponentActivity() {
         }
 
         add(text("Step 3 (optional): game package name. Taps only happen while this app is in front. Leave empty to skip."))
-        pkgField = EditText(this).apply { setText(Prefs.gamePackage(this@MainActivity)) }
+        pkgField = EditText(this).apply {
+            hint = "Kingshot is usually com.run.tower.defense"
+            setText(Prefs.gamePackage(this@MainActivity))
+        }
         add(pkgField)
-        add(button("Detect game package (open the game within 6 seconds)") {
-            Toast.makeText(this, "Open the game now. Detecting in 6 seconds...", Toast.LENGTH_LONG).show()
-            ui.postDelayed({
-                val p = BotService.instance?.currentPackage()
-                if (p != null && p != packageName) {
-                    pkgField.setText(p)
-                    Toast.makeText(this, "Detected: $p", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(this, "Could not detect. Is the accessibility service on and the game in front?", Toast.LENGTH_LONG).show()
-                }
-            }, 6000)
-        })
+        add(button("Detect game package (20 second countdown)") { startDetect() })
 
         add(text("Check interval when idle (seconds)"))
         intervalField = EditText(this).apply {
