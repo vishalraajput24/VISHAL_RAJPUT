@@ -49,6 +49,7 @@ class BotService : AccessibilityService() {
         const val MATCH_THRESHOLD = 0.85
         const val MAX_HOURS = 10L        // auto-stop so it never runs forever
         const val STUCK_LIMIT = 6        // same spot tapped this many times in a row => stop
+        const val MAX_WAIT_SEC = 900     // longest sleep the AI may ask for between looks
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -219,6 +220,7 @@ class BotService : AccessibilityService() {
         var lastTap: Pair<Int, Int>? = null
         var sameSpot = 0
         var nextAiAt = 0L
+        var aiBlockedUntil = 0L   // set when the provider's quota is used up; skills keep running meanwhile
 
         try {
             while (scope.isActive && running) {
@@ -253,7 +255,7 @@ class BotService : AccessibilityService() {
                 }
 
                 // 2) the AI is only asked when its own wait time is over
-                val waitMs = nextAiAt - System.currentTimeMillis()
+                val waitMs = maxOf(nextAiAt, aiBlockedUntil) - System.currentTimeMillis()
                 if (waitMs > 0) {
                     delay(minOf(3_000L, waitMs).coerceAtLeast(300L))
                     continue
@@ -300,15 +302,14 @@ class BotService : AccessibilityService() {
                     delay(wait)
                     continue
                 }
-                if (result.exceptionOrNull() is RateLimitException) {
+                val rl = result.exceptionOrNull()
+                if (rl is RateLimitException) {
                     finishRecording()
-                    rateLimited++
-                    if (rateLimited >= 6) {
-                        stopBot("Free quota used up. Stopped. Try again later (quota resets daily).")
-                        return
-                    }
-                    status = "Rate limit hit ($rateLimited/6). Waiting 5 minutes"
-                    delay(300_000)
+                    val waitS = if (rl.daily) 3_600 else maxOf(30, (rl.retrySec ?: 60) + 5)
+                    aiBlockedUntil = System.currentTimeMillis() + waitS * 1000L
+                    BotLog.add("Rate limit: ${rl.message}")
+                    status = if (rl.daily) "Free daily AI quota used up. Learned skills keep running. AI retry in ${waitS / 60} min"
+                    else "AI rate limit. Waiting ${waitS}s"
                     continue
                 }
                 if (decision == null) {
@@ -374,7 +375,7 @@ class BotService : AccessibilityService() {
                         while (history.size > 4) history.removeFirst()
                         val minWait = Prefs.intervalSec(this)
                         val ask = decision.waitSec
-                        val waitSec = if (ask != null) maxOf(minWait, minOf(ask, 300)) else minWait
+                        val waitSec = maxOf(minWait, minOf(ask ?: 120, MAX_WAIT_SEC))
                         status = "AI: nothing to do (${decision.reason}). Next look in ~${waitSec}s"
                         nextAiAt = System.currentTimeMillis() + waitSec * 1000L + Random.nextLong(0, 5_000)
                     }

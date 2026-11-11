@@ -26,7 +26,7 @@ data class AiDecision(
 )
 
 /** Thrown when a provider says "too many requests / quota used up". */
-class RateLimitException(message: String) : Exception(message)
+class RateLimitException(message: String, val daily: Boolean = false, val retrySec: Int? = null) : Exception(message)
 
 /** Thrown when the provider is temporarily overloaded (HTTP 500/502/503/504). Worth retrying later. */
 class OverloadedException(message: String) : Exception(message)
@@ -71,7 +71,7 @@ Rules:
 - For tap, give a tight box around just the button.
 - Do not repeat an action that did not change the screen; if your last actions look stuck, choose stop.
 - Loading screens, animations or unclear screens: wait.
-- For wait also give wait_seconds: about the remaining timer if that is the only thing pending (at most 300), 10 on a loading screen, otherwise 60.
+- For wait also give wait_seconds: about the remaining timer if that is the only thing pending (at most 900), 10 on a loading screen, otherwise 120. Each look costs a small daily quota, so prefer long waits when every queue is busy.
 """.trimIndent()
 }
 
@@ -99,7 +99,7 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
                         .putAdditionalProperty("y2", prop("integer", "bottom edge of the target button in image pixels (only for tap)"))
                         .putAdditionalProperty("label", prop("string", "the visible text or short name of the button you tap, e.g. Confirm, Help, Upgrade"))
                         .putAdditionalProperty("reason", prop("string", "one short sentence: why this action"))
-                        .putAdditionalProperty("wait_seconds", prop("integer", "only for wait: seconds to sleep before looking again (10-300)"))
+                        .putAdditionalProperty("wait_seconds", prop("integer", "only for wait: seconds to sleep before looking again (10-900)"))
                         .putAdditionalProperty("task", prop("string", "snake_case name of the routine this tap belongs to, e.g. alliance_help"))
                         .putAdditionalProperty("repeat_minutes", prop("integer", "minutes after which the same taps can be repeated blindly; 0 if not repeatable"))
                         .putAdditionalProperty("notes", prop("string", "optional: something noticed that could be automated"))

@@ -42,10 +42,17 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
         var busy: OverloadedException? = null
         for ((i, m) in candidates.withIndex()) {
             try {
-                return call(m, body, width, height)
+                val d = call(m, body, width, height)
+                if (i > 0) BotLog.add("Answered by fallback model $m")
+                return d
             } catch (e: RateLimitException) {
-                rate = e
+                BotLog.add("model $m: ${e.message}")
+                val prev = rate
+                rate = if (prev == null) e else RateLimitException(
+                    e.message ?: "", prev.daily || e.daily, listOfNotNull(prev.retrySec, e.retrySec).minOrNull()
+                )
             } catch (e: OverloadedException) {
+                BotLog.add("model $m: ${e.message}")
                 busy = e
             } catch (e: Exception) {
                 if (thinkingOff && e.message?.contains("think", ignoreCase = true) == true) {
@@ -96,7 +103,14 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
 
             val code = conn.responseCode
-            if (code == 429) throw RateLimitException("HTTP 429: free quota / rate limit reached")
+            if (code == 429) {
+                val err = conn.errorStream?.bufferedReader()?.readText().orEmpty()
+                val low = err.lowercase()
+                val daily = low.contains("perday") || low.contains("per day") || low.contains("daily")
+                val retry = Regex("\"retryDelay\"\\s*:\\s*\"(\\d+)").find(err)?.groupValues?.get(1)?.toIntOrNull()
+                val msg = runCatching { JSONObject(err).getJSONObject("error").getString("message") }.getOrDefault(err)
+                throw RateLimitException("HTTP 429 ($model): ${msg.take(200)}", daily, retry)
+            }
             if (code == 500 || code == 502 || code == 503 || code == 504) throw OverloadedException("HTTP $code: Google is busy")
             if (code != 200) {
                 val err = conn.errorStream?.bufferedReader()?.readText().orEmpty()
