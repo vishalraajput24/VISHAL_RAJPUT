@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.autobase.helper"
     compileSdk = 34
@@ -11,8 +13,8 @@ android {
         applicationId = "com.nightbuilder.app"
         minSdk = 30            // AccessibilityService.takeScreenshot() needs Android 11+
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = buildNumber
+        versionName = "0.3.$buildNumber"
         ndk { abiFilters += listOf("arm64-v8a") }   // keeps the APK small
     }
 

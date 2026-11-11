@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
 
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var statusView: TextView
+    private lateinit var updateView: TextView
     private val slotViews = HashMap<String, TextView>()
     private var pendingName: String? = null
     private lateinit var pkgField: EditText
@@ -53,6 +54,66 @@ class MainActivity : ComponentActivity() {
     }
 
     private var detecting = false
+    private var checkedOnce = false
+
+    private fun currentBuild(): Long = packageManager.getPackageInfo(packageName, 0).longVersionCode
+
+    /** manual = true shows a message even when there is nothing new. */
+    private fun checkUpdate(manual: Boolean) {
+        if (manual) Toast.makeText(this, "Checking for updates...", Toast.LENGTH_SHORT).show()
+        Thread {
+            val res = runCatching { Updater.latest() }
+            runOnUiThread {
+                val rel = res.getOrNull()
+                val cur = currentBuild()
+                when {
+                    res.isFailure -> if (manual) Toast.makeText(
+                        this, "Update check failed: " + res.exceptionOrNull()?.message, Toast.LENGTH_LONG
+                    ).show()
+                    rel == null -> if (manual) Toast.makeText(this, "No release found", Toast.LENGTH_SHORT).show()
+                    rel.build <= cur -> {
+                        updateView.text = "Version: build $cur (up to date)"
+                        if (manual) Toast.makeText(this, "You are up to date", Toast.LENGTH_SHORT).show()
+                    }
+                    else -> {
+                        updateView.text = "Version: build $cur. UPDATE AVAILABLE: build ${rel.build}"
+                        if (manual) {
+                            AlertDialog.Builder(this)
+                                .setTitle("Update available")
+                                .setMessage("Build ${rel.build} is ready (you have $cur). Download and install now? The bot will stop.")
+                                .setPositiveButton("Update") { _, _ -> downloadAndInstall(rel) }
+                                .setNegativeButton("Later", null)
+                                .show()
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun downloadAndInstall(rel: Updater.Release) {
+        if (!packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(this, "Allow 'Install unknown apps' for Night Builder, then press Update again.", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+        BotService.instance?.stopBot("Stopped for update")
+        BotService.status = "Downloading update 0%"
+        Thread {
+            val res = runCatching {
+                Updater.download(this, rel) { pct -> BotService.status = "Downloading update $pct%" }
+            }
+            runOnUiThread {
+                val apk = res.getOrNull()
+                if (apk == null) {
+                    BotService.status = "Update failed: " + res.exceptionOrNull()?.message
+                } else {
+                    BotService.status = "Download done. Confirm the install."
+                    Updater.install(this, apk)
+                }
+            }
+        }.start()
+    }
 
     /** Polls the foreground app for 20 seconds and keeps the last real app seen (not us, not home, not system UI). */
     private fun startDetect() {
@@ -123,6 +184,10 @@ class MainActivity : ComponentActivity() {
 
         statusView = text("Status: ...").apply { textSize = 16f }
         add(statusView)
+
+        updateView = text("Version: build ${currentBuild()}")
+        add(updateView)
+        add(button("Check for update / Update app") { checkUpdate(true) })
 
         add(text("Step 1: enable the Night Builder accessibility service."))
         add(button("Open Accessibility settings") {
@@ -258,6 +323,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (!checkedOnce) { checkedOnce = true; checkUpdate(false) }
         refreshSlots()
         ui.post(ticker)
     }
