@@ -19,6 +19,9 @@ data class AiDecision(val action: String, val box: List<Int>?, val label: String
 /** Thrown when a provider says "too many requests / quota used up". */
 class RateLimitException(message: String) : Exception(message)
 
+/** Thrown when the provider is temporarily overloaded (HTTP 500/502/503/504). Worth retrying later. */
+class OverloadedException(message: String) : Exception(message)
+
 interface Brain {
     fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision
 }

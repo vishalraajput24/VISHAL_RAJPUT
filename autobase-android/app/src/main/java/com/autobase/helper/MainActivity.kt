@@ -218,7 +218,7 @@ class MainActivity : ComponentActivity() {
             })
         }
 
-        add(text("Step 3 (optional): game package name. Taps only happen while this app is in front. Leave empty to skip."))
+        add(text("Step 3 (optional): game package name. Taps only happen while this app is in front. REQUIRED for AI mode (use the detect button or type it)."))
         pkgField = EditText(this).apply {
             hint = "Kingshot is usually com.run.tower.defense"
             setText(Prefs.gamePackage(this@MainActivity))

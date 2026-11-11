@@ -193,6 +193,7 @@ class BotService : AccessibilityService() {
         }
         val agent: Brain = if (gemini) GeminiAgent(key, model) else ClaudeAgent(key, model)
         var rateLimited = 0
+        var overloaded = 0
         val startedAt = System.currentTimeMillis()
         val history = ArrayDeque<String>()
         var consecutiveErrors = 0
@@ -234,6 +235,17 @@ class BotService : AccessibilityService() {
                 runCatching { agent.decide(b64, sendW, sendH, history.toList()) }
             }
             val decision = result.getOrNull()
+            if (result.exceptionOrNull() is OverloadedException) {
+                overloaded++
+                if (overloaded >= 20) {
+                    stopBot("The AI service stayed overloaded. Stopped. Try again later.")
+                    return
+                }
+                val wait = (30_000L * overloaded).coerceAtMost(300_000L)
+                status = "AI service busy (503). Retry $overloaded/20 in ${wait / 1000}s"
+                delay(wait)
+                continue
+            }
             if (result.exceptionOrNull() is RateLimitException) {
                 rateLimited++
                 if (rateLimited >= 6) {
@@ -257,6 +269,7 @@ class BotService : AccessibilityService() {
             }
             consecutiveErrors = 0
             rateLimited = 0
+            overloaded = 0
 
             when (decision.action) {
                 "stop" -> { stopBot("AI asked to stop: ${decision.reason}"); return }

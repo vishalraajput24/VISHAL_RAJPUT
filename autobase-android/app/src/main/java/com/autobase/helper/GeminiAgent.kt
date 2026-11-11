@@ -26,11 +26,32 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
             .put("required", JSONArray(listOf("action", "reason")))
     }
 
+    /** The user's model first, then lighter/alternative aliases. Each model has its own quota and load. */
+    private val candidates = listOf(model, "gemini-flash-lite-latest", "gemini-flash-latest").distinct()
+
     override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
+        val body = buildBody(jpegBase64, history)
+        var rate: RateLimitException? = null
+        var busy: OverloadedException? = null
+        for ((i, m) in candidates.withIndex()) {
+            try {
+                return call(m, body, width, height)
+            } catch (e: RateLimitException) {
+                rate = e
+            } catch (e: OverloadedException) {
+                busy = e
+            } catch (e: Exception) {
+                if (i == 0) throw e   // bad key / bad request on the user's own model: report it
+            }
+        }
+        throw busy ?: rate ?: Exception("No Gemini model answered")
+    }
+
+    private fun buildBody(jpegBase64: String, history: List<String>): JSONObject {
         val prompt = "Your last actions (oldest first):\n${AiPrompts.history(history)}\n\n" +
             "Decide the next action. For tap, box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000."
 
-        val body = JSONObject()
+        return JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", AiPrompts.SYSTEM))))
             .put(
                 "contents", JSONArray().put(
@@ -47,6 +68,9 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                     .put("responseSchema", schema())
             )
 
+    }
+
+    private fun call(model: String, body: JSONObject, width: Int, height: Int): AiDecision {
         val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
             .openConnection() as HttpURLConnection
         try {
@@ -60,6 +84,7 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
 
             val code = conn.responseCode
             if (code == 429) throw RateLimitException("HTTP 429: free quota / rate limit reached")
+            if (code == 500 || code == 502 || code == 503 || code == 504) throw OverloadedException("HTTP $code: Google is busy")
             if (code != 200) {
                 val err = conn.errorStream?.bufferedReader()?.readText().orEmpty()
                 val msg = runCatching { JSONObject(err).getJSONObject("error").getString("message") }.getOrDefault(err)
