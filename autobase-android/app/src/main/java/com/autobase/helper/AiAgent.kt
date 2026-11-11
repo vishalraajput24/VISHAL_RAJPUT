@@ -13,10 +13,45 @@ import com.anthropic.models.messages.TextBlockParam
 import com.anthropic.models.messages.Tool
 import kotlin.jvm.optionals.getOrNull
 
-/** What the model decided. box is [x1, y1, x2, y2] in the coordinates of the image it was shown. */
+/** What the model decided. box is [x1, y1, x2, y2] in pixels of the image it was shown. */
 data class AiDecision(val action: String, val box: List<Int>?, val label: String, val reason: String)
 
-class AiAgent(apiKey: String, private val model: String) {
+/** Thrown when a provider says "too many requests / quota used up". */
+class RateLimitException(message: String) : Exception(message)
+
+interface Brain {
+    fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision
+}
+
+object AiPrompts {
+    fun history(history: List<String>) =
+        if (history.isEmpty()) "none yet" else history.joinToString("\n") { "- $it" }
+
+    val SYSTEM = """
+You operate the mobile strategy game Kingshot on the owner's own phone, looking at one screenshot at a time.
+Your job is to keep the city progressing while the owner sleeps, safely.
+
+Do, in this priority order:
+1. Dismiss harmless popups: "Welcome back!" (tap Confirm), info dialogs (tap their X / Confirm / Claim).
+2. Collect what is ready: resource bubbles above buildings, free daily/idle rewards, completed-task Claim buttons.
+3. Alliance Help: if a "Help" / "Help All" button is visible, tap it.
+4. Keep the building queue busy: the quick panel (Town tab) lists "Building Queue 1 - Idle" with an arrow button. If a queue is Idle, use the arrow to go to a building and start an Upgrade that costs only normal resources (food, wood, stone, iron, coins). Prefer the building named in the quest bar at the bottom (e.g. "Upgrade Town Center to Lv. 15"). The Upgrade screen needs a final Upgrade/Confirm tap.
+If none of this applies, or everything is already running, choose wait.
+
+Never tap anything that could spend real money or premium currency, or is irreversible:
+Shop, Deals, Top-up, VIP purchase, Buy, any button showing a price or a gem/diamond cost, Speed Up or Use Item buttons,
+attack / rally / march / teleport / dismiss troops, chat, settings, account, mail deletion.
+If an Upgrade screen would use gems, or you are unsure what a button does, choose wait (or stop if the screen looks wrong).
+
+Rules:
+- Return exactly one action: tap, wait, or stop.
+- For tap, give a tight box around the button you want.
+- Do not repeat an action that did not change the screen; if your last actions look stuck, choose stop.
+- Loading screens, animations or unclear screens: wait.
+""".trimIndent()
+}
+
+class ClaudeAgent(apiKey: String, private val model: String) : Brain {
 
     private val client: AnthropicClient = AnthropicOkHttpClient.builder().apiKey(apiKey).build()
 
@@ -48,8 +83,8 @@ class AiAgent(apiKey: String, private val model: String) {
         .build()
 
     /** Blocking call, run it off the main thread. Throws on network/API errors. */
-    fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
-        val histText = if (history.isEmpty()) "none yet" else history.joinToString("\n") { "- $it" }
+    override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
+        val histText = AiPrompts.history(history)
         val prompt = "Screenshot size: ${width}x${height} pixels (box coordinates must use this size).\n" +
             "Your last actions (oldest first):\n$histText\n\nDecide the next action and call the act tool."
 
@@ -70,7 +105,7 @@ class AiAgent(apiKey: String, private val model: String) {
         val params = MessageCreateParams.builder()
             .model(model)
             .maxTokens(2000L)
-            .system(SYSTEM_PROMPT)
+            .system(AiPrompts.SYSTEM + "\nAlways call the act tool exactly once. Box coordinates are pixels of the screenshot you were shown.")
             .addTool(actTool)
             .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
             .addMessage(MessageParam.ofUserOfContentBlockParams(content))
@@ -89,30 +124,5 @@ class AiAgent(apiKey: String, private val model: String) {
             return AiDecision(action, box, str("label"), str("reason"))
         }
         return AiDecision("wait", null, "", "no tool call returned")
-    }
-
-    companion object {
-        val SYSTEM_PROMPT = """
-You operate the mobile strategy game Kingshot on the owner's own phone, looking at one screenshot at a time.
-Your job is to keep the city progressing while the owner sleeps, safely.
-
-Do, in this priority order:
-1. Dismiss harmless popups: "Welcome back!" (tap Confirm), info dialogs (tap their X / Confirm / Claim).
-2. Collect what is ready: resource bubbles above buildings, free daily/idle rewards, completed-task Claim buttons.
-3. Alliance Help: if a "Help" / "Help All" button is visible, tap it.
-4. Keep the building queue busy: the quick panel (Town tab) lists "Building Queue 1 - Idle" with an arrow button. If a queue is Idle, use the arrow to go to a building and start an Upgrade that costs only normal resources (food, wood, stone, iron, coins). Prefer the building named in the quest bar at the bottom (e.g. "Upgrade Town Center to Lv. 15"). The Upgrade screen needs a final Upgrade/Confirm tap.
-If none of this applies, or everything is already running, choose wait.
-
-Never tap anything that could spend real money or premium currency, or is irreversible:
-Shop, Deals, Top-up, VIP purchase, Buy, any button showing a price or a gem/diamond cost, Speed Up or Use Item buttons,
-attack / rally / march / teleport / dismiss troops, chat, settings, account, mail deletion.
-If an Upgrade screen would use gems, or you are unsure what a button does, choose wait (or stop if the screen looks wrong).
-
-Rules for output:
-- Always call the act tool exactly once.
-- For tap, give a tight box around the button you want, in the pixel coordinates of the screenshot you were shown.
-- Do not repeat an action that did not change the screen; if your last actions look stuck, choose stop.
-- Loading screens, animations or unclear screens: wait.
-""".trimIndent()
     }
 }

@@ -175,15 +175,17 @@ class BotService : AccessibilityService() {
     )
 
     private suspend fun runAiLoop() {
-        val key = Prefs.apiKey(this)
-        val model = Prefs.model(this)
+        val gemini = Prefs.provider(this) == "gemini"
+        val key = if (gemini) Prefs.geminiKey(this) else Prefs.apiKey(this)
+        val model = if (gemini) Prefs.geminiModel(this) else Prefs.model(this)
         val pkg = Prefs.gamePackage(this)
         if (key.isBlank()) { stopBot("AI mode: enter your API key"); return }
         if (pkg.isBlank()) {
             stopBot("AI mode needs the game package so other apps are never sent. Use 'Detect game package'.")
             return
         }
-        val agent = AiAgent(key, model)
+        val agent: Brain = if (gemini) GeminiAgent(key, model) else ClaudeAgent(key, model)
+        var rateLimited = 0
         val startedAt = System.currentTimeMillis()
         val history = ArrayDeque<String>()
         var consecutiveErrors = 0
@@ -225,6 +227,16 @@ class BotService : AccessibilityService() {
                 runCatching { agent.decide(b64, sendW, sendH, history.toList()) }
             }
             val decision = result.getOrNull()
+            if (result.exceptionOrNull() is RateLimitException) {
+                rateLimited++
+                if (rateLimited >= 6) {
+                    stopBot("Free quota used up. Stopped. Try again later (quota resets daily).")
+                    return
+                }
+                status = "Rate limit hit ($rateLimited/6). Waiting 5 minutes"
+                delay(300_000)
+                continue
+            }
             if (decision == null) {
                 consecutiveErrors++
                 val msg = result.exceptionOrNull()?.message?.take(120) ?: "unknown error"
@@ -237,6 +249,7 @@ class BotService : AccessibilityService() {
                 continue
             }
             consecutiveErrors = 0
+            rateLimited = 0
 
             when (decision.action) {
                 "stop" -> { stopBot("AI asked to stop: ${decision.reason}"); return }

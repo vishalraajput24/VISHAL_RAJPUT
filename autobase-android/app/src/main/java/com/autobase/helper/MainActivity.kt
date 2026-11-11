@@ -13,7 +13,10 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.Switch
+import android.app.AlertDialog
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -30,6 +33,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var aiSwitch: Switch
     private lateinit var apiKeyField: EditText
     private lateinit var modelField: EditText
+    private lateinit var geminiKeyField: EditText
+    private lateinit var geminiModelField: EditText
+    private lateinit var rbGemini: RadioButton
+    private lateinit var rbClaude: RadioButton
     private lateinit var maxCallsField: EditText
 
     private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -124,24 +131,61 @@ class MainActivity : ComponentActivity() {
         add(intervalField)
 
         add(text(
-            "AI mode (optional): Claude looks at the screen and decides what to tap. Needs internet and your " +
-                "Anthropic API key. Game screenshots are sent to Anthropic. Requires the game package above."
+            "AI mode (optional): the AI looks at the screen and decides what to tap. Needs internet. " +
+                "Game screenshots are sent to the provider you pick. Requires the game package above."
         ))
         aiSwitch = Switch(this).apply {
             text = "Use AI mode"
             isChecked = Prefs.aiMode(this@MainActivity)
         }
         add(aiSwitch)
+
+        val group = RadioGroup(this)
+        rbGemini = RadioButton(this).apply { text = "Google Gemini (free key from aistudio.google.com/apikey)"; id = 1001 }
+        rbClaude = RadioButton(this).apply { text = "Anthropic Claude (paid API key)"; id = 1002 }
+        group.addView(rbGemini)
+        group.addView(rbClaude)
+        if (Prefs.provider(this) == "gemini") rbGemini.isChecked = true else rbClaude.isChecked = true
+        add(group)
+
+        add(text("Gemini API key"))
+        geminiKeyField = EditText(this).apply {
+            hint = "AIza..."
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(Prefs.geminiKey(this@MainActivity))
+        }
+        add(geminiKeyField)
+        add(text("Gemini model (use 'List Gemini models' to see what your key can use)"))
+        geminiModelField = EditText(this).apply { setText(Prefs.geminiModel(this@MainActivity)) }
+        add(geminiModelField)
+        add(button("List Gemini models") {
+            val key = geminiKeyField.text.toString().trim()
+            if (key.isEmpty()) {
+                Toast.makeText(this, "Enter the Gemini key first", Toast.LENGTH_SHORT).show()
+            } else {
+                Thread {
+                    val res = runCatching { GeminiAgent.listFlashModels(key) }
+                    runOnUiThread {
+                        val msg = res.getOrNull()?.take(20)?.joinToString("\n")
+                            ?: ("Error: " + res.exceptionOrNull()?.message)
+                        AlertDialog.Builder(this).setTitle("Flash models").setMessage(msg).setPositiveButton("OK", null).show()
+                    }
+                }.start()
+            }
+        })
+
+        add(text("Claude API key (only if you use Claude)"))
         apiKeyField = EditText(this).apply {
-            hint = "Anthropic API key"
+            hint = "sk-ant-..."
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setText(Prefs.apiKey(this@MainActivity))
         }
         add(apiKeyField)
-        add(text("Model (cheap and fast by default; a stronger model taps more accurately but costs more)"))
+        add(text("Claude model"))
         modelField = EditText(this).apply { setText(Prefs.model(this@MainActivity)) }
         add(modelField)
-        add(text("Max AI calls per day (cost cap)"))
+
+        add(text("Max AI calls per day (cost / quota cap)"))
         maxCallsField = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(Prefs.maxCallsPerDay(this@MainActivity).toString())
@@ -153,6 +197,9 @@ class MainActivity : ComponentActivity() {
             Prefs.setIntervalSec(this, intervalField.text.toString().toIntOrNull() ?: 30)
             Prefs.setAiMode(this, aiSwitch.isChecked)
             Prefs.setApiKey(this, apiKeyField.text.toString())
+            Prefs.setGeminiKey(this, geminiKeyField.text.toString())
+            Prefs.setGeminiModel(this, geminiModelField.text.toString())
+            Prefs.setProvider(this, if (rbGemini.isChecked) "gemini" else "claude")
             Prefs.setModel(this, modelField.text.toString())
             Prefs.setMaxCallsPerDay(this, maxCallsField.text.toString().toIntOrNull() ?: 400)
             val svc = BotService.instance

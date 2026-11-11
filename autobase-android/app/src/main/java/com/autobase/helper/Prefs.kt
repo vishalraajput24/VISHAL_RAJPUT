@@ -18,6 +18,15 @@ object Prefs {
     fun aiMode(ctx: Context): Boolean = p(ctx).getBoolean("ai", false)
     fun setAiMode(ctx: Context, v: Boolean) = p(ctx).edit().putBoolean("ai", v).apply()
 
+    fun provider(ctx: Context): String = p(ctx).getString("provider", "gemini") ?: "gemini"
+    fun setProvider(ctx: Context, v: String) = p(ctx).edit().putString("provider", v).apply()
+
+    fun geminiKey(ctx: Context): String = p(ctx).getString("gkey", "") ?: ""
+    fun setGeminiKey(ctx: Context, v: String) = p(ctx).edit().putString("gkey", v.trim()).apply()
+
+    fun geminiModel(ctx: Context): String = p(ctx).getString("gmodel", "gemini-flash-latest") ?: "gemini-flash-latest"
+    fun setGeminiModel(ctx: Context, v: String) = p(ctx).edit().putString("gmodel", v.trim()).apply()
+
     fun apiKey(ctx: Context): String = p(ctx).getString("apikey", "") ?: ""
     fun setApiKey(ctx: Context, v: String) = p(ctx).edit().putString("apikey", v.trim()).apply()
 

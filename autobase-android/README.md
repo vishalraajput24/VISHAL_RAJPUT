@@ -27,6 +27,9 @@ pre-release named `autobase-build-N`. Open the Releases page on your phone and i
   Use at your own risk, ideally on a spare account first.
 
 ## AI mode (optional)
+Providers: Google Gemini (free key from AI Studio, default) or Anthropic Claude (paid API key).
+Free tiers have small daily quotas and may use your data to improve products; check the provider terms.
+
 Turn on "Use AI mode" in the app and paste your Anthropic API key. Instead of matching saved
 button images, the app sends a downscaled screenshot to Claude, which returns one action
 (tap a box / wait / stop). Guards in the app: game-package filter is mandatory (other apps are
