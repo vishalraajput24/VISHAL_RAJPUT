@@ -319,9 +319,11 @@ class BotService : AccessibilityService() {
                     lastTap = null
                     history.addLast("waited - ${decision.reason}")
                     while (history.size > 4) history.removeFirst()
-                    val base = Prefs.intervalSec(this) * 1000L
-                    status = "AI: nothing to do (${decision.reason}). Next look in ~${base / 1000}s"
-                    delay(base + Random.nextLong(0, 5_000))
+                    val minWait = Prefs.intervalSec(this)
+                    val ask = decision.waitSec
+                    val waitSec = if (ask != null) maxOf(minWait, minOf(ask, 300)) else minWait
+                    status = "AI: nothing to do (${decision.reason}). Next look in ~${waitSec}s"
+                    delay(waitSec * 1000L + Random.nextLong(0, 5_000))
                 }
             }
         }

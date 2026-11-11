@@ -17,6 +17,7 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                     .put("action", JSONObject().put("type", "STRING").put("enum", JSONArray(listOf("tap", "wait", "stop"))))
                     .put("label", str("visible text or short name of the button to tap"))
                     .put("reason", str("one short sentence: why this action"))
+                    .put("wait_seconds", JSONObject().put("type", "INTEGER").put("description", "only for wait: seconds to sleep before looking again (10-300)"))
                     .put(
                         "box_2d", JSONObject().put("type", "ARRAY")
                             .put("description", "[ymin, xmin, ymax, xmax] of the button, normalized to 0-1000. Only for tap.")
@@ -27,6 +28,9 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
     }
 
     /** The user's model first, then lighter/alternative aliases. Each model has its own quota and load. */
+    /** Ask Gemini not to spend time 'thinking' (faster, cheaper). Turned off automatically if the model rejects it. */
+    private var thinkingOff = true
+
     private val candidates = listOf(model, "gemini-flash-lite-latest", "gemini-flash-latest").distinct()
 
     override fun decide(jpegBase64: String, width: Int, height: Int, history: List<String>): AiDecision {
@@ -41,6 +45,10 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
             } catch (e: OverloadedException) {
                 busy = e
             } catch (e: Exception) {
+                if (thinkingOff && e.message?.contains("think", ignoreCase = true) == true) {
+                    thinkingOff = false
+                    return decide(jpegBase64, width, height, history)   // retry once without the override
+                }
                 if (i == 0) throw e   // bad key / bad request on the user's own model: report it
             }
         }
@@ -66,6 +74,7 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                 "generationConfig", JSONObject()
                     .put("responseMimeType", "application/json")
                     .put("responseSchema", schema())
+                    .apply { if (thinkingOff) put("thinkingConfig", JSONObject().put("thinkingBudget", 0)) }
             )
 
     }
@@ -76,7 +85,7 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 20_000
-            conn.readTimeout = 60_000
+            conn.readTimeout = 90_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("x-goog-api-key", apiKey)
@@ -103,7 +112,10 @@ class GeminiAgent(private val apiKey: String, private val model: String) : Brain
                     box = listOf(xmin * width / 1000, ymin * height / 1000, xmax * width / 1000, ymax * height / 1000)
                 }
             }
-            return AiDecision(out.optString("action", "wait").lowercase(), box, out.optString("label"), out.optString("reason"))
+            val ws = out.optInt("wait_seconds", -1).takeIf { it > 0 }
+            return AiDecision(out.optString("action", "wait").lowercase(), box, out.optString("label"), out.optString("reason"), ws)
+        } catch (e: java.io.IOException) {
+            throw OverloadedException("network/timeout: ${e.message}")   // includes read timeouts: retry later
         } finally {
             conn.disconnect()
         }

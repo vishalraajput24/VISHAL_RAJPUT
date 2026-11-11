@@ -14,7 +14,13 @@ import com.anthropic.models.messages.Tool
 import kotlin.jvm.optionals.getOrNull
 
 /** What the model decided. box is [x1, y1, x2, y2] in pixels of the image it was shown. */
-data class AiDecision(val action: String, val box: List<Int>?, val label: String, val reason: String)
+data class AiDecision(
+    val action: String,
+    val box: List<Int>?,
+    val label: String,
+    val reason: String,
+    val waitSec: Int? = null
+)
 
 /** Thrown when a provider says "too many requests / quota used up". */
 class RateLimitException(message: String) : Exception(message)
@@ -51,6 +57,7 @@ Rules:
 - For tap, give a tight box around the button you want.
 - Do not repeat an action that did not change the screen; if your last actions look stuck, choose stop.
 - Loading screens, animations or unclear screens: wait.
+- When you choose wait, also give wait_seconds: if a build/training/research timer is the only thing pending, use about that remaining time but at most 300; on a loading or transition screen use 10; otherwise use 60.
 """.trimIndent()
 }
 
@@ -78,6 +85,7 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
                         .putAdditionalProperty("y2", prop("integer", "bottom edge of the target button in image pixels (only for tap)"))
                         .putAdditionalProperty("label", prop("string", "the visible text or short name of the button you tap, e.g. Confirm, Help, Upgrade"))
                         .putAdditionalProperty("reason", prop("string", "one short sentence: why this action"))
+                        .putAdditionalProperty("wait_seconds", prop("integer", "only for wait: seconds to sleep before looking again (10-300)"))
                         .build()
                 )
                 .required(listOf("action", "reason"))
@@ -124,7 +132,7 @@ class ClaudeAgent(apiKey: String, private val model: String) : Brain {
             val action = str("action").lowercase()
             val x1 = num("x1"); val y1 = num("y1"); val x2 = num("x2"); val y2 = num("y2")
             val box = if (x1 != null && y1 != null && x2 != null && y2 != null) listOf(x1, y1, x2, y2) else null
-            return AiDecision(action, box, str("label"), str("reason"))
+            return AiDecision(action, box, str("label"), str("reason"), num("wait_seconds"))
         }
         return AiDecision("wait", null, "", "no tool call returned")
     }
