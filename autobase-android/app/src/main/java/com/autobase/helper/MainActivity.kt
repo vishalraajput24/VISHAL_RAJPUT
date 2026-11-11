@@ -1,6 +1,12 @@
 package com.autobase.helper
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
+import androidx.core.content.FileProvider
+import java.io.File
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -116,6 +122,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Polls the foreground app for 20 seconds and keeps the last real app seen (not us, not home, not system UI). */
+    private fun ignorablePackage(p: String, home: String?) =
+        p == packageName || p == home || p == "com.android.systemui" || p == "com.android.settings" ||
+            p.contains("launcher") || p.contains("inputmethod") || p.contains("keyboard") ||
+            p.contains("permissioncontroller") || p.contains("packageinstaller")
+
     private fun startDetect() {
         val svc = BotService.instance
         if (svc == null) {
@@ -127,18 +138,17 @@ class MainActivity : ComponentActivity() {
         val home = packageManager.resolveActivity(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY
         )?.activityInfo?.packageName
-        var candidate: String? = null
+        val dwell = HashMap<String, Int>()
         var left = 20
         Toast.makeText(this, "Now open the game and leave it on screen for a few seconds.", Toast.LENGTH_LONG).show()
         val step = object : Runnable {
             override fun run() {
                 val p = svc.currentPackage()
-                if (p != null && p != packageName && p != home && p != "com.android.systemui" &&
-                    !p.contains("inputmethod") && !p.contains("keyboard")
-                ) candidate = p
+                if (p != null && !ignorablePackage(p, home)) dwell[p] = (dwell[p] ?: 0) + 1
                 if (left <= 0) {
                     detecting = false
-                    val found = candidate
+                    // the app that stayed in front the longest wins
+                    val found = dwell.maxByOrNull { it.value }?.key
                     if (found != null) {
                         pkgField.setText(found)
                         Prefs.setGamePackage(this@MainActivity, found)
@@ -146,7 +156,7 @@ class MainActivity : ComponentActivity() {
                         Toast.makeText(this@MainActivity, "Detected: $found", Toast.LENGTH_LONG).show()
                     } else {
                         BotService.status = "Could not detect a game app"
-                        Toast.makeText(this@MainActivity, "Could not detect. Try again and keep the game open.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@MainActivity, "Could not detect. Type the package name instead.", Toast.LENGTH_LONG).show()
                     }
                 } else {
                     BotService.status = "Detecting game... ${left}s left. Open the game now."
@@ -158,6 +168,39 @@ class MainActivity : ComponentActivity() {
         ui.post(step)
     }
 
+    private fun showLog() {
+        val tv = TextView(this).apply {
+            text = BotLog.dump(80)
+            textSize = 11f
+            setTextIsSelectable(true)
+            setPadding(24, 24, 24, 24)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Log (last 80 lines)")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Copy all") { _, _ ->
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("NightBuilder log", BotLog.dump(300)))
+                Toast.makeText(this, "Copied. Paste it in the chat.", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun shareLastView() {
+        val f = File(cacheDir, "debug/last.jpg")
+        if (!f.exists()) {
+            Toast.makeText(this, "No AI view saved yet. Run the bot once.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("image/jpeg")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, "Share the last AI view"))
+    }
+
     private val ticker = object : Runnable {
         override fun run() {
             statusView.text = "Status: " + BotService.status
@@ -167,6 +210,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BotLog.init(filesDir)
+        BotLog.header = "Night Builder build ${currentBuild()} | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE}"
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -314,6 +359,8 @@ class MainActivity : ComponentActivity() {
             }
         })
         add(button("STOP") { BotService.instance?.stopBot() })
+        add(button("Show log (copy and send it to me)") { showLog() })
+        add(button("Share last AI view (screenshot with the red box)") { shareLastView() })
 
         add(text(
             "Tips: keep the phone charging, set screen timeout to the maximum, and turn off " +

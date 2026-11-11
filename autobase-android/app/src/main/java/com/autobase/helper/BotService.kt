@@ -3,6 +3,9 @@ package com.autobase.helper
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Path
 import android.util.Base64
 import android.graphics.PixelFormat
@@ -21,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import org.opencv.android.OpenCVLoader
 import org.opencv.core.Mat
 import kotlin.coroutines.resume
@@ -38,6 +42,7 @@ class BotService : AccessibilityService() {
     companion object {
         @Volatile var instance: BotService? = null
         @Volatile var status: String = "Service not enabled"
+            set(value) { field = value; BotLog.add(value) }
         @Volatile var running: Boolean = false
         @Volatile var lastEventPackage: String? = null
         const val MATCH_THRESHOLD = 0.85
@@ -51,6 +56,7 @@ class BotService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
+        BotLog.init(filesDir)
         status = "Ready. Press Start."
         OpenCVLoader.initLocal()
         addKeepAwakeOverlay()
@@ -192,6 +198,7 @@ class BotService : AccessibilityService() {
             return
         }
         val agent: Brain = if (gemini) GeminiAgent(key, model) else ClaudeAgent(key, model)
+        BotLog.add("AI loop start: provider=${if (gemini) "gemini" else "claude"} model=$model pkg=$pkg interval=${Prefs.intervalSec(this)}s cap=${Prefs.maxCallsPerDay(this)}")
         var rateLimited = 0
         var overloaded = 0
         val startedAt = System.currentTimeMillis()
@@ -205,7 +212,7 @@ class BotService : AccessibilityService() {
                 stopBot("Auto-stopped after $MAX_HOURS hours"); return
             }
             if (currentPackage() != pkg) {
-                status = "Waiting for the game to be on screen"
+                status = "Waiting for the game (now in: ${currentPackage()}, expected: $pkg)"
                 delay(5_000)
                 continue
             }
@@ -219,6 +226,8 @@ class BotService : AccessibilityService() {
                 delay(3_000)
                 continue
             }
+            val screenW = bmp.width
+            val screenH = bmp.height
             val sendW = 720
             val sendH = (bmp.height * sendW.toFloat() / bmp.width).toInt()
             val factor = bmp.width.toFloat() / sendW
@@ -226,7 +235,6 @@ class BotService : AccessibilityService() {
             bmp.recycle()
             val out = ByteArrayOutputStream()
             small.compress(Bitmap.CompressFormat.JPEG, 70, out)
-            small.recycle()
             val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
 
             status = "Asking AI... (call ${used + 1}/$cap)"
@@ -235,6 +243,7 @@ class BotService : AccessibilityService() {
                 runCatching { agent.decide(b64, sendW, sendH, history.toList()) }
             }
             val decision = result.getOrNull()
+            saveDebug(small, decision)   // keeps the last AI view (with its box) so it can be shared
             if (result.exceptionOrNull() is OverloadedException) {
                 overloaded++
                 if (overloaded >= 20) {
@@ -270,6 +279,7 @@ class BotService : AccessibilityService() {
             consecutiveErrors = 0
             rateLimited = 0
             overloaded = 0
+            BotLog.add("AI decided: ${decision.action} '${decision.label}' box=${decision.box} sent=${sendW}x${sendH} screen=${screenW}x${screenH} why=${decision.reason}")
 
             when (decision.action) {
                 "stop" -> { stopBot("AI asked to stop: ${decision.reason}"); return }
@@ -296,6 +306,7 @@ class BotService : AccessibilityService() {
                             stopBot("Stuck: same spot tapped 4 times ('${decision.label}')")
                             return
                         }
+                        BotLog.add("TAP at ($cx,$cy) on screen ${screenW}x${screenH}")
                         tap(cx + Random.nextInt(-4, 5), cy + Random.nextInt(-4, 5))
                         status = "AI tapped '${decision.label}': ${decision.reason}"
                         history.addLast("tapped '${decision.label}' - ${decision.reason}")
@@ -314,6 +325,23 @@ class BotService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /** Draws the AI's box on the image it saw and stores it; always recycles [bmp]. */
+    private fun saveDebug(bmp: Bitmap, d: AiDecision?) {
+        runCatching {
+            val dbg = bmp.copy(Bitmap.Config.ARGB_8888, true)
+            val c = Canvas(dbg)
+            val box = Paint().apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 5f }
+            val b = d?.box
+            if (b != null) c.drawRect(b[0].toFloat(), b[1].toFloat(), b[2].toFloat(), b[3].toFloat(), box)
+            val txt = Paint().apply { color = Color.YELLOW; textSize = 28f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+            c.drawText(if (d == null) "AI: no answer" else "${d.action} '${d.label}'", 12f, 36f, txt)
+            val dir = File(cacheDir, "debug").also { it.mkdirs() }
+            File(dir, "last.jpg").outputStream().use { dbg.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+            dbg.recycle()
+        }
+        bmp.recycle()
     }
 
     private fun near(a: Pair<Int, Int>, b: Pair<Int, Int>) =
